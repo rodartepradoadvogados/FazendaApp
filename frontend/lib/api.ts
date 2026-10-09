@@ -7072,6 +7072,8 @@ export type PatrimonioPayload = {
   fator_saldo_decrescente?: number | null;
   unidades_vida_util_total?: number | null; unidades_consumidas?: number | null;
   unidade_uso?: string | null;
+  // Fase A, PR 9: centro de custo do bem (depreciação por centro).
+  centro_custo?: string | null;
 };
 
 // --- Onda 2: listas fechadas, código PAT e baixa ----------------------------
@@ -7132,6 +7134,16 @@ export type ResumoDre = {
   fora_da_dre_total: number; nao_classificado: number; nao_classificado_receita: number; nao_classificado_despesa: number;
 };
 
+// Fase A, PR 9: depreciação com filtro de centro de custo — bens do centro
+// inteiros + a fatia dos bens sem centro, rateada pela participação do centro
+// nas despesas operacionais do período.
+export type RateioDepreciacao = {
+  centro_custo: string; depreciacao_bens_do_centro: number; depreciacao_bens_sem_centro: number;
+  depreciacao_bens_de_outros_centros: number; participacao: number;
+  despesa_operacional_centro: number | null; despesa_operacional_total: number | null;
+  depreciacao_rateada: number; aviso: string | null;
+};
+
 export type DreResposta = {
   periodo: { inicio: string; fim: string };
   regime: string; centro_custo: string | null;
@@ -7145,7 +7157,11 @@ export type DreResposta = {
     por_natureza?: Record<string, number>;
     grupos?: { natureza: string; rotulo: string; total: number; contas: ContaDre[]; liquido?: number }[];
   };
-  depreciacao_periodo: { total: number; inconsistencias: { item: string; numero: string | null; motivo: string }[] };
+  depreciacao_periodo: {
+    total: number; inconsistencias: { item: string; numero: string | null; motivo: string }[];
+    // Fase A, PR 9: com filtro de centro, como a depreciação foi repartida.
+    rateio?: RateioDepreciacao;
+  };
   // Presentes só quando a fazenda usa as regras novas (financeiro_regras_v2).
   regras_v2?: boolean;
   // Fase A, PR 8 (DRE única): o resumo tirado da cascata — o número dos KPIs,

@@ -20,8 +20,9 @@ Este arquivo trava três coisas:
 3. O QUE FALTAVA: cada erro aberto era um `xfail(strict=True)` com o nome do
    PR que o resolvia (numeração do SOLUCOES.md, §4); o PR que acertou o número
    tirou a marcação e o número certo virou asserção normal. Com o PR 8 (DRE
-   única: legado, Capa, CSV do Portal e orçamento pela cascata) só sobram os
-   xfail do PR 9 (custos com "Todos" e depreciação por centro).
+   única: legado, Capa, CSV do Portal e orçamento pela cascata) e o PR 9
+   (custos com "Todos" e depreciação por centro, com rateio do bem sem
+   centro) não sobra nenhum xfail da Fase A.
 """
 from __future__ import annotations
 
@@ -1302,30 +1303,123 @@ def test_pr8_orcamento_com_tudo_ligado(cenario):
     assert o["totais"]["despesa_operacional"]["realizado"] == cenario.get("/financeiro/custo-hectare", **MAR_Q)["despesas_total"]
 
 
-@pytest.mark.xfail(strict=True, reason="PR 9 (COE/COT): 'Todos' no custo por vaca não filtra centro de custo")
-def test_pendente_pr9_custo_vaca_todos(cenario):
+def test_pr9_custo_vaca_todos(cenario):
+    """Ex-xfail `test_pendente_pr9_custo_vaca_todos`: com a flag, "Todos" (sem
+    centro na URL) é TODOS os centros; antes virava "Pecuária Leiteira"."""
+    antes = cenario.get("/financeiro/custo-vaca-lote", **MAR_Q)
+    assert antes["centro_custo"] == "Pecuária Leiteira"
     cenario.ligar_regras_v2()
-    cv = cenario.get("/financeiro/custo-vaca-lote", data_inicio="2031-03-01", data_fim="2031-03-31")
-    assert cv["centro_custo"] is None
+    cv = cenario.get("/financeiro/custo-vaca-lote", **MAR_Q)
+    assert cv["centro_custo"] is None and cv["despesas_total"] == 11660 and cv["depreciacao_rateio"] is None
+    pl = cenario.get("/financeiro/custo-vaca-lote", centro_custo="Pecuária Leiteira", **MAR_Q)
+    assert pl["centro_custo"] == "Pecuária Leiteira" and pl["despesas_total"] == 11660
+    # Num centro sem despesa nenhuma, nada (antes do PR 9 a depreciação inteira entrava no COT).
+    agri = cenario.get("/financeiro/custo-vaca-lote", centro_custo="Agricultura", **MAR_Q)
+    assert (agri["despesas_total"], agri["depreciacao_periodo"], agri["cot"]) == (0, 0, 0)
 
 
-@pytest.mark.xfail(strict=True, reason="PR 9 (depreciação por centro): filtro 'Agricultura' sem bem desse centro não deprecia o trator")
-def test_pendente_pr9_depreciacao_com_filtro_de_centro(cenario):
+def test_pr9_depreciacao_com_filtro_de_centro(cenario):
+    """Ex-xfail `test_pendente_pr9_depreciacao_com_filtro_de_centro`: o trator
+    (sem centro no bem: nasceu antes da flag) é rateado pela participação do
+    centro nas despesas operacionais; a Agricultura não tem despesa em abril,
+    então não recebe depreciação (antes: os 1.000 inteiros)."""
+    assert cenario.linha(cenario.dre("2031-04-01", "2031-04-30", centro_custo="Agricultura"), "DEPRECIACAO_AMORT_EXAUSTAO") == 1000
     cenario.ligar_regras_v2()
     d = cenario.dre("2031-04-01", "2031-04-30", centro_custo="Agricultura")
     assert cenario.linha(d, "DEPRECIACAO_AMORT_EXAUSTAO") == 0
+    rateio = d["depreciacao_periodo"]["rateio"]
+    assert (rateio["depreciacao_bens_sem_centro"], rateio["participacao"], rateio["depreciacao_rateada"]) == (1000, 0, 0)
 
 
-def test_pr8_nao_vaza_para_outra_fazenda(cenario):
-    """Multi-tenant: a fazenda 2 (sem flag) segue com a Capa crua, a DRE sem
-    resumo e o orçamento antigo; o orçamento da 1 não aparece na 2."""
+def _cenario_dois_centros(cenario):
+    """Agricultura com despesa e com bem próprio: uma compra de 2.915 de ração
+    (8.2) no centro Agricultura em março e uma ensiladeira de 12.000 (10 anos,
+    linear: 100/mês) cadastrada no Patrimônio com centro Agricultura."""
+    r = cenario.c.post("/financeiro/lancamentos", json={
+        "tipo": "despesa", "centro_custo": "Agricultura", "fornecedor_cliente": "AUD-AGRI",
+        "itens": [{"produto": "Insumo milho", "codigo_conta_gerencial": "8.2", "valor_total": 2915, "tipo_item": "servico"}],
+        "data_emissao": "2031-03-12", "data_competencia": "2031-03-12", "data_vencimento": "2031-04-12",
+    })
+    assert r.status_code == 201, r.text
+    r = cenario.c.post("/financeiro/patrimonio", json={
+        "nome": "AUD Ensiladeira", "data_imobilizacao": "2031-03-01", "valor_total": 12000, "depreciavel": True,
+        "metodo_depreciacao": "LINEAR", "vida_util_anos": 10, "valor_residual": 0, "centro_custo": "Agricultura",
+    })
+    assert r.status_code == 201, r.text
+
+
+def test_pr9_depreciacao_rateada_entre_os_centros(cenario):
+    """Março, só a flag (despesa operacional: Pecuária 11.660 + Agricultura
+    2.915 = 14.575 → participações 80% e 20%). O trator (1.000, sem centro) é
+    rateado 800/200; a ensiladeira (100) vai inteira para a Agricultura. Os
+    pedaços somam a depreciação da fazenda: 800 + 300 = 1.100."""
+    cenario.ligar_regras_v2()
+    _cenario_dois_centros(cenario)
+    dep = {centro: cenario.dre(centro_custo=centro)["depreciacao_periodo"] for centro in ("Pecuária Leiteira", "Agricultura")}
+    todos = cenario.dre()["depreciacao_periodo"]
+    assert todos["total"] == 1100 and "rateio" not in todos
+    assert {c: d["total"] for c, d in dep.items()} == {"Pecuária Leiteira": 800, "Agricultura": 300}
+    agri = dep["Agricultura"]["rateio"]
+    assert (agri["depreciacao_bens_do_centro"], agri["depreciacao_bens_sem_centro"], agri["participacao"],
+            agri["depreciacao_rateada"]) == (100, 1000, 0.2, 200)
+    assert (agri["despesa_operacional_centro"], agri["despesa_operacional_total"]) == (2915, 14575)
+    assert dep["Pecuária Leiteira"]["rateio"]["depreciacao_bens_de_outros_centros"] == 100
+    # O mesmo número no COT dos custos (por hectare e por vaca) e na DRE de caixa.
+    for centro, cot in (("Pecuária Leiteira", 11660 + 800), ("Agricultura", 2915 + 300)):
+        ch = cenario.get("/financeiro/custo-hectare", centro_custo=centro, **MAR_Q)
+        cv = cenario.get("/financeiro/custo-vaca-lote", centro_custo=centro, **MAR_Q)
+        assert ch["cot"] == cv["cot"] == cot and ch["depreciacao_periodo"] == dep[centro]["total"]
+    dc = cenario.dre(regime="caixa", centro_custo="Agricultura")
+    assert cenario.linha(dc, "DEPRECIACAO_AMORT_EXAUSTAO") == 300
+    # Sem filtro, o COT tem a depreciação inteira.
+    assert cenario.get("/financeiro/custo-hectare", **MAR_Q)["cot"] == 11660 + 2915 + 1100
+
+
+def test_pr9_flag_desligada_depreciacao_inteira_em_qualquer_centro(cenario):
+    _cenario_dois_centros(cenario)
+    for centro in ("Pecuária Leiteira", "Agricultura"):
+        d = cenario.dre(centro_custo=centro)
+        assert cenario.linha(d, "DEPRECIACAO_AMORT_EXAUSTAO") == 1100 and "rateio" not in d["depreciacao_periodo"]
+
+
+def test_pr9_bem_comprado_nasce_no_centro_da_nota(cenario):
+    from fazenda.models import Patrimonio
+
+    cenario.ligar_regras_v2()
+    r = cenario.c.post("/financeiro/lancamentos", json={
+        "tipo": "despesa", "centro_custo": "Agricultura", "fornecedor_cliente": "AUD-Plantadeira",
+        "itens": [{"produto": "Plantadeira", "codigo_conta_gerencial": "8.6", "valor_total": 60000, "tipo_item": "servico"}],
+        "data_emissao": "2031-03-05", "data_competencia": "2031-03-05",
+        "criar_patrimonio": {"nome": "AUD Plantadeira", "data_imobilizacao": "2031-03-05", "valor_total": 60000,
+                             "depreciavel": True, "metodo_depreciacao": "linear", "vida_util_anos": 10},
+    })
+    assert r.status_code == 201, r.text
+    with Session(cenario.engine) as s:
+        bem = s.exec(select(Patrimonio).where(Patrimonio.nome == "AUD Plantadeira")).one()
+        assert bem.centro_custo == "Agricultura"
+
+
+def test_pr8_pr9_nao_vazam_para_outra_fazenda(cenario):
+    """Multi-tenant: a fazenda 2 (sem flag) segue com a Capa crua, o custo por
+    vaca em Pecuária Leiteira e sem rateio; o bem e o orçamento da 2 não
+    entram na depreciação nem no comparativo da 1."""
     cenario.ligar_regras_v2(fazenda_id=1)
     cenario.estado["fazenda_id"] = 2
+    r = cenario.c.post("/financeiro/patrimonio", json={
+        "nome": "F2 Trator", "data_imobilizacao": "2031-03-01", "valor_total": 240000, "depreciavel": True,
+        "metodo_depreciacao": "LINEAR", "vida_util_anos": 10, "valor_residual": 0, "centro_custo": "Agricultura",
+    })
+    assert r.status_code == 201, r.text
     assert cenario.get("/financeiro/resultado-mes-recente") == {"mes": None, "resultado": None}
-    assert "resumo" not in cenario.dre()
+    assert cenario.get("/financeiro/custo-vaca-lote", **MAR_Q)["centro_custo"] == "Pecuária Leiteira"
+    d2 = cenario.dre(centro_custo="Agricultura")
+    assert "resumo" not in d2 and "rateio" not in d2["depreciacao_periodo"]
+    assert cenario.linha(d2, "DEPRECIACAO_AMORT_EXAUSTAO") == 2000
     o2 = cenario.get("/planejamento/orcamento/comparativo", ano=2031, mes_inicio=3, mes_fim=3)
     assert "totais" not in o2 and o2["linhas"] == []
     cenario.estado["fazenda_id"] = 1
-    assert cenario.dre()["resumo"]["resultado_liquido"] == -250
+    d1 = cenario.dre(centro_custo="Agricultura")
+    assert cenario.linha(d1, "DEPRECIACAO_AMORT_EXAUSTAO") == 0  # o trator da 2 não aparece
+    assert cenario.linha(cenario.dre(), "DEPRECIACAO_AMORT_EXAUSTAO") == 1000
     o1 = cenario.get("/planejamento/orcamento/comparativo", ano=2031, mes_inicio=3, mes_fim=3)
     assert o1["totais"]["receita"]["orcado"] == 10000

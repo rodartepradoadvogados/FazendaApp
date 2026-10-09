@@ -986,6 +986,103 @@ def _depreciacao_periodo_fazenda(
     return calcular_depreciacao_periodo(itens, data_inicio, data_fim)
 
 
+def _despesa_operacional_dos_registros(registros: list[dict]) -> float:
+    """Σ das despesas OPERACIONAIS de registros da DRE de competência (o
+    numerador dos custos): item redutor subtrai, natureza fora dos custos
+    não entra. Base do rateio da depreciação por centro (PR 9)."""
+    total = 0.0
+    for r in registros:
+        if r.get("tipo_nota") != "despesa" or not entra_nos_custos(r.get("natureza") or OPERACIONAL):
+            continue
+        valor = r.get("valor") or 0.0
+        total += -valor if r.get("redutor") else valor
+    return round(total, 2)
+
+
+def depreciacao_periodo_v2(
+    session: Session, fazenda_id: int | None, data_inicio: date, data_fim: date,
+    centro_custo: Optional[str], *, despesa_operacional_centro: float | None = None,
+    sobrepor_conta: dict[int, str] | None = None, sobrepor_item: dict[int, str] | None = None,
+    sobrepor_plano: dict[str, str] | None = None,
+) -> dict:
+    """Regras v2, PR 9 — depreciação do período com o filtro de centro de
+    custo (DRE nos dois regimes, COT e custos por hectare/vaca/safra).
+
+    Sem filtro: a depreciação de TODO o patrimônio (igual ao motor antigo).
+    Com filtro de centro C:
+      • bem com `patrimonio.centro_custo` = C entra inteiro;
+      • bem de OUTRO centro não entra;
+      • bem SEM centro é RATEADO (decisão do contador, Q9): entra a fração
+        `participacao` = despesa operacional de C ÷ despesa operacional de
+        todos os centros, no período, pela competência (mesma base dos
+        custos: só natureza operacional, vale descontado, item redutor
+        subtraindo). Sem despesa operacional no período, não há base para
+        ratear: a participação é 0 e a resposta avisa.
+    Devolve o mesmo formato de `calcular_depreciacao_periodo` (total, itens,
+    inconsistências) mais `rateio` quando há filtro."""
+    query = select(Patrimonio)
+    if fazenda_id is not None:
+        query = query.where(Patrimonio.fazenda_id == fazenda_id)
+    bens = session.exec(query).all()
+    base = calcular_depreciacao_periodo([p.model_dump() for p in bens], data_inicio, data_fim)
+    if centro_custo is None:
+        return base
+    alvo = mapear_centro_custo(centro_custo)
+    centro_do_bem = {p.id: (mapear_centro_custo(p.centro_custo) if p.centro_custo else None) for p in bens}
+
+    do_centro = sem_centro = outros = 0.0
+    itens: list[dict] = []
+    itens_sem_centro: list[dict] = []
+    for it in base["itens"]:
+        centro_bem = centro_do_bem.get(it["patrimonio_id"])
+        if centro_bem is None:
+            sem_centro = round(sem_centro + it["valor"], 2)
+            itens_sem_centro.append(it)
+        elif centro_bem == alvo:
+            do_centro = round(do_centro + it["valor"], 2)
+            itens.append({**it, "centro_custo": centro_bem})
+        else:
+            outros = round(outros + it["valor"], 2)
+
+    participacao = 0.0
+    despesa_total = None
+    aviso = None
+    if sem_centro:
+        if despesa_operacional_centro is None:
+            despesa_operacional_centro = _despesa_operacional_dos_registros(registros_competencia_v2(
+                session, fazenda_id, data_inicio, data_fim, centro_custo,
+                sobrepor_conta=sobrepor_conta, sobrepor_item=sobrepor_item, sobrepor_plano=sobrepor_plano))
+        despesa_total = _despesa_operacional_dos_registros(registros_competencia_v2(
+            session, fazenda_id, data_inicio, data_fim, None,
+            sobrepor_conta=sobrepor_conta, sobrepor_item=sobrepor_item, sobrepor_plano=sobrepor_plano))
+        if despesa_total > 0:
+            participacao = min(max(despesa_operacional_centro / despesa_total, 0.0), 1.0)
+        else:
+            aviso = ("Sem despesa operacional no período para ratear a depreciação dos bens sem centro de "
+                     "custo: ela fica fora deste filtro. Informe o centro de custo no cadastro do bem.")
+    rateada = round(sem_centro * participacao, 2)
+    for it in itens_sem_centro:
+        valor = round(it["valor"] * participacao, 2)
+        if valor:
+            itens.append({**it, "valor": valor, "valor_cheio": it["valor"], "centro_custo": None, "rateado": True})
+    return {
+        "total": round(do_centro + rateada, 2),
+        "itens": itens,
+        "inconsistencias": base["inconsistencias"],
+        "rateio": {
+            "centro_custo": alvo,
+            "depreciacao_bens_do_centro": do_centro,
+            "depreciacao_bens_sem_centro": sem_centro,
+            "depreciacao_bens_de_outros_centros": outros,
+            "participacao": round(participacao, 4),
+            "despesa_operacional_centro": despesa_operacional_centro if sem_centro else None,
+            "despesa_operacional_total": despesa_total,
+            "depreciacao_rateada": rateada,
+            "aviso": aviso,
+        },
+    }
+
+
 def _mapa_natureza_plano(session: Session, fazenda_id: int | None) -> dict[str, str]:
     """{codigo: natureza_fin} só das contas do plano com natureza própria — a
     herança por prefixo é resolvida em rules.natureza.resolver_natureza_plano."""
@@ -1117,7 +1214,14 @@ def calcular_dre(
         diferencas_baixa = _registros_diferenca_baixa(session, fazenda_id, data_inicio, data_fim, centro_custo, contexto)
         registros = registros + diferencas_baixa
     mapa_linha = contexto.mapa_linha_dre if contexto is not None else _mapa_linha_por_codigo(session, fazenda_id)
-    depreciacao = _depreciacao_periodo_fazenda(session, fazenda_id, data_inicio, data_fim)
+    if regras_v2:
+        # PR 9: com filtro de centro, só a depreciação dos bens do centro e
+        # a fatia rateada dos bens sem centro.
+        depreciacao = depreciacao_periodo_v2(
+            session, fazenda_id, data_inicio, data_fim, centro_custo,
+            sobrepor_conta=sobrepor_conta, sobrepor_item=sobrepor_item, sobrepor_plano=sobrepor_plano)
+    else:
+        depreciacao = _depreciacao_periodo_fazenda(session, fazenda_id, data_inicio, data_fim)
     baixas = _resultado_baixas_periodo(session, fazenda_id, data_inicio, data_fim) if regras_v2 else None
     cascata = montar_cascata_dre(
         registros, mapa_linha, depreciacao["total"],
@@ -1153,6 +1257,8 @@ def calcular_dre(
         # byte a byte a de antes (o CSV do Portal imprime todas as chaves).
         resposta["regras_v2"] = True
         resposta["resumo"] = resumo
+        if "rateio" in depreciacao:
+            resposta["depreciacao_periodo"]["rateio"] = depreciacao["rateio"]
         resposta["resultado_baixas_periodo"] = baixas
         resposta["pendencias_natureza"] = _pendencias_natureza(registros, filtradas)
         # PR 2: folha/contrato/diária... gerados sem conta automática configurada.
@@ -1195,7 +1301,8 @@ def dre(
     não classificado, tirados da cascata), com os campos legados DERIVADOS
     da cascata: `receitas_total` = receita líquida, `resultado` = resultado
     líquido, `despesas_total` = a diferença e `por_conta` só com o que entrou
-    nas linhas.
+    nas linhas. Com filtro de centro, a depreciação é a dos bens do centro +
+    o rateio dos bens sem centro (PR 9, `depreciacao_periodo.rateio`).
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     resposta = calcular_dre(
@@ -1269,8 +1376,9 @@ def custos_operacionais_periodo(
     (vale descontado, rateio de centro de custo), achatadas por item, e só o
     que tem natureza OPERACIONAL. Investimento, financiamento, capital,
     adiantamento, obrigação e NAO_ENTRA_NA_DRE ficam fora (`fora_por_natureza`).
-    O COT soma a depreciação do período — a MESMA da DRE (sem filtro de centro
-    por enquanto: o rateio por centro é o PR 9).
+    O COT soma a depreciação do período — a MESMA da DRE, com o mesmo filtro
+    de centro (PR 9, `depreciacao_periodo_v2`: bens do centro + rateio dos
+    bens sem centro; `depreciacao_rateio` diz como foi).
 
     Sem nada fora do operacional, `despesas_total` é idêntico ao numerador
     antigo (os registros redistribuem exatamente o valor de cada nota)."""
@@ -1298,11 +1406,19 @@ def custos_operacionais_periodo(
         nivel1 = codigo.split(".")[0] if "." in codigo else codigo
         cat = por_categoria.setdefault(nivel1, {"descricao": r.get("descricao") or "", "valor": 0.0})
         cat["valor"] += valor
-    depreciacao = _depreciacao_periodo_fazenda(session, fazenda_id, data_inicio, data_fim)
     operacional = round(operacional, 2)
+    # PR 9: a MESMA depreciação da DRE com o mesmo filtro de centro (bens do
+    # centro + rateio dos bens sem centro pela participação nas despesas
+    # operacionais — a deste centro já está calculada aqui).
+    depreciacao = depreciacao_periodo_v2(
+        session, fazenda_id, data_inicio, data_fim, centro_custo,
+        despesa_operacional_centro=operacional if centro_custo is not None else None,
+        sobrepor_conta=sobrepor_conta, sobrepor_item=sobrepor_item, sobrepor_plano=sobrepor_plano,
+    )
     return {
         "despesas_total": operacional,
         "depreciacao_periodo": depreciacao["total"],
+        "depreciacao_rateio": depreciacao.get("rateio"),
         "cot": round(operacional + depreciacao["total"], 2),
         "fora_por_natureza": fora,
         "por_categoria": [
@@ -4176,6 +4292,14 @@ def criar_lancamento(
         item_patrimonio = Patrimonio(
             **pat.model_dump(exclude={"nome"}), nome=pat.nome.strip(), fazenda_id=fazenda_id,
         )
+        if regras_v2:
+            # Regras v2, PR 9: o bem comprado nasce no centro de custo da
+            # nota (a depreciação dele passa a ir para esse centro). Só o
+            # centro explícito do bem vence.
+            item_patrimonio.centro_custo = (
+                mapear_centro_custo(pat.centro_custo) if pat.centro_custo
+                else mapear_centro_custo(dados.centro_custo) or "Pecuária Leiteira"
+            )
         if not item_patrimonio.depreciavel and item_patrimonio.valor_mercado_atual is None:
             item_patrimonio.valor_mercado_atual = valor_base_aquisicao(item_patrimonio.model_dump())
         session.add(item_patrimonio)

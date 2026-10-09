@@ -4,8 +4,8 @@ Correção dos números dos Relatórios do Financeiro em PRs pequenos, cada um l
 **fazenda a fazenda** por uma flag. Este arquivo cobre o PR 0 (rede de segurança),
 o PR 1 (natureza do lançamento), o PR 7 (juros e descontos da baixa), o PR 4
 (receita do leite), o PR 2 (contas automáticas), o PR 3 (folha pelo bruto), o PR 6
-(saldo de abertura e Caixa Real), o PR 5 (cartão de crédito por item) e o PR 8
-(DRE única). A auditoria completa, com causa-raiz e a ordem dos PRs, ficou no
+(saldo de abertura e Caixa Real), o PR 5 (cartão de crédito por item), o PR 8
+(DRE única) e o PR 9 (custos com rateio por centro). A auditoria completa, com causa-raiz e a ordem dos PRs, ficou no
 relatório da Fase A (`SOLUCOES.md`, fora do repositório).
 
 ## 1. A flag `financeiro_regras_v2`
@@ -76,8 +76,7 @@ Com a flag ligada:
   depreciar") na DRE e aviso no formulário.
 
 `patrimonio.centro_custo` também foi criado (aceito na API do patrimônio). A
-depreciação **ainda não** é filtrada por centro: isso, com o rateio do bem sem
-centro, é o PR 9.
+depreciação por centro, com o rateio do bem sem centro, é o PR 9 (§12).
 
 ## 3. Backfill (dry-run por padrão) e como reverter
 
@@ -426,19 +425,52 @@ muda (golden: DRE, campos legados, Capa e o CSV do Portal byte a byte).
 - Script de impacto: a seção da DRE ganha `dre.legado.receitas_total`,
   `dre.legado.despesas_total` e `dre.legado.resultado` (antes × depois).
 
-## 12. O que fica para os próximos PRs
+## 12. Custos com rateio correto por centro (PR 9)
 
-Com tudo o que já entrou ligado (PRs 1, 7, 4, 2, 3, 6, 5 e 8: contas automáticas,
-os backfills da folha e do cartão, a natureza do plano e a flag), o cenário da
-auditoria em março/2031 fecha como o relatório previa: receita líquida 9.850,
-CMV 8.300, pessoal 4.840, EBITDA −3.290, resultado −4.290 — o mesmo na
-cascata, no resumo (KPIs), nos campos legados e nos dois CSVs do Portal
-(`test_pr8_um_resultado_em_todas_as_telas_com_tudo_ligado`) —, numerador de
-custos 13.140 (COT 14.140) e custo por litro 0,8276.
+Com a flag desligada, nada muda (custo por vaca sem centro = Pecuária
+Leiteira; depreciação inteira em qualquer filtro).
 
-O teste do cenário marca cada número ainda errado com `xfail(strict=True)` e o
-nome do PR que o corrige; o PR que acertar o número é obrigado a tirar o xfail.
+- **"Todos" no custo por vaca** (`GET /financeiro/custo-vaca-lote`): sem
+  `centro_custo` na URL (é o que o "Todos" da tela manda) = todos os centros,
+  como no custo por hectare e na DRE. Antes caía em "Pecuária Leiteira".
+- **Depreciação por centro de custo** (`financeiro.depreciacao_periodo_v2`),
+  na DRE (os dois regimes), no COT e nos custos por hectare, vaca/lote e
+  safra. Sem filtro: a do patrimônio inteiro (igual a antes). Com o centro C:
+  bem com `patrimonio.centro_custo` = C entra inteiro; bem de outro centro não
+  entra; bem **sem centro é rateado** (decisão do contador, Q9) pela
+  participação de C nas despesas operacionais do período (competência,
+  natureza operacional, vale descontado, item redutor da folha abatendo —
+  a mesma base do numerador dos custos). Os pedaços dos centros somam a
+  depreciação da fazenda. Sem despesa operacional no período, a participação
+  é 0 e a resposta avisa ("informe o centro no cadastro do bem").
+  A DRE responde `depreciacao_periodo.rateio` e os custos
+  `depreciacao_rateio` (bens do centro, sem centro, de outros centros,
+  participação, base e o valor rateado).
+- **Centro do bem**: campo "Centro de custo" no cadastro de Patrimônio (vazio =
+  rateado). Com a flag, o bem criado junto com a compra (`criar_patrimonio`)
+  nasce no centro da nota, salvo centro explícito. Bens antigos ficam sem
+  centro (rateados) até alguém informar.
+- **Front**: a cascata mostra como a depreciação foi repartida no filtro de
+  centro; custos por hectare, vaca e safra mostram depreciação, COT (e COT por
+  hectare/vaca) com as regras novas.
+- Cenário (março/2031, só a flag, mais 2.915 de insumo e uma ensiladeira de
+  12.000 no centro Agricultura): Pecuária 11.660 e Agricultura 2.915 de
+  despesa operacional (80%/20%); trator (1.000, sem centro) rateado 800/200;
+  ensiladeira (100) inteira na Agricultura → Pecuária 800, Agricultura 300,
+  fazenda 1.100 (`test_pr9_depreciacao_rateada_entre_os_centros`).
 
-| PR | O que resolve |
-|---|---|
-| 9 | COE/COT com rateio: "Todos" sem filtro, depreciação por centro |
+## 13. O que fica
+
+Com os PRs 0 a 9 ligados (contas automáticas, os backfills da folha e do
+cartão, a natureza do plano e a flag), o cenário da auditoria em março/2031
+fecha como o relatório previa: receita líquida 9.850, CMV 8.300, pessoal 4.840,
+EBITDA −3.290, resultado −4.290 — o mesmo na cascata, no resumo (KPIs), nos
+campos legados, nos dois CSVs do Portal (`test_pr8_um_resultado_em_todas_as_telas_com_tudo_ligado`)
+—, numerador de custos 13.140 (COT 14.140) e custo por litro 0,8276. Não sobra
+nenhum `xfail` da Fase A no teste do cenário.
+
+Fora da Fase A (registrado para depois): fechamento/conciliação e LCDPR; 13º
+e férias com provisão mensal (Q5); vale de ITEM como adiantamento próprio na
+nota do fornecedor; "Detalhamento por conta" da DRE com drill para Consultas
+filtrada por conta; data de corte do CSV antigo do Portal (07/12/2026) — depois
+dela, remover `_dict_para_csv` da DRE.

@@ -52,6 +52,7 @@ def custo_por_safra(
             "depreciacao_periodo": custos["depreciacao_periodo"],
             "cot": custos["cot"],
             "fora_por_natureza": custos["fora_por_natureza"],
+            "depreciacao_rateio": custos["depreciacao_rateio"],
         }
 
     query_contas = select(ContaGerencial)

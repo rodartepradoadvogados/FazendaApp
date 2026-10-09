@@ -11,7 +11,7 @@ import {
   // Onda 2 — listas fechadas, código PAT e baixa do patrimônio
   fetchOpcoesPatrimonio, gerarCodigosPatrimonio, baixarPatrimonio, estornarBaixaPatrimonio, type OpcoesPatrimonio,
   // Onda 3b — DRE em cascata / Onda 4 — Caixa Real
-  fetchDreCascata, classificarContaDre, type DreResposta, atualizarNaturezaLancamento, fetchRegrasV2, type NaturezaDiferenca,
+  fetchDreCascata, classificarContaDre, type DreResposta, type RateioDepreciacao, atualizarNaturezaLancamento, fetchRegrasV2, type NaturezaDiferenca,
   fetchCaixaReal, fetchFundoReservaSugerido, type CaixaReal,
   fetchPessoas, fetchRmca, fetchCustoLitroLeite, fetchCustoHectare, fetchCustoVacaLote, fetchCustoSafra, fetchSafras, formatBRL, formatDate,
   atualizarLancamentoFinanceiro, ehAdmin, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
@@ -1695,6 +1695,9 @@ type ItemPatrimonio = {
   motivo_baixa: string | null; valor_baixa: number | null;
   baixa: { motivo: string | null; data_baixa: string; valor_recebido: number; valor_contabil: number; resultado: number; estimado: boolean } | null;
   frequencia_manutencao_meses: number | null; data_ultima_manutencao: string | null;
+  // Fase A, PR 9: centro de custo do bem (a depreciação vai para ele; sem
+  // centro, é rateada entre os centros pela participação nas despesas).
+  centro_custo?: string | null;
   data_proxima_manutencao: string | null; observacao_manutencao: string | null;
   situacao_manutencao: "vencida" | "proxima" | "ok" | null; dias_para_manutencao: number | null;
   // Não depreciável (ex.: terra) — acompanha valor de mercado em vez de depreciar.
@@ -2021,6 +2024,9 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
   const [unidadeUso, setUnidadeUso] = useState(item?.unidade_uso || "horas");
   const [opcoes, setOpcoes] = useState<OpcoesPatrimonio | null>(null);
   useEffect(() => { fetchOpcoesPatrimonio().then(setOpcoes).catch(() => {}); }, []);
+  const [centroCustoBem, setCentroCustoBem] = useState(item?.centro_custo || "");
+  const [centrosBem, setCentrosBem] = useState<string[]>([]);
+  useEffect(() => { fetchCentrosCusto().then((d) => setCentrosBem(d.filter((c) => c.ativo).map((c) => c.nome))).catch(() => {}); }, []);
   const [valorResidual, setValorResidual] = useState(item?.valor_residual != null ? String(item.valor_residual) : "");
   const [frequenciaValorMercado, setFrequenciaValorMercado] = useState(
     item?.atualizacao_valor_mercado_frequencia_meses != null ? String(item.atualizacao_valor_mercado_frequencia_meses) : ""
@@ -2048,6 +2054,7 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
       unidade_uso: depreciavel && metodoDepreciacao === "UNIDADES_PRODUZIDAS" ? (unidadeUso || null) : null,
       valor_residual: depreciavel && valorResidual ? Number(valorResidual) : null,
       atualizacao_valor_mercado_frequencia_meses: !depreciavel && frequenciaValorMercado ? Number(frequenciaValorMercado) : null,
+      centro_custo: centroCustoBem || null,
     };
     if (ehCompraAgora && !item) {
       const params = new URLSearchParams({
@@ -2110,6 +2117,12 @@ function ModalNovoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio 
               <option value="">—</option>
               {(opcoes?.unidades || []).map((u) => <option key={u} value={u}>{u}</option>)}
               {unidade && !(opcoes?.unidades || []).includes(unidade) && <option value={unidade}>{unidade} (cadastro antigo)</option>}
+            </select></div>
+          <div style={{ gridColumn: "1 / -1" }}><label style={label}>Centro de custo</label>
+            <select style={inputStyle} value={centroCustoBem} onChange={(e) => setCentroCustoBem(e.target.value)}>
+              <option value="">Sem centro (a depreciação é rateada entre os centros)</option>
+              {centrosBem.map((c) => <option key={c} value={c}>{c}</option>)}
+              {centroCustoBem && !centrosBem.includes(centroCustoBem) && <option value={centroCustoBem}>{centroCustoBem}</option>}
             </select></div>
         </div>
 
@@ -4511,6 +4524,19 @@ const LINHAS_DRE_ATRIBUIVEIS: { valor: string; rotulo: string }[] = [
   { valor: "NAO_ENTRA_NA_DRE", rotulo: "— Não entra na DRE (principal de financiamento, transferência, aporte)" },
 ];
 
+/** Fase A, PR 9: como a depreciação entrou no filtro de centro de custo —
+ *  bens do centro inteiros + a fatia rateada dos bens sem centro. */
+function NotaRateioDepreciacao({ rateio }: { rateio: RateioDepreciacao }) {
+  return (
+    <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
+      Centro {rateio.centro_custo}: {formatBRL(rateio.depreciacao_bens_do_centro)} dos bens do centro
+      {rateio.depreciacao_bens_sem_centro ? <> + {formatBRL(rateio.depreciacao_rateada)} de {formatBRL(rateio.depreciacao_bens_sem_centro)} dos
+        bens sem centro ({(rateio.participacao * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% das despesas operacionais do período)</> : null}.
+      {rateio.aviso && <span style={{ display: "block", color: "var(--amber)", marginTop: "0.2rem" }}>{rateio.aviso}</span>}
+    </p>
+  );
+}
+
 /** Fase A, PR 8: a cascata recebe a DRE já buscada pela página (uma busca, um
  *  regime — o do filtro do topo), em vez de buscar a sua com um seletor de
  *  regime próprio. */
@@ -4715,6 +4741,7 @@ function DreCascataView({ dataInicio, dataFim, dados, erro: erroCarga, onRecarre
               que <strong>não é saída de caixa</strong> — por isso entra aqui e não no Caixa Real.
             </p>
             <KPI v={formatBRL(depreciacao.total)} l="Depreciação, amortização e exaustão" c="var(--amber)" />
+            {depreciacao.rateio && <NotaRateioDepreciacao rateio={depreciacao.rateio} />}
             {depreciacao.inconsistencias.length > 0 && (
               <ul style={{ marginTop: "0.75rem", fontSize: "0.72rem", color: "var(--amber)" }}>
                 {depreciacao.inconsistencias.slice(0, 5).map((m, i) => (
@@ -5454,10 +5481,27 @@ function CustoLitroLeiteView() {
   );
 }
 
-type CustoHectareResp = {
+// Regras novas (Fase A): COT = despesas operacionais + depreciação do período
+// (PR 9: com filtro de centro, a do centro + o rateio dos bens sem centro).
+type CustoCotV2 = { regras_v2?: boolean; depreciacao_periodo?: number; cot?: number; depreciacao_rateio?: RateioDepreciacao | null };
+type CustoHectareResp = CustoCotV2 & {
   periodo: { inicio: string; fim: string }; centro_custo: string | null; area_configurada: boolean;
-  area_hectares: number | null; despesas_total: number; custo_por_hectare: number | null;
+  area_hectares: number | null; despesas_total: number; custo_por_hectare: number | null; cot_por_hectare?: number | null;
 };
+
+function CotDepreciacao({ dados, divisor }: { dados: CustoCotV2; divisor?: { valor: number | null | undefined; rotulo: string } }) {
+  if (!dados.regras_v2 || dados.cot == null) return null;
+  return (
+    <div className="mb-1">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-2">
+        <KPI v={formatBRL(dados.depreciacao_periodo ?? 0)} l="Depreciação do período" c="var(--amber)" />
+        <KPI v={formatBRL(dados.cot)} l="COT (despesas + depreciação)" c="var(--red)" />
+        {divisor && <KPI v={divisor.valor != null ? formatBRL(divisor.valor) : "—"} l={divisor.rotulo} c="var(--green-light)" />}
+      </div>
+      {dados.depreciacao_rateio && <NotaRateioDepreciacao rateio={dados.depreciacao_rateio} />}
+    </div>
+  );
+}
 
 function CustoHectareView() {
   const [dataInicio, setDataInicio] = useState(() => primeiroDiaDoMes());
@@ -5510,6 +5554,7 @@ function CustoHectareView() {
               <KPI v={dados.area_hectares != null ? `${dados.area_hectares.toLocaleString("pt-BR")} ha` : "—"} l="Área total" c="var(--dourado-light)" />
               <KPI v={dados.custo_por_hectare != null ? formatBRL(dados.custo_por_hectare) : "—"} l="Custo por hectare" c="var(--green-light)" />
             </div>
+            <CotDepreciacao dados={dados} divisor={{ valor: dados.cot_por_hectare, rotulo: "COT por hectare" }} />
           </div>
         </>
       )}
@@ -5517,7 +5562,8 @@ function CustoHectareView() {
   );
 }
 
-type CustoVacaLoteResp = {
+type CustoVacaLoteResp = CustoCotV2 & {
+  cot_por_vaca?: number | null;
   periodo: { inicio: string; fim: string }; centro_custo: string | null; tem_vacas_no_periodo: boolean;
   num_vacas: number; despesas_total: number; custo_por_vaca: number | null;
   por_lote: { lote: string; num_vacas: number; custo_alocado: number; custo_por_vaca: number }[];
@@ -5566,7 +5612,7 @@ function CustoVacaLoteView() {
           <div className="card mb-4">
             <div className="card-header mb-3">Custo por vaca</div>
             <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-              Despesas do período (ContaGerencial, por competência{dados.centro_custo ? `, centro de custo "${dados.centro_custo}"` : ""})
+              Despesas do período (ContaGerencial, por competência{dados.centro_custo ? `, centro de custo "${dados.centro_custo}"` : dados.regras_v2 ? ", todos os centros de custo" : ""})
               dividido pelo número de vacas com ao menos um Controle leiteiro lançado no período.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
@@ -5574,6 +5620,7 @@ function CustoVacaLoteView() {
               <KPI v={String(dados.num_vacas)} l="Vacas em lactação" c="var(--dourado-light)" />
               <KPI v={dados.custo_por_vaca != null ? formatBRL(dados.custo_por_vaca) : "—"} l="Custo por vaca" c="var(--green-light)" />
             </div>
+            <CotDepreciacao dados={dados} divisor={{ valor: dados.cot_por_vaca, rotulo: "COT por vaca" }} />
           </div>
           {dados.por_lote.length > 0 && (
             <div className="card">
@@ -5612,7 +5659,7 @@ function CustoVacaLoteView() {
 }
 
 type SafraOpcao = { id: number; nome: string; centro_custo: string; hectares: number; toneladas_produzidas: number; ativo: boolean };
-type CustoSafraResp = {
+type CustoSafraResp = CustoCotV2 & {
   safra: SafraOpcao & { data_inicio: string; data_fim: string; observacao: string | null };
   por_categoria: { codigo: string; descricao: string; valor: number }[];
   despesas_total: number; hectares: number | null; toneladas_produzidas: number | null;
@@ -5677,6 +5724,7 @@ function CustoSafraView() {
               <KPI v={dados.custo_por_hectare != null ? formatBRL(dados.custo_por_hectare) : "—"} l="Custo por hectare" c="var(--green-light)" />
               <KPI v={dados.custo_por_tonelada != null ? formatBRL(dados.custo_por_tonelada) : "—"} l="Custo por tonelada" c="var(--green-light)" />
             </div>
+            <CotDepreciacao dados={dados} />
           </div>
 
           {dados.por_categoria.length > 0 && (
