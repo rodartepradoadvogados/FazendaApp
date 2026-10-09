@@ -26,8 +26,8 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 
 from fazenda.models import (
-    Animal, ColostragemBezerra, ContratoFazenda, ContratoFazendaModulo, Fazenda, FotoCampo, Lactacao,
-    Parto, ProtocoloSanitarioLancamento, Sanidade,
+    Animal, CaixaMovimento, ColostragemBezerra, ContaGerencial, ContratoFazenda, ContratoFazendaModulo,
+    Fazenda, FotoCampo, Lactacao, Lote, Parto, Pessoa, ProtocoloSanitarioLancamento, Sanidade,
 )
 from fazenda.models.planos import MODULOS_COMERCIAIS
 
@@ -268,3 +268,115 @@ class TestExclusaoProtocoloSanitarioNaoAtravessaFazenda:
             from sqlmodel import select
             sobrevivente = s.exec(select(Sanidade).where(Sanidade.fazenda_id == 1)).first()
             assert sobrevivente is not None, "a Sanidade da fazenda 1 não podia ter sido apagada pela exclusão do lançamento da fazenda 2"
+
+
+class TestExclusaoLoteNaoSomaOutraFazenda:
+    """B1 (Fase 0): a contagem de animais do lote (`Animal.grupo_primario ==
+    rotulo`) não filtrava fazenda. Com o `codigo` de lote repetido entre
+    fazendas (o rotulo "07 - Recria" existe nas duas), o impacto listava
+    "2 animal(is)" — somando o rebanho da OUTRA fazenda na contagem."""
+
+    def test_impacto_de_lote_conta_so_animais_desta_fazenda(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            l1 = Lote(codigo="07", nome="Recria", fazenda_id=1)
+            l2 = Lote(codigo="07", nome="Recria", fazenda_id=2)
+            s.add_all([l1, l2])
+            s.commit()
+            s.refresh(l1)
+            s.add(Animal(numero="700", nome="Novilha fazenda 1", fazenda_id=1, grupo_primario="07 - Recria"))
+            s.add(Animal(numero="700", nome="Novilha fazenda 2", fazenda_id=2, grupo_primario="07 - Recria"))
+            s.commit()
+            lote1_id = l1.id
+
+        _como_fazenda(1)
+        r = c.post("/exclusoes/impacto", json={"tipo": "lote", "id": str(lote1_id)})
+        assert r.status_code == 200, r.text
+        impacto = r.json()["impacto"]
+        assert any("1 animal(is)" in item for item in impacto), f"deveria contar só o animal da fazenda 1; veio: {impacto}"
+
+
+class TestFinanceiroFKBloqueio:
+    """B2 (Fase 0): uma `ContaGerencial` referenciada por
+    `caixa_movimento.lancamento_id` (o mesmo vale para `caixa_time_movimento`,
+    `folha_rubrica.conta_gerencial_id` e `extrato_linha.lancamento_id`) não pode
+    ser excluída: no Postgres de produção a FK violaria e o navegador veria um
+    "Failed to fetch". Enquanto a Fase 3 não cobre a cascata, bloqueamos com
+    mensagem clara em `_bloquear_conta_referenciada`."""
+
+    def test_impacto_e_confirmar_bloqueiam_conta_ligada_ao_caixa(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            pessoa = Pessoa(nome="Funcionário Teste", tipo="Funcionário", fazenda_id=1)
+            s.add(pessoa)
+            s.commit()
+            s.refresh(pessoa)
+            conta = ContaGerencial(
+                fazenda_id=1, numero_lancamento="LC-2026-TESTE", descricao="Despesa teste",
+                valor_total=100.0, parcela_total=1,
+            )
+            s.add(conta)
+            s.commit()
+            s.refresh(conta)
+            s.add(CaixaMovimento(
+                fazenda_id=1, pessoa_id=pessoa.id, tipo="deposito", valor=100.0,
+                data=date.today(), motivo="teste", lancamento_id=conta.id,
+            ))
+            s.commit()
+            conta_id = conta.id
+
+        _como_fazenda(1)
+        r_impacto = c.post("/exclusoes/impacto", json={"tipo": "financeiro", "id": str(conta_id)})
+        assert r_impacto.status_code == 400, r_impacto.text
+        assert "caixa do funcionário" in r_impacto.json()["detail"]
+
+        r_confirmar = c.post("/exclusoes/confirmar", json={"tipo": "financeiro", "id": str(conta_id)})
+        assert r_confirmar.status_code == 400, r_confirmar.text
+
+        with Session(engine) as s:
+            from sqlmodel import select
+            assert s.exec(select(ContaGerencial).where(ContaGerencial.id == conta_id)).first() is not None, \
+                "a conta bloqueada não pode ter sido excluída"
+
+
+def test_deletar_conta_referenciada_viola_fk_equivale_ao_postgres():
+    """B2 (Fase 0 — caracterização): prova que, com FK ligada (o que o Postgres
+    de produção SEMPRE faz; o SQLite dos testes não liga por padrão), deletar uma
+    `ContaGerencial` referenciada por `caixa_movimento.lancamento_id` estoura em
+    violação de FK. É o motivo de `_bloquear_conta_referenciada` bloquear antes,
+    em vez de deixar o commit explodir num 500 sem CORS."""
+    from sqlalchemy import event
+    from sqlalchemy.exc import IntegrityError
+    from sqlmodel import select
+
+    engine = create_engine(f"sqlite:///{tempfile.mktemp(suffix='.db')}")
+
+    @event.listens_for(engine, "connect")
+    def _ligar_fk(dbapi_connection, _record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as s:
+        s.add(Fazenda(id=1, nome="Fazenda teste"))
+        s.add(Pessoa(nome="Funcionário", tipo="Funcionário", fazenda_id=1))
+        s.commit()
+        pessoa = s.exec(select(Pessoa)).first()
+        conta = ContaGerencial(fazenda_id=1, numero_lancamento="LC-99", descricao="x", valor_total=1.0)
+        s.add(conta)
+        s.commit()
+        s.refresh(conta)
+        s.add(CaixaMovimento(
+            fazenda_id=1, pessoa_id=pessoa.id, tipo="deposito", valor=1.0,
+            data=date(2026, 1, 1), motivo="x", lancamento_id=conta.id,
+        ))
+        s.commit()
+        conta_id = conta.id
+
+    with Session(engine) as s:
+        conta = s.get(ContaGerencial, conta_id)
+        s.delete(conta)
+        with pytest.raises(IntegrityError):
+            s.flush()
