@@ -29,7 +29,9 @@ from sqlmodel import Session, select
 
 # tabela -> modelo; só o que os backfills desta fase podem tocar.
 def _modelos() -> dict[str, Any]:
-    from fazenda.models import ContaGerencial, LancamentoCartao, LancamentoItem, Patrimonio, PlanoContaGerencial
+    from fazenda.models import (
+        ContaGerencial, ContaPadraoOrigem, LancamentoCartao, LancamentoItem, Patrimonio, PlanoContaGerencial,
+    )
 
     return {
         "conta_gerencial": ContaGerencial,
@@ -37,6 +39,7 @@ def _modelos() -> dict[str, Any]:
         "plano_conta_gerencial": PlanoContaGerencial,
         "patrimonio": Patrimonio,
         "lancamento_cartao": LancamentoCartao,
+        "conta_padrao_origem": ContaPadraoOrigem,
     }
 
 
@@ -51,6 +54,9 @@ CAMPOS_PERMITIDOS: dict[str, frozenset[str]] = {
     "patrimonio": frozenset({"centro_custo"}),
     # numero_lancamento: a nota criada para a compra (PR 5, backfill_cartao_por_item).
     "lancamento_cartao": frozenset({"numero_lancamento"}),
+    # backfill_contas_origem: a conta padrão de `vale` e `caixa_retencao` onde
+    # estava vazia (a linha da origem pode ser criada ou só preenchida).
+    "conta_padrao_origem": frozenset({"codigo_conta_gerencial"}),
 }
 
 # Pseudocampo de uma linha de log que registra um REGISTRO NOVO criado pelo
@@ -58,11 +64,12 @@ CAMPOS_PERMITIDOS: dict[str, frozenset[str]] = {
 # cartão — PR 5). Reverter = apagar a linha criada, só se ela ainda for o que o
 # backfill criou: pela marca (`gerado_por`) ou pelo retrato dos campos abaixo.
 CAMPO_CRIADO = "__criado__"
-TABELAS_CRIAVEIS = frozenset({"lancamento_item", "conta_gerencial"})
+TABELAS_CRIAVEIS = frozenset({"lancamento_item", "conta_gerencial", "conta_padrao_origem"})
 RETRATO_LINHA_CRIADA: dict[str, tuple[str, ...]] = {
     "conta_gerencial": ("numero_lancamento", "valor_total", "valor_pago", "data_pagamento", "conta_bancaria",
                         "conta_corrente_id", "fatura_cartao_id", "gerado_por"),
     "lancamento_item": ("numero_lancamento", "valor_total", "codigo_conta_gerencial"),
+    "conta_padrao_origem": ("origem", "codigo_conta_gerencial"),
 }
 
 

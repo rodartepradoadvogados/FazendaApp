@@ -268,6 +268,31 @@ conta de item gerado que nasceu sem conta. Nunca muda `valor_total`,
 `__criado__` no `migracao_log_financeiro`; reverter apaga só o que ainda é do
 lote. O `downgrade` da migração apaga todos os itens com `gerado_por`.
 
+**Contas do sistema (3.03.01.16 e 3.03.01.17)**: o plano de contas passa a ter,
+sob 3.03.01 (Pessoal), `3.03.01.16 Retenções` (`NAO_ENTRA_NA_DRE`, `OBRIGACAO`) e
+`3.03.01.17 Vales e adiantamentos` (`NAO_ENTRA_NA_DRE`, `ADIANTAMENTO`), com
+`linha_dre`/`natureza_fin` próprias (a herança por prefixo as jogaria em pessoal).
+Regras em `fazenda/rules/plano_padrao.py`:
+
+- a migração de dados `d8b3f6a1c294` cria as duas contas nas fazendas que já têm o
+  grupo 3.03.01 (não cria o grupo, não sobrescreve conta existente, mesmo com outro
+  nome); o downgrade remove só o que ela criou e que nada referencia;
+- `garantir_contas_do_sistema(session, fazenda_id)` roda ao final da importação do
+  CSV do plano (que apaga e reinsere tudo) e ao ligar a flag pela tela de
+  parâmetros. **Conta do sistema tem de sobreviver à reimportação do plano.**
+- os papéis de retenção (`folha_retencao_caixa`, `contrato_/empreita_/diaria_retencao`,
+  `caixa_retencao`) usam 3.03.01.16 e os de vale (`folha_vale`, `rescisao_vale`,
+  `contrato_/empreita_/diaria_vale`, `vale`, `vale_devolucao`) usam 3.03.01.17
+  (`codigo_preferido`) **só quando a conta existe e está ativa e a origem não tem
+  conta configurada** em *Contas automáticas*; a configuração à mão sempre vence.
+  `GET /financeiro/contas-automaticas` mostra `conta_do_sistema` por origem.
+  Com a flag desligada nada muda (itens automáticos são ignorados).
+- histórico: `python -m scripts.backfill_contas_origem --fazenda N [--repintar-itens]
+  [--csv x.csv] [--aplicar] [--reverter LOTE]` grava `ContaPadraoOrigem` de `vale` e
+  `caixa_retencao` onde estiver vazia e, com `--repintar-itens`, dá conta aos itens
+  gerados antigos de retenção/vale que estão sem conta (log em
+  `migracao_log_financeiro`, reversível por lote).
+
 **Limites conscientes**: o vale de ITEM de nota continua fora do CMV do
 fornecedor (não vira registro de adiantamento próprio; a folha mostra o
 desconto); reembolso/indenização lançados como rubrica entram em "Salário e
@@ -469,7 +494,7 @@ campos legados, nos dois CSVs do Portal (`test_pr8_um_resultado_em_todas_as_tela
 —, numerador de custos 13.140 (COT 14.140) e custo por litro 0,8276. Não sobra
 nenhum `xfail` da Fase A no teste do cenário.
 
-Fora da Fase A (registrado para depois): fechamento/conciliação e LCDPR; 13º
+Fora da Fase A (registrado para depois): fechamento/conciliação e LCDPR (feitos na Fase C5 — fechamento com trilha, conciliação bancária e pacote do contador com o apoio ao LCDPR; ver `docs/financeiro-fechamento-conciliacao.md`, inclusive o que falta para o TXT de transmissão do LCDPR); 13º
 e férias com provisão mensal (Q5); vale de ITEM como adiantamento próprio na
 nota do fornecedor; "Detalhamento por conta" da DRE com drill para Consultas
 filtrada por conta; data de corte do CSV antigo do Portal (07/12/2026) — depois

@@ -11,6 +11,7 @@ import {
 import { MediaVerbasVariaveis } from "@/components/MediaVerbasVariaveis";
 import { SecaoRecolhivel, type ModoSecaoCategoria } from "@/components/ui";
 import { Modal } from "@/components/Modal";
+import { larguraDobrada } from "@/lib/janelas";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 /*
@@ -320,7 +321,7 @@ function FeriasSection({ pessoas, contasCorrentes, mostrar }: { pessoas: Pessoa[
       )}
 
       {pagandoId !== null && (
-        <Modal title="Registrar pagamento de férias" onClose={() => setPagandoId(null)} width="380px">
+        <Modal title="Registrar pagamento de férias" onClose={() => setPagandoId(null)} width={larguraDobrada(380)} fecharComEsc={false}>
           <div>
             <label style={lbl}>Data do pagamento</label>
             <input type="date" style={inputSm} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} />
@@ -589,7 +590,7 @@ function DecimoTerceiroSection({ pessoas, contasCorrentes, mostrar }: { pessoas:
       )}
 
       {pagandoId !== null && (
-        <Modal title="Registrar pagamento de 13º salário" onClose={() => setPagandoId(null)} width="380px">
+        <Modal title="Registrar pagamento de 13º salário" onClose={() => setPagandoId(null)} width={larguraDobrada(380)} fecharComEsc={false}>
           <div>
             <label style={lbl}>Data do pagamento</label>
             <input type="date" style={inputSm} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} />

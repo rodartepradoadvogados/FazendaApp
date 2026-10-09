@@ -25,6 +25,7 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { FiltrosSalvos } from "@/components/FiltrosSalvos";
 import { Modal } from "@/components/Modal";
+import { larguraDobrada } from "@/lib/janelas";
 import {
   aplicarFiltroInicial, contarFiltrosAtivos, filtrarRealizados, filtrosPadrao, montarLivro, ordenarLinhas, resumir,
   type CampoPeriodo, type ChaveOrdem, type FiltroInicial, type FiltrosConsulta, type ModoConsulta, type Movimento, type Ordem,
@@ -793,7 +794,7 @@ export default function ConsultasView(props: Props): React.JSX.Element {
       )}
 
       {confirmarParcelas && (
-        <Modal title="Estornar com parcelas de diferença" width="560px" onClose={() => setConfirmarParcelas(null)}>
+        <Modal title="Estornar com parcelas de diferença" width={larguraDobrada(560)} onClose={() => setConfirmarParcelas(null)}>
           <p style={{ fontSize: "0.85rem", marginTop: 0 }}>{confirmarParcelas.mensagem}</p>
           <div className="overflow-x-auto" style={{ maxHeight: "40vh", margin: "0.75rem 0" }}>
             <table className="fazenda-table" style={{ margin: 0 }}>

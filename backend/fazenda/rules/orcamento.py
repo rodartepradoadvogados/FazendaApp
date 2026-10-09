@@ -158,3 +158,97 @@ def comparar_orcado_realizado(
         totais[grupo] = {"rotulo": ROTULOS_GRUPO[grupo], "orcado": orcado, "realizado": realizado,
                          **_desvios(grupo, orcado, realizado)}
     return {"linhas": resultado, "totais": totais}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Fase C dos Relatórios (Plano › Orçamento): orçado por LINHA DA DRE.
+# ─────────────────────────────────────────────────────────────────────────
+ORIGEM_ORCAMENTO = "orcamento"
+ORIGEM_PATRIMONIO = "patrimonio"
+
+
+def cascata_orcada(orcadas: dict[str, dict], mapa_linha: dict[str, str], depreciacao_periodo: float) -> dict:
+    """A cascata da DRE montada com os valores ORÇADOS — o mesmo motor da DRE
+    (`montar_cascata_dre`, regras v2), com um registro por conta orçada
+    (`orcadas`: {codigo: {"tipo", "orcado", "nome_conta_gerencial"}}): a conta
+    cai na linha dela pela mesma herança por prefixo do plano de contas.
+
+    A depreciação não é orçável (não é lançamento: sai do cadastro de
+    Patrimônio, pelo método de cada bem) — entra a do período, a MESMA da DRE
+    realizada, marcada `origem: "patrimonio"`. Assim os subtotais abaixo dela
+    (resultado operacional e resultado) comparam orçado × realizado sem um
+    "desvio" que é só o desgaste dos bens.
+
+    Devolve {"linhas": [... com `orcado` (a linha tem conta orçada, é
+    subtotal ou é a depreciação) e `origem`], "sem_linha": orçado em conta sem
+    linha da DRE (ex.: conta-grupo), "fora_da_dre": orçado em conta que fica
+    fora do resultado}."""
+    from fazenda.rules.dre import DEPRECIACAO_AMORT_EXAUSTAO, montar_cascata_dre
+
+    registros = [
+        {"codigo_conta": codigo, "tipo": l["tipo"], "valor": l["orcado"],
+         "descricao": l.get("nome_conta_gerencial") or codigo, "natureza": OPERACIONAL}
+        for codigo, l in orcadas.items() if l.get("orcado")
+    ]
+    cascata = montar_cascata_dre(registros, mapa_linha, depreciacao_periodo, regras_v2=True)
+    linhas_com_orcamento = {resolver_linha_dre(r["codigo_conta"], mapa_linha) for r in registros}
+    linhas = []
+    for l in cascata["linhas"]:
+        if l["chave"] == DEPRECIACAO_AMORT_EXAUSTAO:
+            linhas.append({**l, "orcado": True, "origem": ORIGEM_PATRIMONIO})
+        else:
+            linhas.append({**l, "orcado": l["eh_subtotal"] or l["chave"] in linhas_com_orcamento, "origem": ORIGEM_ORCAMENTO})
+    return {"linhas": linhas, "sem_linha": cascata["nao_classificado"], "fora_da_dre": cascata["fora_da_dre"]}
+
+
+def por_linha_dre(cascata_realizada: list[dict], cascata_do_orcado: list[dict], litros: float) -> list[dict]:
+    """Orçado × realizado por linha da DRE (as 15, na ordem da cascata), com o
+    mesmo sinal da cascata (custo em magnitude, o operador diz que subtrai) e
+    em R$ por litro entregue. Linha sem nenhuma conta orçada: `orcado` None
+    (sem plano não há desvio). O R$/L do orçado divide pelos MESMOS litros
+    entregues no período (o orçamento ainda não tem litros previstos)."""
+    por_chave = {l["chave"]: l for l in cascata_do_orcado}
+    saida = []
+    for real in cascata_realizada:
+        orc = por_chave.get(real["chave"]) or {}
+        tem = bool(orc.get("orcado"))
+        valor_orc = round(orc.get("valor", 0.0), 2) + 0.0 if tem else None
+        saida.append({
+            "chave": real["chave"], "rotulo": real["rotulo"], "operador": real["operador"],
+            "eh_subtotal": real["eh_subtotal"], "realizado": real["valor"], "orcado": valor_orc,
+            "origem_orcado": orc.get("origem", ORIGEM_ORCAMENTO) if tem else None,
+            "realizado_l": round(real["valor"] / litros, 4) + 0.0 if litros > 0 else None,
+            "orcado_l": round(valor_orc / litros, 4) + 0.0 if litros > 0 and valor_orc is not None else None,
+        })
+    return saida
+
+
+def conferir_com_a_dre(linhas_comparativo: list[dict], cascata_realizada: list[dict], mapa_linha: dict[str, str]) -> dict:
+    """Conferência: o realizado do comparativo (conta a conta) somado por
+    linha da DRE é o realizado da própria DRE, linha a linha. Ficam fora da
+    conta a depreciação (não é lançamento) e Outras receitas e despesas (os
+    juros e descontos da baixa entram só na DRE — PR 7)."""
+    from fazenda.rules.dre import DEDUCAO_IMPOSTOS, DEPRECIACAO_AMORT_EXAUSTAO, OUTRAS_REC_DESP
+
+    soma: dict[str, float] = {}
+    for l in linhas_comparativo:
+        if l["grupo"] == "fora_do_resultado" or l.get("coberta_por"):
+            continue
+        proprio = l["realizado"]
+        filhas = [x for x in linhas_comparativo if x.get("coberta_por") == l["codigo_conta_gerencial"]]
+        partes = [(l, round(proprio - sum(x["realizado"] for x in filhas), 2))] + [(x, x["realizado"]) for x in filhas]
+        for linha_cmp, valor in partes:
+            if linha_cmp["grupo"] == "deducao":
+                chave = DEDUCAO_IMPOSTOS
+            else:
+                chave = resolver_linha_dre(linha_cmp["codigo_conta_gerencial"], mapa_linha) or "(sem linha)"
+            sinal = 1 if linha_cmp["tipo"] == "receita" else -1
+            soma[chave] = round(soma.get(chave, 0.0) + sinal * valor, 2)
+    maior = 0.0
+    for real in cascata_realizada:
+        if real["eh_subtotal"] or real["chave"] in (DEPRECIACAO_AMORT_EXAUSTAO, OUTRAS_REC_DESP):
+            continue
+        liquido = soma.get(real["chave"], 0.0)
+        esperado = -liquido if real["operador"] == "-" else liquido
+        maior = max(maior, abs(round(esperado - real["valor"], 2)))
+    return {"fecha": maior < 0.05, "maior_diferenca": round(maior, 2)}

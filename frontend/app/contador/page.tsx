@@ -18,6 +18,7 @@ import type { ContaPlano } from "@/lib/contaGerencial";
 import { CORES_CONTADOR } from "./layout";
 import { PainelDocumentos } from "@/components/contador/PainelDocumentos";
 import { PainelExtraordinario } from "@/components/contador/PainelExtraordinario";
+import { PainelPacote } from "@/components/contador/PainelPacote";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Lancamento = {
@@ -49,6 +50,7 @@ const ABAS = [
   { id: "folha", label: "Folha de pagamento" },
   { id: "animais", label: "Compra/venda de animais" },
   { id: "documentos", label: "Documentos" },
+  { id: "pacote", label: "Pacote do contador" },
 ] as const;
 // "Ações extraordinárias" é a única aba que ESCREVE dado (o resto é
 // consulta/exportação) — separada do resto da barra, não mais uma aba igual
@@ -587,6 +589,9 @@ export default function PainelContadorPage() {
       )}
 
       {aba === "documentos" && <PainelDocumentos />}
+
+      {/* Fase C5: o pacote completo (PDF + Excel + CSV + apoio ao LCDPR) do período escolhido acima. */}
+      {aba === "pacote" && <PainelPacote inicio={inicio} fim={fim} />}
 
       {aba === "extraordinario" && <PainelExtraordinario planoContas={planoContas} />}
     </div>

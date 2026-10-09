@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 import {
   AlertTriangle, CalendarClock, CheckCircle2, Clock, Circle, CreditCard, Layers, Pencil, Receipt, Plus, Repeat, Search, X, Filter, ChevronUp, ChevronDown, MoreHorizontal, Wallet, Undo2,
 } from "lucide-react";
@@ -10,6 +9,8 @@ import { FAIXAS, diasAte, faixaDe, hojeLocal, situacaoDe, somaDias, somaValores,
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { casaBusca } from "@/lib/busca";
 import { useRegrasV2 } from "@/lib/useRegrasV2";
+import { LARGURA_GAVETA_BAIXA, MSG_SAIR_SEM_SALVAR } from "@/lib/janelas";
+import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { FiltrosSalvos } from "@/components/FiltrosSalvos";
@@ -23,7 +24,7 @@ type Props = {
   centros: string[];
   fornecedores: string[];
   produtos: string[];
-  /** Formulário de baixa (o painel lateral só o hospeda). */
+  /** Formulário de baixa (a gaveta "Dar baixa" só o hospeda). */
   renderBaixa: (nota: Lanc, fechar: (feito?: boolean) => void) => ReactNode;
   /** Depois de "Desfazer" (estorno da baixa): a página recarrega os lançamentos. */
   onDesfeito: () => void;
@@ -200,8 +201,17 @@ export default function ContasListaView(p: Props) {
   const todasDaPagina = paginaSel.length > 0 && paginaSel.every((r) => sel.has(r.id));
   useEffect(() => { setSel((s) => new Set([...s].filter((id) => p.regs.some((r) => r.id === id && !r.data_pagamento)))); }, [p.regs]);
 
-  // ── painel lateral de baixa ─────────────────────────────────────────
+  // ── gaveta de baixa ─────────────────────────────────────────────────
   const [baixa, setBaixa] = useState<Lanc | null>(null);
+  // Janela TRAVADA: não fecha por clique fora nem por Esc, só pelo X. Se o usuário já
+  // mexeu em algum campo, o X pergunta antes (mesmo texto de Lançamentos). Detectado
+  // pelos eventos de change/input que sobem do formulário, sem tocar nele.
+  const [baixaSuja, setBaixaSuja] = useState(false);
+  useEffect(() => { setBaixaSuja(false); }, [baixa?.id]);
+  function fecharBaixaPeloX() {
+    if (baixaSuja && !window.confirm(MSG_SAIR_SEM_SALVAR)) return;
+    setBaixa(null);
+  }
   // "Desfazer" logo após a baixa (= estorno): some sozinho em 12 s.
   const [desfazer, setDesfazer] = useState<{ id: number; rotulo: string; erro?: string } | null>(null);
   useEffect(() => {
@@ -497,10 +507,13 @@ export default function ContasListaView(p: Props) {
       )}
 
       {baixa && (
-        <PainelLateral titulo={`Dar baixa · ${baixa.fornecedor || baixa.descricao}`} onFechar={() => setBaixa(null)}>
-          <ResumoNota r={baixa} hoje={hoje} />
-          {p.renderBaixa(baixa, (feito) => { setBaixa(null); if (feito) setDesfazer({ id: baixa.id, rotulo: `${receber ? "Recebimento" : "Pagamento"} de ${baixa.fornecedor || baixa.descricao} registrado` }); })}
-        </PainelLateral>
+        <GavetaLancamento aberto onFechar={fecharBaixaPeloX} titulo={`Dar baixa · ${baixa.fornecedor || baixa.descricao}`} icone={Wallet}
+          largura={LARGURA_GAVETA_BAIXA} fecharComEsc={false}>
+          <div onChange={() => setBaixaSuja(true)} onInput={() => setBaixaSuja(true)}>
+            <ResumoNota r={baixa} hoje={hoje} />
+            {p.renderBaixa(baixa, (feito) => { setBaixa(null); if (feito) setDesfazer({ id: baixa.id, rotulo: `${receber ? "Recebimento" : "Pagamento"} de ${baixa.fornecedor || baixa.descricao} registrado` }); })}
+          </div>
+        </GavetaLancamento>
       )}
 
       {desfazer && (
@@ -549,32 +562,5 @@ function MenuLinha({ r, onEditar, onRecibo, onInserirEmFatura, podeInserir }: { 
         </div>
       )}
     </div>
-  );
-}
-
-/** Painel lateral: à direita no desktop, tela cheia no celular. Esc fecha; o foco volta ao botão que abriu. */
-function PainelLateral({ titulo, onFechar, children }: { titulo: string; onFechar: () => void; children: ReactNode }) {
-  const caixa = useRef<HTMLDivElement>(null);
-  const gatilho = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    gatilho.current = document.activeElement as HTMLElement | null;
-    caixa.current?.focus();
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onFechar(); };
-    document.addEventListener("keydown", esc);
-    return () => { document.removeEventListener("keydown", esc); gatilho.current?.focus?.(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  return createPortal(
-    <div style={{ position: "fixed", inset: 0, zIndex: 80, display: "flex", justifyContent: "flex-end", background: "rgba(0,0,0,0.5)" }} onMouseDown={(e) => { if (e.target === e.currentTarget) onFechar(); }}>
-      <div ref={caixa} tabIndex={-1} role="dialog" aria-modal="true" aria-label={titulo}
-        style={{ width: "min(560px, 100vw)", height: "100%", background: "var(--bg)", borderLeft: "1px solid var(--border)", overflowY: "auto", padding: "0.9rem 1rem 1.5rem", outline: "none" }}>
-        <div className="flex items-center justify-between gap-2" style={{ marginBottom: 10 }}>
-          <h3 style={{ fontFamily: "var(--font-heading)", fontWeight: 700, fontSize: "1.05rem" }}>{titulo}</h3>
-          <button type="button" className="btn-ghost" onClick={onFechar} aria-label="Fechar painel" style={{ minHeight: 36 }}><X size={18} /></button>
-        </div>
-        {children}
-      </div>
-    </div>,
-    document.body,
   );
 }

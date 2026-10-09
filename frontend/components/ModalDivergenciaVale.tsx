@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { AlertTriangle, Check } from "lucide-react";
 import { Modal } from "@/components/Modal";
+import { larguraDobrada } from "@/lib/janelas";
 import { formatBRL } from "@/lib/api";
 
 const inp: React.CSSProperties = {
@@ -75,7 +76,7 @@ export function ModalDivergenciaVale({
   };
 
   return (
-    <Modal title="Valor diferente do calculado" onClose={onCancelar} width="560px">
+    <Modal title="Valor diferente do calculado" onClose={onCancelar} width={larguraDobrada(560)}>
       <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
         <div className="flex items-start gap-2" style={{ background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: "0.7rem 0.9rem" }}>
           <AlertTriangle size={16} style={{ color: "var(--dourado)", flexShrink: 0, marginTop: "0.1rem" }} />

@@ -939,11 +939,11 @@ textarea:focus-visible, [tabindex]:focus-visible {
    z-50 da Sidebar), mas cobrir também aquela faixa deixaria tema/sino/News
    inalcançáveis toda vez que uma sub-aba de lançamento abrir sozinha. */
 .gaveta-lancamento-scrim, .gaveta-lancamento-painel {
-  top: calc(env(safe-area-inset-top, 0px) + 4rem);
+  top: calc(env(safe-area-inset-top, 0px) + 4rem + var(--faixas-topo-h, 0px));
 }
 @media (max-width: 767px) {
   .gaveta-lancamento-scrim, .gaveta-lancamento-painel {
-    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 3.2rem);
+    top: calc(env(safe-area-inset-top, 0px) + 3.25rem + 3.2rem + var(--faixas-topo-h, 0px));
   }
 }
 /* 390 px: o botão flutuante do assistente (fixed, z 70) ficava por cima do rodapé/"Cancelar" das gavetas —

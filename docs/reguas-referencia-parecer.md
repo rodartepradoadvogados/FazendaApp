@@ -66,6 +66,16 @@ com `Z`.
   }]
 }
 ```
+Também na resposta: `"exportacao": {"permitir_com_reguas": bool}` (o parâmetro 6.2 da fazenda, para a
+tela saber se oferece "exportar com réguas" ou só "exportar sem réguas").
+
+### `GET /financeiro/reguas-referencia/indicadores-fazenda`
+`?data_inicio=&data_fim=&regime=competencia|caixa&centro_custo=&hoje=` → o número da FAZENDA de cada régua,
+tirado das mesmas linhas da DRE e do Resultado por litro do servidor (e do saldo de hoje do Caixa real, só
+para administrador): `{indicadores: {codigo: {valor|null, conta|null, relatorio|null, motivo|null}}}`.
+`conta` é a divisão escrita com os dois números em R$; `relatorio` é o id da árvore de Relatórios que explica
+o número; `motivo` diz por que não há número. Nenhuma faixa sai daqui (`rules/reguas_indicadores.py`).
+
 Texto do alerta/modal: exibir **exatamente** `texto` (quebras de linha `\n`). Sem semáforo, sem
 "acima/abaixo da média": faixa cinza neutra e a palavra "referência" (parecer 6.3).
 

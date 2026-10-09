@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Search, X, ChevronDown, UserPlus } from "lucide-react";
 import { AnimalRow } from "./AnimalModal";
 import { Modal } from "./Modal";
+import { useOverlay } from "./useOverlay";
 import NovoAnimalRapido from "./NovoAnimalRapido";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 import { casaBusca } from "@/lib/busca";
@@ -44,6 +45,9 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
   ocultarFiltroLote?: boolean;
 }) {
   const [aberto, setAberto] = useState(false);
+  // Esc fecha só este seletor (entra na pilha de overlays): dentro de uma gaveta, o Esc
+  // fechava a gaveta inteira por baixo e derrubava o lançamento em andamento.
+  useOverlay({ ativo: aberto, aoEsc: () => setAberto(false) });
   const [busca, setBusca] = useState("");
   const [filtroLote, setFiltroLote] = useState("");
   const [novoAnimalAberto, setNovoAnimalAberto] = useState(false);
@@ -118,7 +122,7 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
         // marca vários animais fechava a janela e derrubava a seleção em
         // andamento. Só fecha pelo X ou "Concluir" abaixo.
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70, padding: "1rem" }}>
-          <div className="card" style={{ width: "720px", maxWidth: "96vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+          <div className="card" role="dialog" aria-modal="true" aria-label={titulo} style={{ width: "720px", maxWidth: "96vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
             <div className="flex items-center justify-between mb-3">
               <div className="card-header" style={{ margin: 0 }}>
                 {titulo} <span style={{ color: "var(--dourado-light)", fontWeight: 400 }}>({selecionados.size}/{animaisComExtras.length})</span>

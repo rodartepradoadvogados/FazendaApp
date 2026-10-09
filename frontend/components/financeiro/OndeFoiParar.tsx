@@ -10,7 +10,7 @@ const MAPA: { antes: string; agora: string; ir: DestinoFin; dica: string }[] = [
   { antes: "Contas › Recebidas", agora: "Consultas › Recebimento", ir: "consultas", dica: "Filtro de movimento = Recebimento." },
   { antes: "Contas › Todas / Relatórios › Extrato completo", agora: "Consultas (Ambos) ou a busca por nº de documento", ir: "consultas", dica: "Consultas só mostra o já realizado; o que está em aberto fica em Contas." },
   { antes: "Relatórios › Livro Caixa", agora: "Consultas › Livro caixa", ir: "consultas", dica: "O saldo acumulado aparece quando uma conta bancária está escolhida." },
-  { antes: "Ações › Pagamento / Recebimento", agora: "Contas › Contas a pagar / a receber › Dar baixa", ir: "a_pagar", dica: "A baixa abre num painel ao lado da lista." },
+  { antes: "Ações › Pagamento / Recebimento", agora: "Contas › Contas a pagar / a receber › Dar baixa", ir: "a_pagar", dica: "A baixa abre numa janela larga à direita da lista; ela só fecha pelo X." },
   { antes: "Ações › Pagamento/recebimento em lote", agora: "Contas › Pagamento/recebimento em lote", ir: "lote", dica: "Selecione linhas em Contas a pagar e clique em Baixar selecionadas." },
   { antes: "Ações › Fechamento da folha + Contas › Holerites e recibos", agora: "Contas › Folha de pagamento", ir: "folha", dica: "Holerites e recibos é uma aba dentro da folha." },
   { antes: "Contas › Faturas de fornecedor + Ações › Gestão de faturas", agora: "Contas › Gestão de faturas", ir: "faturas_gestao", dica: "Uma tela só." },

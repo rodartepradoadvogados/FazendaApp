@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Receipt, Undo2, Trash2, Plus, Wallet, ShieldCheck, Pause, Play, Ban, CheckCircle2, Clock, Minus, Paperclip, Users } from "lucide-react";
 import { Modal } from "@/components/Modal";
+import { larguraDobrada } from "@/lib/janelas";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { Dropzone } from "@/components/Dropzone";
 import CaixaTimesView from "@/components/CaixaTimesView";
@@ -445,7 +446,7 @@ function RetencaoPainel({ pessoaId, onMudou }: { pessoaId: number; onMudou: () =
       {dialogoConfirmacao}
 
       {editando && (
-        <Modal title="Combinado de retenção na folha" onClose={() => setEditando(false)} width="520px">
+        <Modal title="Combinado de retenção na folha" onClose={() => setEditando(false)} width={larguraDobrada(520)}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div><label style={lbl} htmlFor="rn-forma">Forma</label>
               <select id="rn-forma" style={campo} value={forma} onChange={(e) => setForma(e.target.value as "fixo" | "percentual")}>
@@ -619,7 +620,7 @@ function ExtratosLoteModal({ grupo, selecionados, onClose }: { grupo: CaixaGrupo
     } catch (e: any) { setErro(e.message); setGerando(false); }
   }
   return (
-    <Modal title="Extratos do mês" onClose={onClose} width="460px">
+    <Modal title="Extratos do mês" onClose={onClose} width={larguraDobrada(460)}>
       <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginTop: 0 }}>Um PDF com o extrato de <b style={{ color: "var(--text)" }}>{escopo}</b>, um por página, para imprimir e entregar.</p>
       <label style={lbl} htmlFor="ex-mes">Mês</label>
       <input id="ex-mes" type="month" style={{ ...campo, maxWidth: 200 }} value={mes} onChange={(e) => setMes(e.target.value)} />
@@ -675,7 +676,7 @@ function RetiradaModal({ pessoaId, pessoaNome, grupos, saldo, onClose, onFeita }
   }
 
   return (
-    <Modal title="Retirada do caixa" onClose={onClose} width="520px">
+    <Modal title="Retirada do caixa" onClose={onClose} width={larguraDobrada(520)}>
       <p style={{ margin: "0 0 0.15rem", fontWeight: 600 }}>{pessoaNome}</p>
       <p style={{ margin: "0 0 0.8rem", color: "var(--text-muted)", fontSize: "0.8rem" }}>
         Colaborador: {rotuloGrupos(grupos)} · saldo individual disponível: <b style={{ color: "var(--text)" }}>{formatBRL(saldo)}</b>
@@ -723,7 +724,7 @@ function EstornoModal({ pessoaId, movimento, onClose, onFeito }: {
     catch (e: any) { setErro(e.message); setSalvando(false); }
   }
   return (
-    <Modal title={`Estornar ${ROTULO_TIPO[movimento.tipo]?.toLowerCase() || "movimento"} de ${formatDate(movimento.data)}`} onClose={onClose} width="480px">
+    <Modal title={`Estornar ${ROTULO_TIPO[movimento.tipo]?.toLowerCase() || "movimento"} de ${formatDate(movimento.data)}`} onClose={onClose} width={larguraDobrada(480)}>
       <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", margin: "0 0 0.7rem" }}>
         Cria um movimento contrário de {formatBRL(Math.abs(movimento.valor))}, com a data de hoje. O original continua visível, riscado.
         {movimento.numero_lancamento && movimento.valor > 0 ? " O Financeiro recebe o lançamento contrário." : ""}

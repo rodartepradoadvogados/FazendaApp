@@ -580,6 +580,9 @@ export type RelatorioParaExportar = {
   linhas: LinhaRelatorio[];
   notas?: string[];
   nomeArquivoBase: string;
+  /** Rodapé automático das réguas de referência (parecer 7.5, texto devolvido por POST /relatorios/exportacoes):
+   *  sai NO MESMO BLOCO da tabela que tem as réguas (última linha da tabela), sem opção de remover. */
+  rodapeReguas?: string | null;
 };
 
 function nomeDaFazenda(): string {
@@ -658,6 +661,16 @@ export async function exportarRelatorioExcel(r: RelatorioParaExportar, modo: Mod
         row.eachCell((c) => { c.border = { top: { style: "thin", color: { argb: "FF9CA3AF" } } }; });
       }
     }
+    if (r.rodapeReguas) {
+      // Mesmo bloco da régua: a linha logo abaixo da tabela, mesclada e com borda (não é nota solta).
+      const row = ws.addRow([r.rodapeReguas]);
+      ws.mergeCells(row.number, 1, row.number, nCols);
+      const c = row.getCell(1);
+      c.font = { size: 9, italic: true };
+      c.alignment = { wrapText: true, vertical: "top" };
+      c.border = { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } };
+      row.height = Math.min(120, 15 * Math.ceil(r.rodapeReguas.length / 110));
+    }
     if (r.notas?.length) {
       ws.addRow([]);
       for (const n of r.notas) {
@@ -684,6 +697,7 @@ export async function exportarRelatorioPDF(r0: RelatorioParaExportar, modo: Modo
     colunas: r0.colunas.map((c) => ({ ...c, header: paraPdf(c.header) })),
     linhas: r0.linhas.map((l) => ({ ...l, valores: l.valores.map((v) => (typeof v === "string" ? paraPdf(v) : v)) })),
     notas: r0.notas?.map(paraPdf),
+    rodapeReguas: r0.rodapeReguas ? paraPdf(r0.rodapeReguas) : r0.rodapeReguas,
   };
   return comAlertaDeErro(async () => {
     const { default: jsPDF } = await import("jspdf");
@@ -704,6 +718,11 @@ export async function exportarRelatorioPDF(r0: RelatorioParaExportar, modo: Modo
         return i === 0 && l.nivel ? `${"   ".repeat(l.nivel)}${t}` : t;
       })),
       columnStyles: Object.fromEntries(r.colunas.map((c, i) => [i, { halign: c.tipo === "texto" ? "left" : "right" }])),
+      // Rodapé das réguas (parecer 7.5): última linha da PRÓPRIA tabela, ocupando todas as colunas.
+      ...(r.rodapeReguas ? {
+        foot: [[{ content: r.rodapeReguas, colSpan: r.colunas.length, styles: { fontStyle: "italic" as const, fontSize: 7.5, halign: "left" as const, fillColor: [255, 255, 255] as [number, number, number], textColor: [40, 40, 40] as [number, number, number], lineWidth: 0.2 } }]],
+        showFoot: "lastPage" as const,
+      } : {}),
       startY: 31,
       margin: { top: 31 },
       didParseCell: (d) => {

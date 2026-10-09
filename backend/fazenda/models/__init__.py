@@ -267,6 +267,11 @@ from .juridico import (
     ExportacaoRelatorioLog,
     ReguaErroReportado,
 )
+from .fechamento import (
+    FechamentoMesEvento,
+    ExtratoImportacao,
+    ExtratoLinha,
+)
 from .documentos import (
     DocumentoArquivado,
     Chamado,
@@ -569,4 +574,7 @@ __all__ = [
     "AceiteTermos",
     "ExportacaoRelatorioLog",
     "ReguaErroReportado",
+    "FechamentoMesEvento",
+    "ExtratoImportacao",
+    "ExtratoLinha",
 ]

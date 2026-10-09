@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { AlertTriangle, Check, Lock, Pencil, X } from "lucide-react";
 import { Modal } from "@/components/Modal";
+import { larguraDobrada } from "@/lib/janelas";
 import { useConfirmacao } from "@/components/financeiro/folhaUi";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { formatBRL, pagarFolhaComVerbas, type LinhaHolerite, type PagarFolhaResultado } from "@/lib/api";
@@ -227,7 +228,7 @@ export default function PagarFolhaModal({
   }
 
   return (
-    <Modal title={`Pagar — ${registro.pessoa_nome} · ${registro.competencia}`} onClose={onFechar} width="820px">
+    <Modal title={`Pagar — ${registro.pessoa_nome} · ${registro.competencia}`} onClose={onFechar} width="820px" fecharComEsc={false}>
       <div className="space-y-3">
         <div style={{ maxWidth: 220 }}>
           <label htmlFor="pgf-1" style={lbl}>Data do pagamento</label>

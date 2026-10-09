@@ -256,6 +256,23 @@ DEFINICOES: list[dict] = [
     # Sugestão do valor a colocar no caixa do time: "X% do resultado líquido do mês (DRE)". 0 = sem percentual padrão.
     {"chave": "caixa_time_pct_resultado", "grupo": "financeiro", "label": "Caixa do time (PL) — % do resultado líquido do mês sugerido nas entradas (0 = sem sugestão)", "valor": 0, "tipo": "float", "unidade": "%"},
     {"chave": "laticinio_nome", "grupo": "financeiro", "label": "Nome do laticínio (reconhece a receita de leite no RMCA)", "valor": "italac", "tipo": "texto"},
+    # Fase C dos Relatórios (Custos do leite, metodologia CNA/Embrapa): os
+    # parâmetros das ESTIMATIVAS que não saem de lançamento nenhum. Padrão 0 =
+    # "não informado": a tela não inventa número — o COT fica igual ao custo
+    # total do Resultado por litro (custeio + depreciação) e o CT aparece só
+    # com capital informado. Nada disso muda DRE, caixa ou qualquer outro
+    # relatório (ver rules/relatorio_leite.py).
+    {"chave": "custo_remuneracao_familia_mensal", "grupo": "financeiro",
+     "label": "Custos do leite — remuneração da família (pró-labore) por mês (0 = não informada; a retirada real é Particular, fora da DRE)",
+     "valor": 0, "tipo": "float", "unidade": "R$"},
+    {"chave": "custo_taxa_retorno_capital", "grupo": "financeiro",
+     "label": "Custos do leite — taxa de retorno do capital (ao ano)", "valor": 6, "tipo": "float", "unidade": "%"},
+    {"chave": "custo_capital_rebanho", "grupo": "financeiro",
+     "label": "Custos do leite — valor do rebanho (capital empatado; 0 = não informado)", "valor": 0, "tipo": "float", "unidade": "R$"},
+    {"chave": "custo_capital_maquinas", "grupo": "financeiro",
+     "label": "Custos do leite — máquinas, equipamentos e benfeitorias (capital empatado; 0 = não informado)", "valor": 0, "tipo": "float", "unidade": "R$"},
+    {"chave": "custo_capital_terra", "grupo": "financeiro",
+     "label": "Custos do leite — valor da terra (0 = não incluir a terra no retorno do capital)", "valor": 0, "tipo": "float", "unidade": "R$"},
     # Fase A dos Relatórios do Financeiro — liga, NESTA fazenda, as regras novas
     # de número (natureza do lançamento: compra de bem, principal, aporte saem
     # da DRE e dos custos; ganho/perda na baixa de bem entra em Outras). PADRÃO

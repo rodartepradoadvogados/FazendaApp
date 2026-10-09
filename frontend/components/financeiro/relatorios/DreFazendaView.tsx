@@ -7,6 +7,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ExternalLink, Info } from "lucide-react";
 import { fetchDreCascata, type DreResposta } from "@/lib/api";
+import { fetchOrcamentoRelatorio } from "@/lib/apiPlano";
+import { aplicarSemOrcamento, periodoDeMesesInteiros, type RespostaOrcamento } from "@/lib/relatorioOrcamento";
 import {
   ESTADO_INICIAL, REGIME_API, REGIME_NOME, brl, delta, deslocar,
 } from "@/lib/relatorioContexto";
@@ -31,13 +33,15 @@ const KPI_LINHAS: { chave: string; rotulo: string; sub: string }[] = [
 export default function DreFazendaView(props: PropsRelatorio & { onClassificar: () => void }) {
   const { hoje, centros, ccPadrao } = props;
   const regras = useRegrasV2Estado();
+  // Fase C: "Comparar com: Orçado" liga no orçamento de Plano › Orçamento (só com as regras novas).
   const travas: TravasContexto = useMemo(() => (regras.ativa === false
-    ? { cc: "todos", cmpOrcado: false, porque: PORQUE_CENTRO_REGRAS_ANTIGAS }
-    : { cmpOrcado: false }), [regras.ativa]);
+    ? { cc: "todos", cmpOrcado: false, porque: `${PORQUE_CENTRO_REGRAS_ANTIGAS} O orçado como comparação também.` }
+    : {}), [regras.ativa]);
   const padrao = useMemo(() => ESTADO_INICIAL(hoje, ccPadrao), [hoje, ccPadrao]);
   const ctx = useContextoRelatorio(padrao, travas);
   const { periodo, comparacao, efetivo } = ctx;
   const [det, abrirDet] = useDetalheNaUrl("det");
+  const [leituraOrc, setLeituraOrc] = useState<{ k: string; r: RespostaOrcamento | null; erro: string | null } | null>(null);
 
   const [dados, setDados] = useState<DreResposta | null>(null);
   const [dadosCmp, setDadosCmp] = useState<DreResposta | null>(null);
@@ -56,8 +60,25 @@ export default function DreFazendaView(props: PropsRelatorio & { onClassificar: 
     return () => { vivo = false; };
   }, [regras.ativa, periodo.ini, periodo.fim, cmpPeriodo?.ini, cmpPeriodo?.fim, efetivo.reg, centroApi, tentativa]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const linhas = useMemo(() => linhasDre(dados, cmpPeriodo ? dadosCmp : null), [dados, dadosCmp, cmpPeriodo]);
-  const rotuloCmp = cmpPeriodo ? comparacao!.rotulo : null;
+  // Orçado: a cascata montada com os valores orçados (servidor); só pelo mês do gasto e em meses inteiros.
+  const cmpOrc = comparacao?.tipo === "orcado";
+  const orcPossivel = cmpOrc && regras.ativa === true && efetivo.reg === "comp" && periodoDeMesesInteiros(periodo);
+  const chaveOrc = `${periodo.ini}|${periodo.fim}|${centroApi ?? ""}|${tentativa}`;
+  useEffect(() => {
+    if (!orcPossivel) return;
+    let vivo = true;
+    fetchOrcamentoRelatorio({ data_inicio: periodo.ini, data_fim: periodo.fim, centro_custo: centroApi })
+      .then((r) => { if (vivo) setLeituraOrc({ k: chaveOrc, r, erro: null }); })
+      .catch((e) => { if (vivo) setLeituraOrc({ k: chaveOrc, r: null, erro: (e as Error).message }); });
+    return () => { vivo = false; };
+  }, [orcPossivel, chaveOrc]); // eslint-disable-line react-hooks/exhaustive-deps
+  const leituraValida = orcPossivel && leituraOrc?.k === chaveOrc ? leituraOrc : null;
+  const orc = leituraValida?.r ?? null, orcErro = leituraValida?.erro ?? null;
+  const orcAtivo = orcPossivel && !!orc?.tem_orcamento && !!orc.cascata_orcada;
+  const linhas = useMemo(() => (orcAtivo
+    ? aplicarSemOrcamento(linhasDre(dados, { cascata: orc!.cascata_orcada } as unknown as DreResposta), orc!.cascata_orcada!)
+    : linhasDre(dados, cmpPeriodo ? dadosCmp : null)), [dados, dadosCmp, cmpPeriodo, orcAtivo, orc]);
+  const rotuloCmp = cmpPeriodo ? comparacao!.rotulo : orcAtivo ? "Orçado" : null;
   const naoClass = dados?.nao_classificado ?? { total: 0, contas: [] };
   const fora = dados?.fora_da_dre ?? { total: 0, contas: [] };
   const vazio = !!dados && linhas.every((l) => Math.abs(l.a) < 0.005) && Math.abs(naoClass.total) < 0.005 && Math.abs(fora.total) < 0.005;
@@ -68,7 +89,7 @@ export default function DreFazendaView(props: PropsRelatorio & { onClassificar: 
     props.onConsultas(filtroConsultasDe({ periodo, regime: efetivo.reg, cc: efetivo.cc, conta, origem })), [props, periodo, efetivo.reg, efetivo.cc]);
 
   const linhaDet = det ? valorLinha(linhas, det) : null;
-  const estado = regras.ativa === null || (!dados && !erro) ? "carregando" : erro && !dados ? "erro" : vazio ? "vazio" : "ok";
+  const estado = regras.ativa === null || (!dados && !erro) || (orcPossivel && !orc && !orcErro) ? "carregando" : erro && !dados ? "erro" : vazio ? "vazio" : "ok";
 
   // ── KPIs: 1 principal + 3 de apoio, todos abrem o detalhe ──
   const kpis: KpiDef[] = KPI_LINHAS.map((k, i) => {
@@ -131,7 +152,7 @@ export default function DreFazendaView(props: PropsRelatorio & { onClassificar: 
     }
     return {
       titulo: linhaDet ? `DRE da fazenda — ${linhaDet.nome}` : "DRE da fazenda", pergunta: "Estou ganhando?",
-      contexto: { periodo: periodo.label, comparacao: cmpPeriodo?.label ?? null, regime: REGIME_NOME[efetivo.reg], centro: efetivo.cc === "todos" ? "todos os centros" : efetivo.cc },
+      contexto: { periodo: periodo.label, comparacao: cmpPeriodo?.label ?? (orcAtivo ? "o orçado" : null), regime: REGIME_NOME[efetivo.reg], centro: efetivo.cc === "todos" ? "todos os centros" : efetivo.cc },
       colunas, linhas: ls, nomeArquivoBase: "dre_da_fazenda",
       notas: [
         "Números da DRE do servidor (GET /financeiro/dre): a mesma cascata da Capa e do e-mail do Portal.",
@@ -146,12 +167,8 @@ export default function DreFazendaView(props: PropsRelatorio & { onClassificar: 
     {!dados.cascata && (
       <div className="rl-aviso" role="status"><AlertTriangle size={18} aria-hidden /><div><b>O servidor ainda está na versão anterior.</b><p>Atualize a página em alguns minutos.</p></div></div>
     )}
-    {comparacao?.tipo === "orcado" && (
-      <div className="rl-aviso info" role="status"><Info size={18} aria-hidden /><div>
-        <b>O orçado × realizado por linha da DRE ainda não está nesta tela.</b>
-        <p>Ele mora em <button type="button" className="lk" onClick={() => props.onIrRelatorio("orcamento")}>Plano › Orçamento</button>. Escolha outra comparação para ver a variação aqui.</p>
-      </div></div>
-    )}
+    {cmpOrc && <AvisoOrcado regrasNovas={regras.ativa === true} regimeCaixa={efetivo.reg === "caixa"} mesesInteiros={periodoDeMesesInteiros(periodo)}
+      orc={orc} erro={orcErro} periodo={periodo.label} onComp={() => ctx.mudar({ reg: "comp" })} onPlano={() => props.onIrRelatorio("rel_orcamento")} />}
     {(dados.pendencias_contas_automaticas?.length ?? 0) > 0 && (
       <div className="rl-aviso" role="status"><AlertTriangle size={18} aria-hidden /><div>
         <b>Configure as contas automáticas</b>
@@ -179,16 +196,21 @@ export default function DreFazendaView(props: PropsRelatorio & { onClassificar: 
   );
 
   const frase = dados ? fraseDre({
-    periodo, regime: efetivo.reg, linhas, rotuloCmp, brl: (v) => brl(v, 0), naoClassificadoContas: naoClass.contas.length,
+    periodo, regime: efetivo.reg, linhas, rotuloCmp: cmpPeriodo ? rotuloCmp : null, brl: (v) => brl(v, 0), naoClassificadoContas: naoClass.contas.length,
     delta: (a, b) => delta(a, b, "sobe"),
   }) : [];
+  const resOrc = orcAtivo ? valorLinha(linhas, "RESULTADO_LIQUIDO") : null;
+  if (resOrc && resOrc.b != null) {
+    const d = delta(resOrc.a, resOrc.b, "sobe");
+    frase.push({ t: " O orçado previa " }, { t: brl(resOrc.b, 0), b: true }, { t: d && !d.igual ? ` — resultado ${d.melhor ? "melhor" : "pior"} que o plano.` : " — no plano." });
+  }
 
   return (
     <RelatorioShell ctx={ctx} hoje={hoje} centros={centros} grupo="Resultado" nome="DRE da fazenda" pergunta="Estou ganhando?"
       onIrGrupo={props.onIrGrupo}
       niveis={linhaDet ? [{ rotulo: linhaDet.nome }] : []} onVoltarNivel={() => abrirDet("")}
       estado={estado} erro={erro || regras.erro} onTentarDeNovo={() => { setErro(null); setTentativa((t) => t + 1); }} vazio={vazioUi}
-      frase={linhaDet ? [] : frase} kpis={linhaDet ? undefined : kpis} avisos={avisos} exportar={exportar}>
+      frase={linhaDet ? [] : frase} kpis={linhaDet ? undefined : kpis} avisos={avisos} exportar={exportar} rotuloCmp={orcAtivo ? "o orçado" : undefined}>
       {!linhaDet && (<>
         <PainelGrafico titulo="Do faturamento ao resultado, degrau a degrau"
           legenda={<LegendaCascata />}
@@ -270,7 +292,7 @@ export default function DreFazendaView(props: PropsRelatorio & { onClassificar: 
         naoEntra={[
           "Compra de bem (investimento), principal de financiamento, aporte e transferência entre contas — ficam em “Fora da DRE”.",
           "Contas sem linha da DRE — ficam em “Sem conta” até serem classificadas.",
-          "Orçado: o orçado × realizado fica em Plano › Orçamento.",
+          "Orçado (Comparar com: Orçado): linha sem conta orçada fica sem comparação; o desgaste dos bens é o do Patrimônio dos dois lados. O detalhe conta a conta fica em Plano › Orçamento.",
         ]}>
         <p style={{ margin: ".7rem 0 0" }}>
           Para classificar contas uma a uma, use a <button type="button" className="rl-linkbtn" style={{ color: "var(--text-accent)", fontWeight: 700 }} onClick={props.onClassificar}>DRE por conta (tela anterior)</button>.
@@ -280,5 +302,26 @@ export default function DreFazendaView(props: PropsRelatorio & { onClassificar: 
         ? `Cada subtotal é a soma das linhas acima dele (${periodo.label}). Fora da DRE: ${brl(fora.total)}; sem classificação: ${brl(naoClass.total)}.`
         : `Diferença de ${brl(conf.diferenca)} entre um subtotal e as linhas — avise o suporte.`} />
     </RelatorioShell>
+  );
+}
+
+/** "Comparar com: Orçado" — o que falta para comparar (ou o que está sendo comparado). */
+function AvisoOrcado({ regrasNovas, regimeCaixa, mesesInteiros, orc, erro, periodo, onComp, onPlano }: {
+  regrasNovas: boolean; regimeCaixa: boolean; mesesInteiros: boolean; orc: RespostaOrcamento | null; erro: string | null; periodo: string;
+  onComp: () => void; onPlano: () => void;
+}) {
+  const plano = <button type="button" className="lk" onClick={onPlano}>Plano › Orçamento</button>;
+  let titulo: string, texto: React.ReactNode, info = false;
+  if (!regrasNovas) { titulo = "O orçado por linha da DRE usa as regras novas dos relatórios."; texto = <>Com as regras antigas, o orçado × realizado conta a conta está em {plano}.</>; }
+  else if (regimeCaixa) { titulo = "O orçamento é pelo mês do gasto."; texto = <>Para comparar com o orçado, <button type="button" className="lk" onClick={onComp}>use o mês do gasto</button>.</>; }
+  else if (!mesesInteiros) { titulo = "O orçamento é mensal."; texto = "Escolha um período de meses inteiros para comparar com o orçado."; }
+  else if (erro) { titulo = "Não foi possível ler o orçado."; texto = <>{erro} Os números da DRE não mudaram.</>; }
+  else if (orc && !orc.tem_orcamento) { titulo = `Não há orçamento para ${periodo}.`; texto = <>Crie em {plano} (copie o ano anterior ou comece na planilha).</>; }
+  else if (orc) { info = true; titulo = `Comparando com o orçado de ${periodo}.`; texto = <>Linha sem conta orçada fica sem comparação (nada vermelho por falta de plano); o desgaste dos bens é o do Patrimônio dos dois lados. Conta a conta: {plano}.</>; }
+  else return null;
+  return (
+    <div className={`rl-aviso${info ? " info" : ""}`} role="status">{info ? <Info size={18} aria-hidden /> : <AlertTriangle size={18} aria-hidden />}<div>
+      <b>{titulo}</b><p>{texto}</p>
+    </div></div>
   );
 }

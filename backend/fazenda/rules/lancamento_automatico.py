@@ -65,6 +65,7 @@ from sqlalchemy import event, inspect as sa_inspect
 from sqlmodel import Session, select
 
 from fazenda.rules.natureza import ADIANTAMENTO, NATUREZAS, OBRIGACAO, OPERACIONAL
+from fazenda.rules.plano_padrao import CODIGO_RETENCOES, CODIGO_VALES, contas_do_sistema_existentes
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ ORIGENS: dict[str, Origem] = {o.chave: o for o in (
     Origem("caixa_retencao", "Retenção do caixa do funcionário",
            "O que a folha ou o pagamento reteve para o caixa do funcionário. O custo já está no bruto: "
            "fica fora da DRE, como obrigação.",
-           natureza=OBRIGACAO, palavras=("caixa do funcionario",)),
+           natureza=OBRIGACAO, palavras=("retenc", "caixa do funcionario")),
 )}
 
 
@@ -133,14 +134,18 @@ class Papel:
     rotulo: str
     natureza: str | None = None        # explícita no item; None = herda da conta/plano
     linha_forcada: str | None = None   # pseudoconta das regras v2 (multa/juros da guia)
+    # Conta do SISTEMA (rules/plano_padrao.py) usada quando a origem não tem
+    # conta configurada E a conta existe e está ativa no plano da fazenda.
+    codigo_preferido: str | None = None
 
 
 PAPEIS: dict[str, Papel] = {
     "folha_salario": Papel("folha_salario", "Salário e verbas"),
     "folha_outros_descontos": Papel("folha_salario", "(−) Outros descontos (VT, coparticipação, faltas)"),
     "folha_retidos": Papel("obrigacao_inss_irrf_retidos", "(−) INSS e IRRF retidos", OBRIGACAO),
-    "folha_vale": Papel("vale", "(−) Vale descontado", ADIANTAMENTO),
-    "folha_retencao_caixa": Papel("caixa_retencao", "(−) Retenção do caixa do funcionário", OBRIGACAO),
+    "folha_vale": Papel("vale", "(−) Vale descontado", ADIANTAMENTO, codigo_preferido=CODIGO_VALES),
+    "folha_retencao_caixa": Papel("caixa_retencao", "(−) Retenção do caixa do funcionário", OBRIGACAO,
+        codigo_preferido=CODIGO_RETENCOES),
     "folha_fgts_provisao": Papel("encargo_fgts", "FGTS (provisão)"),
     "folha_fgts_a_recolher": Papel("obrigacao_inss_irrf_retidos", "(−) FGTS a recolher", OBRIGACAO),
     "folha_dctf_provisao": Papel("encargo_inss_patronal", "Encargos da DCTF (provisão)"),
@@ -150,7 +155,7 @@ PAPEIS: dict[str, Papel] = {
     "decimo_retidos": Papel("obrigacao_inss_irrf_retidos", "(−) INSS e IRRF retidos", OBRIGACAO),
     "rescisao_verbas": Papel("rescisao", "Verbas rescisórias (bruto)"),
     "rescisao_retidos": Papel("obrigacao_inss_irrf_retidos", "(−) INSS e IRRF retidos", OBRIGACAO),
-    "rescisao_vale": Papel("vale", "(−) Vale descontado", ADIANTAMENTO),
+    "rescisao_vale": Papel("vale", "(−) Vale descontado", ADIANTAMENTO, codigo_preferido=CODIGO_VALES),
     "guia_retidos": Papel("obrigacao_inss_irrf_retidos", "Retidos na folha (quitação)", OBRIGACAO),
     "guia_provisionado": Papel("obrigacao_inss_irrf_retidos", "Encargo já provisionado na folha (quitação)", OBRIGACAO),
     "guia_encargo_fgts": Papel("encargo_fgts", "FGTS além do provisionado"),
@@ -159,17 +164,21 @@ PAPEIS: dict[str, Papel] = {
     "contrato_bruto": Papel("contrato", "Contrato (valor contratado)"),
     "empreita_bruto": Papel("empreita", "Empreita (valor contratado)"),
     "diaria_bruto": Papel("diaria", "Diária (bruto)"),
-    "contrato_vale": Papel("vale", "(−) Vale abatido", ADIANTAMENTO),
-    "empreita_vale": Papel("vale", "(−) Vale abatido", ADIANTAMENTO),
-    "diaria_vale": Papel("vale", "(−) Vale abatido", ADIANTAMENTO),
-    "contrato_retencao": Papel("caixa_retencao", "(−) Retenção do caixa do funcionário", OBRIGACAO),
-    "empreita_retencao": Papel("caixa_retencao", "(−) Retenção do caixa do funcionário", OBRIGACAO),
-    "diaria_retencao": Papel("caixa_retencao", "(−) Retenção do caixa do funcionário", OBRIGACAO),
-    "vale": Papel("vale", "Vale (adiantamento)", ADIANTAMENTO),
-    "vale_devolucao": Papel("vale", "Devolução de vale", ADIANTAMENTO),
+    "contrato_vale": Papel("vale", "(−) Vale abatido", ADIANTAMENTO, codigo_preferido=CODIGO_VALES),
+    "empreita_vale": Papel("vale", "(−) Vale abatido", ADIANTAMENTO, codigo_preferido=CODIGO_VALES),
+    "diaria_vale": Papel("vale", "(−) Vale abatido", ADIANTAMENTO, codigo_preferido=CODIGO_VALES),
+    "contrato_retencao": Papel("caixa_retencao", "(−) Retenção do caixa do funcionário", OBRIGACAO,
+        codigo_preferido=CODIGO_RETENCOES),
+    "empreita_retencao": Papel("caixa_retencao", "(−) Retenção do caixa do funcionário", OBRIGACAO,
+        codigo_preferido=CODIGO_RETENCOES),
+    "diaria_retencao": Papel("caixa_retencao", "(−) Retenção do caixa do funcionário", OBRIGACAO,
+        codigo_preferido=CODIGO_RETENCOES),
+    "vale": Papel("vale", "Vale (adiantamento)", ADIANTAMENTO, codigo_preferido=CODIGO_VALES),
+    "vale_devolucao": Papel("vale", "Devolução de vale", ADIANTAMENTO, codigo_preferido=CODIGO_VALES),
     "vale_assumido": Papel("folha_salario", "Vale assumido pela fazenda"),
     "caixa_entrada": Papel("caixa_entrada", "Entrada no caixa do funcionário"),
-    "caixa_retencao": Papel("caixa_retencao", "Retenção do caixa do funcionário", OBRIGACAO),
+    "caixa_retencao": Papel("caixa_retencao", "Retenção do caixa do funcionário", OBRIGACAO,
+        codigo_preferido=CODIGO_RETENCOES),
 }
 
 # tipo_documento das notas que o sistema cria (ver os routers de RH/caixa).
@@ -221,6 +230,8 @@ class ContaResolvida:
 class Configuracao:
     linhas: dict[str, tuple[str | None, str | None]] = field(default_factory=dict)  # origem -> (codigo, natureza)
     nomes_plano: dict[str, str] = field(default_factory=dict)
+    # Contas do sistema (3.03.01.16/17) que existem e estão ativas no plano.
+    contas_sistema: dict[str, str] = field(default_factory=dict)
 
     def conta(self, origem: str | None) -> ContaResolvida:
         if origem is None:
@@ -250,7 +261,14 @@ def carregar_configuracao(session: Session, fazenda_id: int | None) -> Configura
             PlanoContaGerencial.fazenda_id == fazenda_id, PlanoContaGerencial.codigo.in_(sorted(codigos)),
         )).all():
             cfg.nomes_plano[p.codigo] = p.nome
+    cfg.contas_sistema = contas_do_sistema_existentes(session, fazenda_id)
     return cfg
+
+
+def conta_do_sistema_da_origem(origem: str) -> str | None:
+    """Código da conta do sistema (3.03.01.16/17) que os papéis desta origem
+    usam quando ela não tem conta configurada — None para as demais origens."""
+    return next((p.codigo_preferido for p in PAPEIS.values() if p.origem == origem and p.codigo_preferido), None)
 
 
 def sugerir_conta(origem: str, plano: list) -> dict | None:
@@ -561,6 +579,10 @@ def resolver_itens(desejados: list[ItemDesejado], cfg: Configuracao) -> list[Ite
         codigo, nome = conta.codigo, conta.nome
         if not codigo and d.codigo_preferido:
             codigo, nome = d.codigo_preferido, cfg.nomes_plano.get(d.codigo_preferido)
+        elif not codigo and papel.codigo_preferido and papel.codigo_preferido in cfg.contas_sistema:
+            # Retenção e vale: a conta do sistema, só se existir no plano desta
+            # fazenda e a origem não tiver conta configurada à mão.
+            codigo, nome = papel.codigo_preferido, cfg.contas_sistema[papel.codigo_preferido]
         natureza = conta.natureza if conta.natureza in NATUREZAS else papel.natureza
         finais.append(ItemFinal(d.papel, _r2(d.valor), codigo, nome or papel.rotulo, natureza, papel.rotulo))
     return finais

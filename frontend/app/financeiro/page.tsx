@@ -3,7 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Circle, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
   Paperclip, Pencil, ShoppingCart, Target, TrendingUp, Compass, Trash2, Wrench, AlertTriangle, Repeat, CreditCard, ArrowLeft, Award, Undo2,
-  Milk, ListChecks, type LucideIcon,
+  Milk, ListChecks, LayoutGrid, Ruler, ArrowLeftRight, FileArchive, LockKeyhole, type LucideIcon,
 } from "lucide-react";
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
@@ -13,10 +13,8 @@ import {
   fetchOpcoesPatrimonio, gerarCodigosPatrimonio, baixarPatrimonio, estornarBaixaPatrimonio, type OpcoesPatrimonio,
   // Onda 3b — DRE em cascata / Onda 4 — Caixa Real
   fetchDreCascata, classificarContaDre, type DreResposta, type RateioDepreciacao, atualizarNaturezaLancamento, fetchRegrasV2, type NaturezaDiferenca,
-  fetchCaixaReal, fetchFundoReservaSugerido, type CaixaReal,
-  fetchPessoas, fetchRmca, fetchCustoLitroLeite, fetchCustoHectare, fetchCustoVacaLote, fetchCustoSafra, fetchSafras, formatBRL, formatDate,
-  atualizarLancamentoFinanceiro, ehAdmin, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
-  fetchRelatorioCompraSemen, type LinhaRelatorioCompraSemen,
+  fetchPessoas, formatBRL, formatDate,
+  atualizarLancamentoFinanceiro, ehAdmin,
   fetchCentrosCusto,
   fetchOrcamento, criarItemOrcamento, atualizarItemOrcamento, excluirItemOrcamento, fetchComparativoOrcado,
   fetchCenarios, criarCenario, atualizarCenario, excluirCenario,
@@ -42,6 +40,7 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { Dropzone } from "@/components/Dropzone";
 import { ReciboModal } from "@/components/ReciboModal";
 import { Modal } from "@/components/Modal";
+import { larguraDobrada } from "@/lib/janelas";
 import { FaturasView } from "@/components/FaturasView";
 import { ModalInserirEmFatura } from "@/components/ModalInserirEmFatura";
 import { RetencaoCaixaCampos } from "@/components/RetencaoCaixaCampos";
@@ -72,7 +71,7 @@ const COLUNAS_LIVRO = [
 import type { Lanc } from "@/lib/financeiroTipos";
 import { NATUREZAS_FIN, rotuloNatureza } from "@/lib/naturezaFin";
 
-type Rel = "fluxo" | "dre" | "dre_contas" | "rel_litro" | "rel_dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos" | "resumo";
+type Rel = "fluxo" | "dre" | "dre_contas" | "painel_dono" | "reguas_referencia" | "pacote_contador" | "fechamento_mes" | "conciliacao" | "rel_litro" | "rel_dre" | "rel_caixa" | "rel_fluxo" | "rel_livro" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "rel_orcamento" | "rel_cenarios" | "orcamento_itens" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos" | "resumo";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "caixa_real", label: "Caixa Real", icon: TrendingUp, desc: "Projeção de liquidez: quanto tem hoje e como o saldo evolui com os compromissos já lançados" },
@@ -118,12 +117,15 @@ const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
 // continuam exigindo dado existente, o que faz sentido (não tem o que
 // mostrar de fato).
 // "faturas" (Contas > Faturas de fornecedor) também dispensa lançamento prévio no banco.
-const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas", "a_pagar", "a_receber", "consultas", "custos", "resumo", "rel_litro", "rel_dre"]);
+const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas", "a_pagar", "a_receber", "consultas", "custos", "resumo", "painel_dono", "rel_litro", "rel_dre",
+  "rel_caixa", "rel_fluxo", "rel_livro", "rmca", "reguas_referencia", "compra_venda_animais", "compra_semen", "rel_orcamento", "rel_cenarios", "pacote_contador", "fechamento_mes", "conciliacao"]);
 // Ícones da árvore de Relatórios por pergunta (lib/relatoriosNavegacao.ts).
-const ICONE_GRUPO: Record<string, LucideIcon> = { "rg-resultado": TrendingUp, "rg-caixa": Wallet, "rg-leite": Milk, "rg-plano": Target, "rg-registros": ListChecks };
+const ICONE_GRUPO: Record<string, LucideIcon> = { "rg-painel": LayoutGrid, "rg-resultado": TrendingUp, "rg-caixa": Wallet, "rg-leite": Milk, "rg-plano": Target, "rg-registros": ListChecks, "rg-contador": FileArchive };
 const ICONE_RELATORIO: Record<string, LucideIcon> = {
-  rel_litro: Milk, rel_dre: FileText, dre_contas: FileText, caixa_real: TrendingUp, fluxo: Wallet, custos: BarChart3, rmca: BarChart3,
-  orcamento: Target, planejamento_financeiro: Compass, compra_venda_animais: ShoppingCart, compra_semen: ShoppingCart,
+  painel_dono: LayoutGrid, reguas_referencia: Ruler,
+  rel_litro: Milk, rel_dre: FileText, dre_contas: FileText, rel_caixa: TrendingUp, rel_fluxo: Wallet, rel_livro: BookOpen, custos: BarChart3, rmca: BarChart3,
+  rel_orcamento: Target, rel_cenarios: Compass, orcamento_itens: Target, planejamento_financeiro: Compass, compra_venda_animais: ShoppingCart, compra_semen: ShoppingCart,
+  pacote_contador: FileArchive, fechamento_mes: LockKeyhole, conciliacao: ArrowLeftRight,
 };
 // Orçamento e Planejamento financeiro (Cenários) passaram para Relatórios › Plano (lib/relatoriosNavegacao.ts).
 // Inclui "extrato" mesmo não estando mais em CONTAS — Relatórios > Extrato
@@ -198,9 +200,28 @@ import { useRegrasV2 } from "@/lib/useRegrasV2";
 import { apresentacaoSituacao, kpisDre, regimeDaUrl, type RegimeDre } from "@/lib/dreUnica";
 import { migrarFiltrosSalvosAntigos } from "@/lib/financeiroFiltrosMigracao";
 // Fase B dos Relatórios: molde único, árvore por pergunta e as duas primeiras telas novas.
-import { GRUPOS_RELATORIOS, IDS_RELATORIOS, grupoDe, idDoRelatorio } from "@/lib/relatoriosNavegacao";
+import { GRUPOS_RELATORIOS, IDS_RELATORIOS, RELATORIOS_NO_MOLDE, VISAO_DO_ID_ANTIGO, grupoDe, idDoRelatorio } from "@/lib/relatoriosNavegacao";
 import DreFazendaView from "@/components/financeiro/relatorios/DreFazendaView";
 import ResultadoLitroView from "@/components/financeiro/relatorios/ResultadoLitroView";
+// Fase C1 (Caixa): Caixa real, Fluxo de caixa e Livro caixa da atividade rural no molde.
+import RelCaixaRealView from "@/components/financeiro/relatorios/CaixaRealView";
+import RelFluxoCaixaView from "@/components/financeiro/relatorios/FluxoCaixaView";
+import RelLivroCaixaView from "@/components/financeiro/relatorios/LivroCaixaView";
+// Fase C2: Leite (Custos do leite, Sobra da comida) e Registros (animais, sêmen) no molde.
+import CustosLeiteView from "@/components/financeiro/relatorios/CustosLeiteView";
+import SobraComidaView from "@/components/financeiro/relatorios/SobraComidaView";
+import CompraVendaAnimaisView from "@/components/financeiro/relatorios/CompraVendaAnimaisView";
+import CompraSemenView from "@/components/financeiro/relatorios/CompraSemenView";
+// Fase C3 (Plano): Orçamento e Cenários no molde.
+import OrcamentoPlanoView from "@/components/financeiro/relatorios/OrcamentoPlanoView";
+import CenariosView from "@/components/financeiro/relatorios/CenariosView";
+// Fase C4: Painel do dono (entrada dos Relatórios) e Réguas de referência.
+import PainelDonoView from "@/components/financeiro/relatorios/PainelDonoView";
+import ReguasReferenciaView from "@/components/financeiro/relatorios/ReguasReferenciaView";
+// Fase C5: Entrega ao contador (pacote, fechamento do mês e conciliação bancária).
+import PacoteContadorView from "@/components/financeiro/relatorios/PacoteContadorView";
+import FechamentoMesView from "@/components/financeiro/relatorios/FechamentoMesView";
+import ConciliacaoView from "@/components/financeiro/relatorios/ConciliacaoView";
 import type { PropsRelatorio } from "@/components/financeiro/relatorios/comum";
 import type { FiltroInicialConsultas } from "@/components/financeiro/ConsultasView";
 
@@ -315,6 +336,13 @@ export default function FinanceiroPage() {
   function irPara(destinoBruto: Rel, ref?: string | null, opcoes?: { historico?: boolean; det?: string }) {
     // Ids antigos que mudaram de lugar (ex.: "dre" → "rel_dre", a DRE da fazenda no molde novo).
     const destino = idDoRelatorio(destinoBruto) as Rel;
+    // As quatro telas antigas de custo viraram visões de "Custos do leite" (?visao=).
+    const visaoCusto = VISAO_DO_ID_ANTIGO[destinoBruto];
+    if (visaoCusto && typeof window !== "undefined") {
+      const q = new URLSearchParams(window.location.search);
+      if (visaoCusto === "litro") q.delete("visao"); else q.set("visao", visaoCusto);
+      window.history.replaceState(window.history.state, "", `${window.location.pathname}?${q.toString()}${window.location.hash}`);
+    }
     if (opcoes?.historico !== false && IDS_RELATORIOS.has(destino) && typeof window !== "undefined") empilharSub(destino, opcoes?.det);
     setNotaAlvoRef(ref || null);
     setContasFiltro(null);
@@ -327,12 +355,10 @@ export default function FinanceiroPage() {
       case "faturas": setRel("faturas_gestao"); break;
       case "folha_relatorio": setFolhaModo("holerites"); setRel("folha"); break;
       case "folha": setFolhaModo("fechamento"); setRel("folha"); break;
-      case "custo_litro_leite": case "custo_hectare": case "custo_vaca_lote": case "custo_safra": setCustosBase(destino); setRel("custos"); break;
       case "consultas": setConsultaInicial(null); setRel("consultas"); break;
       default: setRel(destino);
     }
   }
-  const [custosBase, setCustosBase] = useState<"custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra">("custo_litro_leite");
   const [contasFiltro, setContasFiltro] = useState<{ de?: string; ate?: string; rotulo?: string } | null>(null);
   // Busca global: acha a nota pelo nº do documento/lançamento e abre onde ela está (em aberto → Contas; realizada → Consultas).
   const [buscaGlobal, setBuscaGlobal] = useState("");
@@ -793,7 +819,8 @@ export default function FinanceiroPage() {
           {/* A tela de folha traz o próprio texto de papel logo abaixo (é ela
               que precisa dizer "aqui se fecha" × "lá só se consulta"); repetir
               a frase de relatório em cima dele confundia as duas coisas. */}
-          {!["resumo", "folha", "a_pagar", "a_receber", "consultas", "lote", "faturas_gestao", "caixa_funcionarios", "rel_litro", "rel_dre"].includes(rel) && (
+          {/* As telas no molde (RELATORIOS_NO_MOLDE) trazem a própria pergunta e o contexto. */}
+          {!RELATORIOS_NO_MOLDE.has(rel) && !["resumo", "folha", "a_pagar", "a_receber", "consultas", "lote", "faturas_gestao", "caixa_funcionarios"].includes(rel) && (
             <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
           )}
         </div>
@@ -858,8 +885,17 @@ export default function FinanceiroPage() {
           )
           : rel === "rel_dre" ? <DreFazendaView {...propsRelatorio} onClassificar={() => irPara("dre_contas")} />
           : rel === "rel_litro" ? <ResultadoLitroView {...propsRelatorio} />
-          : rel === "custos" ? <CustosView base={custosBase} onBase={setCustosBase} />
-          : rel === "caixa_real" ? <CaixaRealView />
+          : rel === "painel_dono" ? <PainelDonoView {...propsRelatorio} />
+          : rel === "reguas_referencia" ? <ReguasReferenciaView {...propsRelatorio} />
+          : rel === "rel_caixa" ? <RelCaixaRealView {...propsRelatorio} />
+          : rel === "rel_fluxo" ? <RelFluxoCaixaView {...propsRelatorio} />
+          : rel === "rel_livro" ? <RelLivroCaixaView {...propsRelatorio} />
+          : rel === "rel_orcamento" ? <OrcamentoPlanoView {...propsRelatorio} />
+          : rel === "rel_cenarios" ? <CenariosView {...propsRelatorio} />
+          : rel === "custos" ? <CustosLeiteView {...propsRelatorio} />
+          : rel === "pacote_contador" ? <PacoteContadorView {...propsRelatorio} />
+          : rel === "fechamento_mes" ? <FechamentoMesView {...propsRelatorio} />
+          : rel === "conciliacao" ? <ConciliacaoView {...propsRelatorio} />
           : rel === "faturas" || rel === "faturas_gestao" ? <FaturasView />
           : rel === "patrimonio" ? <PatrimonioView />
           : rel === "cartao_credito" ? <CartaoCreditoView />
@@ -874,10 +910,10 @@ export default function FinanceiroPage() {
                 {folhaModo === "holerites" ? <RelatorioFolhaPagamentoView /> : <FolhaPagamentoView />}
               </div>
             ) : rel === "caixa_funcionarios" ? <CaixaFuncionariosView />
-          : rel === "rmca" ? <RmcaView />
-          : rel === "compra_venda_animais" ? <RelatorioCompraVendaAnimaisView />
-          : rel === "compra_semen" ? <RelatorioCompraSemenView />
-          : rel === "orcamento" ? <OrcamentoView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} />
+          : rel === "rmca" ? <SobraComidaView {...propsRelatorio} />
+          : rel === "compra_venda_animais" ? <CompraVendaAnimaisView {...propsRelatorio} />
+          : rel === "compra_semen" ? <CompraSemenView {...propsRelatorio} />
+          : rel === "orcamento" || rel === "orcamento_itens" ? <OrcamentoView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} />
           : rel === "planejamento_financeiro" ? <PlanejamentoFinanceiroView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} /> : <>
         <>
         {filtrosCard}
@@ -1223,21 +1259,6 @@ export default function FinanceiroPage() {
             onSalvo={() => { setNovoLancAberto(null); setNovoLancArquivo(null); recarregar(); }} />
         </ModalDivididoDocumento>
       )}
-    </div>
-  );
-}
-
-/** Custos: uma tela só, com seletor de base (litro de leite, hectare, vaca/lote, safra). */
-function CustosView({ base, onBase }: { base: "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra"; onBase: (b: "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra") => void }) {
-  return (
-    <div>
-      <TabBar abas={[
-        { id: "custo_litro_leite", label: "Por litro de leite", title: "Custo de alimentação do período dividido pelos litros entregues" },
-        { id: "custo_hectare", label: "Por hectare", title: "Despesas do período divididas pela área total da fazenda" },
-        { id: "custo_vaca_lote", label: "Por vaca/lote", title: "Despesas do período divididas pelo nº de vacas em lactação, por lote" },
-        { id: "custo_safra", label: "Por safra", title: "Despesas do centro de custo e período da safra divididas por hectare/tonelada" },
-      ] as const} ativa={base} onChange={onBase} />
-      {base === "custo_litro_leite" ? <CustoLitroLeiteView /> : base === "custo_hectare" ? <CustoHectareView /> : base === "custo_vaca_lote" ? <CustoVacaLoteView /> : <CustoSafraView />}
     </div>
   );
 }
@@ -2317,7 +2338,7 @@ function ModalBaixaPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio
   const label: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
 
   return (
-    <Modal title={`Baixar do ativo — ${item.codigo ? `${item.codigo} · ` : ""}${item.nome}`} onClose={onClose} width="560px">
+    <Modal title={`Baixar do ativo — ${item.codigo ? `${item.codigo} · ` : ""}${item.nome}`} onClose={onClose} width={larguraDobrada(560)} fecharComEsc={false}>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <div><label style={label}>Data da baixa</label>
@@ -2402,7 +2423,7 @@ function ModalValorMercadoPatrimonio({ item, onClose, onSalvo }: { item: ItemPat
   const label: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
 
   return (
-    <Modal title={`Atualizar valor de mercado — ${item.nome}`} onClose={onClose} width="420px">
+    <Modal title={`Atualizar valor de mercado — ${item.nome}`} onClose={onClose} width={larguraDobrada(420)}>
       <div className="space-y-3">
         <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
           Última avaliação: {item.valor_mercado_atual != null ? formatBRL(item.valor_mercado_atual) : "—"}
@@ -2730,7 +2751,7 @@ function ModalNovoCartao({ cartao, onClose, onSalvo }: { cartao: CartaoCredito |
   };
 
   return (
-    <Modal title={cartao ? `Editar cartão — ${cartao.apelido}` : "Novo cartão de crédito"} onClose={onClose} width="520px">
+    <Modal title={cartao ? `Editar cartão — ${cartao.apelido}` : "Novo cartão de crédito"} onClose={onClose} width={larguraDobrada(520)}>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <div style={{ gridColumn: "1 / -1" }}><label style={cartaoLabelStyle}>Apelido</label>
@@ -2922,7 +2943,7 @@ function ModalNovaCompraCartao({ cartaoId, onClose, onSalvo }: { cartaoId: numbe
   };
 
   return (
-    <Modal title="Nova compra no cartão" onClose={onClose} width="460px">
+    <Modal title="Nova compra no cartão" onClose={onClose} width={larguraDobrada(460)}>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <div><label style={cartaoLabelStyle}>Data da compra</label>
@@ -2973,7 +2994,7 @@ function ModalPagarFatura({ fatura, cartao, onClose, onSalvo }: { fatura: Fatura
   };
 
   return (
-    <Modal title={`Pagar fatura — ${cartao.apelido} (${fatura.competencia})`} onClose={onClose} width="420px">
+    <Modal title={`Pagar fatura — ${cartao.apelido} (${fatura.competencia})`} onClose={onClose} width={larguraDobrada(420)} fecharComEsc={false}>
       <div className="space-y-3">
         <p style={{ fontSize: "0.85rem" }}>
           Valor da fatura: <strong>{fatura.valor_total != null ? formatBRL(fatura.valor_total) : "—"}</strong>
@@ -3008,294 +3029,6 @@ function ModalPagarFatura({ fatura, cartao, onClose, onSalvo }: { fatura: Fatura
         </div>
       </div>
     </Modal>
-  );
-}
-
-const inputStyleRelCompraVenda: React.CSSProperties = {
-  background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-  borderRadius: "var(--r-sm)", padding: "0.35rem 0.5rem", fontSize: "0.8rem",
-};
-const COLUNAS_REL_COMPRA_VENDA_ANIMAL = [
-  { header: "Tipo", key: "tipoLabel" }, { header: "Nº animal", key: "numero_animal" },
-  { header: "Contraparte", key: "contraparte" }, { header: "Data", key: "data" },
-  { header: "Valor (por animal)", key: "valor" }, { header: "GTA", key: "gta" },
-  { header: "Documento", key: "numero_documento" }, { header: "Lançamento", key: "numero_lancamento" },
-  { header: "Centro de custo", key: "centro_custo" },
-];
-
-/**
- * Relatório financeiro de compra/venda de animais — consulta unificada das
- * duas pontas (Comprar/Vender animal em Lançamentos), filtrável por número do
- * animal, período (de/até), documento ou GTA.
- */
-function RelatorioCompraVendaAnimaisView() {
-  const [numero, setNumero] = useState("");
-  const [dataDe, setDataDe] = useState("");
-  const [dataAte, setDataAte] = useState("");
-  const [numeroDocumento, setNumeroDocumento] = useState("");
-  const [gta, setGta] = useState("");
-  const [linhas, setLinhas] = useState<LinhaRelatorioCompraVendaAnimal[] | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-  const [carregando, setCarregando] = useState(false);
-
-  const buscar = () => {
-    setCarregando(true); setErro(null);
-    fetchRelatorioCompraVendaAnimais({ numero, dataDe, dataAte, numeroDocumento, gta })
-      .then(setLinhas)
-      .catch((e) => setErro(e.message))
-      .finally(() => setCarregando(false));
-  };
-  useEffect(buscar, []);
-
-  const totalCompra = useMemo(() => (linhas ?? []).filter((l) => l.tipo === "compra").reduce((a, l) => a + l.valor, 0), [linhas]);
-  const totalVenda = useMemo(() => (linhas ?? []).filter((l) => l.tipo === "venda").reduce((a, l) => a + l.valor, 0), [linhas]);
-  const linhasExport = useMemo(() => (linhas ?? []).map((l) => ({ ...l, tipoLabel: l.tipo === "compra" ? "Compra" : "Venda" })), [linhas]);
-  const { ordenados: linhasOrdenadas, sortKey: sortKeyAnimais, sortDir: sortDirAnimais, ordenar: ordenarAnimais } = useOrdenacao(linhas ?? [], {
-    tipo: (l) => l.tipo,
-    numero_animal: (l) => l.numero_animal || "",
-    contraparte: (l) => (l.contraparte || "").toLowerCase(),
-    data: (l) => l.data || "",
-    valor: (l) => l.valor,
-    gta: (l) => l.gta || "",
-    numero_documento: (l) => l.numero_documento || "",
-    numero_lancamento: (l) => l.numero_lancamento || "",
-    centro_custo: (l) => l.centro_custo || "",
-  });
-
-  return (
-    <>
-      <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
-        <div className="flex flex-wrap gap-3 items-end">
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Número do animal</label>
-            <input style={inputStyleRelCompraVenda} value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="ex.: 950" /></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>De</label>
-            <input type="date" style={inputStyleRelCompraVenda} value={dataDe} onChange={(e) => setDataDe(e.target.value)} /></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Até</label>
-            <input type="date" style={inputStyleRelCompraVenda} value={dataAte} onChange={(e) => setDataAte(e.target.value)} /></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Nº do documento</label>
-            <input style={inputStyleRelCompraVenda} value={numeroDocumento} onChange={(e) => setNumeroDocumento(e.target.value)} /></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>GTA</label>
-            <input style={inputStyleRelCompraVenda} value={gta} onChange={(e) => setGta(e.target.value)} /></div>
-          <button className="btn-primary" style={{ fontSize: "0.8rem" }} onClick={buscar} disabled={carregando}>
-            <Search size={13} /> {carregando ? "Buscando…" : "Buscar"}
-          </button>
-        </div>
-      </div>
-
-      {erro && <div className="alert-critico mb-4"><span>{erro}</span></div>}
-
-      {linhas && (
-        <>
-          {/* "Par de contraste": comprado e vendido são igualmente relevantes
-              em sentidos opostos — nenhum dos dois deve virar âncora do outro
-              (diferente do padrão de métrica-âncora usado no resto do app).
-              Os dois dividem o mesmo card com peso visual igual, separados
-              por um filete; Lançamentos vira legenda pequena no rodapé. */}
-          <div className="card mb-4" style={{ padding: "1.2rem 1.4rem" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center" }}>
-              <div>
-                <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Total comprado</div>
-                <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.1rem", fontWeight: 800, lineHeight: 1, color: "var(--red)", marginTop: ".3rem", fontVariantNumeric: "tabular-nums" }}>
-                  {formatBRL(totalCompra)}
-                </div>
-              </div>
-              <div style={{ width: 1, alignSelf: "stretch", background: "var(--border)", margin: "0 1.6rem" }} />
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Total vendido</div>
-                <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.1rem", fontWeight: 800, lineHeight: 1, color: "var(--green-light)", marginTop: ".3rem", fontVariantNumeric: "tabular-nums" }}>
-                  {formatBRL(totalVenda)}
-                </div>
-              </div>
-            </div>
-            <div style={{ marginTop: "1rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", fontSize: ".72rem", color: "var(--text-muted)" }}>
-              {linhas.length} lançamento{linhas.length !== 1 ? "s" : ""} no período
-            </div>
-          </div>
-          <div className="card">
-            <div className="flex items-center justify-between mb-3">
-              <div className="card-header" style={{ margin: 0 }}>Compras e vendas</div>
-              <ExportarBotoes titulo="Compra/Venda de animais" colunas={COLUNAS_REL_COMPRA_VENDA_ANIMAL} linhas={linhasExport} nomeArquivoBase="compra_venda_animais" disabled={!linhas.length} />
-            </div>
-            <div className="overflow-x-auto">
-              <table className="fazenda-table">
-                <thead><tr>
-                  <ThOrd rotulo="Tipo" chave="tipo" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} />
-                  <ThOrd rotulo="Nº animal" chave="numero_animal" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} />
-                  <ThOrd rotulo="Contraparte" chave="contraparte" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} />
-                  <ThOrd rotulo="Data" chave="data" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} />
-                  <ThOrd rotulo="Valor (por animal)" chave="valor" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} style={{ textAlign: "right" }} />
-                  <ThOrd rotulo="GTA" chave="gta" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} />
-                  <ThOrd rotulo="Documento" chave="numero_documento" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} />
-                  <ThOrd rotulo="Lançamento" chave="numero_lancamento" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} />
-                  <ThOrd rotulo="Centro de custo" chave="centro_custo" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} />
-                </tr></thead>
-                <tbody>
-                  {linhasOrdenadas.map((l, i) => (
-                    <tr key={i}>
-                      <td>
-                        <span style={{
-                          fontSize: "0.72rem", padding: "0.15rem 0.5rem", borderRadius: "999px", fontWeight: 700,
-                          background: l.tipo === "compra" ? "rgba(220,38,38,0.12)" : "rgba(22,163,74,0.12)",
-                          color: l.tipo === "compra" ? "var(--red)" : "var(--green-light)",
-                        }}>{l.tipo === "compra" ? "Compra" : "Venda"}</span>
-                      </td>
-                      <td style={{ fontWeight: 700 }}>{l.numero_animal}</td>
-                      <td style={{ fontSize: "0.8rem" }}>{l.contraparte}</td>
-                      <td style={{ fontSize: "0.8rem" }}>{l.data}</td>
-                      <td style={{ textAlign: "right" }}>{formatBRL(l.valor)}</td>
-                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.gta || "—"}</td>
-                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.numero_documento || "—"}</td>
-                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.numero_lancamento || "—"}</td>
-                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.centro_custo || "—"}</td>
-                    </tr>
-                  ))}
-                  {!linhas.length && <tr><td colSpan={9} style={{ color: "var(--text-muted)", padding: "1rem" }}>Nenhuma compra ou venda de animal encontrada para o filtro.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </>
-      )}
-    </>
-  );
-}
-
-const COLUNAS_REL_COMPRA_SEMEN = [
-  { header: "Touro", key: "touro_nome" }, { header: "NAAB", key: "naab" }, { header: "Tipo", key: "tipo" },
-  { header: "Doses", key: "doses" }, { header: "Valor/dose", key: "valor_unitario" }, { header: "Valor total", key: "valor_total" },
-  { header: "Data", key: "data_compra" }, { header: "Vendedor", key: "vendedor" }, { header: "Documento", key: "numero_documento" },
-  { header: "Lançamento", key: "numero_lancamento" }, { header: "Centro de custo", key: "centro_custo" },
-];
-
-/**
- * Relatório financeiro de compra de sêmen — espelho de
- * RelatorioCompraVendaAnimaisView, consultando CompraSemen (em vez de
- * CompraAnimal/VendaAnimal), filtrável por touro, NAAB, vendedor, período ou
- * número do documento.
- */
-function RelatorioCompraSemenView() {
-  const [touro, setTouro] = useState("");
-  const [vendedor, setVendedor] = useState("");
-  const [dataDe, setDataDe] = useState("");
-  const [dataAte, setDataAte] = useState("");
-  const [numeroDocumento, setNumeroDocumento] = useState("");
-  const [linhas, setLinhas] = useState<LinhaRelatorioCompraSemen[] | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-  const [carregando, setCarregando] = useState(false);
-
-  const buscar = () => {
-    setCarregando(true); setErro(null);
-    fetchRelatorioCompraSemen({ touro, vendedor, dataDe, dataAte, numeroDocumento })
-      .then(setLinhas)
-      .catch((e) => setErro(e.message))
-      .finally(() => setCarregando(false));
-  };
-  useEffect(buscar, []);
-
-  const totalDoses = useMemo(() => (linhas ?? []).reduce((a, l) => a + l.doses, 0), [linhas]);
-  const totalGasto = useMemo(() => (linhas ?? []).reduce((a, l) => a + l.valor_total, 0), [linhas]);
-  const { ordenados: linhasOrdenadas, sortKey: sortKeySemen, sortDir: sortDirSemen, ordenar: ordenarSemen } = useOrdenacao(linhas ?? [], {
-    touro_nome: (l) => l.touro_nome || "",
-    naab: (l) => l.naab || "",
-    tipo: (l) => l.tipo || "",
-    doses: (l) => l.doses,
-    valor_unitario: (l) => l.valor_unitario,
-    valor_total: (l) => l.valor_total,
-    data_compra: (l) => l.data_compra || "",
-    vendedor: (l) => (l.vendedor || "").toLowerCase(),
-    numero_documento: (l) => l.numero_documento || "",
-    numero_lancamento: (l) => l.numero_lancamento || "",
-    centro_custo: (l) => l.centro_custo || "",
-  });
-
-  return (
-    <>
-      <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
-        <div className="flex flex-wrap gap-3 items-end">
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Touro</label>
-            <input style={inputStyleRelCompraVenda} value={touro} onChange={(e) => setTouro(e.target.value)} placeholder="ex.: Coors" /></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Vendedor</label>
-            <input style={inputStyleRelCompraVenda} value={vendedor} onChange={(e) => setVendedor(e.target.value)} placeholder="ex.: ABS" /></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>De</label>
-            <input type="date" style={inputStyleRelCompraVenda} value={dataDe} onChange={(e) => setDataDe(e.target.value)} /></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Até</label>
-            <input type="date" style={inputStyleRelCompraVenda} value={dataAte} onChange={(e) => setDataAte(e.target.value)} /></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Nº do documento</label>
-            <input style={inputStyleRelCompraVenda} value={numeroDocumento} onChange={(e) => setNumeroDocumento(e.target.value)} /></div>
-          <button className="btn-primary" style={{ fontSize: "0.8rem" }} onClick={buscar} disabled={carregando}>
-            <Search size={13} /> {carregando ? "Buscando…" : "Buscar"}
-          </button>
-        </div>
-      </div>
-
-      {erro && <div className="alert-critico mb-4"><span>{erro}</span></div>}
-
-      {linhas && (
-        <>
-          {/* Total gasto já era o único KPI marcado em vermelho — vira métrica-
-              âncora. Mesmos 3 números de antes, só reordenados por prioridade. */}
-          <div className="card mb-4" style={{ padding: "1.1rem 1.3rem" }}>
-            <div style={{ fontSize: ".68rem", fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Total gasto</div>
-            <div style={{ fontFamily: "var(--font-heading)", fontSize: "2.6rem", fontWeight: 800, lineHeight: 1, color: "var(--red)", marginTop: ".25rem", fontVariantNumeric: "tabular-nums" }}>
-              {formatBRL(totalGasto)}
-            </div>
-            <div style={{ display: "flex", gap: "1.6rem", marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{linhas.length}</div>
-                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Compras</div>
-              </div>
-              <div>
-                <div style={{ fontSize: "1.05rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{totalDoses}</div>
-                <div style={{ fontSize: ".62rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: ".1rem" }}>Doses compradas</div>
-              </div>
-            </div>
-          </div>
-          <div className="card">
-            <div className="flex items-center justify-between mb-3">
-              <div className="card-header" style={{ margin: 0 }}>Compras de sêmen</div>
-              <ExportarBotoes titulo="Compra de sêmen" colunas={COLUNAS_REL_COMPRA_SEMEN} linhas={linhas} nomeArquivoBase="compra_semen" disabled={!linhas.length} />
-            </div>
-            <div className="overflow-x-auto">
-              <table className="fazenda-table">
-                <thead><tr>
-                  <ThOrd rotulo="Touro" chave="touro_nome" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
-                  <ThOrd rotulo="NAAB" chave="naab" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
-                  <ThOrd rotulo="Tipo" chave="tipo" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
-                  <ThOrd rotulo="Doses" chave="doses" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} style={{ textAlign: "right" }} />
-                  <ThOrd rotulo="Valor/dose" chave="valor_unitario" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} style={{ textAlign: "right" }} />
-                  <ThOrd rotulo="Valor total" chave="valor_total" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} style={{ textAlign: "right" }} />
-                  <ThOrd rotulo="Data" chave="data_compra" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
-                  <ThOrd rotulo="Vendedor" chave="vendedor" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
-                  <ThOrd rotulo="Documento" chave="numero_documento" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
-                  <ThOrd rotulo="Lançamento" chave="numero_lancamento" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
-                  <ThOrd rotulo="Centro de custo" chave="centro_custo" sortKey={sortKeySemen} sortDir={sortDirSemen} onSort={ordenarSemen} />
-                </tr></thead>
-                <tbody>
-                  {linhasOrdenadas.map((l, i) => (
-                    <tr key={i}>
-                      <td style={{ fontWeight: 700 }}>{l.touro_nome}</td>
-                      <td style={{ fontSize: "0.8rem" }}>{l.naab || "—"}</td>
-                      <td style={{ fontSize: "0.8rem" }}>{l.tipo === "sexado" ? "Sexado" : "Convencional"}</td>
-                      <td style={{ textAlign: "right" }}>{l.doses}</td>
-                      <td style={{ textAlign: "right" }}>{formatBRL(l.valor_unitario)}</td>
-                      <td style={{ textAlign: "right" }}>{formatBRL(l.valor_total)}</td>
-                      <td style={{ fontSize: "0.8rem" }}>{l.data_compra}</td>
-                      <td style={{ fontSize: "0.8rem" }}>{l.vendedor}</td>
-                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.numero_documento || "—"}</td>
-                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.numero_lancamento || "—"}</td>
-                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.centro_custo || "—"}</td>
-                    </tr>
-                  ))}
-                  {!linhas.length && <tr><td colSpan={11} style={{ color: "var(--text-muted)", padding: "1rem" }}>Nenhuma compra de sêmen encontrada para o filtro.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </>
-      )}
-    </>
   );
 }
 
@@ -4496,73 +4229,6 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   );
 }
 
-/*
- * RMCA (Receita Menos Custo com Alimentação) — duas versões lado a lado, por
- * decisão explícita do usuário: "gerencial" (contas do plano de contas
- * marcadas em Configurações > Parâmetros financeiros) e "físico" (consumo
- * real registrado pela Alimentação × valor unitário do Estoque).
- */
-type ItemFisicoRmca = {
-  ingrediente: string; quantidade: number; quantidade_kg: number; valor_unitario: number; custo: number;
-  estoque_id: number | null; unidade: string | null;
-  preco_padrao_kg: number | null; preco_ultima_compra_kg: number | null;
-};
-type PrecoMedioLitroLeite = { competencia: string; litros: number; receita: number; preco_por_litro: number } | null;
-type RmcaResp = {
-  periodo: { inicio: string; fim: string };
-  configurado: boolean;
-  contas_receita: string[];
-  contas_custo: string[];
-  // `receita_leite_liquida`/`rmca_sobre_liquida`/`deducoes_receita_leite`: só
-  // com as regras v2 (PR 4) — o RMCA fica sobre a receita BRUTA e a líquida
-  // de Funrural/Senar aparece ao lado.
-  gerencial: {
-    receita_leite: number; custo_alimentacao: number; rmca: number;
-    deducoes_receita_leite?: number; receita_leite_liquida?: number; rmca_sobre_liquida?: number;
-  };
-  fisico: {
-    receita_leite: number; custo_alimentacao: number; rmca: number; itens: ItemFisicoRmca[];
-    receita_leite_liquida?: number; rmca_sobre_liquida?: number;
-  };
-  regras_v2?: boolean;
-  meta_rmca: number;
-  preco_medio_litro_leite: PrecoMedioLitroLeite;
-};
-
-function primeiroDiaDoMes() {
-  const hoje = new Date();
-  return new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
-}
-
-/* ───────────────────────── Roteiro do RMCA (modal em tela, mesmo padrão do manual de colostro/sangue) ───────────────────────── */
-const ROTEIRO_RMCA = [
-  { t: "1. O que é o RMCA", d: "Receita Menos Custo com Alimentação: quanto sobra da receita do leite depois de descontar o gasto com ração/alimentação no mesmo período. Duas versões lado a lado — gerencial e físico — para conferência cruzada." },
-  { t: "2. Versão gerencial — marque as contas", d: "Vá em Configurações → Parâmetros financeiros → Conta gerencial. Marque a(s) conta(s) de receita que representam a venda do leite (ex.: \"Leite indústria\") e a(s) conta(s) de despesa que representam alimentação (ex.: \"Ração\", \"Silagem\", \"Sal mineral\"). O RMCA gerencial soma os lançamentos financeiros dessas contas no período." },
-  { t: "3. Versão física — indique os produtos", d: "Vá em Configurações → Cadastro → Estoque → Itens de Estoque. Na coluna RMCA, marque quais produtos são ração/alimento e devem entrar no custo físico. Desmarque produtos que não são alimentação (medicamentos, materiais etc.), mesmo que também tenham baixa de \"Saída de ajuste\"." },
-  { t: "4. Como o custo físico é calculado", d: "Para cada produto marcado, o sistema soma a quantidade baixada como \"Saída de ajuste\" pela Alimentação no período e multiplica pelo valor unitário cadastrado no Estoque. O card \"RMCA físico\" mostra o detalhamento produto a produto." },
-  { t: "5. Por que duas versões", d: "A gerencial reflete o que foi de fato lançado no financeiro (pode incluir sobras de estoque, compras antecipadas). A física reflete o consumo real no período, ainda que o pagamento tenha sido em outro mês. Comparar as duas ajuda a identificar diferenças de timing." },
-];
-
-function RoteiroRmcaModal({ onClose }: { onClose: () => void }) {
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "1rem" }} onClick={onClose}>
-      <div className="card" style={{ width: "560px", maxWidth: "96vw", maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-3">
-          <div className="card-header" style={{ margin: 0 }}>Roteiro — Como indicar os produtos do RMCA</div>
-          <button onClick={onClose} title="Fechar" style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><X size={20} /></button>
-        </div>
-        <div className="space-y-2">
-          {ROTEIRO_RMCA.map((s) => (
-            <div key={s.t} style={{ borderLeft: "3px solid var(--dourado-light)", paddingLeft: "0.6rem" }}>
-              <p style={{ fontSize: "0.8rem", fontWeight: 700 }}>{s.t}</p>
-              <p style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{s.d}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Onda 3b — DRE Gerencial em cascata (15 linhas) + classificação de contas
@@ -4867,952 +4533,6 @@ function DreCascataView({ dataInicio, dataFim, dados, erro: erroCarga, onRecarre
         </div>
         </>;
       })()}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Onda 4 — Caixa Real (projeção de liquidez)
-// ---------------------------------------------------------------------------
-function CaixaRealView() {
-  const [dias, setDias] = useState(90);
-  const [dados, setDados] = useState<CaixaReal | null>(null);
-  const [sugestao, setSugestao] = useState<{ sugerido: number; meses_folga: number; atual: number } | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-
-  useEffect(() => {
-    setErro(null);
-    // `hoje` local (nunca toISOString): o servidor usa Brasília, mas o front manda o dia que a pessoa vê.
-    fetchCaixaReal(dias, hojeLocal()).then(setDados).catch((e) => setErro(e.message));
-  }, [dias]);
-  useEffect(() => { fetchFundoReservaSugerido(6, hojeLocal()).then(setSugestao).catch(() => {}); }, []);
-
-  // Só os dias com movimento — a série vem completa (365 pontos num ano) e
-  // listar dia vazio afogaria o que importa. O `|| []` também protege a tela
-  // quando a API ainda está na versão anterior (ver o comentário na DRE).
-  const diasComMovimento = (dados?.serie || []).filter((d) => d.entradas || d.saidas);
-  const contasDoCaixa = dados?.contas || [];
-  // Regras v2 (Fase A, PR 6): sem saldo de abertura o "saldo hoje" é só a soma
-  // dos lançamentos — mostra a pendência em vez de fingir um número.
-  const semAbertura = dados?.saldo_abertura_pendente || [];
-  const saldoPendente = !!dados?.regras_v2 && (semAbertura.length > 0 || contasDoCaixa.length === 0);
-  const foraDaJanela = dados?.agendados_fora_da_janela;
-
-  const formatarDia = (iso: string) => new Date(iso + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
-
-  return (
-    <div>
-      <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Horizonte da projeção</div>
-        <div className="flex flex-wrap gap-3 items-end">
-          <div>
-            <label style={labelStyleLote}>Projetar os próximos</label>
-            <select style={selStyleLote} value={dias} onChange={(e) => setDias(Number(e.target.value))}>
-              <option value={30}>30 dias</option>
-              <option value={60}>60 dias</option>
-              <option value={90}>90 dias</option>
-              <option value={180}>180 dias</option>
-              <option value={365}>365 dias</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <div className="card mb-4" style={{ borderColor: "var(--border)" }}>
-        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: 0 }}>
-          <strong>Caixa Real responde “tem dinheiro?”; a DRE responde “deu lucro?”.</strong>{" "}
-          As duas não batem, e não devem bater: depreciação é despesa na DRE e não sai do caixa;
-          o principal de um financiamento sai do caixa e não é despesa. Fazenda lucrativa pode
-          quebrar por falta de caixa — é isso que esta tela antecipa.
-        </p>
-      </div>
-
-      {erro && <div className="alert-critico mb-3"><span>{erro}</span></div>}
-      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {dados && <>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-          <KPI v={saldoPendente ? "Pendente" : formatBRL(dados.saldo_inicial)} l={saldoPendente ? "Saldo hoje · informe o saldo de abertura" : "Saldo hoje"} c={saldoPendente ? "var(--amber)" : "var(--dourado-light)"} />
-          <KPI v={formatBRL(dados.saldo_final)} l={`Saldo projetado em ${dados.dias} dias`} c={dados.saldo_final >= 0 ? "var(--green-light)" : "var(--red)"} />
-          <KPI v={formatBRL(dados.total_entradas)} l="Entradas previstas" c="var(--green-light)" />
-          <KPI v={formatBRL(dados.total_saidas)} l="Saídas previstas" c="var(--red)" />
-        </div>
-
-        {saldoPendente && (
-          <div className="card mb-3" style={{ borderColor: "var(--amber)" }}>
-            <p style={{ fontSize: "0.8rem", color: "var(--amber)", margin: 0 }}>
-              <strong>Informe o saldo de abertura</strong>{semAbertura.length ? ` de ${semAbertura.map((c) => c.nome).join(", ")}` : ""}:
-              {" "}o saldo do extrato numa data. Sem ele, o “saldo hoje” é só a soma dos lançamentos
-              ({formatBRL(dados.saldo_inicial)}) e não bate com o banco. Grave em{" "}
-              <a href="/parametros" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>
-                Parâmetros financeiros → Conta corrente
-              </a>.
-            </p>
-          </div>
-        )}
-        {!!foraDaJanela?.quantidade && (
-          <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-            {foraDaJanela.quantidade} pagamento(s) já baixado(s) com data depois desta janela (agendados:{" "}
-            {formatBRL(foraDaJanela.total_saidas)} de saída, {formatBRL(foraDaJanela.total_entradas)} de entrada) não entram no saldo de hoje.
-          </p>
-        )}
-
-        {/* Os dois alertas são distintos: furar a reserva é aviso; ficar
-            negativo é falta de dinheiro. */}
-        {dados.primeiro_dia_negativo && (
-          <div className="alert-critico mb-3">
-            <span>
-              <strong>O caixa fica negativo em {new Date(dados.primeiro_dia_negativo + "T12:00:00").toLocaleDateString("pt-BR")}.</strong>{" "}
-              Nessa data falta dinheiro para honrar os compromissos já lançados.
-            </span>
-          </div>
-        )}
-        {!dados.primeiro_dia_negativo && dados.primeiro_dia_abaixo_da_reserva && (
-          <div className="card mb-3" style={{ borderColor: "var(--amber)" }}>
-            <p style={{ fontSize: "0.82rem", color: "var(--amber)", margin: 0 }}>
-              O saldo fura o fundo de reserva de {formatBRL(dados.fundo_reserva)} em{" "}
-              <strong>{new Date(dados.primeiro_dia_abaixo_da_reserva + "T12:00:00").toLocaleDateString("pt-BR")}</strong>.
-              Ainda há dinheiro, mas a folga acabou.
-            </p>
-          </div>
-        )}
-        {dados.compromissos_sem_vencimento > 0 && (
-          <div className="card mb-3" style={{ borderColor: "var(--amber)" }}>
-            <p style={{ fontSize: "0.78rem", color: "var(--amber)", margin: 0 }}>
-              {dados.compromissos_sem_vencimento} lançamento(s) em aberto <strong>sem data de vencimento</strong> ficaram
-              fora da projeção — não há como posicioná-los na linha do tempo. O caixa real pode ser
-              mais apertado do que o mostrado aqui.
-            </p>
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <div className="card">
-            <div className="card-header mb-2">Fundo de reserva</div>
-            {dados.fundo_reserva > 0 ? (
-              <>
-                <KPI v={formatBRL(dados.fundo_reserva)} l="Colchão definido" />
-                <div style={{ marginTop: "0.75rem" }}>
-                  <KPI
-                    v={formatBRL(dados.folga_minima)}
-                    l="Folga mínima na projeção"
-                    c={dados.folga_minima >= 0 ? "var(--green-light)" : "var(--red)"}
-                  />
-                </div>
-                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.75rem" }}>
-                  A folga é o pior saldo da projeção menos a reserva. Negativa significa que a
-                  reserva é furada em algum momento, mesmo que o saldo final pareça confortável.
-                </p>
-              </>
-            ) : (
-              <>
-                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-                  Nenhum fundo de reserva definido — a tela só alerta quando o caixa fica negativo.
-                </p>
-                {sugestao && sugestao.sugerido > 0 && (
-                  <p style={{ fontSize: "0.8rem" }}>
-                    Sugestão pelo seu histórico: <strong>{formatBRL(sugestao.sugerido)}</strong>{" "}
-                    ({sugestao.meses_folga} meses de custo médio). Para adotar, grave em{" "}
-                    <a href="/configuracoes?aba=parametros" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>
-                      Configurações → Parâmetros
-                    </a>, no campo “Caixa Real — fundo de reserva”.
-                  </p>
-                )}
-              </>
-            )}
-          </div>
-
-          <div className="card">
-            <div className="card-header mb-2">Saldo por conta</div>
-            {contasDoCaixa.length ? (
-              <table className="fazenda-table" style={{ margin: 0 }}>
-                <tbody>
-                  {contasDoCaixa.map((c) => (
-                    <tr key={c.id}>
-                      <td style={{ fontSize: "0.8rem" }}>
-                        {c.nome}
-                        {dados.regras_v2 && (
-                          <div style={{ fontSize: "0.7rem", color: c.pendente_saldo_abertura ? "var(--amber)" : "var(--text-muted)" }}>
-                            {c.pendente_saldo_abertura || c.saldo_abertura == null || !c.data_saldo_abertura
-                              ? "Informe o saldo de abertura"
-                              : `Inclui saldo de abertura de ${formatBRL(c.saldo_abertura)} em ${new Date(c.data_saldo_abertura + "T12:00:00").toLocaleDateString("pt-BR")}`}
-                          </div>
-                        )}
-                      </td>
-                      <td style={{ textAlign: "right", fontSize: "0.8rem", fontWeight: 600, color: c.saldo < 0 ? "var(--red)" : undefined }}>
-                        {formatBRL(c.saldo)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Nenhuma conta corrente cadastrada.</p>}
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-header mb-3">Linha do tempo — dias com movimento</div>
-          {diasComMovimento.length ? (
-            <div className="overflow-x-auto">
-              <table className="fazenda-table" style={{ margin: 0 }}>
-                <thead>
-                  <tr>
-                    <th>Data</th><th>Compromissos</th>
-                    <th style={{ textAlign: "right" }}>Entradas</th>
-                    <th style={{ textAlign: "right" }}>Saídas</th>
-                    <th style={{ textAlign: "right" }}>Saldo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {diasComMovimento.map((d) => (
-                    <tr key={d.data} style={{ background: d.saldo < 0 ? "rgba(220,80,80,0.08)" : undefined }}>
-                      <td style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>{formatarDia(d.data)}</td>
-                      <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                        {d.itens.slice(0, 3).map((it, i) => (
-                          <span key={i}>
-                            {i > 0 && " · "}
-                            {it.vencido && <span style={{ color: "var(--amber)" }} title={`Venceu em ${new Date(it.data_original + "T12:00:00").toLocaleDateString("pt-BR")} e não foi pago`}>⚠ </span>}
-                            {it.descricao}
-                            {it.agendado && <span style={{ color: "var(--dourado-light)" }} title="Pagamento já baixado com esta data: sai do saldo neste dia"> (agendado)</span>}
-                            {it.fatura_cartao && <span title="Compra no cartão: sai no vencimento da fatura"> (cartão)</span>}
-                          </span>
-                        ))}
-                        {d.itens.length > 3 && <span> · +{d.itens.length - 3}</span>}
-                      </td>
-                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: d.entradas ? "var(--green-light)" : "var(--text-muted)" }}>
-                        {d.entradas ? formatBRL(d.entradas) : "—"}
-                      </td>
-                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: d.saidas ? "var(--red)" : "var(--text-muted)" }}>
-                        {d.saidas ? formatBRL(d.saidas) : "—"}
-                      </td>
-                      <td style={{ textAlign: "right", fontSize: "0.8rem", fontWeight: 600, color: d.saldo < 0 ? "var(--red)" : undefined }}>
-                        {formatBRL(d.saldo)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
-              Nenhum compromisso em aberto com vencimento nos próximos {dados.dias} dias.
-            </p>
-          )}
-        </div>
-      </>}
-    </div>
-  );
-}
-
-function RmcaView() {
-  const [dataInicio, setDataInicio] = useState(() => primeiroDiaDoMes());
-  const [dataFim, setDataFim] = useState(() => hojeLocal());
-  const [dados, setDados] = useState<RmcaResp | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-  const [roteiroAberto, setRoteiroAberto] = useState(false);
-
-  // "vivo" evita que uma resposta desatualizada sobrescreva uma mais nova:
-  // o <input type="date"> pode emitir um valor vazio por uma fração de
-  // segundo ao trocar mês/ano (varia por navegador), disparando uma busca
-  // com data inválida (422) logo antes da busca boa — sem esta trava, se a
-  // resposta ruim chegasse DEPOIS da boa, o erro ficava "preso" na tela
-  // mesmo com o período certo selecionado. Mesmo padrão já usado no
-  // celular (ver components/mobile/menu/Rmca.tsx).
-  useEffect(() => {
-    let vivo = true;
-    fetchRmca(dataInicio, dataFim).then((r) => { if (vivo) { setDados(r); setErro(null); } })
-      .catch((e) => { if (vivo) setErro(e.message); });
-    return () => { vivo = false; };
-  }, [dataInicio, dataFim]);
-
-  return (
-    <div>
-      {roteiroAberto && <RoteiroRmcaModal onClose={() => setRoteiroAberto(false)} />}
-
-      <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center justify-between">
-          <span className="flex items-center gap-2"><Filter size={14} /> Período</span>
-          <button className="btn-ghost" title="Abrir o passo a passo de configuração do RMCA" style={{ fontSize: "0.75rem" }} onClick={() => setRoteiroAberto(true)}>
-            <BookOpen size={13} /> Roteiro — como indicar os produtos do RMCA
-          </button>
-        </div>
-        <div className="flex flex-wrap gap-3 items-end">
-          <div><label style={labelStyleLote}>Início</label><input type="date" style={selStyleLote} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Fim</label><input type="date" style={selStyleLote} value={dataFim} onChange={(e) => setDataFim(e.target.value)} /></div>
-        </div>
-      </div>
-
-      {erro && <div className="alert-critico mb-3"><span>Sem dados: {erro}.</span></div>}
-      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {dados && (
-        <>
-          {!dados.configurado && (
-            <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
-              <p style={{ fontSize: "0.85rem", color: "var(--amber)" }}>
-                Nenhuma conta gerencial está marcada como receita do leite ou custo de alimentação — a versão gerencial fica zerada até a configuração ser feita.
-                Marque em <strong>Configurações → Parâmetros financeiros → Conta gerencial</strong>.
-              </p>
-            </div>
-          )}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="card">
-              <div className="card-header mb-3">RMCA gerencial</div>
-              <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-                A partir dos lançamentos financeiros, pelas contas marcadas como receita do leite / custo de alimentação.
-              </p>
-              <div className="grid grid-cols-1 gap-3 mb-3">
-                <KPI v={formatBRL(dados.gerencial.receita_leite)} l="Receita do leite" c="var(--green-light)" />
-                <KPI v={formatBRL(dados.gerencial.custo_alimentacao)} l="Custo de alimentação" c="var(--red)" />
-                <KPI v={formatBRL(dados.gerencial.rmca)} l="RMCA" c={dados.gerencial.rmca >= dados.meta_rmca ? "var(--green-light)" : "var(--amber)"} />
-              </div>
-              {dados.gerencial.receita_leite_liquida != null && (
-                <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
-                  Receita bruta, que é a convenção do indicador. Sobre a receita líquida de Funrural/Senar e descontos da nota
-                  ({formatBRL(dados.gerencial.receita_leite_liquida)}, após {formatBRL(dados.gerencial.deducoes_receita_leite ?? 0)} de deduções),
-                  o RMCA é <strong style={{ color: "var(--text)" }}>{formatBRL(dados.gerencial.rmca_sobre_liquida ?? 0)}</strong>.
-                </p>
-              )}
-              {dados.contas_receita.length > 0 && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Receita: {dados.contas_receita.join(", ")}</p>}
-              {dados.contas_custo.length > 0 && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Custo: {dados.contas_custo.join(", ")}</p>}
-            </div>
-            <div className="card">
-              <div className="card-header mb-3">RMCA físico</div>
-              <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-                Mesma receita do leite, mas custo a partir do consumo real registrado pela Alimentação × valor unitário do Estoque.
-              </p>
-              <div className="grid grid-cols-1 gap-3 mb-3">
-                <KPI v={formatBRL(dados.fisico.receita_leite)} l="Receita do leite" c="var(--green-light)" />
-                <KPI v={formatBRL(dados.fisico.custo_alimentacao)} l="Custo de alimentação (físico)" c="var(--red)" />
-                <KPI v={formatBRL(dados.fisico.rmca)} l="RMCA" c={dados.fisico.rmca >= dados.meta_rmca ? "var(--green-light)" : "var(--amber)"} />
-              </div>
-              {dados.fisico.itens.length > 0 && (
-                <div className="overflow-x-auto">
-                  <table className="fazenda-table" style={{ margin: 0 }}>
-                    <thead><tr><th>Ingrediente</th><th style={{ textAlign: "right" }}>Consumo</th><th style={{ textAlign: "right" }}>Vlr. unit.</th><th style={{ textAlign: "right" }}>Custo</th></tr></thead>
-                    <tbody>
-                      {dados.fisico.itens.map((it) => (
-                        <tr key={it.ingrediente}>
-                          <td style={{ fontSize: "0.78rem" }}>{it.ingrediente}</td>
-                          <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{it.quantidade}</td>
-                          <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(it.valor_unitario)}</td>
-                          <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(it.custo)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              {!dados.fisico.itens.length && <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Sem consumo registrado pela Alimentação no período.</p>}
-            </div>
-          </div>
-          <RmcaSimulador dados={dados} />
-        </>
-      )}
-    </div>
-  );
-}
-
-/* ───────────────────────── Simulador de cenários (RMCA) ─────────────────────────
- * Calculadora "e se" nos moldes da planilha manual do nutricionista: uma
- * lista de ingredientes (kg/dia × R$/kg) por cenário — "dieta de hoje" ao
- * lado de "dieta pretendida" — comparada com a receita do leite do mesmo
- * período. Não lança nada; é só simulação, por isso vive só no front, sem
- * endpoint de escrita. */
-type FonteCusto = "manual" | "ultima_compra" | "padrao";
-type LinhaSimulador = {
-  id: string; nome: string; kgDia: number; fonte: FonteCusto;
-  precoManual: number; precoUltimaCompra: number | null; precoPadrao: number | null;
-};
-type FontePrecoLeite = "manual" | "media_laticinio";
-
-function diasDoPeriodo(p: { inicio: string; fim: string }): number {
-  const ini = new Date(p.inicio + "T00:00:00").getTime();
-  const fim = new Date(p.fim + "T00:00:00").getTime();
-  return Math.max(1, Math.round((fim - ini) / 86400000) + 1);
-}
-
-function linhasDoFisico(dados: RmcaResp): LinhaSimulador[] {
-  const dias = diasDoPeriodo(dados.periodo);
-  return dados.fisico.itens.map((it, i) => ({
-    id: `${it.estoque_id ?? it.ingrediente}-${i}`,
-    nome: it.ingrediente,
-    kgDia: Math.round((it.quantidade_kg / dias) * 100) / 100,
-    fonte: "padrao" as FonteCusto,
-    precoManual: it.preco_padrao_kg ?? it.valor_unitario ?? 0,
-    precoUltimaCompra: it.preco_ultima_compra_kg,
-    precoPadrao: it.preco_padrao_kg,
-  }));
-}
-
-function precoEfetivoLinha(l: LinhaSimulador): number {
-  if (l.fonte === "manual") return l.precoManual;
-  if (l.fonte === "ultima_compra") return l.precoUltimaCompra ?? l.precoPadrao ?? l.precoManual;
-  return l.precoPadrao ?? l.precoManual;
-}
-
-function TabelaCenario({ titulo, linhas, setLinhas }: {
-  titulo: string; linhas: LinhaSimulador[]; setLinhas: (fn: (atual: LinhaSimulador[]) => LinhaSimulador[]) => void;
-}) {
-  const atualizar = (id: string, campo: keyof LinhaSimulador, valor: any) =>
-    setLinhas((atual) => atual.map((l) => (l.id === id ? { ...l, [campo]: valor } : l)));
-  const remover = (id: string) => setLinhas((atual) => atual.filter((l) => l.id !== id));
-  const adicionar = () => setLinhas((atual) => [
-    ...atual, { id: `novo-${Date.now()}`, nome: "Novo ingrediente", kgDia: 0, fonte: "manual", precoManual: 0, precoUltimaCompra: null, precoPadrao: null },
-  ]);
-  const totalDia = linhas.reduce((s, l) => s + l.kgDia * precoEfetivoLinha(l), 0);
-
-  return (
-    <div className="card">
-      <div className="card-header mb-3">{titulo}</div>
-      <div className="overflow-x-auto">
-        <table className="fazenda-table" style={{ margin: 0 }}>
-          <thead>
-            <tr>
-              <th>Ingrediente</th>
-              <th style={{ textAlign: "right" }}>kg/dia</th>
-              <th>Fonte do preço</th>
-              <th style={{ textAlign: "right" }}>R$/kg</th>
-              <th style={{ textAlign: "right" }}>Subtotal/dia</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {linhas.map((l) => {
-              const preco = precoEfetivoLinha(l);
-              const semFonte = l.fonte === "ultima_compra" && l.precoUltimaCompra == null;
-              return (
-                <tr key={l.id}>
-                  <td style={{ minWidth: "10rem" }}>
-                    <input style={{ ...selStyleLote, fontSize: "0.78rem" }} value={l.nome} onChange={(e) => atualizar(l.id, "nome", e.target.value)} />
-                  </td>
-                  <td style={{ textAlign: "right" }}>
-                    <input type="number" style={{ ...selStyleLote, fontSize: "0.78rem", textAlign: "right", width: "5.5rem" }}
-                      value={l.kgDia} step="0.1" onChange={(e) => atualizar(l.id, "kgDia", Number(e.target.value) || 0)} />
-                  </td>
-                  <td style={{ minWidth: "11rem" }}>
-                    <select style={{ ...selStyleLote, fontSize: "0.78rem" }} value={l.fonte} onChange={(e) => atualizar(l.id, "fonte", e.target.value as FonteCusto)}>
-                      <option value="manual">Lançar R$/kg</option>
-                      <option value="ultima_compra">Último preço de compra{l.precoUltimaCompra == null ? " (sem compra registrada)" : ""}</option>
-                      <option value="padrao">Preço padrão do cadastro{l.precoPadrao == null ? " (sem cadastro)" : ""}</option>
-                    </select>
-                  </td>
-                  <td style={{ textAlign: "right" }}>
-                    {l.fonte === "manual" ? (
-                      <input type="number" style={{ ...selStyleLote, fontSize: "0.78rem", textAlign: "right", width: "5.5rem" }}
-                        value={l.precoManual} step="0.01" onChange={(e) => atualizar(l.id, "precoManual", Number(e.target.value) || 0)} />
-                    ) : (
-                      <span style={{ fontSize: "0.78rem", color: semFonte ? "var(--amber)" : undefined }}>{formatBRL(preco)}</span>
-                    )}
-                  </td>
-                  <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(l.kgDia * preco)}</td>
-                  <td><button className="btn-ghost" title="Remover ingrediente" onClick={() => remover(l.id)}><Trash2 size={13} /></button></td>
-                </tr>
-              );
-            })}
-          </tbody>
-          <tfoot>
-            <tr>
-              <td colSpan={4} style={{ fontWeight: 700 }}>Total diário de alimentação</td>
-              <td style={{ textAlign: "right", fontWeight: 700 }}>{formatBRL(totalDia)}</td>
-              <td></td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-      <button className="btn-ghost mt-2" style={{ fontSize: "0.75rem" }} onClick={adicionar}><Plus size={13} /> Adicionar ingrediente</button>
-    </div>
-  );
-}
-
-function RmcaSimulador({ dados }: { dados: RmcaResp }) {
-  const [aberto, setAberto] = useState(false);
-  const [cenarioA, setCenarioA] = useState<LinhaSimulador[]>(() => linhasDoFisico(dados));
-  const [cenarioB, setCenarioB] = useState<LinhaSimulador[]>(() => linhasDoFisico(dados));
-
-  const [litrosDia, setLitrosDia] = useState(1000);
-  const [fontePrecoVenda, setFontePrecoVenda] = useState<FontePrecoLeite>("manual");
-  const [precoVendaManual, setPrecoVendaManual] = useState(3.0);
-  const [litrosBezerros, setLitrosBezerros] = useState(0);
-  const [fontePrecoBezerro, setFontePrecoBezerro] = useState<FontePrecoLeite>("manual");
-  const [precoBezerroPadrao, setPrecoBezerroPadrao] = useState(3.0);
-
-  const precoMedioLaticinio = dados.preco_medio_litro_leite?.preco_por_litro ?? null;
-  const precoVenda = fontePrecoVenda === "media_laticinio" ? (precoMedioLaticinio ?? precoVendaManual) : precoVendaManual;
-  const precoBezerro = fontePrecoBezerro === "media_laticinio" ? (precoMedioLaticinio ?? precoBezerroPadrao) : precoBezerroPadrao;
-  const litrosVendidos = Math.max(0, litrosDia - litrosBezerros);
-  const receitaVenda = litrosVendidos * precoVenda;
-  const valorLeiteBezerros = litrosBezerros * precoBezerro;
-
-  const custoA = cenarioA.reduce((s, l) => s + l.kgDia * precoEfetivoLinha(l), 0);
-  const custoB = cenarioB.reduce((s, l) => s + l.kgDia * precoEfetivoLinha(l), 0);
-  const pctA = receitaVenda > 0 ? (custoA / receitaVenda) * 100 : null;
-  const pctB = receitaVenda > 0 ? (custoB / receitaVenda) * 100 : null;
-
-  const recarregarDoFisico = (coluna: "A" | "B") => {
-    const linhas = linhasDoFisico(dados);
-    if (coluna === "A") setCenarioA(linhas); else setCenarioB(linhas);
-  };
-
-  return (
-    <div className="card mt-4">
-      <div className="card-header mb-3 flex items-center justify-between">
-        <span>Simulador de cenários</span>
-        <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setAberto((v) => !v)}>
-          {aberto ? "Recolher" : "Abrir simulador"}
-        </button>
-      </div>
-      {!aberto && (
-        <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-          Compare o custo diário de alimentação de dois cenários (ex.: a dieta de hoje × uma dieta que você está pensando em fazer) contra a receita do leite — mesma mecânica da planilha manual, mas recalculando ao vivo.
-        </p>
-      )}
-      {aberto && (
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: 0 }}>
-              Os dois cenários já vêm pré-preenchidos com o consumo real do RMCA físico no período — edite livremente, ou recarregue a partir do real a qualquer momento.
-            </p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <div>
-              <TabelaCenario titulo="Cenário A — Dieta de hoje" linhas={cenarioA} setLinhas={setCenarioA} />
-              <button className="btn-ghost mt-1" style={{ fontSize: "0.72rem" }} onClick={() => recarregarDoFisico("A")}>
-                <Undo2 size={12} /> Recarregar do RMCA físico
-              </button>
-            </div>
-            <div>
-              <TabelaCenario titulo="Cenário B — Dieta pretendida" linhas={cenarioB} setLinhas={setCenarioB} />
-              <button className="btn-ghost mt-1" style={{ fontSize: "0.72rem" }} onClick={() => recarregarDoFisico("B")}>
-                <Undo2 size={12} /> Recarregar do RMCA físico
-              </button>
-            </div>
-          </div>
-
-          <div className="card mb-4" style={{ background: "var(--surface-2)" }}>
-            <div className="card-header mb-3">Receita do leite (usada nos dois cenários)</div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <div className="flex flex-wrap gap-3 items-end mb-2">
-                  <div><label style={labelStyleLote}>Litros produzidos/dia</label>
-                    <input type="number" style={selStyleLote} value={litrosDia} step="10" onChange={(e) => setLitrosDia(Number(e.target.value) || 0)} /></div>
-                  <div><label style={labelStyleLote}>Fonte do preço de venda</label>
-                    <select style={selStyleLote} value={fontePrecoVenda} onChange={(e) => setFontePrecoVenda(e.target.value as FontePrecoLeite)}>
-                      <option value="manual">Valor digitado</option>
-                      <option value="media_laticinio">Média paga pelo laticínio{precoMedioLaticinio == null ? " (sem dado ainda)" : ""}</option>
-                    </select></div>
-                  {fontePrecoVenda === "manual" && (
-                    <div><label style={labelStyleLote}>R$/litro</label>
-                      <input type="number" style={selStyleLote} value={precoVendaManual} step="0.01" onChange={(e) => setPrecoVendaManual(Number(e.target.value) || 0)} /></div>
-                  )}
-                </div>
-                {dados.preco_medio_litro_leite && (
-                  <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                    Última nota do laticínio ({mesCompLabel(dados.preco_medio_litro_leite.competencia)}): {formatBRL(dados.preco_medio_litro_leite.preco_por_litro)}/L
-                    ({formatBRL(dados.preco_medio_litro_leite.receita)} ÷ {dados.preco_medio_litro_leite.litros.toLocaleString("pt-BR")} L).
-                  </p>
-                )}
-              </div>
-              <div>
-                <div className="flex flex-wrap gap-3 items-end mb-2">
-                  <div><label style={labelStyleLote}>Leite p/ bezerros (L/dia)</label>
-                    <input type="number" style={selStyleLote} value={litrosBezerros} step="1" onChange={(e) => setLitrosBezerros(Number(e.target.value) || 0)} /></div>
-                  <div><label style={labelStyleLote}>Fonte do valor atribuído</label>
-                    <select style={selStyleLote} value={fontePrecoBezerro} onChange={(e) => setFontePrecoBezerro(e.target.value as FontePrecoLeite)}>
-                      <option value="manual">Valor padrão digitado</option>
-                      <option value="media_laticinio">Média paga pelo laticínio{precoMedioLaticinio == null ? " (sem dado ainda)" : ""}</option>
-                    </select></div>
-                  {fontePrecoBezerro === "manual" && (
-                    <div><label style={labelStyleLote}>R$/litro (padrão)</label>
-                      <input type="number" style={selStyleLote} value={precoBezerroPadrao} step="0.01" onChange={(e) => setPrecoBezerroPadrao(Number(e.target.value) || 0)} /></div>
-                  )}
-                </div>
-                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                  Litros produzidos são descontados do leite fornecido a bezerros antes de calcular a receita de venda; o valor do leite de bezerro aparece à parte, informativo.
-                </p>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
-              <KPI v={`${litrosVendidos.toLocaleString("pt-BR")} L`} l="Litros disponíveis p/ venda" />
-              <KPI v={formatBRL(receitaVenda)} l="Receita de venda" c="var(--green-light)" />
-              <KPI v={formatBRL(valorLeiteBezerros)} l="Valor do leite p/ bezerros" />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {[{ nome: "Cenário A", custo: custoA, pct: pctA }, { nome: "Cenário B", custo: custoB, pct: pctB }].map((c) => (
-              <div key={c.nome} className="card" style={{ borderColor: c.pct != null && c.pct >= 45 ? "var(--red)" : undefined }}>
-                <div className="card-header mb-3">{c.nome}</div>
-                <div className="grid grid-cols-1 gap-3">
-                  <KPI v={formatBRL(c.custo)} l="Custo de alimentação/dia" c="var(--red)" />
-                  <KPI v={c.pct != null ? `${c.pct.toFixed(2)}%` : "—"} l="Custo ÷ Receita de venda" c={c.pct != null && c.pct >= 45 ? "var(--red)" : "var(--green-light)"} />
-                </div>
-                {c.pct != null && (
-                  <div style={{ height: "0.5rem", borderRadius: "99px", background: "var(--surface-2)", overflow: "hidden", marginTop: "0.6rem" }}>
-                    <div style={{ height: "100%", width: `${Math.min(c.pct, 100)}%`, background: c.pct >= 45 ? "var(--red)" : "var(--green-light)" }} />
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-type CustoLitroLeiteResp = {
-  periodo: { inicio: string; fim: string }; configurado: boolean; tem_entrega: boolean;
-  contas_custo: string[]; litros: number; custo_total: number; custo_por_litro: number | null;
-  // Só com as regras v2 (PR 4): mês fechado e kg convertido para litro.
-  regras_v2?: boolean; periodo_ajustado_para_mes_fechado?: boolean; litros_convertidos_de_kg?: boolean;
-  avisos?: string[];
-};
-
-function CustoLitroLeiteView() {
-  const [dataInicio, setDataInicio] = useState(() => primeiroDiaDoMes());
-  const [dataFim, setDataFim] = useState(() => hojeLocal());
-  const [dados, setDados] = useState<CustoLitroLeiteResp | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-
-  // Mesma trava de resposta desatualizada de RmcaView, acima — ver o
-  // comentário lá para a explicação completa do 422 intermitente.
-  useEffect(() => {
-    let vivo = true;
-    fetchCustoLitroLeite(dataInicio, dataFim).then((r) => { if (vivo) { setDados(r); setErro(null); } })
-      .catch((e) => { if (vivo) setErro(e.message); });
-    return () => { vivo = false; };
-  }, [dataInicio, dataFim]);
-
-  return (
-    <div>
-      <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Período</div>
-        <div className="flex flex-wrap gap-3 items-end">
-          <div><label style={labelStyleLote}>Início</label><input type="date" style={selStyleLote} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Fim</label><input type="date" style={selStyleLote} value={dataFim} onChange={(e) => setDataFim(e.target.value)} /></div>
-        </div>
-      </div>
-
-      {erro && <div className="alert-critico mb-3"><span>Sem dados: {erro}.</span></div>}
-      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {dados && (
-        <>
-          {!dados.configurado && (
-            <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
-              <p style={{ fontSize: "0.85rem", color: "var(--amber)" }}>
-                Nenhuma conta gerencial está marcada como custo de alimentação — o custo fica zerado até a configuração ser feita.
-                Marque em <strong>Configurações → Parâmetros financeiros → Conta gerencial</strong>.
-              </p>
-            </div>
-          )}
-          {!dados.tem_entrega && (
-            <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
-              <p style={{ fontSize: "0.85rem", color: "var(--amber)" }}>
-                Nenhuma entrega mensal de leite cadastrada — sem litros no período, o custo por litro fica indefinido.
-                Lance em <strong>Lançamentos → Produção → Venda mensal do leite</strong>.
-              </p>
-            </div>
-          )}
-          <div className="card">
-            <div className="card-header mb-3">Custo por litro de leite</div>
-            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-              {dados.regras_v2
-                ? <>Custo de alimentação do período (mesmas contas marcadas para o RMCA, com o desconto da nota rateado) dividido pelos
-                  litros de leite entregues (Venda mensal do leite), sempre por mês fechado ({formatDate(dados.periodo.inicio)} a {formatDate(dados.periodo.fim)}).</>
-                : <>Custo de alimentação do período (mesmas contas marcadas para o RMCA) dividido pelos litros de leite entregues
-                  no período (Venda mensal do leite), projetados proporcionalmente por dia quando o período não cobre o mês inteiro.</>}
-            </p>
-            {(dados.avisos?.length ?? 0) > 0 && (
-              <ul className="mb-3" style={{ listStyle: "none", padding: 0, margin: "0 0 0.75rem", fontSize: "0.76rem", color: "var(--amber)" }}>
-                {dados.avisos!.map((a) => <li key={a}>{a}</li>)}
-              </ul>
-            )}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-              <KPI v={formatBRL(dados.custo_total)} l="Custo de alimentação" c="var(--red)" />
-              <KPI v={`${dados.litros.toLocaleString("pt-BR")} L`} l="Litros entregues" c="var(--dourado-light)" />
-              <KPI v={dados.custo_por_litro != null ? formatBRL(dados.custo_por_litro) : "—"} l="Custo por litro" c="var(--green-light)" />
-            </div>
-            {dados.contas_custo.length > 0 && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Custo: {dados.contas_custo.join(", ")}</p>}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-// Regras novas (Fase A): COT = despesas operacionais + depreciação do período
-// (PR 9: com filtro de centro, a do centro + o rateio dos bens sem centro).
-type CustoCotV2 = { regras_v2?: boolean; depreciacao_periodo?: number; cot?: number; depreciacao_rateio?: RateioDepreciacao | null };
-type CustoHectareResp = CustoCotV2 & {
-  periodo: { inicio: string; fim: string }; centro_custo: string | null; area_configurada: boolean;
-  area_hectares: number | null; despesas_total: number; custo_por_hectare: number | null; cot_por_hectare?: number | null;
-};
-
-function CotDepreciacao({ dados, divisor }: { dados: CustoCotV2; divisor?: { valor: number | null | undefined; rotulo: string } }) {
-  if (!dados.regras_v2 || dados.cot == null) return null;
-  return (
-    <div className="mb-1">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-2">
-        <KPI v={formatBRL(dados.depreciacao_periodo ?? 0)} l="Depreciação do período" c="var(--amber)" />
-        <KPI v={formatBRL(dados.cot)} l="COT (despesas + depreciação)" c="var(--red)" />
-        {divisor && <KPI v={divisor.valor != null ? formatBRL(divisor.valor) : "—"} l={divisor.rotulo} c="var(--green-light)" />}
-      </div>
-      {dados.depreciacao_rateio && <NotaRateioDepreciacao rateio={dados.depreciacao_rateio} />}
-    </div>
-  );
-}
-
-function CustoHectareView() {
-  const [dataInicio, setDataInicio] = useState(() => primeiroDiaDoMes());
-  const [dataFim, setDataFim] = useState(() => hojeLocal());
-  const [centroCusto, setCentroCusto] = useState("");
-  const [centros, setCentros] = useState<string[]>([]);
-  const [dados, setDados] = useState<CustoHectareResp | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-
-  useEffect(() => { fetchCentrosCusto().then((d) => setCentros(d.filter((c: any) => c.ativo).map((c: any) => c.nome))).catch(() => {}); }, []);
-  useEffect(() => {
-    fetchCustoHectare(dataInicio, dataFim, centroCusto || undefined).then(setDados).catch((e) => setErro(e.message));
-  }, [dataInicio, dataFim, centroCusto]);
-
-  return (
-    <div>
-      <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Período</div>
-        <div className="flex flex-wrap gap-3 items-end">
-          <div><label style={labelStyleLote}>Início</label><input type="date" style={selStyleLote} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Fim</label><input type="date" style={selStyleLote} value={dataFim} onChange={(e) => setDataFim(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Centro de custo</label>
-            <select style={selStyleLote} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
-              <option value="">Todos</option>{centros.map((c) => <option key={c}>{c}</option>)}
-            </select></div>
-        </div>
-      </div>
-
-      {erro && <div className="alert-critico mb-3"><span>Sem dados: {erro}.</span></div>}
-      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {dados && (
-        <>
-          {!dados.area_configurada && (
-            <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
-              <p style={{ fontSize: "0.85rem", color: "var(--amber)" }}>
-                Área total da fazenda ainda não foi cadastrada — o custo por hectare fica indefinido até a configuração ser feita.
-                Cadastre em <strong>Configurações → Parâmetros → Estrutura da fazenda</strong>.
-              </p>
-            </div>
-          )}
-          <div className="card">
-            <div className="card-header mb-3">Custo por hectare</div>
-            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-              Despesas do período (ContaGerencial, por competência{dados.centro_custo ? `, centro de custo "${dados.centro_custo}"` : ""})
-              dividido pela área total da fazenda em hectares.
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-              <KPI v={formatBRL(dados.despesas_total)} l="Despesas do período" c="var(--red)" />
-              <KPI v={dados.area_hectares != null ? `${dados.area_hectares.toLocaleString("pt-BR")} ha` : "—"} l="Área total" c="var(--dourado-light)" />
-              <KPI v={dados.custo_por_hectare != null ? formatBRL(dados.custo_por_hectare) : "—"} l="Custo por hectare" c="var(--green-light)" />
-            </div>
-            <CotDepreciacao dados={dados} divisor={{ valor: dados.cot_por_hectare, rotulo: "COT por hectare" }} />
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-type CustoVacaLoteResp = CustoCotV2 & {
-  cot_por_vaca?: number | null;
-  periodo: { inicio: string; fim: string }; centro_custo: string | null; tem_vacas_no_periodo: boolean;
-  num_vacas: number; despesas_total: number; custo_por_vaca: number | null;
-  por_lote: { lote: string; num_vacas: number; custo_alocado: number; custo_por_vaca: number }[];
-};
-
-function CustoVacaLoteView() {
-  const [dataInicio, setDataInicio] = useState(() => primeiroDiaDoMes());
-  const [dataFim, setDataFim] = useState(() => hojeLocal());
-  const [centroCusto, setCentroCusto] = useState("");
-  const [centros, setCentros] = useState<string[]>([]);
-  const [dados, setDados] = useState<CustoVacaLoteResp | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-
-  useEffect(() => { fetchCentrosCusto().then((d) => setCentros(d.filter((c: any) => c.ativo).map((c: any) => c.nome))).catch(() => {}); }, []);
-  useEffect(() => {
-    fetchCustoVacaLote(dataInicio, dataFim, centroCusto || undefined).then(setDados).catch((e) => setErro(e.message));
-  }, [dataInicio, dataFim, centroCusto]);
-
-  return (
-    <div>
-      <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Período</div>
-        <div className="flex flex-wrap gap-3 items-end">
-          <div><label style={labelStyleLote}>Início</label><input type="date" style={selStyleLote} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Fim</label><input type="date" style={selStyleLote} value={dataFim} onChange={(e) => setDataFim(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Centro de custo</label>
-            <select style={selStyleLote} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
-              <option value="">Todos</option>{centros.map((c) => <option key={c}>{c}</option>)}
-            </select></div>
-        </div>
-      </div>
-
-      {erro && <div className="alert-critico mb-3"><span>Sem dados: {erro}.</span></div>}
-      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {dados && (
-        <>
-          {!dados.tem_vacas_no_periodo && (
-            <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
-              <p style={{ fontSize: "0.85rem", color: "var(--amber)" }}>
-                Nenhuma vaca com Controle leiteiro lançado no período — o custo por vaca fica indefinido.
-                Lance em <strong>Lançamentos → Produção → Controle leiteiro</strong>.
-              </p>
-            </div>
-          )}
-          <div className="card mb-4">
-            <div className="card-header mb-3">Custo por vaca</div>
-            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-              Despesas do período (ContaGerencial, por competência{dados.centro_custo ? `, centro de custo "${dados.centro_custo}"` : dados.regras_v2 ? ", todos os centros de custo" : ""})
-              dividido pelo número de vacas com ao menos um Controle leiteiro lançado no período.
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-              <KPI v={formatBRL(dados.despesas_total)} l="Despesas do período" c="var(--red)" />
-              <KPI v={String(dados.num_vacas)} l="Vacas em lactação" c="var(--dourado-light)" />
-              <KPI v={dados.custo_por_vaca != null ? formatBRL(dados.custo_por_vaca) : "—"} l="Custo por vaca" c="var(--green-light)" />
-            </div>
-            <CotDepreciacao dados={dados} divisor={{ valor: dados.cot_por_vaca, rotulo: "COT por vaca" }} />
-          </div>
-          {dados.por_lote.length > 0 && (
-            <div className="card">
-              <div className="card-header mb-3">Custo por lote</div>
-              <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-                Rateio proporcional ao número de vacas de cada lote sobre o total — não há vínculo direto
-                entre lançamento financeiro e lote/animal, então cada lote recebe sua fatia do custo total
-                pelo peso de cabeças.
-              </p>
-              <table className="w-full" style={{ fontSize: "0.82rem" }}>
-                <thead>
-                  <tr style={{ textAlign: "left", color: "var(--text-muted)" }}>
-                    <th style={{ padding: "0.3rem 0.5rem" }}>Lote</th>
-                    <th style={{ padding: "0.3rem 0.5rem" }}>Vacas</th>
-                    <th style={{ padding: "0.3rem 0.5rem" }}>Custo alocado</th>
-                    <th style={{ padding: "0.3rem 0.5rem" }}>Custo por vaca</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dados.por_lote.map((l) => (
-                    <tr key={l.lote} style={{ borderTop: "1px solid var(--border)" }}>
-                      <td style={{ padding: "0.3rem 0.5rem" }}>{l.lote}</td>
-                      <td style={{ padding: "0.3rem 0.5rem" }}>{l.num_vacas}</td>
-                      <td style={{ padding: "0.3rem 0.5rem" }}>{formatBRL(l.custo_alocado)}</td>
-                      <td style={{ padding: "0.3rem 0.5rem" }}>{formatBRL(l.custo_por_vaca)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-type SafraOpcao = { id: number; nome: string; centro_custo: string; hectares: number; toneladas_produzidas: number; ativo: boolean };
-type CustoSafraResp = CustoCotV2 & {
-  safra: SafraOpcao & { data_inicio: string; data_fim: string; observacao: string | null };
-  por_categoria: { codigo: string; descricao: string; valor: number }[];
-  despesas_total: number; hectares: number | null; toneladas_produzidas: number | null;
-  custo_por_hectare: number | null; custo_por_tonelada: number | null;
-};
-
-// Opção A do plano de custo agrícola (silagem): em vez de período/centro de
-// custo livres como os relatórios acima, aqui o usuário escolhe a Safra já
-// cadastrada (Configurações > Cadastro > Safra) — ela já traz o centro de
-// custo e o período embutidos.
-function CustoSafraView() {
-  const [safras, setSafras] = useState<SafraOpcao[]>([]);
-  const [safraId, setSafraId] = useState<number | "">("");
-  const [dados, setDados] = useState<CustoSafraResp | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchSafras().then((lista: SafraOpcao[]) => {
-      setSafras(lista);
-      const primeira = lista.find((s) => s.ativo) ?? lista[0];
-      if (primeira) setSafraId(primeira.id);
-    }).catch((e) => setErro(e.message));
-  }, []);
-
-  useEffect(() => {
-    if (safraId === "") return;
-    setDados(null);
-    fetchCustoSafra(Number(safraId)).then(setDados).catch((e) => setErro(e.message));
-  }, [safraId]);
-
-  return (
-    <div>
-      <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Safra</div>
-        {!safras.length && !erro && (
-          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-            Nenhuma safra cadastrada ainda. Cadastre em <strong>Configurações → Cadastro → Safra</strong>
-            (nome, centro de custo, período, hectares e toneladas produzidas).
-          </p>
-        )}
-        {!!safras.length && (
-          <select style={selStyleLote} value={safraId} onChange={(e) => setSafraId(Number(e.target.value))}>
-            {safras.map((s) => <option key={s.id} value={s.id}>{s.nome}{!s.ativo ? " (inativa)" : ""}</option>)}
-          </select>
-        )}
-      </div>
-
-      {erro && <div className="alert-critico mb-3"><span>Sem dados: {erro}.</span></div>}
-
-      {dados && (
-        <>
-          <div className="card mb-4">
-            <div className="card-header mb-3">Custo por safra — {dados.safra.nome}</div>
-            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-              Despesas lançadas no centro de custo "{dados.safra.centro_custo}" entre{" "}
-              {dados.safra.data_inicio.split("-").reverse().join("/")} e {dados.safra.data_fim.split("-").reverse().join("/")},
-              divididas pelos {dados.hectares?.toLocaleString("pt-BR")} ha e {dados.toneladas_produzidas?.toLocaleString("pt-BR")} ton cadastrados na safra.
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
-              <KPI v={formatBRL(dados.despesas_total)} l="Despesas do período" c="var(--red)" />
-              <KPI v={dados.hectares != null ? `${dados.hectares.toLocaleString("pt-BR")} ha` : "—"} l="Hectares" c="var(--dourado-light)" />
-              <KPI v={dados.custo_por_hectare != null ? formatBRL(dados.custo_por_hectare) : "—"} l="Custo por hectare" c="var(--green-light)" />
-              <KPI v={dados.custo_por_tonelada != null ? formatBRL(dados.custo_por_tonelada) : "—"} l="Custo por tonelada" c="var(--green-light)" />
-            </div>
-            <CotDepreciacao dados={dados} />
-          </div>
-
-          {dados.por_categoria.length > 0 && (
-            <div className="card">
-              <div className="card-header mb-3">Quebra por categoria</div>
-              <div className="overflow-x-auto">
-                <table className="w-full" style={{ fontSize: "0.82rem" }}>
-                  <thead>
-                    <tr style={{ textAlign: "left", color: "var(--text-muted)" }}>
-                      <th style={{ padding: "0.3rem 0.5rem" }}>Categoria</th>
-                      <th style={{ padding: "0.3rem 0.5rem", textAlign: "right" }}>Valor</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dados.por_categoria.map((cat) => (
-                      <tr key={cat.codigo} style={{ borderTop: "1px solid var(--border)" }}>
-                        <td style={{ padding: "0.3rem 0.5rem" }}>{cat.codigo} — {cat.descricao || "Sem descrição"}</td>
-                        <td style={{ padding: "0.3rem 0.5rem", textAlign: "right" }}>{formatBRL(cat.valor)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </>
-      )}
     </div>
   );
 }

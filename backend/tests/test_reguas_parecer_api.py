@@ -350,6 +350,18 @@ def test_exportar_com_reguas_desligado_por_padrao(ambiente, publicado):
     assert sem.status_code == 201 and sem.json()["rodape"] is None and sem.json()["com_reguas"] is False
 
 
+def test_get_diz_se_a_fazenda_permite_exportar_com_reguas(ambiente):
+    c, _engine, como, _ids = ambiente
+    como("oper1", 1)
+    assert c.get("/financeiro/reguas-referencia").json()["exportacao"] == {"permitir_com_reguas": False}
+    como("admin1", 1)
+    _ligar_exportacao(c)
+    como("oper1", 1)
+    assert c.get("/financeiro/reguas-referencia").json()["exportacao"] == {"permitir_com_reguas": True}
+    como("admin2", 2)
+    assert c.get("/financeiro/reguas-referencia").json()["exportacao"] == {"permitir_com_reguas": False}
+
+
 def test_parametro_so_admin_e_nunca_pelo_painel(ambiente):
     c, engine, como, _ids = ambiente
     como("oper1", 1)

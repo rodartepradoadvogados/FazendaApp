@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, X, Loader2, AlertTriangle } from "lucide-react";
 import { fetchPessoas, fetchOpcoesValeItem, formatBRL, formatDate, type ValeItemOpcoes } from "@/lib/api";
 import { Modal } from "@/components/Modal";
+import { larguraDobrada } from "@/lib/janelas";
 import { MobVoltar } from "@/components/mobile/ui";
 
 const inputStyle: React.CSSProperties = {
@@ -355,7 +356,7 @@ export default function ValeItemModal({
   }
 
   return (
-    <Modal title="Vale de funcionário" onClose={onCancelar} width="560px">
+    <Modal title="Vale de funcionário" onClose={onCancelar} width={larguraDobrada(560)}>
       {conteudo}
     </Modal>
   );

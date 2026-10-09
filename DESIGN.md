@@ -213,6 +213,12 @@ Easing de chegada `cubic-bezier(0.16, 1, 0.3, 1)` (desaceleração natural); sa�
 - **TabBar (pílula):** ativa = fundo/borda marinho, texto ouro-claro, peso 700; inativa = transparente, texto mudo.
 - **MultiFiltro (dropdown de seleção múltipla):** botão mostra resumo ("Todos" / label / "N selecionados"); painel em portal com checkbox customizado (marcado = fundo/borda ouro).
 
+### Janelas (Modal e gaveta)
+- **Modal** (`components/Modal.tsx`) e **gaveta** (`GavetaLancamento`) são as duas únicas janelas suspensas. Clique no fundo escurecido nunca fecha nenhuma delas.
+- **Janela travada** (baixa, pagamento, recebimento): `fecharComEsc={false}` (Modal ou gaveta) — só o X fecha. "Dar baixa" é a gaveta com `largura={LARGURA_GAVETA_BAIXA}` (`min(1120px, 100vw)`); se já houve edição, o X pede confirmação (`MSG_SAIR_SEM_SALVAR`).
+- **Larguras num lugar só**: `frontend/lib/janelas.ts` (`larguraDobrada(px)` = dobro, teto 1120px, nunca mais que 95vw). Confirmação simples (só texto + botões) mantém a largura estreita.
+- **Esc aninhado**: toda janela entra na pilha de `useOverlay`; o Esc age só na do topo (e só se ela permitir). Overlay novo feito à mão deve usar `useOverlay` em vez de ouvir `keydown` por conta própria.
+
 ### Empty / Dropzone
 - **Estado vazio:** borda tracejada, ícone + texto mudo, fundo `surface-2` — nunca só texto solto.
 - **Dropzone de upload:** borda tracejada 2px, destaca borda/fundo em `vinho-light` translúcido no hover/drag.

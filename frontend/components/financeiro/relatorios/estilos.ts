@@ -45,6 +45,7 @@ export const CSS_RELATORIO = `
 .rl-mig [aria-current="page"]{color:var(--text);font-weight:700}
 
 /* Cabeçalho, frase-resumo */
+.rl-cab.com-acao{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:.6rem 1rem}
 .rl-cab h2{font-size:1.75rem;font-weight:700;letter-spacing:-.02em;color:var(--text);margin:0;line-height:1.15}
 .rl-cab h2:focus,.rl-cab h2:focus-visible{outline:none!important;box-shadow:none!important}
 .rl-cab p{margin:.25rem 0 0;font-size:.82rem;color:var(--text-muted)}
@@ -71,6 +72,8 @@ button.rl-kpi{cursor:pointer}button.rl-kpi:hover{background:var(--surface-2)}
 /* Painéis, gráfico */
 .rl-painel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:.85rem .95rem;min-width:0}
 .rl-tit{font-size:.75rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text-accent);margin:0 0 .65rem}
+.rl-cab-painel{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.4rem .75rem;margin:0 0 .65rem}
+.rl-cab-painel .rl-tit{margin:0}
 .rl-graf svg.rl-svg{display:block;width:100%;height:auto;overflow:visible}
 .rl-graf text{fill:var(--text-muted);font-size:12px;font-family:var(--font-body)}
 .rl-graf .forte{fill:var(--text);font-weight:700}
@@ -83,7 +86,9 @@ button.rl-kpi{cursor:pointer}button.rl-kpi:hover{background:var(--surface-2)}
 .rl-dois{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:.75rem}
 
 /* Tabela Atual | Comparação | Δ | Δ% */
-.rl-tw{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r-sm)}
+/* position:relative: o texto só para leitor de tela (.rl-sr, absoluto) das células roladas fica DENTRO da
+   rolagem da tabela — sem ele vazava do card e a página rolava de lado a 390 px (achado por C1 e C2). */
+.rl-tw{overflow-x:auto;position:relative;border:1px solid var(--border);border-radius:var(--r-sm)}
 .rl-tab{margin:0}
 .rl-tab th.r,.rl-tab td.r{text-align:right;white-space:nowrap}
 .rl-tab td{vertical-align:top}

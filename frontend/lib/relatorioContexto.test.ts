@@ -109,6 +109,12 @@ test("formatação pt-BR com sinal de menos tipográfico", () => {
   assert.equal(formatar(10320, "litros"), "10.320 L");
   assert.equal(formatarDelta(-1.2, "pct"), "−1,2 p.p.");
   assert.equal(formatarDelta(462.1, "brl0"), "+R$ 462");
+  // "num" (Fase C: C1 usava "num0" para dias de fôlego e C2 "num" para contagens — um formato só):
+  // inteiro sem unidade, e o que arredonda para zero não vira "−0".
+  assert.equal(formatar(1234, "num"), "1.234");
+  assert.equal(formatar(-3, "num"), "−3");
+  assert.equal(formatar(-0.4, "num"), "0");
+  assert.equal(formatarDelta(-12, "num"), "−12");
   const set = periodoDe("m:2026-09")!;
   assert.equal(resumoContexto(set, comparacaoDe(set, "aa"), "comp", "Pecuária Leiteira"), "set/26 · vs set/25 · mês do gasto · Pecuária Leiteira");
   assert.equal(resumoContexto(set, null, "caixa", "todos"), "set/26 · dia do pagamento · todos os centros");

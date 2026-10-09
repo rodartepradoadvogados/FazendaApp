@@ -19,16 +19,21 @@ registrar que leu o aviso e poder apontar um erro — nada disso é lançamento.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
-from sqlmodel import Session
+from datetime import date
+from typing import Optional
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
+from sqlmodel import Session, select
+
+from fazenda.auth import eh_email_dono_equivalente, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
-from fazenda.models import Usuario
+from fazenda.models import PlanoContaGerencial, Usuario
 from fazenda.models.juridico import LIMITE_TEXTO_ERRO, ReguaErroReportado
 from fazenda.rules import aceites, reguas_referencia
 from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.rules.parametros import exportar_com_reguas_permitido, regras_v2_ativas
+from fazenda.rules.reguas_indicadores import indicadores_da_fazenda
 
 router = APIRouter(prefix="/financeiro/reguas-referencia", tags=["financeiro"])
 router_registros = APIRouter(prefix="/financeiro/reguas-referencia", tags=["financeiro"])
@@ -57,7 +62,65 @@ def reguas_de_referencia(
     carga = reguas_referencia.publico(ocultar_faixas=aceite["pendente"])
     carga["aceite"] = aceite
     carga["aceite_pendente"] = aceite["pendente"]
+    # Parecer 6.2: a tela só oferece "exportar com réguas" se a fazenda ligou o parâmetro.
+    carga["exportacao"] = {"permitir_com_reguas": exportar_com_reguas_permitido(session, fazenda_id)}
     return carga
+
+
+@router.get("/indicadores-fazenda")
+def indicadores_fazenda(
+    data_inicio: date = Query(..., description="Data inicial"),
+    data_fim: date = Query(..., description="Data final"),
+    regime: str = Query("competencia", description="'competencia' ou 'caixa' (o mesmo da DRE)"),
+    centro_custo: Optional[str] = Query(None),
+    hoje: Optional[date] = Query(None, description="'Hoje' do front (hojeLocal), para o saldo do caixa"),
+    session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """O número da fazenda de cada régua no período (ver rules/reguas_indicadores.py):
+    as MESMAS linhas da DRE e do Resultado por litro do servidor, e o saldo de hoje
+    do Caixa real (só para quem vê o caixa: administrador). Nenhuma faixa sai daqui."""
+    if data_fim < data_inicio:
+        raise HTTPException(status_code=422, detail="A data final é anterior à inicial.")
+    if regime not in ("competencia", "caixa"):
+        raise HTTPException(status_code=422, detail="Regime deve ser 'competencia' ou 'caixa'.")
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    # Imports tardios: financeiro.py é o dono do motor da DRE e do Caixa real.
+    from fazenda.api.routers.financeiro import caixa_real, calcular_dre, leite_e_alimentacao_por_registros
+    from fazenda.api.routers.relatorio_resultado_litro import _entregas
+    from fazenda.rules.custo_leite import litros_leite_no_periodo
+    from fazenda.rules.resultado_litro import indicadores_por_litro, meses_no_periodo
+
+    regras_v2 = regras_v2_ativas(session, fazenda_id)
+    query_plano = select(PlanoContaGerencial)
+    if fazenda_id is not None:
+        query_plano = query_plano.where(PlanoContaGerencial.fazenda_id == fazenda_id)
+    plano = session.exec(query_plano).all()
+    codigos_receita = {c.codigo for c in plano if c.rmca_receita_leite}
+    codigos_custo = {c.codigo for c in plano if c.rmca_custo_alimentacao}
+    entregas, _ = _entregas(session, fazenda_id, regras_v2)
+
+    dre = calcular_dre(session, fazenda_id, data_inicio, data_fim, centro_custo, regime, regras_v2=regras_v2)
+    linhas = {linha["chave"]: linha["valor"] for linha in dre["cascata"]}
+    leite = leite_e_alimentacao_por_registros(dre.get("_registros") or [], codigos_receita, codigos_custo)
+    litro = indicadores_por_litro(
+        linhas=linhas, leite=leite, litros=litros_leite_no_periodo(entregas, data_inicio, data_fim),
+        meses=meses_no_periodo(data_inicio, data_fim),
+    )
+
+    saldo, motivo_saldo = None, None
+    if user.papel == "admin" or eh_email_dono_equivalente(getattr(user, "email", None)):
+        saldo = caixa_real(dias=1, hoje=hoje, session=session, fazenda_id=fazenda_id, _=user)["saldo_inicial"]
+    else:
+        motivo_saldo = "O saldo do caixa só aparece para o administrador da fazenda."
+    return {
+        "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
+        "regime": regime,
+        "centro_custo": centro_custo,
+        "regras_v2": regras_v2,
+        "indicadores": indicadores_da_fazenda(litro=litro, linhas=linhas, saldo_caixa=saldo, motivo_saldo=motivo_saldo),
+    }
 
 
 @router_registros.get("/aceite")

@@ -32,7 +32,8 @@ export function BarraContexto({ ctx, hoje, centros, onExportar, podeExportar }: 
 
   const tipo = periodo.tipo;
   const opcoes = tipo === "l" ? [] : opcoesPeriodo(tipo, hoje, periodo.cod);
-  const cmpVal: ModoComparacao = estado.cmp;
+  const cmpVal: ModoComparacao = efetivo.cmp;
+  const perTravado = !!travas.per;
 
   const exportar = async (t: AcaoExportar) => {
     setGerando(t);
@@ -40,10 +41,10 @@ export function BarraContexto({ ctx, hoje, centros, onExportar, podeExportar }: 
   };
 
   // "Comparar com qual período": lista do mesmo tipo (o padrão marcado) ou datas livres.
-  const padraoCmp = estado.cmp === "aa" ? anoAnterior(periodo) : deslocar(periodo, -1);
+  const padraoCmp = efetivo.cmp === "aa" ? anoAnterior(periodo) : deslocar(periodo, -1);
   const cmpAtual = comparacao && comparacao.tipo === "periodo" ? comparacao.periodo : null;
   const cmpLivre = !!cmpAtual && (tipo === "l" || cmpAtual.tipo === "l");
-  const mostraQual = ["ant", "aa", "outro"].includes(estado.cmp);
+  const mostraQual = ["ant", "aa", "outro"].includes(efetivo.cmp);
   const opcoesCmp = tipo === "l" ? [] : opcoesPeriodo(tipo, hoje, cmpAtual?.cod).filter((o) => o.v !== periodo.cod);
 
   const centrosOpc = Array.from(new Set(centros.filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR"));
@@ -52,45 +53,52 @@ export function BarraContexto({ ctx, hoje, centros, onExportar, podeExportar }: 
   return (
     <div className={`rl-ctx rl-noprint${aberta ? " aberta" : ""}`} role="region" aria-label="Contexto do relatório">
       <div className="rl-ctx-sum">
-        <span>{resumoContexto(periodo, comparacao, efetivo.reg, efetivo.cc)}</span>
+        <span>{travas.per === false ? [travas.rotuloPeriodo, resumoContexto(periodo, null, efetivo.reg, efetivo.cc).split(" · ").slice(1).join(" · ")].filter(Boolean).join(" · ") : resumoContexto(periodo, comparacao, efetivo.reg, efetivo.cc)}</span>
         <button type="button" className="rl-btn" aria-expanded={aberta} aria-controls={id("linha")} onClick={() => setAberta((v) => !v)}>
           <SlidersHorizontal size={15} aria-hidden /> {aberta ? "Fechar" : "Filtros"}
         </button>
       </div>
       <div className="rl-ctx-row" id={id("linha")}>
+        {travas.per === false ? (
+          <div className="rl-campo">
+            <span className="rl-rot">Período</span>
+            <span className="rl-in" aria-disabled="true" style={{ display: "inline-flex", alignItems: "center", gap: ".35rem", color: "var(--text-muted)" }}><Lock size={13} aria-hidden /> {travas.rotuloPeriodo || "fixo neste relatório"}</span>
+          </div>
+        ) : (<>
         <div className="rl-campo">
           <label htmlFor={id("tipo")}>Período</label>
-          <select id={id("tipo")} className="rl-in" value={tipo}
+          <select id={id("tipo")} className="rl-in" value={tipo} disabled={perTravado}
             onChange={(e) => mudar({ per: periodoPadrao(e.target.value as TipoPeriodo, hoje).cod })}>
-            {TIPOS_PERIODO.map((t) => <option key={t.v} value={t.v}>{t.rotulo}</option>)}
+            {TIPOS_PERIODO.filter((t) => !travas.tiposPeriodo || travas.tiposPeriodo.includes(t.v)).map((t) => <option key={t.v} value={t.v}>{t.rotulo}</option>)}
           </select>
         </div>
         {tipo === "l" ? (<>
           <div className="rl-campo">
             <label htmlFor={id("de")}>De</label>
-            <input id={id("de")} type="date" className="rl-in" value={periodo.ini}
+            <input id={id("de")} type="date" className="rl-in" value={periodo.ini} disabled={perTravado}
               onChange={(e) => e.target.value && mudar({ per: periodoDe(`l:${e.target.value}~${periodo.fim}`)?.cod ?? estado.per })} />
           </div>
           <div className="rl-campo">
             <label htmlFor={id("ate")}>Até</label>
-            <input id={id("ate")} type="date" className="rl-in" value={periodo.fim}
+            <input id={id("ate")} type="date" className="rl-in" value={periodo.fim} disabled={perTravado}
               onChange={(e) => e.target.value && mudar({ per: periodoDe(`l:${periodo.ini}~${e.target.value}`)?.cod ?? estado.per })} />
           </div>
         </>) : (
           <div className="rl-campo">
             <label htmlFor={id("val")}>{({ m: "Qual mês", t: "Qual trimestre", s: "Qual safra", a: "Qual ano" } as Record<string, string>)[tipo]}</label>
-            <select id={id("val")} className="rl-in" value={periodo.cod} onChange={(e) => mudar({ per: e.target.value })}>
+            <select id={id("val")} className="rl-in" value={periodo.cod} disabled={perTravado} onChange={(e) => mudar({ per: e.target.value })}>
               {opcoes.map((o) => <option key={o.v} value={o.v}>{o.rotulo}</option>)}
             </select>
           </div>
         )}
+        {travas.cmp !== false && (<>
         <div className="rl-campo">
           <label htmlFor={id("cmp")}>Comparar com</label>
-          <select id={id("cmp")} className="rl-in" value={cmpVal}
+          <select id={id("cmp")} className="rl-in" value={cmpVal} disabled={!!travas.cmp}
             onChange={(e) => {
               const v = e.target.value as ModoComparacao;
               if (v === "outro") {
-                const q = comparacaoDe(periodo, estado.cmp === "outro" ? "ant" : estado.cmp);
+                const q = comparacaoDe(periodo, efetivo.cmp === "outro" ? "ant" : efetivo.cmp);
                 mudar({ cmp: "outro", cmpp: q && q.tipo === "periodo" ? q.periodo.cod : deslocar(periodo, -1).cod });
               } else mudar({ cmp: v });
             }}>
@@ -126,6 +134,8 @@ export function BarraContexto({ ctx, hoje, centros, onExportar, podeExportar }: 
                 onChange={(e) => e.target.value && mudar({ cmp: "outro", cmpp: `l:${cmpAtual.ini}~${e.target.value}` })} />
             </div>
           </>)}
+        </>)}
+        </>)}
         </>)}
         <div className="rl-campo">
           <span className="rl-rot" id={id("reg")}>Regime</span>

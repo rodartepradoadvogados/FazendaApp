@@ -252,6 +252,218 @@ def _comparativo_v2(
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Fase C dos Relatórios — Plano › Orçamento (molde único)
+# ─────────────────────────────────────────────────────────────────────────
+def _meses_do_periodo(ini: date, fim: date) -> list[tuple[int, int]]:
+    meses, ano, mes = [], ini.year, ini.month
+    while (ano, mes) <= (fim.year, fim.month):
+        meses.append((ano, mes))
+        mes += 1
+        if mes == 13:
+            ano, mes = ano + 1, 1
+    return meses
+
+
+@router.get("/orcamento/relatorio")
+def relatorio_orcamento(
+    data_inicio: date = Query(..., description="Primeiro dia de um mês"),
+    data_fim: date = Query(..., description="Último dia de um mês"),
+    centro_custo: Optional[str] = Query(None),
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Orçado × realizado do relatório "Gastei o que planejei?" (Fase C):
+    o comparativo conta a conta do PR 8 (mesmas regras, mesmo motor), mais o
+    orçado por LINHA DA DRE (a cascata montada com os valores orçados — ver
+    rules/orcamento.py::cascata_orcada), em R$ e em R$ por litro entregue, e o
+    "orçado por litro" (para o Resultado por litro comparar com o orçado).
+
+    Só leitura. Período de meses inteiros (o orçamento é mensal), em
+    competência (o orçamento é pelo mês do gasto). Com a flag
+    `financeiro_regras_v2` desligada devolve o comparativo ANTIGO tal qual
+    (`comparativo_antigo`, os mesmos números de GET /orcamento/comparativo) —
+    o que a regra antiga não tem (totais por grupo, linha da DRE, R$/L) a tela
+    trava com o porquê."""
+    if data_fim < data_inicio:
+        raise HTTPException(status_code=422, detail="A data final é anterior à inicial.")
+    if data_inicio.day != 1 or data_fim.day != calendar.monthrange(data_fim.year, data_fim.month)[1]:
+        raise HTTPException(status_code=422, detail="O orçamento é mensal: escolha um período de meses inteiros.")
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    from fazenda.rules.parametros import regras_v2_ativas
+
+    meses = _meses_do_periodo(data_inicio, data_fim)
+    anos = sorted({a for a, _m in meses})
+    query_orc = select(OrcamentoItem).where(OrcamentoItem.ano.in_(anos))
+    if fazenda_id is not None:
+        query_orc = query_orc.where(OrcamentoItem.fazenda_id == fazenda_id)
+    if centro_custo:
+        query_orc = query_orc.where(OrcamentoItem.centro_custo == centro_custo)
+    no_periodo = set(meses)
+    itens = [o for o in session.exec(query_orc).all() if (o.ano, o.mes) in no_periodo]
+    base = {
+        "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
+        "centro_custo": centro_custo, "regime": "competencia",
+        "tem_orcamento": bool(itens),
+        "meses": [f"{a:04d}-{m:02d}" for a, m in meses],
+        "meses_com_orcamento": sorted({f"{o.ano:04d}-{o.mes:02d}" for o in itens}),
+    }
+    if not regras_v2_ativas(session, fazenda_id):
+        if len(anos) > 1:
+            return {**base, "regras_v2": False, "comparativo_antigo": None,
+                    "travado": "Com as regras antigas, o orçado × realizado é de um ano por vez: escolha um período dentro do mesmo ano."}
+        antigo = comparativo_orcado_realizado(
+            ano=anos[0], mes_inicio=data_inicio.month, mes_fim=data_fim.month, centro_custo=centro_custo,
+            session=session, fazenda_id=fazenda_id)
+        return {**base, "regras_v2": False, "comparativo_antigo": antigo, "travado": None}
+
+    from fazenda.api.routers.financeiro import _mapa_linha_por_codigo, calcular_dre, registros_competencia_v2
+    from fazenda.api.routers.relatorio_resultado_litro import _entregas
+    from fazenda.rules.custo_leite import litros_leite_no_periodo
+    from fazenda.rules.dre import DEDUCAO_IMPOSTOS, resolver_linha_dre
+    from fazenda.rules.orcamento import cascata_orcada, comparar_orcado_realizado, conferir_com_a_dre, por_linha_dre
+    from fazenda.rules.resultado_litro import indicadores_por_litro, meses_no_periodo
+
+    query_plano = select(PlanoContaGerencial)
+    if fazenda_id is not None:
+        query_plano = query_plano.where(PlanoContaGerencial.fazenda_id == fazenda_id)
+    plano = session.exec(query_plano).all()
+    nomes = {c.codigo: c.nome for c in plano}
+    orcadas: dict[str, dict] = {}
+    for o in itens:
+        l = orcadas.setdefault(o.codigo_conta_gerencial, {
+            "codigo_conta_gerencial": o.codigo_conta_gerencial,
+            "nome_conta_gerencial": nomes.get(o.codigo_conta_gerencial, o.codigo_conta_gerencial),
+            "tipo": o.tipo, "orcado": 0.0, "realizado": 0.0,
+        })
+        l["orcado"] = round(l["orcado"] + o.valor_orcado, 2)
+
+    mapa = _mapa_linha_por_codigo(session, fazenda_id)
+    registros = registros_competencia_v2(session, fazenda_id, data_inicio, data_fim, centro_custo or None)
+    comparativo = comparar_orcado_realizado({k: dict(v) for k, v in orcadas.items()}, registros, mapa, nomes)
+    for l in comparativo["linhas"]:
+        l["linha_dre"] = (DEDUCAO_IMPOSTOS if l["grupo"] == "deducao"
+                          else None if l["grupo"] == "fora_do_resultado"
+                          else resolver_linha_dre(l["codigo_conta_gerencial"], mapa))
+
+    dre = calcular_dre(session, fazenda_id, data_inicio, data_fim, centro_custo or None, "competencia", regras_v2=True)
+    dre.pop("_registros", None)
+    orc = cascata_orcada(orcadas, mapa, dre["depreciacao_periodo"]["total"])
+    entregas, _unidades = _entregas(session, fazenda_id, True)
+    litros = round(litros_leite_no_periodo(entregas, data_inicio, data_fim), 1)
+
+    litro_orcado = None
+    if itens:
+        codigos_receita = {c.codigo for c in plano if c.rmca_receita_leite}
+        codigos_custo = {c.codigo for c in plano if c.rmca_custo_alimentacao}
+        linhas_orc = {l["chave"]: l["valor"] for l in orc["linhas"]}
+        receita_leite = round(sum(l["orcado"] for c, l in orcadas.items() if c in codigos_receita and l["tipo"] == "receita"), 2)
+        # Deduções orçadas (Funrural/Senar) = a linha de deduções do orçado: na
+        # fazenda de leite é a nota do laticínio.
+        deducoes = round(linhas_orc.get(DEDUCAO_IMPOSTOS, 0.0), 2) if receita_leite else 0.0
+        leite = {
+            "receita_leite": receita_leite, "deducoes_receita_leite": deducoes,
+            "receita_leite_liquida": round(receita_leite - deducoes, 2),
+            "custo_alimentacao": round(sum(l["orcado"] for c, l in orcadas.items() if c in codigos_custo and l["tipo"] != "receita"), 2),
+        }
+        litro_orcado = indicadores_por_litro(linhas=linhas_orc, leite=leite, litros=litros,
+                                             meses=meses_no_periodo(data_inicio, data_fim))
+
+    return {
+        **base,
+        "regras_v2": True,
+        "linhas": comparativo["linhas"],
+        "totais": comparativo["totais"],
+        "linhas_dre": por_linha_dre(dre["cascata"], orc["linhas"], litros),
+        "cascata_orcada": orc["linhas"],
+        "orcado_sem_linha": orc["sem_linha"],
+        "orcado_fora_da_dre": orc["fora_da_dre"]["total"],
+        "nao_classificado_dre": dre["nao_classificado"],
+        "litros": litros,
+        "litro_orcado": litro_orcado,
+        "conferencia": conferir_com_a_dre(comparativo["linhas"], dre["cascata"], mapa),
+    }
+
+
+class CelulaGradeIn(BaseModel):
+    codigo_conta_gerencial: str
+    centro_custo: Optional[str] = None
+    tipo: str  # "receita" | "despesa"
+    mes: int
+    valor: float
+
+
+class GradeOrcamentoIn(BaseModel):
+    ano: int
+    celulas: list[CelulaGradeIn]
+
+
+# Caminho próprio (não "/orcamento/grade"): PUT /orcamento/{item_id} viria antes e recusaria "grade" como id.
+@router.put("/orcamento-grade")
+def salvar_grade_orcamento(
+    dados: GradeOrcamentoIn,
+    session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """A planilha do orçamento (conta × 12 meses) salva de uma vez: cada
+    célula (ano, mês, conta, centro) vira UM item de orçamento — criado se não
+    existe, atualizado se existe um só. Zerar uma célula apaga o item, a não
+    ser que ele tenha observação ou tenha virado pedido (aí fica com zero).
+    Célula com mais de um item (lançados um a um na tela anterior) não é
+    mexida: volta em `ignoradas`, para a pessoa ajustar item a item."""
+    if not 2000 <= dados.ano <= 2100:
+        raise HTTPException(status_code=422, detail="Ano fora do intervalo aceito.")
+    if len(dados.celulas) > 6000:
+        raise HTTPException(status_code=422, detail="Planilha grande demais para salvar de uma vez.")
+    for c in dados.celulas:
+        if c.tipo not in ("receita", "despesa"):
+            raise HTTPException(status_code=422, detail="tipo deve ser 'receita' ou 'despesa'")
+        if not 1 <= c.mes <= 12:
+            raise HTTPException(status_code=422, detail="mes deve estar entre 1 e 12")
+        if not c.codigo_conta_gerencial.strip():
+            raise HTTPException(status_code=422, detail="Informe a conta gerencial de cada linha.")
+
+    existentes: dict[tuple, list[OrcamentoItem]] = {}
+    for o in session.exec(select(OrcamentoItem).where(OrcamentoItem.fazenda_id == fazenda_id, OrcamentoItem.ano == dados.ano)).all():
+        existentes.setdefault((o.mes, o.codigo_conta_gerencial, o.centro_custo or None), []).append(o)
+    com_pedido = set(session.exec(select(Pedido.origem_item_id).where(
+        Pedido.fazenda_id == fazenda_id, Pedido.origem_tipo == "orcamento")).all())
+
+    criadas = atualizadas = excluidas = 0
+    ignoradas: list[dict] = []
+    for c in dados.celulas:
+        centro = mapear_centro_custo(c.centro_custo) if c.centro_custo else None
+        valor = round(c.valor, 2)
+        itens = existentes.get((c.mes, c.codigo_conta_gerencial, centro), [])
+        if len(itens) > 1:
+            ignoradas.append({"codigo_conta_gerencial": c.codigo_conta_gerencial, "centro_custo": centro, "mes": c.mes,
+                              "motivo": f"{len(itens)} itens neste mês — ajuste item a item"})
+            continue
+        if not itens:
+            if valor:
+                session.add(OrcamentoItem(
+                    ano=dados.ano, mes=c.mes, codigo_conta_gerencial=c.codigo_conta_gerencial, centro_custo=centro,
+                    tipo=c.tipo, valor_orcado=valor, usuario_id=user.id if isinstance(user, Usuario) else None,
+                    fazenda_id=fazenda_id,
+                ))
+                criadas += 1
+            continue
+        item = itens[0]
+        if not valor and not (item.observacao or "").strip() and item.id not in com_pedido:
+            session.delete(item)
+            excluidas += 1
+            continue
+        if item.valor_orcado != valor or item.tipo != c.tipo:
+            item.valor_orcado = valor
+            item.tipo = c.tipo
+            item.atualizado_em = datetime.utcnow()
+            session.add(item)
+            atualizadas += 1
+    session.commit()
+    return {"criadas": criadas, "atualizadas": atualizadas, "excluidas": excluidas, "ignoradas": ignoradas}
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Planejamento financeiro (cenários)
 # ─────────────────────────────────────────────────────────────────────────
 class CenarioIn(BaseModel):

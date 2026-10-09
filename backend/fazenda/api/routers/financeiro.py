@@ -31,6 +31,7 @@ from fazenda.rules.vale_item import (
     ajuste_vale_por_conta, eh_item_de_vale, sem_itens_automaticos, sem_itens_de_vale, valor_caixa_parcela, valor_gerencial,
 )
 from fazenda.rules import juros_descontos, saldo_conta
+from fazenda.rules import fechamento_mes  # trava do mês fechado (Fase C5; só com a flag)
 from fazenda.rules import lancamento_automatico  # registra os listeners dos itens automáticos (PR 2/3)
 from fazenda.rules.email import enviar_email
 from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, mapear_centro_custo, valor_gerencial_por_centro_custo
@@ -2595,6 +2596,14 @@ def _contas_automaticas_resposta(session: Session, fazenda_id: int | None) -> di
             # Conta que vale HOJE (a própria ou a da reserva) — None = pendência.
             "conta_efetiva": resolvida.codigo,
             "conta_efetiva_de": resolvida.origem_usada,
+            # Conta do SISTEMA (3.03.01.16/17) que vale enquanto a origem não
+            # tiver conta própria — só quando ela existe no plano da fazenda.
+            "conta_do_sistema": (
+                lancamento_automatico.conta_do_sistema_da_origem(origem.chave)
+                if resolvida.codigo is None
+                and lancamento_automatico.conta_do_sistema_da_origem(origem.chave) in cfg.contas_sistema
+                else None
+            ),
             "sugestao": None if (linha and linha.codigo_conta_gerencial) else lancamento_automatico.sugerir_conta(origem.chave, plano),
         })
     return {"regras_v2": regras_v2_ativas(session, fazenda_id), "origens": origens}
@@ -3883,6 +3892,9 @@ def atualizar_natureza_lancamento(
     )).all()
     if not contas:
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+    # Fase C5: a natureza muda a DRE da competência — mês fechado exige reabrir (só com a flag).
+    fechamento_mes.exigir_meses_abertos(
+        session, fazenda_id, [d for c in contas for d in fechamento_mes.datas_do_lancamento(c)], "mudar a natureza de")
     if dados.item_id is not None:
         item = session.exec(select(LancamentoItem).where(
             LancamentoItem.id == dados.item_id, LancamentoItem.numero_lancamento == numero_lancamento,
@@ -4147,6 +4159,12 @@ def criar_lancamento(
 
     # Fase A, PR 6: `valor_pago` obrigatório no que já nasce pago (com a flag).
     regras_v2 = regras_v2_ativas(session, fazenda_id)
+    # Fase C5: mês fechado não recebe lançamento novo (competência ou pagamento) — só com a flag.
+    fechamento_mes.exigir_meses_abertos(
+        session, fazenda_id,
+        [dados.data_competencia or dados.data_emissao, dados.data_pagamento, *(p.data_pagamento for p in dados.parcelas)],
+        "lançar",
+    )
     ano = (dados.data_emissao or dados.data_competencia or hoje_local()).year
     numero_lancamento = _proximo_numero_lancamento(session, ano)
     data_competencia = dados.data_competencia or dados.data_emissao
@@ -4757,6 +4775,13 @@ def pagar_lancamento(
         if round(soma_parcelas - abs(diferenca), 2) != 0:
             raise HTTPException(status_code=400, detail="A soma das parcelas precisa bater com a diferença a parcelar")
     tipo_diferenca = _tipo_diferenca_da_baixa(dados.natureza_diferenca, diferenca, bool(dados.parcelas_diferenca))
+    # Fase C5: baixa com data de pagamento num mês fechado (ou que refaz uma baixa de mês fechado,
+    # ou cujo abatimento muda o valor da competência fechada) exige reabrir — só com a flag.
+    fechamento_mes.exigir_meses_abertos(session, fazenda_id, [
+        dados.data_pagamento, dados.data_vencimento_cartao if dados.forma_pagamento == "credito" else None,
+        registro.data_pagamento, saldo_conta.data_caixa(registro),
+        registro.data_competencia if tipo_diferenca == juros_descontos.DIFERENCA_ABATIMENTO else None,
+    ], "dar baixa em")
 
     registro.data_pagamento = dados.data_pagamento
     registro.valor_pago = dados.valor_pago
@@ -4824,6 +4849,13 @@ def baixa_lote(
             _recusar_se_em_fatura(_r)
 
     conta_corrente_lote = resolver_conta_corrente_id(session, fazenda_id, dados.conta_bancaria, dados.conta_corrente_id)
+    # Fase C5: mês fechado (pagamento novo ou baixa anterior) — só com a flag.
+    _datas_lote: list = [dados.data_pagamento, dados.data_vencimento_cartao if dados.forma_pagamento == "credito" else None]
+    for lancamento_id in dados.lancamento_ids:
+        _r = session.get(ContaGerencial, lancamento_id)
+        if _r and (fazenda_id is None or _r.fazenda_id == fazenda_id):
+            _datas_lote += [_r.data_pagamento, saldo_conta.data_caixa(_r)]
+    fechamento_mes.exigir_meses_abertos(session, fazenda_id, _datas_lote, "dar baixa em")
     baixados = []
     nao_encontrados = []
     for lancamento_id in dados.lancamento_ids:
@@ -4909,6 +4941,17 @@ def baixa_lote_detalhada(
             it.natureza_diferenca, round(it.valor_pago - (registro.valor_total or 0), 2), bool(it.parcelas_diferenca),
             rotulo=f"Lançamento {it.lancamento_id}: ",
         )
+
+    # Fase C5: mês fechado (pagamento novo ou baixa anterior) — só com a flag.
+    _datas_det: list = []
+    for it in dados.itens:
+        _datas_det += [it.data_pagamento, it.data_vencimento_cartao if it.forma_pagamento == "credito" else None]
+        _r = session.get(ContaGerencial, it.lancamento_id)
+        if _r and (fazenda_id is None or _r.fazenda_id == fazenda_id):
+            _datas_det += [_r.data_pagamento, saldo_conta.data_caixa(_r)]
+            if tipos_diferenca.get(it.lancamento_id) == juros_descontos.DIFERENCA_ABATIMENTO:
+                _datas_det.append(_r.data_competencia)
+    fechamento_mes.exigir_meses_abertos(session, fazenda_id, _datas_det, "dar baixa em")
 
     baixados = []
     nao_encontrados = []
@@ -5007,6 +5050,11 @@ def editar_lancamento(
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
 
     enviados = dados.model_dump(exclude_unset=True)
+    # Fase C5: lançamento com competência/pagamento em mês fechado (antes ou depois da edição) — só com a flag.
+    fechamento_mes.exigir_meses_abertos(session, fazenda_id, [
+        *fechamento_mes.datas_do_lancamento(registro),
+        enviados.get("data_competencia"), enviados.get("data_pagamento"), enviados.get("data_vencimento_cartao"),
+    ], "editar")
     produto_novo = enviados.pop("produto", None)
     for campo, valor in enviados.items():
         if campo == "centro_custo":
@@ -5229,6 +5277,8 @@ def estornar_lancamento(
     _recusar_se_em_fatura(registro)
     if registro.data_pagamento is None and registro.valor_pago is None:
         raise HTTPException(status_code=400, detail="Este lançamento não está baixado — não há pagamento a estornar.")
+    # Fase C5: estornar baixa de mês fechado exige reabrir — só com a flag.
+    fechamento_mes.exigir_meses_abertos(session, fazenda_id, [registro.data_pagamento, saldo_conta.data_caixa(registro)], "estornar a baixa de")
 
     if registro.tipo_documento in TIPOS_DOCUMENTO_BAIXA_ESPELHADA:
         raise HTTPException(

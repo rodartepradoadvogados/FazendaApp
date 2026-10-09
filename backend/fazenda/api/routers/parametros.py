@@ -164,6 +164,17 @@ def atualizar_parametro(
     linha.atualizado_em = datetime.utcnow()
     session.add(linha)
     session.commit()
+    # Ligar as regras novas do Financeiro garante as contas do sistema
+    # (3.03.01.16 Retenções, 3.03.01.17 Vales e adiantamentos) no plano da
+    # fazenda — só se ela já tem o grupo 3.03.01. Nunca faz a gravação do
+    # parâmetro falhar.
+    if chave == "financeiro_regras_v2" and fazenda_id is not None and linha.valor == "true":
+        try:
+            from fazenda.rules.plano_padrao import garantir_contas_do_sistema
+            garantir_contas_do_sistema(session, fazenda_id)
+            session.commit()
+        except Exception:  # noqa: BLE001
+            session.rollback()
     # Rotina da lista de espera: ao ativar/salvar os parâmetros dela, roda já
     # (não espera a passada diária). Nunca faz a gravação do parâmetro falhar.
     rotina = None

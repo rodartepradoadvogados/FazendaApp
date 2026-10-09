@@ -12,8 +12,24 @@ import {
   comparacaoDe, escreverContexto, lerContexto, periodoDe, type Comparacao, type EstadoContexto, type Periodo,
 } from "@/lib/relatorioContexto";
 
-/** Trava do relatório: o que ele NÃO deixa mudar e por quê (ex.: regras antigas = DRE da fazenda inteira). */
-export type TravasContexto = { cc?: string; reg?: EstadoContexto["reg"]; cmpOrcado?: boolean; porque?: string };
+/** Trava do relatório: o que ele NÃO deixa mudar e por quê (ex.: regras antigas = DRE da fazenda inteira).
+ *  `per`/`cmp` (Fase C) têm dois sentidos, que se excluem:
+ *  - um VALOR (código de período / modo de comparação): o relatório fixa esse período ou essa
+ *    comparação e mostra os campos desabilitados (C3: Orçamento/Cenários; C5: Fechamento e
+ *    Conciliação usam `cmp: "nada"` — a tela não compara) — a URL guarda o que a pessoa escolheu
+ *    nos outros relatórios; aqui vale a trava;
+ *  - `false`: o relatório NÃO TEM período/comparação (C1: o Caixa real olha de hoje para a frente);
+ *    a barra troca os campos pelo `rotuloPeriodo` e a comparação some.
+ *  `perSugerido` (C5) é outra coisa: o período que vale enquanto a URL não traz um do tipo certo
+ *    (ex.: veio o ano do Pacote, o Fechamento mostra o último mês fechável dele), SEM travar a barra —
+ *    a pessoa troca o mês e a URL passa a mandar. `per` (valor) trava; `perSugerido` só preenche.
+ *  `tiposPeriodo` (C5) limita os tipos de período oferecidos na barra (ex.: só mês). */
+export type TravasContexto = {
+  cc?: string; reg?: EstadoContexto["reg"]; cmpOrcado?: boolean; porque?: string;
+  per?: string | false; perSugerido?: string; cmp?: EstadoContexto["cmp"] | false; tiposPeriodo?: string[];
+  /** O que a barra e o cabeçalho mostram no lugar do período quando `per` é false. */
+  rotuloPeriodo?: string;
+};
 
 export function useContextoRelatorio(padrao: EstadoContexto, travas: TravasContexto = {}) {
   const padraoRef = useRef(padrao);
@@ -55,9 +71,12 @@ export function useContextoRelatorio(padrao: EstadoContexto, travas: TravasConte
     ...estado,
     ...(travas.cc ? { cc: travas.cc } : {}),
     ...(travas.reg ? { reg: travas.reg } : {}),
-  }), [estado, travas.cc, travas.reg]);
+    ...(travas.per ? { per: travas.per } : travas.perSugerido ? { per: travas.perSugerido } : {}),
+    ...(travas.cmp ? { cmp: travas.cmp, cmpp: "" } : {}),
+  }), [estado, travas.cc, travas.reg, travas.per, travas.perSugerido, travas.cmp]);
   const periodo: Periodo = useMemo(() => periodoDe(efetivo.per) ?? periodoDe(padrao.per)!, [efetivo.per, padrao.per]);
-  const comparacao: Comparacao | null = useMemo(() => comparacaoDe(periodo, efetivo.cmp, efetivo.cmpp), [periodo, efetivo.cmp, efetivo.cmpp]);
+  const semCmp = travas.cmp === false;
+  const comparacao: Comparacao | null = useMemo(() => (semCmp ? null : comparacaoDe(periodo, efetivo.cmp, efetivo.cmpp)), [semCmp, periodo, efetivo.cmp, efetivo.cmpp]);
 
   return { estado, efetivo, periodo, comparacao, mudar, travas };
 }
