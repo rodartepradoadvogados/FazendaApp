@@ -276,7 +276,7 @@ export function RelatorioShell(props: {
   const tituloRef = useRef<HTMLHeadingElement>(null);
   const fazenda = typeof window === "undefined" ? "" : getFazendaAtual()?.nome || "";
   const contextoTexto = {
-    periodo: ctx.periodo.label, comparacao: ctx.comparacao ? (ctx.comparacao.tipo === "orcado" ? "o orçado" : ctx.comparacao.periodo.label) : null,
+    periodo: ctx.travas.rotuloPeriodo ?? ctx.periodo.label, comparacao: ctx.comparacao ? (ctx.comparacao.tipo === "orcado" ? "o orçado" : ctx.comparacao.periodo.label) : null,
     regime: REGIME_NOME[ctx.efetivo.reg], centro: ctx.efetivo.cc === "todos" ? "todos os centros" : ctx.efetivo.cc,
   };
   // Ao subir/descer um nível, o foco vai para o título (leitor de tela anuncia onde está).
@@ -329,7 +329,7 @@ export function RelatorioShell(props: {
       </div>
       <header className="rl-cab">
         <h2 ref={tituloRef} tabIndex={-1}>{props.pergunta}</h2>
-        <p>{[props.nome, ...niveis.map((n) => n.rotulo)].join(" › ")} · {ctx.periodo.label} · {REGIME_NOME[ctx.efetivo.reg]} · {contextoTexto.centro}</p>
+        <p>{[props.nome, ...niveis.map((n) => n.rotulo)].join(" › ")}{niveis[niveis.length - 1]?.rotulo === contextoTexto.periodo ? "" : ` · ${contextoTexto.periodo}`} · {REGIME_NOME[ctx.efetivo.reg]} · {contextoTexto.centro}</p>
       </header>
       {props.avisos}
       {estado === "carregando" && (

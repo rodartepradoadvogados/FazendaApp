@@ -18,7 +18,9 @@ test("nenhum relatório antigo some: cada id antigo cai num relatório da árvor
   }
   assert.equal(idDoRelatorio("dre"), "rel_dre");
   assert.equal(grupoDe("dre")!.label, "Resultado");
-  assert.equal(idDoRelatorio("fluxo"), "fluxo");
+  assert.equal(idDoRelatorio("fluxo"), "rel_fluxo");
+  assert.equal(idDoRelatorio("caixa_real"), "rel_caixa");
+  assert.equal(grupoDe("caixa_real")!.label, "Caixa");
   // A DRE por conta (tela anterior, com a classificação) continua acessível.
   assert.ok(IDS_RELATORIOS.has("dre_contas"));
   // Fase C: Plano › Orçamento no molde; as telas anteriores do orçamento e dos cenários continuam.
@@ -31,6 +33,8 @@ test("nenhum relatório antigo some: cada id antigo cai num relatório da árvor
 test("ids únicos na árvore (a aba ativa nunca fica ambígua) e telas novas no molde", () => {
   const ids = GRUPOS_RELATORIOS.flatMap((g) => [g.id, ...g.itens.map((i) => i.id)]);
   assert.equal(new Set(ids).size, ids.length);
-  assert.deepEqual([...RELATORIOS_NO_MOLDE], ["rel_litro", "rel_dre", "rel_orcamento", "rel_cenarios"]);
+  assert.deepEqual([...RELATORIOS_NO_MOLDE], ["rel_litro", "rel_dre", "rel_caixa", "rel_fluxo", "rel_livro", "rel_orcamento", "rel_cenarios"]);
+  // Fase C1: o grupo Caixa tem as três telas, e o Livro caixa da atividade rural é uma delas.
+  assert.deepEqual(GRUPOS_RELATORIOS.find((g) => g.label === "Caixa")!.itens.map((i) => i.id), ["rel_caixa", "rel_fluxo", "rel_livro"]);
   assert.equal(grupoDe("inexistente"), null);
 });

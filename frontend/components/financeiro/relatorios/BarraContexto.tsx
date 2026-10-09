@@ -53,12 +53,18 @@ export function BarraContexto({ ctx, hoje, centros, onExportar, podeExportar }: 
   return (
     <div className={`rl-ctx rl-noprint${aberta ? " aberta" : ""}`} role="region" aria-label="Contexto do relatório">
       <div className="rl-ctx-sum">
-        <span>{resumoContexto(periodo, comparacao, efetivo.reg, efetivo.cc)}</span>
+        <span>{travas.per === false ? [travas.rotuloPeriodo, resumoContexto(periodo, null, efetivo.reg, efetivo.cc).split(" · ").slice(1).join(" · ")].filter(Boolean).join(" · ") : resumoContexto(periodo, comparacao, efetivo.reg, efetivo.cc)}</span>
         <button type="button" className="rl-btn" aria-expanded={aberta} aria-controls={id("linha")} onClick={() => setAberta((v) => !v)}>
           <SlidersHorizontal size={15} aria-hidden /> {aberta ? "Fechar" : "Filtros"}
         </button>
       </div>
       <div className="rl-ctx-row" id={id("linha")}>
+        {travas.per === false ? (
+          <div className="rl-campo">
+            <span className="rl-rot">Período</span>
+            <span className="rl-in" aria-disabled="true" style={{ display: "inline-flex", alignItems: "center", gap: ".35rem", color: "var(--text-muted)" }}><Lock size={13} aria-hidden /> {travas.rotuloPeriodo || "fixo neste relatório"}</span>
+          </div>
+        ) : (<>
         <div className="rl-campo">
           <label htmlFor={id("tipo")}>Período</label>
           <select id={id("tipo")} className="rl-in" value={tipo} disabled={perTravado}
@@ -85,6 +91,7 @@ export function BarraContexto({ ctx, hoje, centros, onExportar, podeExportar }: 
             </select>
           </div>
         )}
+        {travas.cmp !== false && (<>
         <div className="rl-campo">
           <label htmlFor={id("cmp")}>Comparar com</label>
           <select id={id("cmp")} className="rl-in" value={cmpVal} disabled={!!travas.cmp}
@@ -127,6 +134,8 @@ export function BarraContexto({ ctx, hoje, centros, onExportar, podeExportar }: 
                 onChange={(e) => e.target.value && mudar({ cmp: "outro", cmpp: `l:${cmpAtual.ini}~${e.target.value}` })} />
             </div>
           </>)}
+        </>)}
+        </>)}
         </>)}
         <div className="rl-campo">
           <span className="rl-rot" id={id("reg")}>Regime</span>

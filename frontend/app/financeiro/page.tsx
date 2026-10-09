@@ -13,7 +13,6 @@ import {
   fetchOpcoesPatrimonio, gerarCodigosPatrimonio, baixarPatrimonio, estornarBaixaPatrimonio, type OpcoesPatrimonio,
   // Onda 3b — DRE em cascata / Onda 4 — Caixa Real
   fetchDreCascata, classificarContaDre, type DreResposta, type RateioDepreciacao, atualizarNaturezaLancamento, fetchRegrasV2, type NaturezaDiferenca,
-  fetchCaixaReal, fetchFundoReservaSugerido, type CaixaReal,
   fetchPessoas, fetchRmca, fetchCustoLitroLeite, fetchCustoHectare, fetchCustoVacaLote, fetchCustoSafra, fetchSafras, formatBRL, formatDate,
   atualizarLancamentoFinanceiro, ehAdmin, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
   fetchRelatorioCompraSemen, type LinhaRelatorioCompraSemen,
@@ -72,7 +71,7 @@ const COLUNAS_LIVRO = [
 import type { Lanc } from "@/lib/financeiroTipos";
 import { NATUREZAS_FIN, rotuloNatureza } from "@/lib/naturezaFin";
 
-type Rel = "fluxo" | "dre" | "dre_contas" | "rel_litro" | "rel_dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "rel_orcamento" | "rel_cenarios" | "orcamento_itens" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos" | "resumo";
+type Rel = "fluxo" | "dre" | "dre_contas" | "rel_litro" | "rel_dre" | "rel_caixa" | "rel_fluxo" | "rel_livro" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "rel_orcamento" | "rel_cenarios" | "orcamento_itens" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos" | "resumo";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "caixa_real", label: "Caixa Real", icon: TrendingUp, desc: "Projeção de liquidez: quanto tem hoje e como o saldo evolui com os compromissos já lançados" },
@@ -118,11 +117,11 @@ const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
 // continuam exigindo dado existente, o que faz sentido (não tem o que
 // mostrar de fato).
 // "faturas" (Contas > Faturas de fornecedor) também dispensa lançamento prévio no banco.
-const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas", "a_pagar", "a_receber", "consultas", "custos", "resumo", "rel_litro", "rel_dre", "rel_orcamento", "rel_cenarios"]);
+const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas", "a_pagar", "a_receber", "consultas", "custos", "resumo", "rel_litro", "rel_dre", "rel_caixa", "rel_fluxo", "rel_livro", "rel_orcamento", "rel_cenarios"]);
 // Ícones da árvore de Relatórios por pergunta (lib/relatoriosNavegacao.ts).
 const ICONE_GRUPO: Record<string, LucideIcon> = { "rg-resultado": TrendingUp, "rg-caixa": Wallet, "rg-leite": Milk, "rg-plano": Target, "rg-registros": ListChecks };
 const ICONE_RELATORIO: Record<string, LucideIcon> = {
-  rel_litro: Milk, rel_dre: FileText, dre_contas: FileText, caixa_real: TrendingUp, fluxo: Wallet, custos: BarChart3, rmca: BarChart3,
+  rel_litro: Milk, rel_dre: FileText, dre_contas: FileText, rel_caixa: TrendingUp, rel_fluxo: Wallet, rel_livro: BookOpen, custos: BarChart3, rmca: BarChart3,
   orcamento: Target, planejamento_financeiro: Compass, rel_orcamento: Target, rel_cenarios: Compass, orcamento_itens: Target, compra_venda_animais: ShoppingCart, compra_semen: ShoppingCart,
 };
 // Orçamento e Planejamento financeiro (Cenários) passaram para Relatórios › Plano (lib/relatoriosNavegacao.ts).
@@ -198,9 +197,14 @@ import { useRegrasV2 } from "@/lib/useRegrasV2";
 import { apresentacaoSituacao, kpisDre, regimeDaUrl, type RegimeDre } from "@/lib/dreUnica";
 import { migrarFiltrosSalvosAntigos } from "@/lib/financeiroFiltrosMigracao";
 // Fase B dos Relatórios: molde único, árvore por pergunta e as duas primeiras telas novas.
-import { GRUPOS_RELATORIOS, IDS_RELATORIOS, grupoDe, idDoRelatorio } from "@/lib/relatoriosNavegacao";
+import { GRUPOS_RELATORIOS, IDS_RELATORIOS, RELATORIOS_NO_MOLDE, grupoDe, idDoRelatorio } from "@/lib/relatoriosNavegacao";
 import DreFazendaView from "@/components/financeiro/relatorios/DreFazendaView";
 import ResultadoLitroView from "@/components/financeiro/relatorios/ResultadoLitroView";
+// Fase C1 (Caixa): Caixa real, Fluxo de caixa e Livro caixa da atividade rural no molde.
+import RelCaixaRealView from "@/components/financeiro/relatorios/CaixaRealView";
+import RelFluxoCaixaView from "@/components/financeiro/relatorios/FluxoCaixaView";
+import RelLivroCaixaView from "@/components/financeiro/relatorios/LivroCaixaView";
+// Fase C3 (Plano): Orçamento e Cenários no molde.
 import OrcamentoPlanoView from "@/components/financeiro/relatorios/OrcamentoPlanoView";
 import CenariosView from "@/components/financeiro/relatorios/CenariosView";
 import type { PropsRelatorio } from "@/components/financeiro/relatorios/comum";
@@ -795,7 +799,8 @@ export default function FinanceiroPage() {
           {/* A tela de folha traz o próprio texto de papel logo abaixo (é ela
               que precisa dizer "aqui se fecha" × "lá só se consulta"); repetir
               a frase de relatório em cima dele confundia as duas coisas. */}
-          {!["resumo", "folha", "a_pagar", "a_receber", "consultas", "lote", "faturas_gestao", "caixa_funcionarios", "rel_litro", "rel_dre"].includes(rel) && (
+          {/* As telas no molde (RELATORIOS_NO_MOLDE) trazem a própria pergunta e o contexto. */}
+          {!RELATORIOS_NO_MOLDE.has(rel) && !["resumo", "folha", "a_pagar", "a_receber", "consultas", "lote", "faturas_gestao", "caixa_funcionarios"].includes(rel) && (
             <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
           )}
         </div>
@@ -860,10 +865,12 @@ export default function FinanceiroPage() {
           )
           : rel === "rel_dre" ? <DreFazendaView {...propsRelatorio} onClassificar={() => irPara("dre_contas")} />
           : rel === "rel_litro" ? <ResultadoLitroView {...propsRelatorio} />
+          : rel === "rel_caixa" ? <RelCaixaRealView {...propsRelatorio} />
+          : rel === "rel_fluxo" ? <RelFluxoCaixaView {...propsRelatorio} />
+          : rel === "rel_livro" ? <RelLivroCaixaView {...propsRelatorio} />
           : rel === "rel_orcamento" ? <OrcamentoPlanoView {...propsRelatorio} />
           : rel === "rel_cenarios" ? <CenariosView {...propsRelatorio} />
           : rel === "custos" ? <CustosView base={custosBase} onBase={setCustosBase} />
-          : rel === "caixa_real" ? <CaixaRealView />
           : rel === "faturas" || rel === "faturas_gestao" ? <FaturasView />
           : rel === "patrimonio" ? <PatrimonioView />
           : rel === "cartao_credito" ? <CartaoCreditoView />
@@ -4878,236 +4885,6 @@ function DreCascataView({ dataInicio, dataFim, dados, erro: erroCarga, onRecarre
 // ---------------------------------------------------------------------------
 // Onda 4 — Caixa Real (projeção de liquidez)
 // ---------------------------------------------------------------------------
-function CaixaRealView() {
-  const [dias, setDias] = useState(90);
-  const [dados, setDados] = useState<CaixaReal | null>(null);
-  const [sugestao, setSugestao] = useState<{ sugerido: number; meses_folga: number; atual: number } | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-
-  useEffect(() => {
-    setErro(null);
-    // `hoje` local (nunca toISOString): o servidor usa Brasília, mas o front manda o dia que a pessoa vê.
-    fetchCaixaReal(dias, hojeLocal()).then(setDados).catch((e) => setErro(e.message));
-  }, [dias]);
-  useEffect(() => { fetchFundoReservaSugerido(6, hojeLocal()).then(setSugestao).catch(() => {}); }, []);
-
-  // Só os dias com movimento — a série vem completa (365 pontos num ano) e
-  // listar dia vazio afogaria o que importa. O `|| []` também protege a tela
-  // quando a API ainda está na versão anterior (ver o comentário na DRE).
-  const diasComMovimento = (dados?.serie || []).filter((d) => d.entradas || d.saidas);
-  const contasDoCaixa = dados?.contas || [];
-  // Regras v2 (Fase A, PR 6): sem saldo de abertura o "saldo hoje" é só a soma
-  // dos lançamentos — mostra a pendência em vez de fingir um número.
-  const semAbertura = dados?.saldo_abertura_pendente || [];
-  const saldoPendente = !!dados?.regras_v2 && (semAbertura.length > 0 || contasDoCaixa.length === 0);
-  const foraDaJanela = dados?.agendados_fora_da_janela;
-
-  const formatarDia = (iso: string) => new Date(iso + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
-
-  return (
-    <div>
-      <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Horizonte da projeção</div>
-        <div className="flex flex-wrap gap-3 items-end">
-          <div>
-            <label style={labelStyleLote}>Projetar os próximos</label>
-            <select style={selStyleLote} value={dias} onChange={(e) => setDias(Number(e.target.value))}>
-              <option value={30}>30 dias</option>
-              <option value={60}>60 dias</option>
-              <option value={90}>90 dias</option>
-              <option value={180}>180 dias</option>
-              <option value={365}>365 dias</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <div className="card mb-4" style={{ borderColor: "var(--border)" }}>
-        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: 0 }}>
-          <strong>Caixa Real responde “tem dinheiro?”; a DRE responde “deu lucro?”.</strong>{" "}
-          As duas não batem, e não devem bater: depreciação é despesa na DRE e não sai do caixa;
-          o principal de um financiamento sai do caixa e não é despesa. Fazenda lucrativa pode
-          quebrar por falta de caixa — é isso que esta tela antecipa.
-        </p>
-      </div>
-
-      {erro && <div className="alert-critico mb-3"><span>{erro}</span></div>}
-      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {dados && <>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-          <KPI v={saldoPendente ? "Pendente" : formatBRL(dados.saldo_inicial)} l={saldoPendente ? "Saldo hoje · informe o saldo de abertura" : "Saldo hoje"} c={saldoPendente ? "var(--amber)" : "var(--dourado-light)"} />
-          <KPI v={formatBRL(dados.saldo_final)} l={`Saldo projetado em ${dados.dias} dias`} c={dados.saldo_final >= 0 ? "var(--green-light)" : "var(--red)"} />
-          <KPI v={formatBRL(dados.total_entradas)} l="Entradas previstas" c="var(--green-light)" />
-          <KPI v={formatBRL(dados.total_saidas)} l="Saídas previstas" c="var(--red)" />
-        </div>
-
-        {saldoPendente && (
-          <div className="card mb-3" style={{ borderColor: "var(--amber)" }}>
-            <p style={{ fontSize: "0.8rem", color: "var(--amber)", margin: 0 }}>
-              <strong>Informe o saldo de abertura</strong>{semAbertura.length ? ` de ${semAbertura.map((c) => c.nome).join(", ")}` : ""}:
-              {" "}o saldo do extrato numa data. Sem ele, o “saldo hoje” é só a soma dos lançamentos
-              ({formatBRL(dados.saldo_inicial)}) e não bate com o banco. Grave em{" "}
-              <a href="/parametros" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>
-                Parâmetros financeiros → Conta corrente
-              </a>.
-            </p>
-          </div>
-        )}
-        {!!foraDaJanela?.quantidade && (
-          <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-            {foraDaJanela.quantidade} pagamento(s) já baixado(s) com data depois desta janela (agendados:{" "}
-            {formatBRL(foraDaJanela.total_saidas)} de saída, {formatBRL(foraDaJanela.total_entradas)} de entrada) não entram no saldo de hoje.
-          </p>
-        )}
-
-        {/* Os dois alertas são distintos: furar a reserva é aviso; ficar
-            negativo é falta de dinheiro. */}
-        {dados.primeiro_dia_negativo && (
-          <div className="alert-critico mb-3">
-            <span>
-              <strong>O caixa fica negativo em {new Date(dados.primeiro_dia_negativo + "T12:00:00").toLocaleDateString("pt-BR")}.</strong>{" "}
-              Nessa data falta dinheiro para honrar os compromissos já lançados.
-            </span>
-          </div>
-        )}
-        {!dados.primeiro_dia_negativo && dados.primeiro_dia_abaixo_da_reserva && (
-          <div className="card mb-3" style={{ borderColor: "var(--amber)" }}>
-            <p style={{ fontSize: "0.82rem", color: "var(--amber)", margin: 0 }}>
-              O saldo fura o fundo de reserva de {formatBRL(dados.fundo_reserva)} em{" "}
-              <strong>{new Date(dados.primeiro_dia_abaixo_da_reserva + "T12:00:00").toLocaleDateString("pt-BR")}</strong>.
-              Ainda há dinheiro, mas a folga acabou.
-            </p>
-          </div>
-        )}
-        {dados.compromissos_sem_vencimento > 0 && (
-          <div className="card mb-3" style={{ borderColor: "var(--amber)" }}>
-            <p style={{ fontSize: "0.78rem", color: "var(--amber)", margin: 0 }}>
-              {dados.compromissos_sem_vencimento} lançamento(s) em aberto <strong>sem data de vencimento</strong> ficaram
-              fora da projeção — não há como posicioná-los na linha do tempo. O caixa real pode ser
-              mais apertado do que o mostrado aqui.
-            </p>
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <div className="card">
-            <div className="card-header mb-2">Fundo de reserva</div>
-            {dados.fundo_reserva > 0 ? (
-              <>
-                <KPI v={formatBRL(dados.fundo_reserva)} l="Colchão definido" />
-                <div style={{ marginTop: "0.75rem" }}>
-                  <KPI
-                    v={formatBRL(dados.folga_minima)}
-                    l="Folga mínima na projeção"
-                    c={dados.folga_minima >= 0 ? "var(--green-light)" : "var(--red)"}
-                  />
-                </div>
-                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.75rem" }}>
-                  A folga é o pior saldo da projeção menos a reserva. Negativa significa que a
-                  reserva é furada em algum momento, mesmo que o saldo final pareça confortável.
-                </p>
-              </>
-            ) : (
-              <>
-                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-                  Nenhum fundo de reserva definido — a tela só alerta quando o caixa fica negativo.
-                </p>
-                {sugestao && sugestao.sugerido > 0 && (
-                  <p style={{ fontSize: "0.8rem" }}>
-                    Sugestão pelo seu histórico: <strong>{formatBRL(sugestao.sugerido)}</strong>{" "}
-                    ({sugestao.meses_folga} meses de custo médio). Para adotar, grave em{" "}
-                    <a href="/configuracoes?aba=parametros" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>
-                      Configurações → Parâmetros
-                    </a>, no campo “Caixa Real — fundo de reserva”.
-                  </p>
-                )}
-              </>
-            )}
-          </div>
-
-          <div className="card">
-            <div className="card-header mb-2">Saldo por conta</div>
-            {contasDoCaixa.length ? (
-              <table className="fazenda-table" style={{ margin: 0 }}>
-                <tbody>
-                  {contasDoCaixa.map((c) => (
-                    <tr key={c.id}>
-                      <td style={{ fontSize: "0.8rem" }}>
-                        {c.nome}
-                        {dados.regras_v2 && (
-                          <div style={{ fontSize: "0.7rem", color: c.pendente_saldo_abertura ? "var(--amber)" : "var(--text-muted)" }}>
-                            {c.pendente_saldo_abertura || c.saldo_abertura == null || !c.data_saldo_abertura
-                              ? "Informe o saldo de abertura"
-                              : `Inclui saldo de abertura de ${formatBRL(c.saldo_abertura)} em ${new Date(c.data_saldo_abertura + "T12:00:00").toLocaleDateString("pt-BR")}`}
-                          </div>
-                        )}
-                      </td>
-                      <td style={{ textAlign: "right", fontSize: "0.8rem", fontWeight: 600, color: c.saldo < 0 ? "var(--red)" : undefined }}>
-                        {formatBRL(c.saldo)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Nenhuma conta corrente cadastrada.</p>}
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-header mb-3">Linha do tempo — dias com movimento</div>
-          {diasComMovimento.length ? (
-            <div className="overflow-x-auto">
-              <table className="fazenda-table" style={{ margin: 0 }}>
-                <thead>
-                  <tr>
-                    <th>Data</th><th>Compromissos</th>
-                    <th style={{ textAlign: "right" }}>Entradas</th>
-                    <th style={{ textAlign: "right" }}>Saídas</th>
-                    <th style={{ textAlign: "right" }}>Saldo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {diasComMovimento.map((d) => (
-                    <tr key={d.data} style={{ background: d.saldo < 0 ? "rgba(220,80,80,0.08)" : undefined }}>
-                      <td style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}>{formatarDia(d.data)}</td>
-                      <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                        {d.itens.slice(0, 3).map((it, i) => (
-                          <span key={i}>
-                            {i > 0 && " · "}
-                            {it.vencido && <span style={{ color: "var(--amber)" }} title={`Venceu em ${new Date(it.data_original + "T12:00:00").toLocaleDateString("pt-BR")} e não foi pago`}>⚠ </span>}
-                            {it.descricao}
-                            {it.agendado && <span style={{ color: "var(--dourado-light)" }} title="Pagamento já baixado com esta data: sai do saldo neste dia"> (agendado)</span>}
-                            {it.fatura_cartao && <span title="Compra no cartão: sai no vencimento da fatura"> (cartão)</span>}
-                          </span>
-                        ))}
-                        {d.itens.length > 3 && <span> · +{d.itens.length - 3}</span>}
-                      </td>
-                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: d.entradas ? "var(--green-light)" : "var(--text-muted)" }}>
-                        {d.entradas ? formatBRL(d.entradas) : "—"}
-                      </td>
-                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: d.saidas ? "var(--red)" : "var(--text-muted)" }}>
-                        {d.saidas ? formatBRL(d.saidas) : "—"}
-                      </td>
-                      <td style={{ textAlign: "right", fontSize: "0.8rem", fontWeight: 600, color: d.saldo < 0 ? "var(--red)" : undefined }}>
-                        {formatBRL(d.saldo)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
-              Nenhum compromisso em aberto com vencimento nos próximos {dados.dias} dias.
-            </p>
-          )}
-        </div>
-      </>}
-    </div>
-  );
-}
-
 function RmcaView() {
   const [dataInicio, setDataInicio] = useState(() => primeiroDiaDoMes());
   const [dataFim, setDataFim] = useState(() => hojeLocal());

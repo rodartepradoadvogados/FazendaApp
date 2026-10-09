@@ -14,8 +14,9 @@ export const GRUPOS_RELATORIOS: GrupoRelatorio[] = [
     { id: "dre_contas", label: "DRE por conta (tela anterior)" },
   ] },
   { id: "rg-caixa", label: "Caixa", pergunta: "Quando o caixa aperta?", itens: [
-    { id: "caixa_real", label: "Caixa real" },
-    { id: "fluxo", label: "Fluxo de caixa" },
+    { id: "rel_caixa", label: "Caixa real" },
+    { id: "rel_fluxo", label: "Fluxo de caixa" },
+    { id: "rel_livro", label: "Livro caixa da atividade rural" },
   ] },
   { id: "rg-leite", label: "Leite", pergunta: "Quanto custa meu litro?", itens: [
     { id: "custos", label: "Custos do leite" },
@@ -35,12 +36,15 @@ export const GRUPOS_RELATORIOS: GrupoRelatorio[] = [
 ];
 
 /** Relatórios novos, feitos no molde único (os outros continuam na tela de antes até a Fase C). */
-export const RELATORIOS_NO_MOLDE = new Set(["rel_litro", "rel_dre", "rel_orcamento", "rel_cenarios"]);
+export const RELATORIOS_NO_MOLDE = new Set(["rel_litro", "rel_dre", "rel_caixa", "rel_fluxo", "rel_livro", "rel_orcamento", "rel_cenarios"]);
 
 /** Ids antigos que mudaram de lugar → onde estão agora. */
 export const REDIRECIONAMENTOS: Record<string, string> = {
   dre: "rel_dre",
-  // Fase C: o orçamento no molde (a tela anterior continua em "orcamento_itens").
+  // Fase C1 (Caixa): as telas antigas deram lugar às do molde.
+  caixa_real: "rel_caixa",
+  fluxo: "rel_fluxo",
+  // Fase C3: o orçamento no molde (a tela anterior continua em "orcamento_itens").
   orcamento: "rel_orcamento",
 };
 

@@ -13,9 +13,18 @@ import {
 } from "@/lib/relatorioContexto";
 
 /** Trava do relatório: o que ele NÃO deixa mudar e por quê (ex.: regras antigas = DRE da fazenda inteira).
- *  `per`/`cmp` (Fase C): o relatório fixa o período (código) ou a comparação — a URL guarda o que a
- *  pessoa escolheu nos outros relatórios; aqui vale a trava. */
-export type TravasContexto = { cc?: string; reg?: EstadoContexto["reg"]; cmpOrcado?: boolean; per?: string; cmp?: EstadoContexto["cmp"]; porque?: string };
+ *  `per`/`cmp` (Fase C) têm dois sentidos, que se excluem:
+ *  - um VALOR (código de período / modo de comparação): o relatório fixa esse período ou essa
+ *    comparação e mostra os campos desabilitados (C3: Orçamento/Cenários) — a URL guarda o que a
+ *    pessoa escolheu nos outros relatórios; aqui vale a trava;
+ *  - `false`: o relatório NÃO TEM período/comparação (C1: o Caixa real olha de hoje para a frente);
+ *    a barra troca os campos pelo `rotuloPeriodo` e a comparação some. */
+export type TravasContexto = {
+  cc?: string; reg?: EstadoContexto["reg"]; cmpOrcado?: boolean; porque?: string;
+  per?: string | false; cmp?: EstadoContexto["cmp"] | false;
+  /** O que a barra e o cabeçalho mostram no lugar do período quando `per` é false. */
+  rotuloPeriodo?: string;
+};
 
 export function useContextoRelatorio(padrao: EstadoContexto, travas: TravasContexto = {}) {
   const padraoRef = useRef(padrao);
@@ -61,7 +70,8 @@ export function useContextoRelatorio(padrao: EstadoContexto, travas: TravasConte
     ...(travas.cmp ? { cmp: travas.cmp, cmpp: "" } : {}),
   }), [estado, travas.cc, travas.reg, travas.per, travas.cmp]);
   const periodo: Periodo = useMemo(() => periodoDe(efetivo.per) ?? periodoDe(padrao.per)!, [efetivo.per, padrao.per]);
-  const comparacao: Comparacao | null = useMemo(() => comparacaoDe(periodo, efetivo.cmp, efetivo.cmpp), [periodo, efetivo.cmp, efetivo.cmpp]);
+  const semCmp = travas.cmp === false;
+  const comparacao: Comparacao | null = useMemo(() => (semCmp ? null : comparacaoDe(periodo, efetivo.cmp, efetivo.cmpp)), [semCmp, periodo, efetivo.cmp, efetivo.cmpp]);
 
   return { estado, efetivo, periodo, comparacao, mudar, travas };
 }
