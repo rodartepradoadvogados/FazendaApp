@@ -27,6 +27,8 @@ from fazenda.rules.vale_item import eh_item_de_vale
 from fazenda.models import (
     AgendaManual,
     Animal,
+    CaixaMovimento,
+    CaixaTimeMovimento,
     CalendarioSanitario,
     ColostragemBezerra,
     ComissaoCorretagem,
@@ -38,7 +40,9 @@ from fazenda.models import (
     Estoque,
     EstoqueSemen,
     EventoSanitario,
+    ExtratoLinha,
     FolhaPagamento,
+    FolhaRubrica,
     Fornecedor,
     FotoCampo,
     Lactacao,
@@ -214,13 +218,16 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "protocolo_sanitario_lancamento":
-        protocolos = {p.id: p.nome for p in session.exec(select(ProtocoloSanitario)).all()}
+        protocolos = {p.id: p.nome for p in session.exec(select(ProtocoloSanitario).where(ProtocoloSanitario.fazenda_id == fazenda_id)).all()} if fazenda_id is not None else {p.id: p.nome for p in session.exec(select(ProtocoloSanitario)).all()}
         query = select(ProtocoloSanitarioLancamento)
         if fazenda_id is not None:
             query = query.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
         rows = session.exec(query).all()
         aplicacoes_por_lancamento: dict[int, list] = {}
-        for ap in session.exec(select(ProtocoloSanitarioAplicacao)).all():
+        query_aplicacoes = select(ProtocoloSanitarioAplicacao)
+        if fazenda_id is not None:
+            query_aplicacoes = query_aplicacoes.where(ProtocoloSanitarioAplicacao.fazenda_id == fazenda_id)
+        for ap in session.exec(query_aplicacoes).all():
             aplicacoes_por_lancamento.setdefault(ap.lancamento_id, []).append(ap)
         out = []
         for l in rows:
@@ -443,8 +450,8 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "calendario_sanitario":
-        eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
-        doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
+        eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario).where(EventoSanitario.fazenda_id == fazenda_id)).all()} if fazenda_id is not None else {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
+        doencas = {d.id: d.nome for d in session.exec(select(Doenca).where(Doenca.fazenda_id == fazenda_id)).all()} if fazenda_id is not None else {d.id: d.nome for d in session.exec(select(Doenca)).all()}
         query = select(CalendarioSanitario)
         if fazenda_id is not None:
             query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
@@ -493,6 +500,48 @@ def buscar(
     for item in combinados:
         item.pop("_data", None)
     return combinados[:300]
+
+
+def _bloquear_conta_referenciada(session: Session, contas: list) -> None:
+    """Fase 0 (B2): `ContaGerencial.id` é chave estrangeira de
+    `folha_rubrica.conta_gerencial_id`, `caixa_movimento.lancamento_id`,
+    `caixa_time_movimento.lancamento_id` e `extrato_linha.lancamento_id`.
+    `_alvos("financeiro")` não apaga essas linhas — então, no Postgres de
+    produção (que aplica FK de verdade), excluir uma conta que ainda é
+    referenciada por qualquer uma delas viola a FK e explode num 500 que,
+    por sair como exceção não tratada do FastAPI, chega ao navegador sem
+    cabeçalho CORS: só um "Failed to fetch" sem pista (mesmo modo de falha
+    já documentado no caso do animal, ver `_excluir_alvos_em_ordem`). O
+    SQLite dos testes NÃO pega isso porque não liga FK por padrão.
+
+    Enquanto a Fase 3 não cobre a cascata desses vínculos, bloqueamos com
+    mensagem clara em vez de deixar estourar em produção. A checagem é
+    incondicional (sem filtro de fazenda): a restrição de FK não conhece
+    `fazenda_id`, dispara sobre o `id` — e os `ids` aqui já são as contas
+    desta fazenda, então qualquer referência encontrada é a estas contas."""
+
+    ids = [c.id for c in contas if c.id is not None]
+    if not ids:
+        return
+    referencias: list[str] = []
+    if session.exec(select(CaixaMovimento).where(CaixaMovimento.lancamento_id.in_(ids))).first() is not None:
+        referencias.append("lançamento no caixa do funcionário")
+    if session.exec(select(CaixaTimeMovimento).where(CaixaTimeMovimento.lancamento_id.in_(ids))).first() is not None:
+        referencias.append("lançamento no caixa do time")
+    if session.exec(select(FolhaRubrica).where(FolhaRubrica.conta_gerencial_id.in_(ids))).first() is not None:
+        referencias.append("linha de rubrica na folha de pagamento")
+    if session.exec(select(ExtratoLinha).where(ExtratoLinha.lancamento_id.in_(ids))).first() is not None:
+        referencias.append("linha pareada no extrato bancário")
+    if referencias:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Não dá para excluir este lançamento ainda: ele continua ligado a "
+                + " e ".join(referencias)
+                + ". Desfaça esse vínculo antes, ou peça a um administrador que o faça "
+                "por você (a exclusão em cascata desses vínculos chega numa próxima etapa)."
+            ),
+        )
 
 
 def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None) -> tuple[list[str], list]:
@@ -740,11 +789,12 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         ).all()
         if not sanidades:
             matrizes = {a.numero_matriz for a in aplicacoes}
-            candidatas = session.exec(
-                select(Sanidade).where(
-                    Sanidade.data_aplicacao >= lancamento.data_d0,
-                )
-            ).all()
+            query_candidatas = select(Sanidade).where(
+                Sanidade.data_aplicacao >= lancamento.data_d0,
+            )
+            if fazenda_id is not None:
+                query_candidatas = query_candidatas.where(Sanidade.fazenda_id == fazenda_id)
+            candidatas = session.exec(query_candidatas).all()
             sanidades = [
                 s for s in candidatas
                 if s.numero_matriz in matrizes and (s.obs or "").startswith("Protocolo IATF — D")
@@ -806,6 +856,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             ).all()
             fechamento_mes.exigir_meses_abertos(
                 session, fazenda_id, [d for i in irmaos for d in fechamento_mes.datas_do_lancamento(i)], "excluir")
+            _bloquear_conta_referenciada(session, irmaos)
             impacto = [
                 f"Lançamento {c.numero_lancamento} — {c.descricao or '—'}",
                 f"{len(irmaos)} parcela(s) no total — todas serão excluídas",
@@ -815,6 +866,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             if n_itens_vale:
                 impacto.append(f"{n_itens_vale} item(ns) desta nota geraram vale — o(s) vale(s) também será(ão) excluído(s)")
             return impacto, [*irmaos, *itens]
+        _bloquear_conta_referenciada(session, [c])
         impacto = [f"Lançamento {c.numero_lancamento or ''} — {c.descricao or '—'} (R$ {c.valor_total or 0:,.2f})"]
         if itens:
             impacto.append(f"{len(itens)} produto(s)/serviço(s) lançados nesta nota")
@@ -979,7 +1031,10 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         if not lote or (fazenda_id is not None and lote.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Lote não encontrado")
         rotulo = f"{lote.codigo} - {lote.nome}"
-        n_animais = len(session.exec(select(Animal).where(Animal.grupo_primario == rotulo)).all())
+        query_animais = select(Animal).where(Animal.grupo_primario == rotulo)
+        if fazenda_id is not None:
+            query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+        n_animais = len(session.exec(query_animais).all())
         impacto = [f"Lote {rotulo}"]
         if n_animais:
             impacto.append(f"{n_animais} animal(is) atualmente com esse lote no cadastro (não serão apagados, só ficam com um lote que não existe mais)")
@@ -989,7 +1044,10 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         fornecedor = session.get(Fornecedor, int(id_))
         if not fornecedor or (fazenda_id is not None and fornecedor.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Fornecedor não encontrado")
-        vinculados = session.exec(select(Estoque).where(Estoque.fornecedor_id == fornecedor.id)).all()
+        query_vinculados = select(Estoque).where(Estoque.fornecedor_id == fornecedor.id)
+        if fazenda_id is not None:
+            query_vinculados = query_vinculados.where(Estoque.fazenda_id == fazenda_id)
+        vinculados = session.exec(query_vinculados).all()
         impacto = [f"Fornecedor {fornecedor.nome}"]
         if vinculados:
             impacto.append(f"{len(vinculados)} item(ns) de estoque perderão o vínculo com este fornecedor")
@@ -1008,8 +1066,13 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         pessoa = session.get(Pessoa, int(id_))
         if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Pessoa não encontrada")
-        n_folha = len(session.exec(select(FolhaPagamento).where(FolhaPagamento.pessoa_id == pessoa.id)).all())
-        n_vale = len(session.exec(select(ValeFuncionario).where(ValeFuncionario.pessoa_id == pessoa.id)).all())
+        query_folha = select(FolhaPagamento).where(FolhaPagamento.pessoa_id == pessoa.id)
+        query_vale = select(ValeFuncionario).where(ValeFuncionario.pessoa_id == pessoa.id)
+        if fazenda_id is not None:
+            query_folha = query_folha.where(FolhaPagamento.fazenda_id == fazenda_id)
+            query_vale = query_vale.where(ValeFuncionario.fazenda_id == fazenda_id)
+        n_folha = len(session.exec(query_folha).all())
+        n_vale = len(session.exec(query_vale).all())
         if n_folha or n_vale:
             raise HTTPException(
                 status_code=400,
@@ -1033,8 +1096,13 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         doenca = session.get(Doenca, int(id_))
         if not doenca or (fazenda_id is not None and doenca.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Doença não encontrada")
-        n_calendario = session.exec(select(CalendarioSanitario).where(CalendarioSanitario.doenca_id == doenca.id)).all()
-        n_protocolo = session.exec(select(ProtocoloSanitario).where(ProtocoloSanitario.doenca_id == doenca.id)).all()
+        query_calendario = select(CalendarioSanitario).where(CalendarioSanitario.doenca_id == doenca.id)
+        query_protocolo = select(ProtocoloSanitario).where(ProtocoloSanitario.doenca_id == doenca.id)
+        if fazenda_id is not None:
+            query_calendario = query_calendario.where(CalendarioSanitario.fazenda_id == fazenda_id)
+            query_protocolo = query_protocolo.where(ProtocoloSanitario.fazenda_id == fazenda_id)
+        n_calendario = session.exec(query_calendario).all()
+        n_protocolo = session.exec(query_protocolo).all()
         impacto = [f"Doença {doenca.nome}"]
         if n_calendario or n_protocolo:
             impacto.append(f"{len(n_calendario)} regra(s) do calendário e {len(n_protocolo)} protocolo(s) perderão esse vínculo")
@@ -1050,7 +1118,10 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         evento = session.get(EventoSanitario, int(id_))
         if not evento or (fazenda_id is not None and evento.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Evento sanitário não encontrado")
-        n_calendario = len(session.exec(select(CalendarioSanitario).where(CalendarioSanitario.evento_sanitario_id == evento.id)).all())
+        query_calendario = select(CalendarioSanitario).where(CalendarioSanitario.evento_sanitario_id == evento.id)
+        if fazenda_id is not None:
+            query_calendario = query_calendario.where(CalendarioSanitario.fazenda_id == fazenda_id)
+        n_calendario = len(session.exec(query_calendario).all())
         if n_calendario:
             raise HTTPException(
                 status_code=400,
@@ -1063,16 +1134,18 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         protocolo = session.get(ProtocoloSanitario, int(id_))
         if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Protocolo sanitário não encontrado")
-        n_lancamentos = len(session.exec(
-            select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.protocolo_id == protocolo.id)
-        ).all())
+        query_lancamentos = select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.protocolo_id == protocolo.id)
+        if fazenda_id is not None:
+            query_lancamentos = query_lancamentos.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
+        n_lancamentos = len(session.exec(query_lancamentos).all())
         if n_lancamentos:
             raise HTTPException(
                 status_code=400,
                 detail=f'Não é possível excluir "{protocolo.nome}": há {n_lancamentos} lançamento(s) já feito(s) '
                        "com esse protocolo (histórico em Sanidade/Agenda).",
             )
-        etapas = session.exec(select(ProtocoloSanitarioEtapa).where(ProtocoloSanitarioEtapa.protocolo_id == protocolo.id)).all()
+        query_etapas = select(ProtocoloSanitarioEtapa).where(ProtocoloSanitarioEtapa.protocolo_id == protocolo.id)
+        etapas = session.exec(query_etapas).all()
         impacto = [f"Protocolo sanitário {protocolo.nome}"]
         if etapas:
             impacto.append(f"{len(etapas)} etapa(s) do protocolo")
