@@ -194,7 +194,7 @@ class TestExclusaoAnimalIsolada:
     def test_excluir_animal_9006_da_fazenda_b_nao_apaga_historico_da_fazenda_a(self, client):
         c, engine = client
         _como_fazenda(2)
-        r = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "9006"})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "9006", "motivo": "teste", "confirmacao": "9006"})
         assert r.status_code == 200, r.text
         with Session(engine) as s:
             # O animal "9006" da fazenda B foi de fato excluído...

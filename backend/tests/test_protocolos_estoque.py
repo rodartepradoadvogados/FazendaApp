@@ -509,7 +509,7 @@ class TestCancelarEExcluirNaoDevolveEmDobro:
         assert r.status_code == 200, r.text
         assert _saldo(engine, "Sincrocp") == 50
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "protocolo_iatf_lancamento", "id": str(lid)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "protocolo_iatf_lancamento", "id": str(lid), "motivo": "teste"})
         assert r.status_code == 200, r.text
         assert _saldo(engine, "Sincrocp") == 50, "excluir um lançamento já cancelado não pode devolver o estoque de novo"
 

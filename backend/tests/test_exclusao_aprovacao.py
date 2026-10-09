@@ -61,7 +61,7 @@ class TestSolicitacaoOperador:
     def test_operador_nao_exclui_direto_fica_pendente(self, setup):
         app, engine = setup
         c = _client_as(app, _FakeOperador())
-        r = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "501"})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "501", "motivo": "teste"})
         assert r.status_code == 200
         assert r.json()["status"] == "solicitado"
 
@@ -73,7 +73,7 @@ class TestSolicitacaoOperador:
     def test_admin_ve_pendencia_do_operador(self, setup):
         app, engine = setup
         c_op = _client_as(app, _FakeOperador())
-        c_op.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "501"})
+        c_op.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "501", "motivo": "teste"})
 
         c_admin = _client_as(app, _FakeAdmin())
         r = c_admin.get("/exclusoes/pendentes")
@@ -90,11 +90,11 @@ class TestSolicitacaoOperador:
     def test_admin_aprova_e_executa_exclusao(self, setup):
         app, engine = setup
         c_op = _client_as(app, _FakeOperador())
-        c_op.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "501"})
+        c_op.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "501", "motivo": "teste"})
 
         c_admin = _client_as(app, _FakeAdmin())
         sol_id = c_admin.get("/exclusoes/pendentes").json()[0]["id"]
-        r = c_admin.post(f"/exclusoes/pendentes/{sol_id}/aprovar")
+        r = c_admin.post(f"/exclusoes/pendentes/{sol_id}/aprovar", json={"confirmacao": "501"})
         assert r.status_code == 200
         assert r.json()["aprovado"] is True
 
@@ -107,7 +107,7 @@ class TestSolicitacaoOperador:
     def test_admin_rejeita_e_nao_exclui(self, setup):
         app, engine = setup
         c_op = _client_as(app, _FakeOperador())
-        c_op.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "501"})
+        c_op.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "501", "motivo": "teste"})
 
         c_admin = _client_as(app, _FakeAdmin())
         sol_id = c_admin.get("/exclusoes/pendentes").json()[0]["id"]
@@ -124,7 +124,7 @@ class TestSolicitacaoOperador:
     def test_admin_ainda_exclui_direto(self, setup):
         app, engine = setup
         c_admin = _client_as(app, _FakeAdmin())
-        r = c_admin.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "501"})
+        r = c_admin.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "501", "motivo": "teste", "confirmacao": "501"})
         assert r.json()["status"] == "excluido"
 
         from sqlmodel import select

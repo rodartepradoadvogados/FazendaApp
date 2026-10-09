@@ -620,7 +620,7 @@ def test_17_exclusao_da_nota(client):
         parcela = s.exec(select(EmpreitadaParcela).where(EmpreitadaParcela.empreitada_id == empreitada["id"])).first()
         assert parcela.valor == 700.0
 
-    r = c.post("/exclusoes/confirmar", json={"tipo": "financeiro", "id": str(conta_id)})
+    r = c.post("/exclusoes/confirmar", json={"tipo": "financeiro", "id": str(conta_id), "motivo": "teste"})
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "excluido"
 

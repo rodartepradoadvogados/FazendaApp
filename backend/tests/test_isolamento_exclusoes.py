@@ -194,7 +194,7 @@ class TestExclusaoAnimalOrfaoNaoAtravessaFazenda:
         assert r_impacto.status_code == 200, r_impacto.text
         assert not any("colostragem" in item.lower() for item in r_impacto.json()["impacto"])
 
-        r_confirmar = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "100"})
+        r_confirmar = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "100", "motivo": "teste", "confirmacao": "100"})
         assert r_confirmar.status_code == 200, r_confirmar.text
 
         with Session(engine) as s:
@@ -219,7 +219,7 @@ class TestExclusaoAnimalOrfaoNaoAtravessaFazenda:
             s.commit()
 
         _como_fazenda(2)
-        r_confirmar = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "200"})
+        r_confirmar = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "200", "motivo": "teste", "confirmacao": "200"})
         assert r_confirmar.status_code == 200, r_confirmar.text
 
         with Session(engine) as s:
@@ -327,11 +327,12 @@ class TestFinanceiroFKBloqueio:
 
         _como_fazenda(1)
         r_impacto = c.post("/exclusoes/impacto", json={"tipo": "financeiro", "id": str(conta_id)})
-        assert r_impacto.status_code == 400, r_impacto.text
-        assert "caixa do funcionário" in r_impacto.json()["detail"]
+        assert r_impacto.status_code == 200, r_impacto.text
+        assert r_impacto.json().get("bloqueia"), "impacto de conta ligada ao caixa deveria vir bloqueado"
 
         r_confirmar = c.post("/exclusoes/confirmar", json={"tipo": "financeiro", "id": str(conta_id)})
-        assert r_confirmar.status_code == 400, r_confirmar.text
+        assert r_confirmar.status_code == 409, r_confirmar.text
+        assert "caixa do funcionário" in str(r_confirmar.json().get("detail", ""))
 
         with Session(engine) as s:
             from sqlmodel import select

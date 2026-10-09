@@ -11,6 +11,7 @@ from sqlmodel import select
 
 from fazenda.api.routers.estoque import MOVIMENTOS_SAIDA
 from fazenda.models import Estoque, EstoqueSemen, MovimentoEstoque
+from fazenda.rules.exclusao_impacto import Bloqueio, ExclusaoBloqueada
 from fazenda.rules.exclusao_tipos._base import TipoExclusao, _br, _contem, _dentro_periodo
 
 
@@ -57,16 +58,17 @@ def _alvos_movimento_estoque(id_: str, session, fazenda_id: int | None = None, *
     if not mov or (fazenda_id is not None and mov.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Movimento de estoque não encontrado")
     if mov.origem_tipo is not None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Este movimento foi gerado por um lançamento de {mov.origem_tipo} — desfaça pelo próprio "
-            "lançamento (Sanidade, Protocolo, Secagem…), não pelo histórico de estoque.",
-        )
+        raise ExclusaoBloqueada(Bloqueio(
+            titulo="Movimento gerado por outro lançamento",
+            motivo=f"Este movimento foi gerado por um lançamento de {mov.origem_tipo}.",
+            fazer="Desfaça pelo próprio lançamento (Sanidade, Protocolo, Secagem…), não pelo histórico de estoque.",
+        ))
     if mov.pedido_item_id is not None:
-        raise HTTPException(
-            status_code=400,
-            detail="Esta entrada está vinculada a um item de pedido — desfaça pelo Pedido.",
-        )
+        raise ExclusaoBloqueada(Bloqueio(
+            titulo="Entrada vinculada a um pedido",
+            motivo="Esta entrada está vinculada a um item de pedido.",
+            fazer="Desfaça pelo Pedido.",
+        ))
 
     impacto = [
         f'Movimento "{mov.movimento}" de {mov.quantidade:g} {mov.unidade or ""} de {mov.nome_item} em {_br(mov.data_movimento)}'

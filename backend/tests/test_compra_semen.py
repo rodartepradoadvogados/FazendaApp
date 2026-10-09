@@ -289,7 +289,7 @@ class TestCompraSemenMultiItem:
         assert r_impacto.status_code == 200
         assert any("mais 1 sêmen/touro" in linha for linha in r_impacto.json()["impacto"])
 
-        r_confirma = client.post("/exclusoes/confirmar", json={"tipo": "compra_semen", "id": str(compra_do_item_2.id)})
+        r_confirma = client.post("/exclusoes/confirmar", json={"tipo": "compra_semen", "id": str(compra_do_item_2.id), "motivo": "teste"})
         assert r_confirma.status_code == 200
 
         with Session(client.engine) as s:
@@ -316,7 +316,7 @@ class TestCompraSemenMultiItem:
         with Session(client.engine) as s:
             compra = s.exec(select(CompraSemen).where(CompraSemen.numero_lancamento_gerado == numero_lancamento)).first()
 
-        r_confirma = client.post("/exclusoes/confirmar", json={"tipo": "compra_semen", "id": str(compra.id)})
+        r_confirma = client.post("/exclusoes/confirmar", json={"tipo": "compra_semen", "id": str(compra.id), "motivo": "teste"})
         assert r_confirma.status_code == 200
         with Session(client.engine) as s:
             assert s.get(CompraSemen, compra.id) is None

@@ -199,7 +199,7 @@ class TestExclusaoDiariaPagamento:
         numero_lancamento = pagamento["pagamentos"][0]["numero_lancamento_gerado"]
         assert numero_lancamento
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "diaria_pagamento", "id": str(pagamento_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "diaria_pagamento", "id": str(pagamento_id), "motivo": "teste"})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "excluido"
 
@@ -249,7 +249,7 @@ class TestExclusaoDiariaPagamento:
         pagamento_id = pagamento["pagamentos"][0]["id"]
 
         estado["user"] = operador
-        r = c.post("/exclusoes/confirmar", json={"tipo": "diaria_pagamento", "id": str(pagamento_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "diaria_pagamento", "id": str(pagamento_id), "motivo": "teste"})
         assert r.status_code == 200
         assert r.json()["status"] == "solicitado"
 
@@ -278,7 +278,7 @@ class TestExclusaoEmpreitada:
         empreitada = _criar_empreitada_mensal(c, pessoa_id, [1000.0, 1000.0])
         numeros = [p["numero_lancamento_gerado"] for p in empreitada["parcelas"]]
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "empreitada", "id": str(empreitada["id"])})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "empreitada", "id": str(empreitada["id"]), "motivo": "teste"})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "excluido"
 
@@ -295,9 +295,12 @@ class TestExclusaoEmpreitada:
         _marcar_pago(engine, empreitada["parcelas"][0]["numero_lancamento_gerado"])
 
         r = c.post("/exclusoes/impacto", json={"tipo": "empreitada", "id": str(empreitada["id"])})
-        assert r.status_code == 400
-        assert "paga" in r.json()["detail"].lower()
-        assert "Estorne a baixa" in r.json()["detail"]
+        assert r.status_code == 200
+        bloqueio = r.json()["bloqueia"]
+        assert bloqueio
+        texto = " ".join(f"{b.get('titulo', '')} {b.get('motivo', '')} {b.get('fazer', '')}" for b in bloqueio)
+        assert "paga" in texto.lower()
+        assert "Estorne a baixa" in texto
 
         # A empreitada continua intacta — nada foi mutado pela prévia bloqueada.
         with _sessao(engine) as s:
@@ -316,7 +319,7 @@ class TestExclusaoEmpreitada:
             parcela1 = s.get(EmpreitadaParcela, empreitada["parcelas"][0]["id"])
             assert parcela1.valor == 700.0  # 1000 - 300 abatido pelo vale
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "empreitada", "id": str(empreitada["id"])})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "empreitada", "id": str(empreitada["id"]), "motivo": "teste"})
         assert r.status_code == 200, r.text
 
         with _sessao(engine) as s:
@@ -332,7 +335,7 @@ class TestExclusaoEmpreitada:
         r = c.put(f"/cadastro/empreitadas/{empreitada['id']}/etapas/{etapa_id}/concluir")
         assert r.status_code == 200, r.text
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "empreitada", "id": str(empreitada["id"])})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "empreitada", "id": str(empreitada["id"]), "motivo": "teste"})
         assert r.status_code == 200, r.text
 
         with _sessao(engine) as s:
@@ -373,7 +376,7 @@ class TestExclusaoContrato:
         contrato = _criar_contrato(c, pessoa_id, forma_pagamento="mensal", valores=[500.0, 500.0])
         numeros = [p["numero_lancamento_gerado"] for p in contrato["parcelas"]]
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "contrato", "id": str(contrato["id"])})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "contrato", "id": str(contrato["id"]), "motivo": "teste"})
         assert r.status_code == 200, r.text
 
         with _sessao(engine) as s:
@@ -389,8 +392,11 @@ class TestExclusaoContrato:
         _marcar_pago(engine, contrato["parcelas"][0]["numero_lancamento_gerado"])
 
         r = c.post("/exclusoes/impacto", json={"tipo": "contrato", "id": str(contrato["id"])})
-        assert r.status_code == 400
-        assert "paga" in r.json()["detail"].lower()
+        assert r.status_code == 200
+        bloqueio = r.json()["bloqueia"]
+        assert bloqueio
+        texto = " ".join(f"{b.get('titulo', '')} {b.get('motivo', '')} {b.get('fazer', '')}" for b in bloqueio)
+        assert "paga" in texto.lower()
 
     def test_sem_frequencia_excluivel_remove_lembrete_agenda(self, client):
         c, engine, _, _ = client
@@ -403,7 +409,7 @@ class TestExclusaoContrato:
         assert r.status_code == 200
         assert any("lembrete" in i.lower() for i in r.json()["impacto"])
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "contrato", "id": str(contrato["id"])})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "contrato", "id": str(contrato["id"]), "motivo": "teste"})
         assert r.status_code == 200, r.text
 
         with _sessao(engine) as s:
@@ -448,7 +454,7 @@ class TestExclusaoDiaria:
         vale = _criar_vale_avulso(c, "diaria", diaria["id"], valor=20.0, forma_pagamento="desconto_proximo_pagamento")
         vale_id = vale["vale"]["id"]
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "diaria", "id": str(diaria["id"])})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "diaria", "id": str(diaria["id"]), "motivo": "teste"})
         assert r.status_code == 200, r.text
 
         with _sessao(engine) as s:
@@ -463,8 +469,11 @@ class TestExclusaoDiaria:
         _registrar_pagamento_diaria(c, diaria["id"], valor=40.0)
 
         r = c.post("/exclusoes/impacto", json={"tipo": "diaria", "id": str(diaria["id"])})
-        assert r.status_code == 400
-        assert "pagamento" in r.json()["detail"].lower()
+        assert r.status_code == 200
+        bloqueio = r.json()["bloqueia"]
+        assert bloqueio
+        texto = " ".join(f"{b.get('titulo', '')} {b.get('motivo', '')} {b.get('fazer', '')}" for b in bloqueio)
+        assert "pagamento" in texto.lower()
 
     def test_com_vale_saida_de_caixa_bloqueia(self, client):
         c, engine, _, _ = client
@@ -474,8 +483,11 @@ class TestExclusaoDiaria:
         _criar_vale_avulso(c, "diaria", diaria["id"], valor=50.0, forma_pagamento="pix", conta_corrente_id=conta_id)
 
         r = c.post("/exclusoes/impacto", json={"tipo": "diaria", "id": str(diaria["id"])})
-        assert r.status_code == 400
-        assert "vale" in r.json()["detail"].lower()
+        assert r.status_code == 200
+        bloqueio = r.json()["bloqueia"]
+        assert bloqueio
+        texto = " ".join(f"{b.get('titulo', '')} {b.get('motivo', '')} {b.get('fazer', '')}" for b in bloqueio)
+        assert "vale" in texto.lower()
 
     def test_apos_excluir_pagamentos_diaria_fica_excluivel(self, client):
         c, engine, _, _ = client
@@ -485,12 +497,13 @@ class TestExclusaoDiaria:
         pagamento_id = pagamento["pagamentos"][0]["id"]
 
         r = c.post("/exclusoes/impacto", json={"tipo": "diaria", "id": str(diaria["id"])})
-        assert r.status_code == 400
+        assert r.status_code == 200
+        assert r.json()["bloqueia"]
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "diaria_pagamento", "id": str(pagamento_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "diaria_pagamento", "id": str(pagamento_id), "motivo": "teste"})
         assert r.status_code == 200, r.text
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "diaria", "id": str(diaria["id"])})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "diaria", "id": str(diaria["id"]), "motivo": "teste"})
         assert r.status_code == 200, r.text
         with _sessao(engine) as s:
             assert s.get(Diaria, diaria["id"]) is None

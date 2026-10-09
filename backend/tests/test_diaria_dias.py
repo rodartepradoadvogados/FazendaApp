@@ -550,7 +550,7 @@ class TestExclusaoCascata:
         with Session(engine) as s:
             assert len(s.exec(select(DiariaDia).where(DiariaDia.diaria_id == diaria_id)).all()) == 1
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "diaria", "id": str(diaria_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "diaria", "id": str(diaria_id), "motivo": "teste"})
         assert r.status_code == 200, r.text
 
         with Session(engine) as s:

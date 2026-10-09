@@ -215,7 +215,7 @@ class TestExcluirPesagem:
         antes = c.get("/producao/pesagens/relatorio").json()["linhas"][0]
         assert antes["num_pesagens"] == 2
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "pesagem_corporal", "id": str(pid)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "pesagem_corporal", "id": str(pid), "motivo": "teste"})
         assert r.status_code == 200
         assert r.json()["status"] == "excluido"
 
@@ -262,7 +262,7 @@ class TestExcluirPesagem:
         anterior = main.app.dependency_overrides[get_current_user]
         main.app.dependency_overrides[get_current_user] = lambda: _FakeOperador()
         try:
-            r = c.post("/exclusoes/confirmar", json={"tipo": "pesagem_corporal", "id": str(pid)})
+            r = c.post("/exclusoes/confirmar", json={"tipo": "pesagem_corporal", "id": str(pid), "motivo": "teste"})
         finally:
             main.app.dependency_overrides[get_current_user] = anterior
         assert r.status_code == 200

@@ -34,6 +34,7 @@ from fazenda.models import (
     ValeAvulso,
 )
 from fazenda.auth import exigir_fazenda_da_operacao
+from fazenda.rules.exclusao_impacto import Bloqueio, ExclusaoBloqueada
 from fazenda.rules.exclusao_tipos._base import TipoExclusao, _br, _contem, _dentro_periodo
 
 
@@ -175,11 +176,11 @@ def _alvos_empreitada(id_, session, fazenda_id=None) -> tuple[list[str], list]:
     # pagamento automaticamente (o dinheiro já saiu do banco).
     pagos = _numeros_pagos(session, numeros, fazenda_id)
     if pagos:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Não é possível excluir esta empreita: {len(pagos)} parcela(s)/etapa(s) já foi(ram) paga(s). "
-                   "Estorne a baixa em Financeiro › Contas pagas e depois exclua.",
-        )
+        raise ExclusaoBloqueada(Bloqueio(
+            titulo="Empreita com parcela paga",
+            motivo=f"{len(pagos)} parcela(s)/etapa(s) já foi(ram) paga(s).",
+            fazer="Estorne a baixa em Financeiro › Contas pagas e depois exclua.",
+        ))
 
     contas = session.exec(
         select(ContaGerencial).where(
@@ -264,11 +265,11 @@ def _alvos_contrato(id_, session, fazenda_id=None) -> tuple[list[str], list]:
     # Bloqueio idêntico ao da empreitada: parcela paga → 400 apontando o estorno.
     pagos = _numeros_pagos(session, numeros, fazenda_id)
     if pagos:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Não é possível excluir este contrato: {len(pagos)} parcela(s) já foi(ram) paga(s). "
-                   "Estorne a baixa em Financeiro › Contas pagas e depois exclua.",
-        )
+        raise ExclusaoBloqueada(Bloqueio(
+            titulo="Contrato com parcela paga",
+            motivo=f"{len(pagos)} parcela(s) já foi(ram) paga(s).",
+            fazer="Estorne a baixa em Financeiro › Contas pagas e depois exclua.",
+        ))
 
     contas = session.exec(
         select(ContaGerencial).where(
@@ -369,11 +370,11 @@ def _alvos_diaria(id_, session, fazenda_id=None) -> tuple[list[str], list]:
     pagamentos = session.exec(select(DiariaPagamento).where(DiariaPagamento.diaria_id == diaria.id)).all()
     if pagamentos:
         total_pago = round(sum(p.valor for p in pagamentos), 2)
-        raise HTTPException(
-            status_code=400,
-            detail=f"Não é possível excluir esta diária: há {len(pagamentos)} pagamento(s) registrado(s) "
-                   f"(R$ {total_pago:,.2f}). Exclua os pagamentos primeiro (Pessoal › Diárias, botão de excluir pagamento).",
-        )
+        raise ExclusaoBloqueada(Bloqueio(
+            titulo="Diária com pagamento registrado",
+            motivo=f"há {len(pagamentos)} pagamento(s) registrado(s) (R$ {total_pago:,.2f}).",
+            fazer="Exclua os pagamentos primeiro (Pessoal › Diárias, botão de excluir pagamento).",
+        ))
 
     vales = session.exec(
         select(ValeAvulso).where(ValeAvulso.origem_tipo == "diaria", ValeAvulso.origem_id == diaria.id)
@@ -381,11 +382,11 @@ def _alvos_diaria(id_, session, fazenda_id=None) -> tuple[list[str], list]:
     vales_com_saida = [v for v in vales if v.forma_pagamento != "desconto_proximo_pagamento"]
     if vales_com_saida:
         total_vale = round(sum(v.valor for v in vales_com_saida), 2)
-        raise HTTPException(
-            status_code=400,
-            detail=f"Não é possível excluir esta diária: há {len(vales_com_saida)} vale(s) avulso(s) com saída de "
-                   f"caixa já pago(s) (R$ {total_vale:,.2f}). Veja o Relatório de vales avulsos antes de excluir.",
-        )
+        raise ExclusaoBloqueada(Bloqueio(
+            titulo="Diária com vale já pago",
+            motivo=f"há {len(vales_com_saida)} vale(s) avulso(s) com saída de caixa já pago(s) (R$ {total_vale:,.2f}).",
+            fazer="Veja o Relatório de vales avulsos antes de excluir.",
+        ))
 
     # Conta a pagar emitida no encerramento do período (ver
     # `rh_contratos.encerrar_diaria`). Se já foi paga, excluir a diária é
@@ -410,12 +411,11 @@ def _alvos_diaria(id_, session, fazenda_id=None) -> tuple[list[str], list]:
             )
         ).first()
     if conta_encerramento is not None and conta_encerramento.valor_pago is not None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Não é possível excluir esta diária: a conta a pagar do encerramento "
-                   f"({conta_encerramento.numero_lancamento}, R$ {conta_encerramento.valor_pago:,.2f}) já foi paga. "
-                   "Estorne a baixa em Financeiro › Lançamentos antes de excluir.",
-        )
+        raise ExclusaoBloqueada(Bloqueio(
+            titulo="Conta do encerramento já paga",
+            motivo=f"a conta ({conta_encerramento.numero_lancamento}, R$ {conta_encerramento.valor_pago:,.2f}) já foi paga.",
+            fazer="Estorne a baixa em Financeiro › Lançamentos antes de excluir.",
+        ))
 
     auditorias = session.exec(select(DiariaAuditoria).where(DiariaAuditoria.diaria_id == diaria.id)).all()
     dias_calendario = session.exec(select(DiariaDia).where(DiariaDia.diaria_id == diaria.id)).all()

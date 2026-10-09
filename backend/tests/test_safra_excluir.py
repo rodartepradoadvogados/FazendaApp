@@ -113,7 +113,7 @@ class TestExcluirSafra:
         c, engine = client
         sid = _criar_safra(engine)
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "safra", "id": str(sid)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "safra", "id": str(sid), "motivo": "teste"})
         assert r.status_code == 200
         assert r.json()["status"] == "excluido"
 
@@ -134,7 +134,7 @@ class TestExcluirSafra:
             ))
             s.commit()
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "safra", "id": str(sid)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "safra", "id": str(sid), "motivo": "teste"})
         assert r.status_code == 200
 
         with Session(engine) as s:
