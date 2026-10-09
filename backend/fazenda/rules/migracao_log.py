@@ -46,11 +46,13 @@ def _modelos() -> dict[str, Any]:
 # Campos que um backfill pode alterar. valor_total/valor_pago NUNCA entram aqui.
 CAMPOS_PERMITIDOS: dict[str, frozenset[str]] = {
     # conta_corrente_id: vínculo do pagamento com a conta (PR 6, backfill_conta_corrente).
-    "conta_gerencial": frozenset({"natureza_fin", "conta_corrente_id"}),
+    # codigo_conta: a conta de uma nota SEM itens, mudada pela tela Classificar (classificacao_manual_v1).
+    "conta_gerencial": frozenset({"natureza_fin", "conta_corrente_id", "codigo_conta"}),
     # PR 2/3 (backfill dos itens automáticos): a conta de um item GERADO que
     # nasceu sem conta configurada. Item de gente nunca passa por aqui.
     "lancamento_item": frozenset({"natureza_fin", "codigo_conta_gerencial", "nome_conta_gerencial"}),
-    "plano_conta_gerencial": frozenset({"natureza_fin"}),
+    # linha_dre: a linha da DRE da conta, mudada pela tela Classificar (classificacao_manual_v1).
+    "plano_conta_gerencial": frozenset({"natureza_fin", "linha_dre"}),
     "patrimonio": frozenset({"centro_custo"}),
     # numero_lancamento: a nota criada para a compra (PR 5, backfill_cartao_por_item).
     "lancamento_cartao": frozenset({"numero_lancamento"}),

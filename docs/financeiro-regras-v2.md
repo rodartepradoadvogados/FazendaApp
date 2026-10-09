@@ -484,7 +484,58 @@ Leiteira; depreciação inteira em qualquer filtro).
   ensiladeira (100) inteira na Agricultura → Pecuária 800, Agricultura 300,
   fazenda 1.100 (`test_pr9_depreciacao_rateada_entre_os_centros`).
 
-## 13. O que fica
+## 13. Classificar: a fila e o lote (tela Relatórios › Resultado › Classificar)
+
+A DRE deixa de fora o que não tem classificação (nunca finge que fecha). A tela
+**Classificar** lista esse resíduo lançamento a lançamento e o resolve em lote,
+com Desfazer. Regras em `fazenda/rules/classificacao_manual.py`; rotas em
+`fazenda/api/routers/classificacao.py` (mesmas travas do router do Financeiro).
+
+- **Fila** — `GET /financeiro/classificacao/pendencias?data_inicio&data_fim&regime&centro_custo`
+  (`inicio`, `fim` e `centro` são apelidos). Lê os MESMOS registros da DRE
+  (`_registros_dre_para_cascata`) e aplica as regras do motor, então a fila fecha com o
+  “sem classificação” e o “fora da DRE sem motivo” da cascata. Uma linha por
+  lançamento/item (as parcelas somam), com `conta_id`, `item_id`, `numero_lancamento`,
+  fornecedor, descrição, valor, data (pelo regime), conta atual, `acoes` possíveis, `travas`
+  (o porquê de cada ação travada) e `sugestao`. Também vem agrupada (`por_motivo`,
+  `por_conta`), com `ultimo_lote` (o Desfazer) e `bloqueios`. Limite de 1.000 linhas
+  (`resumo.truncado`); os totais contam todas.
+
+  | motivo | o que é | como se resolve |
+  |---|---|---|
+  | `conta_sem_linha_dre` | a conta não tem linha da DRE (nem herdada) | `linha_dre` da conta (vale para todos os lançamentos dela) |
+  | `sem_codigo_conta` | lançamento ou item sem conta gerencial | `conta` do item (ou da nota, se ela não tem itens) |
+  | `item_sem_conta_automatica` | folha/contrato/diária gerado sem conta (**só v2**) | `conta` do item (ou configurar a origem em Contas automáticas) |
+  | `natureza_nao_informada` | conta “não entra na DRE” sem dizer o motivo (**só v2**) | `natureza` (da conta do plano ou só do lançamento) |
+
+- **Sugestões** (nunca aplicadas sozinhas; a tela as mostra e aceita com um clique): linha
+  da DRE pelas contas irmãs (mesmo pai, todas na mesma linha) e, depois, pelo nome da conta;
+  conta pelo histórico do fornecedor (≥ 50% das notas dele numa conta-folha ativa) ou pelo nome
+  que combina com a origem automática; natureza pelo nome (`inferir_natureza_por_nome`).
+- **Lote** — `POST /financeiro/classificacao/aplicar` (administrador; `get_fazenda_id_escrita`):
+  `{"acoes":[{"tipo":"conta|natureza|linha_dre","alvo":{...},"valor":"..."}],"motivo":"..."}`.
+  **Tudo ou nada**: valida todas as ações antes de gravar (422 com `erros[{indice,codigo,mensagem}]`).
+  Cada campo mudado vira uma linha em `migracao_log_financeiro` (migração
+  `classificacao_manual_v1`, lote `classificacao-…`, antes/depois, motivo). Nunca toca valor,
+  data, pagamento nem conta bancária. Aplicar de novo o que já está assim não muda nada
+  (`lote: null`).
+- **Desfazer** — `POST /financeiro/classificacao/reverter/{lote}`: devolve o valor de antes **só**
+  onde o valor de hoje ainda é o que o lote gravou (o resto vira `conflitos`, intocado). Só lotes
+  desta tela e da própria fazenda (outra fazenda → 404).
+- **Flag desligada** (nada muda de número): a fila lista só o que a regra antiga também enxerga
+  (`conta_sem_linha_dre` e `sem_codigo_conta`); `natureza` e `item_sem_conta_automatica` vêm
+  travados com o porquê, e uma ação `natureza` responde 409 `regras_v2_desligadas`. Uma nota com
+  só itens gerados pelo sistema aceita a conta na nota (a regra antiga a lê) e a resposta avisa
+  que, com as regras novas, vale a conta configurada em Contas automáticas.
+- **Mês fechado** (só com a flag): ação sobre o **lançamento** (`conta`, `natureza` por lançamento)
+  com competência ou pagamento em mês fechado → 409 `mes_fechado` (nada é gravado) e o Desfazer
+  também. Ação sobre a **conta do plano** (`linha_dre`, natureza padrão) segue a regra já documentada
+  do Fechamento — vale para todos os meses e não trava —, mas a resposta traz `avisos` com os meses
+  fechados que mudam (o Fechamento mostra “mudou depois do fechamento”).
+- O checklist do Fechamento do mês (`sem_conta`) agora leva para esta tela (`destino: "classificar"`).
+  A DRE por conta (tela anterior, `dre_contas`) foi removida; `?sub=dre_contas` redireciona para cá.
+
+## 14. O que fica
 
 Com os PRs 0 a 9 ligados (contas automáticas, os backfills da folha e do
 cartão, a natureza do plano e a flag), o cenário da auditoria em março/2031
