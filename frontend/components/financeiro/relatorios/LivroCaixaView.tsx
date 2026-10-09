@@ -272,7 +272,7 @@ export default function LivroCaixaView(props: PropsRelatorio) {
           ))}
           {dados.fora_do_livro!.grupos.some((g) => g.natureza === "sem_conta" || g.natureza === "NAO_INFORMADA") && (
             <p style={{ margin: ".6rem 0 0", fontSize: ".82rem" }}>
-              <button type="button" className="rl-linkbtn" style={{ color: "var(--text-accent)", fontWeight: 700 }} onClick={() => props.onIrRelatorio("dre_contas")}>
+              <button type="button" className="rl-linkbtn" style={{ color: "var(--text-accent)", fontWeight: 700 }} onClick={() => props.onIrRelatorio("classificar")}>
                 <ExternalLink size={13} aria-hidden /> Classificar as contas
               </button>{" "}para elas entrarem (ou saírem com o motivo certo).
             </p>

@@ -27,8 +27,10 @@ test("nenhum relatório antigo some: cada id antigo cai num relatório da árvor
   assert.equal(idDoRelatorio("caixa"), "rel_caixa");
   assert.equal(grupoDe("caixa")!.label, "Caixa");
   for (const id of ["caixa", "caixa_real", "fluxo"]) assert.ok(RELATORIOS_NO_MOLDE.has(idDoRelatorio(id)), id);
-  // A DRE por conta (tela anterior, com a classificação) continua acessível.
-  assert.ok(IDS_RELATORIOS.has("dre_contas"));
+  // T2: a DRE por conta (tela anterior) saiu; links salvos com ?sub=dre_contas abrem a tela Classificar.
+  assert.ok(!IDS_RELATORIOS.has("dre_contas"));
+  assert.equal(idDoRelatorio("dre_contas"), "classificar");
+  assert.equal(grupoDe("dre_contas")!.label, "Resultado");
   // Fase C: Plano › Orçamento no molde; as telas anteriores do orçamento e dos cenários continuam.
   assert.equal(idDoRelatorio("orcamento"), "rel_orcamento");
   assert.equal(grupoDe("orcamento")!.label, "Plano");
@@ -40,7 +42,7 @@ test("ids únicos na árvore (a aba ativa nunca fica ambígua) e telas novas no 
   const ids = GRUPOS_RELATORIOS.flatMap((g) => [g.id, ...g.itens.map((i) => i.id)]);
   assert.equal(new Set(ids).size, ids.length);
   assert.deepEqual([...RELATORIOS_NO_MOLDE], [
-    "painel_dono", "rel_litro", "rel_dre", "rel_caixa", "rel_fluxo", "rel_livro", "custos", "rmca", "reguas_referencia",
+    "painel_dono", "rel_litro", "rel_dre", "classificar", "rel_caixa", "rel_fluxo", "rel_livro", "custos", "rmca", "reguas_referencia",
     "rel_orcamento", "rel_cenarios", "compra_venda_animais", "compra_semen", "pacote_contador", "fechamento_mes", "conciliacao",
   ]);
   for (const id of RELATORIOS_NO_MOLDE) assert.ok(IDS_RELATORIOS.has(id), id);
@@ -68,7 +70,7 @@ test("integração da Fase C: árvore coerente — toda tela nova no molde, tela
   const ordem = GRUPOS_RELATORIOS.map((g) => [g.label, g.itens.map((i) => i.id)]);
   assert.deepEqual(ordem, [
     ["Painel", ["painel_dono"]],
-    ["Resultado", ["rel_litro", "rel_dre", "dre_contas"]],
+    ["Resultado", ["rel_litro", "rel_dre", "classificar"]],
     ["Caixa", ["rel_caixa", "rel_fluxo", "rel_livro"]],
     ["Leite", ["custos", "rmca", "reguas_referencia"]],
     ["Plano", ["rel_orcamento", "rel_cenarios", "orcamento_itens", "planejamento_financeiro"]],

@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fraseLitro, linhasLitro, pendenciasLitro, serieLitro, temResultadoPorLitro, type IndicadoresLitro, type RespostaLitro } from "./relatorioLitro.ts";
+import {
+  avisoLitrosEstimados, descricaoFonteLitros, fraseLitro, linhasLitro, litrosEstimados, pendenciasLitro, serieLitro, temResultadoPorLitro,
+  type IndicadoresLitro, type RespostaLitro,
+} from "./relatorioLitro.ts";
 import { brl, delta, periodoDe } from "./relatorioContexto.ts";
 
 const IND = (o: Partial<IndicadoresLitro> = {}): IndicadoresLitro => ({
@@ -26,8 +29,48 @@ test("sem litros ou sem receita do leite não há resultado por litro", () => {
 test("pendências com o caminho de 1 clique, prontas ou não", () => {
   const p = pendenciasLitro(RESP(IND({ litros: 0 })));
   assert.deepEqual(p.map((x) => [x.chave, x.pronto]), [["leite", true], ["comida", false], ["litros", false]]);
-  assert.equal(p[2].href, "/lancamentos?sub=entrega_leite");
+  // T4: o litro vem da NOTA do laticínio (Financeiro); a Venda mensal é a reserva.
+  assert.equal(p[2].acao, "Lançar a nota do laticínio (item de leite) — ou a Venda mensal como reserva");
+  assert.equal(p[2].href, "/financeiro?sub=a_receber");
+  assert.equal(p[2].hrefReserva, "/lancamentos?sub=entrega_leite");
   assert.deepEqual(pendenciasLitro(null), []);
+});
+
+const MISTO: Partial<IndicadoresLitro> = {
+  fonte_litros: "mista", litros_por_fonte: { nota: 8000, venda_mensal: 10000 }, pct_litros_estimados: 55.6,
+  meses_litros: [
+    { competencia: "2031-05", fonte: "nota", litros: 8000 }, { competencia: "2031-06", fonte: "venda_mensal", litros: 10000 },
+  ],
+};
+
+test("litros estimados: parcela da Venda mensal e os meses, só quando há mês estimado", () => {
+  assert.deepEqual(litrosEstimados(IND(MISTO)), { pct: 55.6, meses: ["2031-06"] });
+  assert.equal(avisoLitrosEstimados(IND(MISTO)), "55,6% dos litros estimados pela Venda mensal (sem nota do laticínio)");
+  // Tudo da reserva: sem percentual, o aviso diz que o litro todo é estimado.
+  const reserva = IND({ fonte_litros: "venda_mensal", litros_por_fonte: { nota: 0, venda_mensal: 5000 }, pct_litros_estimados: 100,
+    meses_litros: [{ competencia: "2031-05", fonte: "venda_mensal", litros: 5000 }] });
+  assert.equal(avisoLitrosEstimados(reserva), "litros estimados pela Venda mensal (sem nota do laticínio)");
+  // Só nota, regras antigas (sem os campos) ou nada: sem aviso.
+  assert.equal(litrosEstimados(IND({ fonte_litros: "nota", meses_litros: [{ competencia: "2031-05", fonte: "nota", litros: 8000 }] })), null);
+  assert.equal(litrosEstimados(IND()), null);
+  assert.equal(avisoLitrosEstimados(null), "");
+});
+
+test("a nota do relatório diz de onde saem os litros", () => {
+  assert.equal(descricaoFonteLitros(IND(), false), "Venda mensal do leite");
+  assert.equal(descricaoFonteLitros(IND({ fonte_litros: "nota" }), true), "nota do laticínio lançada em Financeiro");
+  assert.match(descricaoFonteLitros(IND(MISTO), true), /^nota do laticínio e, nos meses sem nota, a Venda mensal do leite — 55,6%/);
+  assert.equal(descricaoFonteLitros(IND({ fonte_litros: "sem_dado" }), true), "sem nota do laticínio nem Venda mensal");
+});
+
+test("a série marca o mês estimado (litros da reserva), nunca o mês sem leite", () => {
+  const s = serieLitro(RESP(IND(), [
+    { ...IND({ fonte_litros: "nota" }), competencia: "2031-04" },
+    { ...IND({ fonte_litros: "venda_mensal" }), competencia: "2031-05" },
+    { ...IND({ litros: 0, preco_liquido_l: null, coe_l: null, fonte_litros: "sem_dado" }), competencia: "2031-06" },
+    { ...IND(), competencia: "2031-07" },
+  ]));
+  assert.deepEqual(s.map((p) => p.estimado), [false, true, false, false]);
 });
 
 test("linha a linha: do preço bruto à sobra depois de repor; o custeio fecha com as partes", () => {

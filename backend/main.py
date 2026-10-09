@@ -38,6 +38,7 @@ from fazenda.api.routers import (
     central_protocolos,
     chamados,
     aceites,
+    classificacao,
     cobranca,
     cofre_acesso,
     compra_animal,
@@ -966,6 +967,8 @@ app.include_router(relatorio_leite.router, dependencies=[Depends(exigir_modulo("
 # Fase C5 (Relatórios › Entrega ao contador): fechamento do mês, conciliação bancária e
 # pacote do contador — mesmas travas do Financeiro (o contador lê e baixa, não escreve).
 app.include_router(fechamento_conciliacao.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
+# Relatórios › Resultado › Classificar: a fila do que a DRE deixa de fora por falta de classificação e o lote que a resolve.
+app.include_router(classificacao.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 # Planejamento (Orçamento/Planejamento financeiro) é uma sub-aba de Financeiro
 # na permissão do usuário, mas um módulo comercial PRÓPRIO no contrato (Silver
 # não inclui, Gold/Diamond incluem — "financeiro completo"). Pedidos também é

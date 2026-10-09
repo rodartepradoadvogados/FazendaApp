@@ -7195,15 +7195,6 @@ export async function fetchDreConferencia(params: { data_inicio: string; data_fi
   return res.json();
 }
 
-export async function classificarContaDre(codigo: string, linhaDre: string | null) {
-  const res = await authFetch(`${API}/financeiro/plano-contas/${encodeURIComponent(codigo)}/linha-dre`, {
-    method: "PUT", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ linha_dre: linhaDre }),
-  });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao classificar a conta"); }
-  return res.json();
-}
-
 // --- Fase A, PR 2: contas automáticas (conta padrão de cada origem de lançamento automático)
 export type OrigemContaAutomatica = {
   origem: string; rotulo: string; ajuda: string; natureza_padrao: string;

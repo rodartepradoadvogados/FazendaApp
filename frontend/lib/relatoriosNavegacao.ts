@@ -15,7 +15,8 @@ export const GRUPOS_RELATORIOS: GrupoRelatorio[] = [
   { id: "rg-resultado", label: "Resultado", pergunta: "Estou ganhando?", itens: [
     { id: "rel_litro", label: "Resultado por litro" },
     { id: "rel_dre", label: "DRE da fazenda" },
-    { id: "dre_contas", label: "DRE por conta (tela anterior)" },
+    // O que a DRE deixa de fora por falta de classificação, lançamento a lançamento (T2).
+    { id: "classificar", label: "Classificar" },
   ] },
   { id: "rg-caixa", label: "Caixa", pergunta: "Quando o caixa aperta?", itens: [
     { id: "rel_caixa", label: "Caixa real" },
@@ -49,7 +50,7 @@ export const GRUPOS_RELATORIOS: GrupoRelatorio[] = [
 /** Relatórios novos, feitos no molde único (os outros continuam na tela de antes até a Fase C). */
 export const RELATORIOS_NO_MOLDE = new Set([
   "painel_dono", // Fase C4 (Painel)
-  "rel_litro", "rel_dre", // Fase B (Resultado)
+  "rel_litro", "rel_dre", "classificar", // Fase B (Resultado) + T2 (Classificar)
   "rel_caixa", "rel_fluxo", "rel_livro", // Fase C1 (Caixa)
   "custos", "rmca", // Fase C2 (Leite)
   "reguas_referencia", // Fase C4 (Leite)
@@ -61,6 +62,8 @@ export const RELATORIOS_NO_MOLDE = new Set([
 /** Ids antigos que mudaram de lugar → onde estão agora. */
 export const REDIRECIONAMENTOS: Record<string, string> = {
   dre: "rel_dre",
+  // T2: a DRE por conta (tela anterior) saiu; a classificação das contas é a tela Classificar.
+  dre_contas: "classificar",
   // Fase C1 (Caixa): as telas antigas deram lugar às do molde.
   caixa_real: "rel_caixa",
   fluxo: "rel_fluxo",

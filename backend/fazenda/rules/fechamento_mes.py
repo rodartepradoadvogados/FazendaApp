@@ -195,7 +195,7 @@ def checklist(session: Session, fazenda_id: int, mes: str) -> list[dict]:
     saida.append(_item(
         "sem_conta", "Lançamentos sem conta ou sem linha da DRE",
         "Não entram em nenhuma linha da DRE até a conta ganhar uma linha (ou o lançamento ganhar uma conta).",
-        sem_conta, destino="dre_contas", rotulo_acao="Classificar",
+        sem_conta, destino="classificar", rotulo_acao="Classificar",
     ))
     saida.append(_item(
         "natureza", "Natureza a revisar",

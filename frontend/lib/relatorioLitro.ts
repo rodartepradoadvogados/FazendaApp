@@ -3,8 +3,15 @@
 // DRE do servidor). PURO (só import de tipo) — testes em relatorioLitro.test.ts.
 import type { Delta, Periodo, Regime } from "@/lib/relatorioContexto";
 
+/** De onde vieram os litros (T4): a NOTA do laticínio lançada em Financeiro, a Venda mensal do leite (reserva, ESTIMADO)
+ * ou nenhuma; "mista" só num período com meses de fontes diferentes. Só vem com as regras novas ligadas. */
+export type FonteLitros = "nota" | "venda_mensal" | "mista" | "sem_dado";
+export type MesLitros = { competencia: string; fonte: FonteLitros; litros: number; nota_incompleta?: boolean };
+
 export type IndicadoresLitro = {
   litros: number; litros_mes: number | null; meses: number;
+  fonte_litros?: FonteLitros; litros_por_fonte?: { nota: number; venda_mensal: number };
+  pct_litros_estimados?: number | null; meses_litros?: MesLitros[];
   receita_leite_bruta: number; deducoes_leite: number; receita_leite_liquida: number;
   comida: number; pessoal: number; outros_custeio: number; custo_variavel: number; custo_fixo: number;
   coe: number; depreciacao: number; cot: number;
@@ -17,12 +24,14 @@ export type IndicadoresLitro = {
 };
 export type RespostaLitro = {
   periodo: { inicio: string; fim: string }; regime: string; centro_custo: string | null; regras_v2: boolean;
-  configuracao: { contas_leite: string[]; contas_alimentacao: string[]; tem_entrega: boolean };
+  configuracao: { contas_leite: string[]; contas_alimentacao: string[]; tem_entrega: boolean; tem_nota_leite?: boolean };
   atual: IndicadoresLitro; serie: (IndicadoresLitro & { competencia: string })[]; avisos: string[];
+  /** Avisos de fonte dos litros (estimado pela Venda mensal, nota sem unidade/quantidade…); só com as regras novas. */
+  avisos_fonte_litros?: string[];
 };
 
 /** O que falta configurar para o número existir (cada item com o caminho de 1 clique). */
-export type Pendencia = { chave: string; texto: string; pronto: boolean; acao: string; href: string };
+export type Pendencia = { chave: string; texto: string; pronto: boolean; acao: string; href: string; hrefReserva?: string; acaoReserva?: string };
 export function pendenciasLitro(r: RespostaLitro | null): Pendencia[] {
   if (!r) return [];
   return [
@@ -30,9 +39,39 @@ export function pendenciasLitro(r: RespostaLitro | null): Pendencia[] {
       acao: "Marcar em Parâmetros financeiros › Conta gerencial", href: "/parametros?sub=financeiro&pf=gerenciais" },
     { chave: "comida", texto: "Contas de alimentação marcadas", pronto: r.configuracao.contas_alimentacao.length > 0,
       acao: "Marcar em Parâmetros financeiros › Conta gerencial", href: "/parametros?sub=financeiro&pf=gerenciais" },
-    { chave: "litros", texto: "Litros entregues no período", pronto: r.atual.litros > 0,
-      acao: "Lançar em Lançamentos › Venda mensal do leite", href: "/lancamentos?sub=entrega_leite" },
+    { chave: "litros", texto: "Litros do leite no período", pronto: r.atual.litros > 0,
+      acao: "Lançar a nota do laticínio (item de leite) — ou a Venda mensal como reserva", href: "/financeiro?sub=a_receber",
+      acaoReserva: "Venda mensal do leite (reserva)", hrefReserva: "/lancamentos?sub=entrega_leite" },
   ];
+}
+
+const pctPt = (v: number) => v.toLocaleString("pt-BR", { maximumFractionDigits: 1 });
+
+/** Parcela dos litros que veio da Venda mensal (reserva) em vez de uma nota do laticínio, e os meses estimados.
+ * null quando nenhum mês do indicador é estimado (ou a resposta é das regras antigas, sem `meses_litros`). */
+export function litrosEstimados(i: IndicadoresLitro | null | undefined): { pct: number; meses: string[] } | null {
+  const meses = (i?.meses_litros ?? []).filter((m) => m.fonte === "venda_mensal").map((m) => m.competencia);
+  if (!i || !meses.length) return null;
+  const nota = i.litros_por_fonte?.nota ?? 0, reserva = i.litros_por_fonte?.venda_mensal ?? 0;
+  const pct = i.pct_litros_estimados ?? (nota + reserva > 0 ? Math.round((1000 * reserva) / (nota + reserva)) / 10 : 100);
+  return { pct, meses };
+}
+
+/** "55,6% estimados pela Venda mensal (sem nota)" — o aviso curto que acompanha o número de litros; "" sem mês estimado. */
+export function avisoLitrosEstimados(i: IndicadoresLitro | null | undefined): string {
+  const e = litrosEstimados(i);
+  if (!e) return "";
+  return e.pct >= 100 ? "litros estimados pela Venda mensal (sem nota do laticínio)" : `${pctPt(e.pct)}% dos litros estimados pela Venda mensal (sem nota do laticínio)`;
+}
+
+/** De onde saem os litros, em palavras, para as notas do relatório exportado. */
+export function descricaoFonteLitros(i: IndicadoresLitro | null | undefined, regrasV2: boolean): string {
+  if (!regrasV2 || !i?.fonte_litros) return "Venda mensal do leite";
+  const est = avisoLitrosEstimados(i);
+  if (i.fonte_litros === "nota") return "nota do laticínio lançada em Financeiro";
+  if (i.fonte_litros === "venda_mensal") return `Venda mensal do leite — ${est}`;
+  if (i.fonte_litros === "mista") return `nota do laticínio e, nos meses sem nota, a Venda mensal do leite — ${est}`;
+  return "sem nota do laticínio nem Venda mensal";
 }
 
 /** Sem litros ou sem receita do leite no período, não há resultado por litro: a tela ensina em vez de mostrar zero. */
@@ -67,14 +106,18 @@ export function linhasLitro(a: IndicadoresLitro | null, b: IndicadoresLitro | nu
 }
 
 /** Pontos do gráfico de 12 meses (mês sem leite fica vazio, sem inventar zero). */
-export type PontoLitro = { comp: string; preco: number | null; custo: number | null; faixaPos: [number, number] | null; faixaNeg: [number, number] | null };
+export type PontoLitro = {
+  comp: string; preco: number | null; custo: number | null; faixaPos: [number, number] | null; faixaNeg: [number, number] | null;
+  /** Mês cujos litros vêm da Venda mensal (reserva), não de uma nota do laticínio. */
+  estimado: boolean;
+};
 export function serieLitro(r: RespostaLitro | null): PontoLitro[] {
   return (r?.serie ?? []).map((m) => {
     const ok = temResultadoPorLitro(m);
     const preco = ok ? m.preco_liquido_l : null, custo = ok ? m.coe_l : null;
     const ambos = preco != null && custo != null;
     return {
-      comp: m.competencia, preco, custo,
+      comp: m.competencia, preco, custo, estimado: ok && m.fonte_litros === "venda_mensal",
       // A faixa entre as linhas: sobra (preço acima do custo) ou falta (custo acima do preço).
       faixaPos: ambos && preco! >= custo! ? [custo!, preco!] : null,
       faixaNeg: ambos && custo! > preco! ? [preco!, custo!] : null,

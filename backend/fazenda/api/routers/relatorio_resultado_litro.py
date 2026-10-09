@@ -12,6 +12,13 @@ Com `serie_meses`, devolve também os N meses fechados que terminam no mês de
 Flag desligada: as linhas da DRE são as de antes da Fase A e os litros saem do
 campo cru da entrega (como o custo por litro antigo); nenhum outro relatório
 muda por causa deste endpoint.
+
+Flag ligada (T4): os litros vêm da NOTA do laticínio lançada em Financeiro (item de
+leite da receita, com a unidade do item de estoque "Produto de leite"); a Venda
+mensal do leite é só a RESERVA dos meses sem nota — ver rules/litros_leite.py. A
+resposta diz a fonte de cada mês (`fonte_litros`, `meses_litros`) e quanto dos
+litros é estimado (`pct_litros_estimados`); com a flag desligada essas chaves
+não existem (a resposta é a de antes, byte a byte).
 """
 from __future__ import annotations
 
@@ -25,6 +32,8 @@ from fazenda.database import get_session
 from fazenda.models import EntregaLeiteMensal, PlanoContaGerencial
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.custo_leite import litros_leite_no_periodo
+from fazenda.rules.litros_leite import campos_fonte_para_api
+from fazenda.rules.litros_leite_nota import LitrosLeite, carregar_litros_do_leite
 from fazenda.rules.parametros import regras_v2_ativas
 from fazenda.rules.resultado_litro import indicadores_por_litro, meses_da_serie, meses_no_periodo
 from fazenda.rules.unidades import leite_em_litros
@@ -47,16 +56,24 @@ def _entregas(session: Session, fazenda_id: int | None, regras_v2: bool) -> tupl
     return por_comp, unidades
 
 
-def _periodo(session, fazenda_id, ini, fim, centro_custo, regime, regras_v2, entregas, codigos_receita, codigos_custo) -> dict:
+def _periodo(session, fazenda_id, ini, fim, centro_custo, regime, regras_v2, entregas, codigos_receita, codigos_custo,
+             litros_leite: LitrosLeite | None = None) -> dict:
     # Import tardio: financeiro.py é o dono do motor da DRE (e importa muita coisa).
     from fazenda.api.routers.financeiro import calcular_dre, leite_e_alimentacao_por_registros
 
     dre = calcular_dre(session, fazenda_id, ini, fim, centro_custo, regime, regras_v2=regras_v2)
     linhas = {linha["chave"]: linha["valor"] for linha in dre["cascata"]}
     leite = leite_e_alimentacao_por_registros(dre.get("_registros") or [], codigos_receita, codigos_custo)
-    litros = litros_leite_no_periodo(entregas, ini, fim)
+    if litros_leite is not None:
+        # T4: litros da NOTA do laticínio; a Venda mensal só nos meses sem nota.
+        resumo = litros_leite.resumo(ini, fim)
+        litros = resumo["litros"]
+    else:
+        litros = litros_leite_no_periodo(entregas, ini, fim)
     ind = indicadores_por_litro(linhas=linhas, leite=leite, litros=litros, meses=meses_no_periodo(ini, fim))
     ind["nao_classificado"] = round(dre["nao_classificado"].get("total", 0.0), 2) + 0.0
+    if litros_leite is not None:
+        ind.update(campos_fonte_para_api(resumo))
     return ind
 
 
@@ -87,34 +104,55 @@ def resultado_por_litro(
     plano = session.exec(query_plano).all()
     codigos_receita = {c.codigo for c in plano if c.rmca_receita_leite}
     codigos_custo = {c.codigo for c in plano if c.rmca_custo_alimentacao}
-    entregas, unidades_por_comp = _entregas(session, fazenda_id, regras_v2)
+    # Flag ligada: litros da nota (T4) com a Venda mensal de reserva; desligada: o campo cru da entrega, como antes.
+    litros_leite = carregar_litros_do_leite(session, fazenda_id, codigos_receita, regime=regime) if regras_v2 else None
+    if regras_v2:
+        entregas, unidades_por_comp = litros_leite.venda_mensal, {}
+    else:
+        entregas, unidades_por_comp = _entregas(session, fazenda_id, regras_v2)
 
     def calc(ini: date, fim: date) -> dict:
-        return _periodo(session, fazenda_id, ini, fim, centro_custo, regime, regras_v2, entregas, codigos_receita, codigos_custo)
+        return _periodo(session, fazenda_id, ini, fim, centro_custo, regime, regras_v2, entregas, codigos_receita, codigos_custo,
+                        litros_leite)
 
     atual = calc(data_inicio, data_fim)
     serie = [{"competencia": f"{ini:%Y-%m}", **calc(ini, fim)} for ini, fim in meses_da_serie(data_fim, serie_meses)]
 
-    # Aviso de kg só quando a conversão mexeu num mês mostrado (período ou série).
-    comp_ini = min([f"{data_inicio:%Y-%m}"] + [m["competencia"] for m in serie])
-    comp_fim = f"{data_fim:%Y-%m}"
-    unidades = set().union(*[u for c, u in unidades_por_comp.items() if comp_ini <= c <= comp_fim]) if unidades_por_comp else set()
     avisos: list[str] = []
-    if regras_v2 and "kg" in unidades:
-        avisos.append("A entrega de leite lançada em kg foi convertida para litros (1 L = 1,029 kg).")
-    if not regras_v2 and "kg" in unidades:
-        avisos.append("Entregas lançadas em kg contam como litros enquanto as regras novas dos relatórios estiverem desligadas.")
+    avisos_fonte: list[str] = []
+    if regras_v2:
+        # Aviso de kg só quando a conversão mexeu num mês mostrado E o mês usou esse lançamento.
+        meses_mostrados: dict[str, dict] = {}
+        for ind in [atual, *serie]:
+            for m in ind["meses_litros"]:
+                meses_mostrados.setdefault(m["competencia"], m)
+        resumo_mostrado = {"meses": [meses_mostrados[c] for c in sorted(meses_mostrados)]}
+        usadas = litros_leite.unidades_usadas(resumo_mostrado)
+        if "kg" in usadas:
+            avisos.append("A entrega de leite lançada em kg foi convertida para litros (1 L = 1,029 kg).")
+        avisos_fonte = litros_leite.avisos(resumo_mostrado)
+    else:
+        # Aviso de kg só quando a conversão mexeu num mês mostrado (período ou série).
+        comp_ini = min([f"{data_inicio:%Y-%m}"] + [m["competencia"] for m in serie])
+        comp_fim = f"{data_fim:%Y-%m}"
+        unidades = set().union(*[u for c, u in unidades_por_comp.items() if comp_ini <= c <= comp_fim]) if unidades_por_comp else set()
+        if "kg" in unidades:
+            avisos.append("Entregas lançadas em kg contam como litros enquanto as regras novas dos relatórios estiverem desligadas.")
+    configuracao = {
+        "contas_leite": sorted(c.nome for c in plano if c.codigo in codigos_receita),
+        "contas_alimentacao": sorted(c.nome for c in plano if c.codigo in codigos_custo),
+        "tem_entrega": bool(entregas),
+    }
+    if regras_v2:
+        configuracao["tem_nota_leite"] = bool(litros_leite.notas.litros_por_mes)
     return {
         "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
         "regime": regime,
         "centro_custo": centro_custo,
         "regras_v2": regras_v2,
-        "configuracao": {
-            "contas_leite": sorted(c.nome for c in plano if c.codigo in codigos_receita),
-            "contas_alimentacao": sorted(c.nome for c in plano if c.codigo in codigos_custo),
-            "tem_entrega": bool(entregas),
-        },
+        "configuracao": configuracao,
         "atual": atual,
         "serie": serie,
         "avisos": avisos,
+        **({"avisos_fonte_litros": avisos_fonte} if regras_v2 else {}),
     }

@@ -57,7 +57,7 @@ test("decisões do mês: só o que pede ação, cada uma com o relatório do det
   const c = respostaCaixa(CAIXA, "2026-10-09");
   const d = decisoesDoMes({ caixa: c, litro: { ...LITRO, margem_l: -0.1 }, naoClassificado: 250, pendenciasNatureza: 1,
     orcado: { estado: "ok", orcado: 1000, realizado: 1200, desvio: 200, desvioPct: 20, acima: true }, fmt });
-  assert.deepEqual(d.map((x) => [x.chave, x.relatorio]), [["caixa", "rel_caixa"], ["vence7", "rel_caixa"], ["litro", "rel_litro"], ["orcado", "rel_orcamento"], ["contador", "dre_contas"]]);
+  assert.deepEqual(d.map((x) => [x.chave, x.relatorio]), [["caixa", "rel_caixa"], ["vence7", "rel_caixa"], ["litro", "rel_litro"], ["orcado", "rel_orcamento"], ["contador", "classificar"]]);
   // Integração da Fase C: cada decisão abre um item da árvore, nunca um id antigo que só redireciona.
   for (const x of d) { assert.ok(IDS_RELATORIOS.has(x.relatorio), x.relatorio); assert.ok(!(x.relatorio in REDIRECIONAMENTOS), x.relatorio); }
   assert.match(d[0].titulo, /abaixo da reserva em 12\/10 e fica abaixo de zero em 20\/10/);
