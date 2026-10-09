@@ -108,6 +108,9 @@ def test_endpoint_litros_seguem_a_flag(cenario):  # noqa: F811
         rmca["receita_leite"], rmca["deducoes_receita_leite"], rmca["receita_leite_liquida"])
     assert a["preco_liquido_l"] == round(a["receita_leite_liquida"] / a["litros"], 4)
     assert any("convertida para litros" in x for x in depois["avisos"])
+    # Mês sem entrega em kg (nem na série): sem aviso de conversão.
+    fev = cenario.get("/financeiro/resultado-por-litro", data_inicio="2031-02-01", data_fim="2031-02-28")
+    assert fev["avisos"] == [] and fev["atual"]["litros"] == 0.0
 
 
 def test_endpoint_serie_de_meses_fechados(cenario):  # noqa: F811

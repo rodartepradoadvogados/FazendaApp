@@ -32,18 +32,18 @@ from fazenda.rules.unidades import leite_em_litros
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
 
 
-def _entregas(session: Session, fazenda_id: int | None, regras_v2: bool) -> tuple[dict[str, float], set[str]]:
+def _entregas(session: Session, fazenda_id: int | None, regras_v2: bool) -> tuple[dict[str, float], dict[str, set[str]]]:
     query = select(EntregaLeiteMensal)
     if fazenda_id is not None:
         query = query.where(EntregaLeiteMensal.fazenda_id == fazenda_id)
     por_comp: dict[str, float] = {}
-    unidades: set[str] = set()
+    unidades: dict[str, set[str]] = {}
     for e in session.exec(query).all():
         qtd = e.quantidade_litros or 0.0
         # Regras v2 (PR 4): kg vira litro de verdade; sem a flag, o número cru (como o custo por litro antigo).
         valor = leite_em_litros(qtd, e.unidade) if regras_v2 else qtd
         por_comp[e.competencia] = por_comp.get(e.competencia, 0.0) + valor
-        unidades.add("L" if (e.unidade or "kg").strip().upper() == "L" else "kg")
+        unidades.setdefault(e.competencia, set()).add("L" if (e.unidade or "kg").strip().upper() == "L" else "kg")
     return por_comp, unidades
 
 
@@ -87,7 +87,7 @@ def resultado_por_litro(
     plano = session.exec(query_plano).all()
     codigos_receita = {c.codigo for c in plano if c.rmca_receita_leite}
     codigos_custo = {c.codigo for c in plano if c.rmca_custo_alimentacao}
-    entregas, unidades = _entregas(session, fazenda_id, regras_v2)
+    entregas, unidades_por_comp = _entregas(session, fazenda_id, regras_v2)
 
     def calc(ini: date, fim: date) -> dict:
         return _periodo(session, fazenda_id, ini, fim, centro_custo, regime, regras_v2, entregas, codigos_receita, codigos_custo)
@@ -95,6 +95,10 @@ def resultado_por_litro(
     atual = calc(data_inicio, data_fim)
     serie = [{"competencia": f"{ini:%Y-%m}", **calc(ini, fim)} for ini, fim in meses_da_serie(data_fim, serie_meses)]
 
+    # Aviso de kg só quando a conversão mexeu num mês mostrado (período ou série).
+    comp_ini = min([f"{data_inicio:%Y-%m}"] + [m["competencia"] for m in serie])
+    comp_fim = f"{data_fim:%Y-%m}"
+    unidades = set().union(*[u for c, u in unidades_por_comp.items() if comp_ini <= c <= comp_fim]) if unidades_por_comp else set()
     avisos: list[str] = []
     if regras_v2 and "kg" in unidades:
         avisos.append("A entrega de leite lançada em kg foi convertida para litros (1 L = 1,029 kg).")
