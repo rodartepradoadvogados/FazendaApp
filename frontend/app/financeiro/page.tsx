@@ -3,7 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Circle, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
   Paperclip, Pencil, ShoppingCart, Target, TrendingUp, Compass, Trash2, Wrench, AlertTriangle, Repeat, CreditCard, ArrowLeft, Award, Undo2,
-  Milk, ListChecks, LayoutGrid, Ruler, type LucideIcon,
+  Milk, ListChecks, LayoutGrid, Ruler, ArrowLeftRight, FileArchive, LockKeyhole, type LucideIcon,
 } from "lucide-react";
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
@@ -70,7 +70,7 @@ const COLUNAS_LIVRO = [
 import type { Lanc } from "@/lib/financeiroTipos";
 import { NATUREZAS_FIN, rotuloNatureza } from "@/lib/naturezaFin";
 
-type Rel = "fluxo" | "dre" | "dre_contas" | "painel_dono" | "reguas_referencia" | "rel_litro" | "rel_dre" | "rel_caixa" | "rel_fluxo" | "rel_livro" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "rel_orcamento" | "rel_cenarios" | "orcamento_itens" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos" | "resumo";
+type Rel = "fluxo" | "dre" | "dre_contas" | "painel_dono" | "reguas_referencia" | "pacote_contador" | "fechamento_mes" | "conciliacao" | "rel_litro" | "rel_dre" | "rel_caixa" | "rel_fluxo" | "rel_livro" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "rel_orcamento" | "rel_cenarios" | "orcamento_itens" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos" | "resumo";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "caixa_real", label: "Caixa Real", icon: TrendingUp, desc: "Projeção de liquidez: quanto tem hoje e como o saldo evolui com os compromissos já lançados" },
@@ -117,13 +117,14 @@ const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
 // mostrar de fato).
 // "faturas" (Contas > Faturas de fornecedor) também dispensa lançamento prévio no banco.
 const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas", "a_pagar", "a_receber", "consultas", "custos", "resumo", "painel_dono", "rel_litro", "rel_dre",
-  "rel_caixa", "rel_fluxo", "rel_livro", "rmca", "reguas_referencia", "compra_venda_animais", "compra_semen", "rel_orcamento", "rel_cenarios"]);
+  "rel_caixa", "rel_fluxo", "rel_livro", "rmca", "reguas_referencia", "compra_venda_animais", "compra_semen", "rel_orcamento", "rel_cenarios", "pacote_contador", "fechamento_mes", "conciliacao"]);
 // Ícones da árvore de Relatórios por pergunta (lib/relatoriosNavegacao.ts).
-const ICONE_GRUPO: Record<string, LucideIcon> = { "rg-painel": LayoutGrid, "rg-resultado": TrendingUp, "rg-caixa": Wallet, "rg-leite": Milk, "rg-plano": Target, "rg-registros": ListChecks };
+const ICONE_GRUPO: Record<string, LucideIcon> = { "rg-painel": LayoutGrid, "rg-resultado": TrendingUp, "rg-caixa": Wallet, "rg-leite": Milk, "rg-plano": Target, "rg-registros": ListChecks, "rg-contador": FileArchive };
 const ICONE_RELATORIO: Record<string, LucideIcon> = {
   painel_dono: LayoutGrid, reguas_referencia: Ruler,
   rel_litro: Milk, rel_dre: FileText, dre_contas: FileText, rel_caixa: TrendingUp, rel_fluxo: Wallet, rel_livro: BookOpen, custos: BarChart3, rmca: BarChart3,
   rel_orcamento: Target, rel_cenarios: Compass, orcamento_itens: Target, planejamento_financeiro: Compass, compra_venda_animais: ShoppingCart, compra_semen: ShoppingCart,
+  pacote_contador: FileArchive, fechamento_mes: LockKeyhole, conciliacao: ArrowLeftRight,
 };
 // Orçamento e Planejamento financeiro (Cenários) passaram para Relatórios › Plano (lib/relatoriosNavegacao.ts).
 // Inclui "extrato" mesmo não estando mais em CONTAS — Relatórios > Extrato
@@ -216,6 +217,10 @@ import CenariosView from "@/components/financeiro/relatorios/CenariosView";
 // Fase C4: Painel do dono (entrada dos Relatórios) e Réguas de referência.
 import PainelDonoView from "@/components/financeiro/relatorios/PainelDonoView";
 import ReguasReferenciaView from "@/components/financeiro/relatorios/ReguasReferenciaView";
+// Fase C5: Entrega ao contador (pacote, fechamento do mês e conciliação bancária).
+import PacoteContadorView from "@/components/financeiro/relatorios/PacoteContadorView";
+import FechamentoMesView from "@/components/financeiro/relatorios/FechamentoMesView";
+import ConciliacaoView from "@/components/financeiro/relatorios/ConciliacaoView";
 import type { PropsRelatorio } from "@/components/financeiro/relatorios/comum";
 import type { FiltroInicialConsultas } from "@/components/financeiro/ConsultasView";
 
@@ -887,6 +892,9 @@ export default function FinanceiroPage() {
           : rel === "rel_orcamento" ? <OrcamentoPlanoView {...propsRelatorio} />
           : rel === "rel_cenarios" ? <CenariosView {...propsRelatorio} />
           : rel === "custos" ? <CustosLeiteView {...propsRelatorio} />
+          : rel === "pacote_contador" ? <PacoteContadorView {...propsRelatorio} />
+          : rel === "fechamento_mes" ? <FechamentoMesView {...propsRelatorio} />
+          : rel === "conciliacao" ? <ConciliacaoView {...propsRelatorio} />
           : rel === "faturas" || rel === "faturas_gestao" ? <FaturasView />
           : rel === "patrimonio" ? <PatrimonioView />
           : rel === "cartao_credito" ? <CartaoCreditoView />

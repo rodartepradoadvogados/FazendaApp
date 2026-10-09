@@ -69,7 +69,7 @@ export function BarraContexto({ ctx, hoje, centros, onExportar, podeExportar }: 
           <label htmlFor={id("tipo")}>Período</label>
           <select id={id("tipo")} className="rl-in" value={tipo} disabled={perTravado}
             onChange={(e) => mudar({ per: periodoPadrao(e.target.value as TipoPeriodo, hoje).cod })}>
-            {TIPOS_PERIODO.map((t) => <option key={t.v} value={t.v}>{t.rotulo}</option>)}
+            {TIPOS_PERIODO.filter((t) => !travas.tiposPeriodo || travas.tiposPeriodo.includes(t.v)).map((t) => <option key={t.v} value={t.v}>{t.rotulo}</option>)}
           </select>
         </div>
         {tipo === "l" ? (<>

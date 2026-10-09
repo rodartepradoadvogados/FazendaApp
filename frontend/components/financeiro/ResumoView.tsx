@@ -10,6 +10,7 @@
 // Layout desktop (≥981px de largura e ≥600px de altura): duas colunas que
 // ocupam a altura que sobra na janela, alinhadas na base, cada painel rolando
 // por dentro (a página não rola). No celular, tudo empilhado.
+import { SeloEstadoMes } from "@/components/financeiro/relatorios/entregaComum";
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
   AlertTriangle, CheckCircle2, ChevronRight, Clock, CreditCard, FileText, Info, Landmark, Layers, Lock, Wallet,
@@ -450,6 +451,8 @@ export default function ResumoView(p: Props) {
         <div>
           <h2>Resumo do financeiro</h2>
           <p className="rs-saud">{saudacao}</p>
+          {/* Fase C5: estado do mês anterior (aberto/fechado), discreto — só com as regras novas. */}
+          <SeloEstadoMes hoje={hoje} />
         </div>
         <button type="button" className="btn-primary" onClick={p.onIrParaContas}>Ver contas a pagar</button>
       </div>

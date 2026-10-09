@@ -93,6 +93,7 @@ from fazenda.api.routers import (
     relatorio_resultado_litro,
     relatorio_caixa,
     relatorio_leite,
+    fechamento_conciliacao,
     relatorio_rastreabilidade_sanitaria,
     relatorios,
     reproducao,
@@ -962,6 +963,9 @@ app.include_router(relatorio_custo_safra.router, dependencies=[Depends(exigir_mo
 app.include_router(relatorio_resultado_litro.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 app.include_router(relatorio_caixa.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 app.include_router(relatorio_leite.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
+# Fase C5 (Relatórios › Entrega ao contador): fechamento do mês, conciliação bancária e
+# pacote do contador — mesmas travas do Financeiro (o contador lê e baixa, não escreve).
+app.include_router(fechamento_conciliacao.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 # Planejamento (Orçamento/Planejamento financeiro) é uma sub-aba de Financeiro
 # na permissão do usuário, mas um módulo comercial PRÓPRIO no contrato (Silver
 # não inclui, Gold/Diamond incluem — "financeiro completo"). Pedidos também é

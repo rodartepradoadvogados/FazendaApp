@@ -38,6 +38,12 @@ export const GRUPOS_RELATORIOS: GrupoRelatorio[] = [
     { id: "compra_venda_animais", label: "Compra e venda de animais" },
     { id: "compra_semen", label: "Compra de sêmen" },
   ] },
+  // Fase C5: entrega ao contador (pacote, fechamento do mês e conciliação bancária).
+  { id: "rg-contador", label: "Entrega ao contador", pergunta: "Está pronto para o contador?", itens: [
+    { id: "pacote_contador", label: "Pacote do contador" },
+    { id: "fechamento_mes", label: "Fechamento do mês" },
+    { id: "conciliacao", label: "Conciliação bancária" },
+  ] },
 ];
 
 /** Relatórios novos, feitos no molde único (os outros continuam na tela de antes até a Fase C). */
@@ -49,6 +55,7 @@ export const RELATORIOS_NO_MOLDE = new Set([
   "reguas_referencia", // Fase C4 (Leite)
   "rel_orcamento", "rel_cenarios", // Fase C3 (Plano)
   "compra_venda_animais", "compra_semen", // Fase C2 (Registros)
+  "pacote_contador", "fechamento_mes", "conciliacao", // Fase C5 (Entrega ao contador)
 ]);
 
 /** Ids antigos que mudaram de lugar → onde estão agora. */

@@ -792,6 +792,11 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             if c.numero_lancamento else []
         )
         n_itens_vale = sum(1 for it in itens if eh_item_de_vale(it))
+        # Fase C5: excluir lançamento com competência/pagamento em mês fechado exige
+        # reabrir com motivo (só com a flag financeiro_regras_v2; ver rules/fechamento_mes.py).
+        from fazenda.rules import fechamento_mes
+
+        fechamento_mes.exigir_meses_abertos(session, fazenda_id, fechamento_mes.datas_do_lancamento(c), "excluir")
         if c.numero_lancamento and (c.parcela_total or 1) > 1:
             irmaos = session.exec(
                 select(ContaGerencial).where(
@@ -799,6 +804,8 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
                     ContaGerencial.fazenda_id == fazenda_id,
                 )
             ).all()
+            fechamento_mes.exigir_meses_abertos(
+                session, fazenda_id, [d for i in irmaos for d in fechamento_mes.datas_do_lancamento(i)], "excluir")
             impacto = [
                 f"Lançamento {c.numero_lancamento} — {c.descricao or '—'}",
                 f"{len(irmaos)} parcela(s) no total — todas serão excluídas",

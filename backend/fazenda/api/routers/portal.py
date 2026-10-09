@@ -273,6 +273,9 @@ RELATORIOS_DISPONIVEIS = {
     "dre": "DRE",
     "rmca": "RMCA",
     "custo_litro_leite": "Custo por litro de leite",
+    # Fase C5: o Pacote do contador (ZIP com PDF, Excel e CSVs) — o mesmo do
+    # download em Relatórios › Pacote do contador (fazenda/rules/pacote_contador.py).
+    "pacote_contador": "Pacote do contador (ZIP)",
 }
 
 
@@ -451,7 +454,9 @@ def enviar_email_portal(
         # anexo sai do sistema por e-mail. Então aqui não existe caminho
         # "sem fazenda": ou a sessão diz qual é, ou não há relatório.
         fazenda_id = _fazenda_obrigatoria(session, fazenda_id)
-        if dados.relatorio == "dre":
+        if dados.relatorio == "pacote_contador":
+            resultado = None
+        elif dados.relatorio == "dre":
             resultado = dre(data_inicio=dados.data_inicio, data_fim=dados.data_fim, centro_custo=None, regime="competencia", session=session, fazenda_id=fazenda_id)
         elif dados.relatorio == "rmca":
             resultado = rmca(data_inicio=dados.data_inicio, data_fim=dados.data_fim, session=session, fazenda_id=fazenda_id)
@@ -459,7 +464,16 @@ def enviar_email_portal(
             resultado = custo_litro_leite(data_inicio=dados.data_inicio, data_fim=dados.data_fim, session=session, fazenda_id=fazenda_id)
 
         base_nome = f"{dados.relatorio}_{dados.data_inicio.isoformat()}_{dados.data_fim.isoformat()}"
-        if dados.relatorio == "dre":
+        if dados.relatorio == "pacote_contador":
+            from fazenda.rules import pacote_contador
+
+            if not isinstance(fazenda_id, int):
+                raise HTTPException(409, "Selecione a fazenda para enviar o pacote do contador.")
+            if dados.data_fim < dados.data_inicio or (dados.data_fim - dados.data_inicio).days > 400:
+                raise HTTPException(400, "O pacote vai até 13 meses por vez (ano-calendário).")
+            pacote = pacote_contador.montar(session, fazenda_id, dados.data_inicio, dados.data_fim, getattr(user, "nome", None) or user.username)
+            anexos = [(pacote_contador.nome_base(pacote) + ".zip", pacote_contador.gerar_zip(pacote))]
+        elif dados.relatorio == "dre":
             anexos = _anexos_dre(resultado, base_nome, _nome_fazenda(session, fazenda_id))
         else:
             anexos = [(f"{base_nome}.csv", _dict_para_csv(resultado).encode("utf-8-sig"))]

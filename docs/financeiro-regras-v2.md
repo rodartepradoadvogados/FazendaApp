@@ -469,7 +469,7 @@ campos legados, nos dois CSVs do Portal (`test_pr8_um_resultado_em_todas_as_tela
 —, numerador de custos 13.140 (COT 14.140) e custo por litro 0,8276. Não sobra
 nenhum `xfail` da Fase A no teste do cenário.
 
-Fora da Fase A (registrado para depois): fechamento/conciliação e LCDPR; 13º
+Fora da Fase A (registrado para depois): fechamento/conciliação e LCDPR (feitos na Fase C5 — fechamento com trilha, conciliação bancária e pacote do contador com o apoio ao LCDPR; ver `docs/financeiro-fechamento-conciliacao.md`, inclusive o que falta para o TXT de transmissão do LCDPR); 13º
 e férias com provisão mensal (Q5); vale de ITEM como adiantamento próprio na
 nota do fornecedor; "Detalhamento por conta" da DRE com drill para Consultas
 filtrada por conta; data de corte do CSV antigo do Portal (07/12/2026) — depois

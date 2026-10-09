@@ -6,8 +6,8 @@ import { GRUPOS_RELATORIOS, IDS_RELATORIOS, REDIRECIONAMENTOS, RELATORIOS_NO_MOL
 const ANTIGOS = ["fluxo", "caixa_real", "dre", "rmca", "custos", "compra_venda_animais", "compra_semen", "orcamento", "planejamento_financeiro",
   "custo_litro_leite", "custo_vaca_lote", "custo_hectare", "custo_safra"];
 
-test("árvore por pergunta: Painel (entrada), Resultado, Caixa, Leite, Plano e Registros, nessa ordem", () => {
-  assert.deepEqual(GRUPOS_RELATORIOS.map((g) => g.label), ["Painel", "Resultado", "Caixa", "Leite", "Plano", "Registros"]);
+test("árvore por pergunta: Painel (entrada), Resultado, Caixa, Leite, Plano, Registros e Entrega ao contador, nessa ordem", () => {
+  assert.deepEqual(GRUPOS_RELATORIOS.map((g) => g.label), ["Painel", "Resultado", "Caixa", "Leite", "Plano", "Registros", "Entrega ao contador"]);
   assert.equal(GRUPOS_RELATORIOS[0].itens[0].id, "painel_dono");
   for (const g of GRUPOS_RELATORIOS) assert.ok(g.pergunta.endsWith("?"), g.label);
 });
@@ -37,7 +37,7 @@ test("ids únicos na árvore (a aba ativa nunca fica ambígua) e telas novas no 
   assert.equal(new Set(ids).size, ids.length);
   assert.deepEqual([...RELATORIOS_NO_MOLDE], [
     "painel_dono", "rel_litro", "rel_dre", "rel_caixa", "rel_fluxo", "rel_livro", "custos", "rmca", "reguas_referencia",
-    "rel_orcamento", "rel_cenarios", "compra_venda_animais", "compra_semen",
+    "rel_orcamento", "rel_cenarios", "compra_venda_animais", "compra_semen", "pacote_contador", "fechamento_mes", "conciliacao",
   ]);
   for (const id of RELATORIOS_NO_MOLDE) assert.ok(IDS_RELATORIOS.has(id), id);
   // Fase C1: o grupo Caixa tem as três telas, e o Livro caixa da atividade rural é uma delas.
@@ -69,6 +69,7 @@ test("integração da Fase C: árvore coerente — toda tela nova no molde, tela
     ["Leite", ["custos", "rmca", "reguas_referencia"]],
     ["Plano", ["rel_orcamento", "rel_cenarios", "orcamento_itens", "planejamento_financeiro"]],
     ["Registros", ["compra_venda_animais", "compra_semen"]],
+    ["Entrega ao contador", ["pacote_contador", "fechamento_mes", "conciliacao"]],
   ]);
   // O que não está no molde é tela anterior (paridade) e diz isso no rótulo.
   for (const g of GRUPOS_RELATORIOS) for (const i of g.itens) {
@@ -81,4 +82,8 @@ test("integração da Fase C: árvore coerente — toda tela nova no molde, tela
     assert.ok(IDS_RELATORIOS.has(novo), `${antigo} → ${novo}`);
   }
   for (const antigo of Object.keys(VISAO_DO_ID_ANTIGO)) assert.equal(REDIRECIONAMENTOS[antigo], "custos", antigo);
+});
+
+test("Fase C5: pacote, fechamento e conciliação no grupo Entrega ao contador", () => {
+  for (const id of ["pacote_contador", "fechamento_mes", "conciliacao"]) assert.equal(grupoDe(id)!.id, "rg-contador", id);
 });
