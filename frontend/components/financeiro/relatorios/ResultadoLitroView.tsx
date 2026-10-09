@@ -11,7 +11,8 @@ import { fetchOrcamentoRelatorio } from "@/lib/apiPlano";
 import { periodoDeMesesInteiros, type RespostaOrcamento } from "@/lib/relatorioOrcamento";
 import { ESTADO_INICIAL, REGIME_API, REGIME_NOME, brl, delta, deslocar, litros, mesCurto, mesLongo, num } from "@/lib/relatorioContexto";
 import {
-  fraseLitro, linhasLitro, pendenciasLitro, serieLitro, temResultadoPorLitro, type RespostaLitro,
+  avisoLitrosEstimados, descricaoFonteLitros, fraseLitro, linhasLitro, pendenciasLitro, serieLitro, temResultadoPorLitro,
+  type RespostaLitro,
 } from "@/lib/relatorioLitro";
 import type { RelatorioParaExportar } from "@/lib/export";
 import {
@@ -102,7 +103,7 @@ export default function ResultadoLitroView(props: PropsRelatorio) {
     { chave: "preco", rotulo: "Preço líquido do leite", valor: a.preco_liquido_l, cmp: b?.preco_liquido_l ?? null, formato: "brlL", unidade: "/L", bom: "sobe",
       sub: `Bruto ${brl(a.preco_bruto_l ?? 0)} − Funrural/Senar e descontos`, onAbrir: () => props.onIrRelatorio("rel_dre", "RECEITA_VENDAS") },
     { chave: "coe_l", rotulo: "Custo de custeio (COE)", valor: a.coe_l, cmp: b?.coe_l ?? null, formato: "brlL", unidade: "/L", bom: "desce",
-      sub: `${brl(a.coe, 0)} de custeio ÷ ${litros(a.litros)}`, onAbrir: () => props.onIrRelatorio("rel_dre", "EBITDA") },
+      sub: `${brl(a.coe, 0)} de custeio ÷ ${litros(a.litros)}${avisoLitrosEstimados(a) ? ` (${avisoLitrosEstimados(a)})` : ""}`, onAbrir: () => props.onIrRelatorio("rel_dre", "EBITDA") },
     { chave: "cot_l", rotulo: "Custo total (COT)", valor: a.cot_l, cmp: b?.cot_l ?? null, formato: "brlL", unidade: "/L", bom: "desce",
       sub: `Custeio + desgaste dos bens (${brl(a.depreciacao_l ?? 0)}/L)`, onAbrir: () => props.onIrRelatorio("rel_dre", "DEPRECIACAO_AMORT_EXAUSTAO") },
   ] : [];
@@ -146,10 +147,11 @@ export default function ResultadoLitroView(props: PropsRelatorio) {
       ],
       nomeArquivoBase: "resultado_por_litro",
       notas: [
-        `Litros: ${num(a.litros, 0)} L entregues no período (Venda mensal do leite${dados?.regras_v2 ? ", kg convertido para litro" : ""}).`,
+        `Litros: ${num(a.litros, 0)} L no período — ${descricaoFonteLitros(a, !!dados?.regras_v2)}${dados?.regras_v2 ? "; kg convertido para litro" : ""}.`,
         "Custeio (COE) = custo variável + despesas variáveis + pessoal + despesas operacionais da DRE do mesmo período; COT = COE + depreciação.",
         pe ? `Ponto de equilíbrio (estimativa): ${num(pe.litros_mes ?? pe.litros_periodo, 0)} L por mês.` : "",
         ...(dados?.avisos ?? []),
+        ...(dados?.avisos_fonte_litros ?? []),
       ].filter(Boolean),
     };
   };
@@ -159,13 +161,18 @@ export default function ResultadoLitroView(props: PropsRelatorio) {
       titulo={`Sem resultado por litro em ${periodo.label}`}
       texto="Para dividir por litro, o relatório precisa da receita do leite, do custo e dos litros entregues no mesmo período. Veja o que falta:"
       itens={[
-        ...pend.map((p) => ({ texto: p.texto, pronto: p.pronto, acao: <a href={p.href}>{p.acao}</a> })),
+        ...pend.map((p) => ({
+          texto: p.texto, pronto: p.pronto,
+          acao: <><a href={p.href}>{p.acao}</a>{p.hrefReserva ? <> · <a href={p.hrefReserva}>{p.acaoReserva}</a></> : null}</>,
+        })),
         { texto: "Venda do leite lançada no período", pronto: (a?.receita_leite_liquida ?? 0) > 0, acao: <a href="/financeiro?sub=a_receber">Lançar o recebimento do laticínio</a> },
       ]}
       acoes={<button type="button" className="rl-btn" onClick={() => ctx.mudar({ per: deslocar(periodo, -1).cod })}>Ver o período anterior</button>}
     />
   );
 
+  // Avisos do servidor + a fonte dos litros (estimado pela Venda mensal, nota sem unidade…) — sem repetir.
+  const avisosDaTela = Array.from(new Set([...(dados?.avisos ?? []), ...(dados?.avisos_fonte_litros ?? [])]));
   const frase = a && ok ? fraseLitro({ periodo, regime: efetivo.reg, a, b: cmpPeriodo ? b : null, rotuloCmp: cmpPeriodo ? rotuloCmp : null, brl, delta: (x, y, bom) => delta(x, y, bom) }) : [];
   if (orcAtivo && b?.margem_l != null && a && ok) {
     const d = delta(a.margem_l, b.margem_l, "sobe");
@@ -191,8 +198,8 @@ export default function ResultadoLitroView(props: PropsRelatorio) {
         {avisoOrc && (
           <div className={`rl-aviso${avisoOrc.info ? " info" : ""}`} role="status">{avisoOrc.info ? <Info size={18} aria-hidden /> : <AlertTriangle size={18} aria-hidden />}<div><b>{avisoOrc.t}</b><p>{avisoOrc.p}</p></div></div>
         )}
-        {dados && dados.avisos.length > 0 && (
-          <div className="rl-aviso info" role="status"><AlertTriangle size={18} aria-hidden /><div>{dados.avisos.map((x) => <p key={x} style={{ margin: 0 }}>{x}</p>)}</div></div>
+        {avisosDaTela.length > 0 && (
+          <div className="rl-aviso info" role="status"><AlertTriangle size={18} aria-hidden /><div>{avisosDaTela.map((x) => <p key={x} style={{ margin: 0 }}>{x}</p>)}</div></div>
         )}
       </>}>
       {a && ok && (<>
@@ -202,7 +209,7 @@ export default function ResultadoLitroView(props: PropsRelatorio) {
         </section>
         <PainelGrafico titulo="O ano, mês a mês · preço × custo por litro" legenda={<LegendaPrecoCusto />}
           tabela={{ cabecalho: ["Mês", "Preço líquido", "Custo de custeio", "Sobra"], linhas: pontos.map((p) => [
-            mesCurto(p.comp), p.preco != null ? brl(p.preco) : "—", p.custo != null ? brl(p.custo) : "—",
+            `${mesCurto(p.comp)}${p.estimado ? " (estimado)" : ""}`, p.preco != null ? brl(p.preco) : "—", p.custo != null ? brl(p.custo) : "—",
             p.preco != null && p.custo != null ? brl(p.preco - p.custo) : "—",
           ]) }}>
           <GraficoPrecoCusto pontos={pontos} descricao={descricaoGrafico} cursor={itensAno[indiceCursor]?.chave ?? null} />

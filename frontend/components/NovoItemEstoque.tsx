@@ -33,7 +33,7 @@ const vazio = {
   proibido_lactacao: false, centro_custo_padrao: "",
   conta_gerencial_despesa_padrao: "", conta_gerencial_despesa_nome: "",
   conta_gerencial_receita_padrao: "", conta_gerencial_receita_nome: "",
-  gera_receita: false, gera_patrimonio: false,
+  gera_receita: false, gera_patrimonio: false, produto_leite: false,
   exibir_necessidade_compra_agenda: false, estocavel: true, data_inicio_controle: "",
   principio_ativo: "", principio_ativo_id: "",
   laboratorio: "", categoriaMedicamentoIds: [] as number[], classificacaoMedicamentoIds: [] as number[],
@@ -282,6 +282,7 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
       conta_gerencial_receita_padrao: s(editando.conta_gerencial_receita_padrao),
       gera_receita: editando.gera_receita === true,
       gera_patrimonio: editando.gera_patrimonio === true,
+      produto_leite: editando.produto_leite === true,
       exibir_necessidade_compra_agenda: editando.exibir_necessidade_compra_agenda === true,
       estocavel: editando.estocavel !== false, data_inicio_controle: s(editando.data_inicio_controle),
       principio_ativo: s(editando.principio_ativo), principio_ativo_id: s(editando.principio_ativo_id),
@@ -417,6 +418,7 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         conta_gerencial_receita_padrao: str(form.conta_gerencial_receita_padrao),
         gera_receita: form.gera_receita,
         gera_patrimonio: form.gera_patrimonio,
+        produto_leite: form.produto_leite,
         exibir_necessidade_compra_agenda: form.estocavel ? form.exibir_necessidade_compra_agenda : false,
         estocavel: form.estocavel,
         data_inicio_controle: form.estocavel && form.data_inicio_controle.trim() !== "" ? form.data_inicio_controle : null,
@@ -607,6 +609,12 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         <div className="flex items-end gap-3">
           <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }} title="Produto de venda (leite, animal, esterco…) — usado nos relatórios de receita.">
             <input type="checkbox" checked={form.gera_receita} onChange={(e) => set({ gera_receita: e.target.checked })} /> Gera receita
+          </label>
+        </div>
+        <div className="flex items-end gap-3">
+          <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}
+            title="O item que a nota do laticínio lança em Financeiro (receita). Os litros do Resultado por litro saem da quantidade desta nota, na unidade (kg ou L) deste item. Não marque o 'Leite' que é ingrediente de dieta dos bezerros.">
+            <input type="checkbox" checked={form.produto_leite} onChange={(e) => set({ produto_leite: e.target.checked })} /> Produto de leite (venda ao laticínio)
           </label>
         </div>
         <div className="flex items-end gap-3">
