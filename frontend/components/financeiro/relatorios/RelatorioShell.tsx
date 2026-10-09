@@ -279,12 +279,16 @@ export function RelatorioShell(props: {
   };
   // Ao subir/descer um nível, o foco vai para o título (leitor de tela anuncia onde está).
   const nivelAtual = (props.niveis ?? []).map((n) => n.rotulo).join("/");
+  // Só quando a pessoa sobe/desce um nível com a tela já carregada — abrir um link
+  // (ou o dado chegar) não rouba o foco.
   const nivelAnterior = useRef(nivelAtual);
+  const estavaPronto = useRef(estado === "ok");
   useEffect(() => {
-    if (nivelAnterior.current === nivelAtual) return; // montagem (e o duplo efeito do modo estrito) não rouba o foco
+    const mudou = nivelAnterior.current !== nivelAtual;
     nivelAnterior.current = nivelAtual;
-    tituloRef.current?.focus();
-  }, [nivelAtual]);
+    if (mudou && estavaPronto.current) tituloRef.current?.focus();
+    estavaPronto.current = estado === "ok";
+  }, [nivelAtual, estado]);
 
   const onExportar = async (tipo: AcaoExportar) => {
     if (tipo === "imprimir") { window.print(); return; }

@@ -46,7 +46,7 @@ export const CSS_RELATORIO = `
 
 /* Cabeçalho, frase-resumo */
 .rl-cab h2{font-size:1.75rem;font-weight:700;letter-spacing:-.02em;color:var(--text);margin:0;line-height:1.15}
-.rl-cab h2:focus,.rl-cab h2:focus-visible{outline:none}
+.rl-cab h2:focus,.rl-cab h2:focus-visible{outline:none!important;box-shadow:none!important}
 .rl-cab p{margin:.25rem 0 0;font-size:.82rem;color:var(--text-muted)}
 .rl-frase{margin:0;max-width:72ch;font-size:1.02rem;line-height:1.6;color:var(--text)}
 .rl-frase strong{font-weight:700}
@@ -100,7 +100,7 @@ button.rl-kpi{cursor:pointer}button.rl-kpi:hover{background:var(--surface-2)}
 .rl-linkbtn svg{color:var(--text-muted);flex-shrink:0}
 .rl-dt{display:inline-flex;gap:.25rem;align-items:center;font-weight:600;white-space:nowrap}
 .rl-dt.bom{color:var(--st-pago-fg)}.rl-dt.ruim{color:var(--st-venc-fg)}.rl-dt.neu{color:var(--text-muted)}
-.rl-tab tfoot td{font-weight:700;border-top:1px solid var(--border-strong,var(--border))}
+.rl-tab tfoot td{font-weight:700;padding:8px 10px;color:var(--text);font-variant-numeric:tabular-nums;background:var(--surface-2);border-top:1px solid var(--border-strong,var(--border))}
 
 /* Notas de método, conferência, avisos */
 .rl-nota{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm)}
