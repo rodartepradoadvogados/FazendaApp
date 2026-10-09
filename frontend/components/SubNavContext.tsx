@@ -37,17 +37,29 @@ export function useSubNavRegister(value: SubNavValue) {
   const pathname = usePathname();
   const router = useRouter();
   const aplicouParamInicial = useRef(false);
+  // Enquanto a seleção vinda de "?sub=" não chega ao activeId, o efeito de
+  // sincronia abaixo NÃO pode reescrever a URL com o activeId antigo — antes,
+  // o router.replace(?sub=<padrão>) assíncrono chegava depois e apagava o
+  // ?sub= do link compartilhado (a tela abria certa, a URL ficava errada).
+  const selecaoInicialDe = useRef<string | null>(null);
 
   useEffect(() => {
     if (aplicouParamInicial.current || !value) return;
     aplicouParamInicial.current = true;
     const sub = new URLSearchParams(window.location.search).get("sub");
-    if (sub && sub !== value.activeId && existeId(value.tree, sub)) value.onSelect(sub);
+    if (sub && sub !== value.activeId && existeId(value.tree, sub)) {
+      selecaoInicialDe.current = value.activeId;
+      value.onSelect(sub);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!value]);
 
   useEffect(() => {
     if (!value) return;
+    if (selecaoInicialDe.current !== null) {
+      if (value.activeId === selecaoInicialDe.current) return;
+      selecaoInicialDe.current = null;
+    }
     const atual = new URLSearchParams(window.location.search);
     if (atual.get("sub") === value.activeId) return;
     atual.set("sub", value.activeId);

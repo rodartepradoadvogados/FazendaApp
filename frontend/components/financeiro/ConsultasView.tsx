@@ -27,7 +27,7 @@ import { FiltrosSalvos } from "@/components/FiltrosSalvos";
 import { Modal } from "@/components/Modal";
 import {
   aplicarFiltroInicial, contarFiltrosAtivos, filtrarRealizados, filtrosPadrao, montarLivro, ordenarLinhas, resumir,
-  type CampoPeriodo, type ChaveOrdem, type FiltrosConsulta, type ModoConsulta, type Movimento, type Ordem,
+  type CampoPeriodo, type ChaveOrdem, type FiltroInicial, type FiltrosConsulta, type ModoConsulta, type Movimento, type Ordem,
 } from "./consultasCalculo";
 
 const TELA_FILTRO = "financeiro_consultas";
@@ -42,8 +42,11 @@ type Props = {
   onRecibo: (l: Lanc) => void;
   onEstornado: () => void;
   onEditar: (l: Lanc) => void;
-  filtroInicial?: { documento?: string; banco?: string; modo?: "lista" | "livro" };
+  filtroInicial?: FiltroInicialConsultas;
 };
+
+/** Filtro vindo de fora: busca global, Resumo, Agenda — ou o drill de um relatório (Fase B), com a origem para o aviso. */
+export type FiltroInicialConsultas = FiltroInicial & { modo?: "lista" | "livro"; origem?: string; chave?: string };
 
 type ParcelaDiferenca = { id: number; parcela_num: number; parcela_total: number; data_vencimento: string; valor_total: number };
 type ErroApi = { status?: number; message?: string; detail?: { mensagem?: string; parcelas?: ParcelaDiferenca[] } };
@@ -52,7 +55,7 @@ const MOVIMENTOS: { v: Movimento; rotulo: string }[] = [
   { v: "pagamento", rotulo: "Pagamento" }, { v: "recebimento", rotulo: "Recebimento" }, { v: "ambos", rotulo: "Ambos" },
 ];
 const CAMPOS_PERIODO: { v: CampoPeriodo; rotulo: string }[] = [
-  { v: "emissao", rotulo: "Emissão" }, { v: "vencimento", rotulo: "Vencimento" }, { v: "pagamento", rotulo: "Pagamento" },
+  { v: "emissao", rotulo: "Emissão" }, { v: "vencimento", rotulo: "Vencimento" }, { v: "pagamento", rotulo: "Pagamento" }, { v: "competencia", rotulo: "Competência" },
 ];
 const MODOS: { v: ModoConsulta; rotulo: string; icone: React.ReactNode }[] = [
   { v: "lista", rotulo: "Lista", icone: <List size={14} aria-hidden /> },
@@ -227,7 +230,7 @@ export default function ConsultasView(props: Props): React.JSX.Element {
 
   // Novo filtro vindo de fora depois de montado (ex.: outro link para
   // Consultas com a tela já aberta): reaplica — ajuste durante o render, sem efeito.
-  const chaveInicial = `${filtroInicial?.documento ?? ""}|${filtroInicial?.banco ?? ""}|${filtroInicial?.modo ?? ""}`;
+  const chaveInicial = `${filtroInicial?.documento ?? ""}|${filtroInicial?.banco ?? ""}|${filtroInicial?.modo ?? ""}|${filtroInicial?.chave ?? ""}`;
   const [chaveAplicada, setChaveAplicada] = useState(chaveInicial);
   if (chaveAplicada !== chaveInicial) {
     setChaveAplicada(chaveInicial);
@@ -416,6 +419,15 @@ export default function ConsultasView(props: Props): React.JSX.Element {
         <div>
           <h2>Consultas</h2>
           <p className="cq-nota"><Info size={14} aria-hidden />Aqui só aparece o que já foi pago ou recebido; para o que está em aberto use Contas.</p>
+          {filtroInicial?.origem && (
+            <p className="cq-nota" role="status"><Layers size={14} aria-hidden />
+              <span>
+                Aberto de <b style={{ color: "var(--text)" }}>{filtroInicial.origem}</b>, com o mesmo período, regime, centro e conta.
+                {filtroInicial.periodoPor === "competencia" ? " A DRE pelo mês do gasto soma também o que ainda está em aberto — isso fica em Contas." : ""}
+                {" "}Use o Voltar do navegador para retornar ao relatório.
+              </span>
+            </p>
+          )}
         </div>
         <div className="cq-acoes">
           <Segmentado idRotulo={idc("modo")} rotulo="Modo de exibição" oculto opcoes={MODOS} valor={modo} onChange={setModo} />
