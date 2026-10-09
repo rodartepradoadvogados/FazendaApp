@@ -179,12 +179,15 @@ export function TabelaComparacao({ titulo, linhas, rotuloCmp, formato = "brl", c
 }
 
 // ── Gráfico (slot) + tabela equivalente ───────────────────────────────────
-export function PainelGrafico({ titulo, children, tabela, legenda }: {
+export function PainelGrafico({ titulo, children, tabela, legenda, acoes }: {
   titulo: string; children: ReactNode; legenda?: ReactNode; tabela: { cabecalho: string[]; linhas: string[][] };
+  /** Controle do próprio gráfico (ex.: horizonte do Caixa real), à direita do título. */
+  acoes?: ReactNode;
 }) {
+  const cab = <h3 className="rl-tit">{titulo}</h3>;
   return (
     <section className="rl-painel rl-graf" aria-label={titulo}>
-      <h3 className="rl-tit">{titulo}</h3>
+      {acoes ? <div className="rl-cab-painel">{cab}<div className="rl-noprint">{acoes}</div></div> : cab}
       {children}
       {legenda && <div className="rl-leg">{legenda}</div>}
       <details className="rl-astab rl-noprint">

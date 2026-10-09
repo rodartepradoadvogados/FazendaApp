@@ -6,7 +6,7 @@
 // alinha a comparação, desenha as barras com a linha do ano anterior (ou o
 // resumo numérico, com menos de 3 meses) e abre o mês dia a dia e por conta.
 import { useEffect, useMemo, useState } from "react";
-import { ExternalLink } from "lucide-react";
+import { ChevronRight, ExternalLink } from "lucide-react";
 import { fetchFluxoCaixaMensal } from "@/lib/apiRelatoriosCaixa";
 import {
   ESTADO_INICIAL, anoAnterior, brl, delta, deslocar, fimDoMes, formatarDelta, mesCurto, mesLongo, pctSinal, periodoDe, periodoPadrao,
@@ -40,6 +40,8 @@ export default function FluxoCaixaView(props: PropsRelatorio) {
   const [respMes, setRespMes] = useState<{ mes: string; r: RespostaFluxo } | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [tentativa, setTentativa] = useState(0);
+  // Gráfico e tabela se respondem: o mês sob o mouse/foco de um destaca o mesmo mês no outro.
+  const [mesSobre, setMesSobre] = useState<string | null>(null);
   const cmpPeriodo = comparacao && comparacao.tipo === "periodo" ? comparacao.periodo : null;
   const ant = anoAnterior(periodo);
   const centroApi = efetivo.cc === "todos" ? null : efetivo.cc;
@@ -85,7 +87,7 @@ export default function FluxoCaixaView(props: PropsRelatorio) {
       sub: "Entradas − saídas que já passaram no banco (sem transferências entre contas próprias)" },
     { chave: "entradas", rotulo: "Entradas", valor: t.entradas, cmp: tq?.entradas ?? null, formato: "brl0", bom: "sobe",
       sub: "Depósito do leite, vendas, empréstimos e aportes recebidos", onAbrir: () => consultas(periodo.ini, periodo.fim, "Fluxo de caixa › Entradas") },
-    { chave: "saidas", rotulo: "Saídas", valor: t.saidas, cmp: tq?.saidas ?? null, formato: "brl0", bom: "desce",
+    { chave: "saidas", rotulo: "Saídas", valor: t.saidas, cmp: tq?.saidas ?? null, formato: "brl0", bom: "neutro",
       sub: "Inclui investimentos, parcelas e retiradas — dinheiro que saiu", onAbrir: () => consultas(periodo.ini, periodo.fim, "Fluxo de caixa › Saídas") },
     { chave: "media", rotulo: "Sobra média por mês", valor: Math.round((t.sobra / nMeses) * 100) / 100, cmp: tq ? Math.round((tq.sobra / nMesesCmp) * 100) / 100 : null,
       formato: "brl0", bom: "sobe", negativoEmVermelho: true,
@@ -181,6 +183,7 @@ export default function FluxoCaixaView(props: PropsRelatorio) {
             <BarrasMensais rotulos={linhas.map((l) => mesCurto(l.competencia))} series={series}
               linha={temLinhaAnt ? { nome: "Mesmo mês do ano anterior", valores: linhas.map((l) => l.anoAnterior) } : null}
               projetado={linhas.map((l) => l.previsto)} onAbrir={(i) => abrirDet(linhas[i].competencia)}
+              selecionado={mesSobre ? linhas.findIndex((l) => l.competencia === mesSobre) : null} aoPassar={(i) => setMesSobre(i == null ? null : linhas[i]?.competencia ?? null)}
               rotuloAbrir={(i) => `${mesLongo(linhas[i].competencia)}: entradas ${brl(linhas[i].entradas)}, saídas ${brl(linhas[i].saidas)}, sobra ${brl(linhas[i].sobra)}. Abrir o mês dia a dia`}
               descricao={`Fluxo de caixa mensal de ${periodo.label}: ${linhas.length} meses, sobra total ${brl0(t.sobra_prevista)}.`} />
           </PainelGrafico>
@@ -192,22 +195,26 @@ export default function FluxoCaixaView(props: PropsRelatorio) {
             <table className="fazenda-table rl-tab">
               <caption className="rl-sr">Fluxo de caixa mês a mês — {periodo.label}</caption>
               <thead><tr>
-                <th scope="col">Mês</th><th scope="col" className="r">Entradas</th><th scope="col" className="r">Saídas</th><th scope="col" className="r">Sobrou</th>
+                <th scope="col">Mês</th><th scope="col" className="r rl-cx-larga">Entradas</th><th scope="col" className="r rl-cx-larga">Saídas</th><th scope="col" className="r">Sobrou</th>
                 {rotuloCmp && <th scope="col" className="r">{rotuloCmp}</th>}{rotuloCmp && <th scope="col" className="r">Δ</th>}{rotuloCmp && <th scope="col" className="r rl-opc">Δ%</th>}
               </tr></thead>
               <tbody>
                 {linhas.map((l) => {
                   const d = rotuloCmp ? delta(l.sobra, l.cmpSobra, "sobe") : null;
                   return (
-                    <tr key={l.competencia} className="clic" onClick={(e) => { if (!(e.target as HTMLElement).closest("button")) abrirDet(l.competencia); }}>
+                    <tr key={l.competencia} className={`clic${mesSobre === l.competencia ? " dest" : ""}`}
+                      onMouseEnter={() => setMesSobre(l.competencia)} onMouseLeave={() => setMesSobre(null)}
+                      onClick={(e) => { if (!(e.target as HTMLElement).closest("button")) abrirDet(l.competencia); }}>
                       <td>
-                        <button type="button" className="rl-linkbtn" onClick={() => abrirDet(l.competencia)} aria-label={`${mesLongo(l.competencia)}: abrir dia a dia`}>{mesLongo(l.competencia)}</button>
+                        <button type="button" className="rl-linkbtn" onClick={() => abrirDet(l.competencia)} aria-label={`${mesLongo(l.competencia)}: abrir dia a dia`}
+                          onFocus={() => setMesSobre(l.competencia)} onBlur={() => setMesSobre(null)}>{mesLongo(l.competencia)}<ChevronRight size={14} aria-hidden /></button>
                         {SITUACAO[l.situacao] && <span className="rl-selo" style={{ marginLeft: ".4rem" }}>{SITUACAO[l.situacao]}</span>}
                         {l.previsto && <span className="sub">com o previsto em aberto e agendado</span>}
                         {rotuloCmp && l.cmpCompetencia && <span className="sub">vs {mesCurto(l.cmpCompetencia)}</span>}
+                        <span className="sub rl-cx-estreita">entrou {brl(l.entradas)} · saiu {brl(l.saidas)}</span>
                       </td>
-                      <td className="r">{brl(l.entradas)}</td>
-                      <td className="r">{brl(l.saidas)}</td>
+                      <td className="r rl-cx-larga">{brl(l.entradas)}</td>
+                      <td className="r rl-cx-larga">{brl(l.saidas)}</td>
                       <td className={`r${l.sobra < 0 ? " neg" : ""}`}><b>{brl(l.sobra)}</b></td>
                       {rotuloCmp && <td className="r mut">{l.cmpSobra == null ? "—" : brl(l.cmpSobra)}</td>}
                       {rotuloCmp && <td className="r">{!d ? <span className="mut">—</span> : d.igual ? <span className="mut">=</span> : (
@@ -219,7 +226,8 @@ export default function FluxoCaixaView(props: PropsRelatorio) {
                 })}
               </tbody>
               <tfoot><tr>
-                <td>Total do período</td><td className="r">{brl(t.entradas + t.previsto_entradas)}</td><td className="r">{brl(t.saidas + t.previsto_saidas)}</td>
+                <td>Total do período<span className="sub rl-cx-estreita" style={{ fontWeight: 400 }}>entrou {brl(t.entradas + t.previsto_entradas)} · saiu {brl(t.saidas + t.previsto_saidas)}</span></td>
+                <td className="r rl-cx-larga">{brl(t.entradas + t.previsto_entradas)}</td><td className="r rl-cx-larga">{brl(t.saidas + t.previsto_saidas)}</td>
                 <td className={`r${t.sobra_prevista < 0 ? " neg" : ""}`}>{brl(t.sobra_prevista)}</td>
                 {rotuloCmp && <td className="r">{tq ? brl(tq.sobra_prevista) : "—"}</td>}
                 {rotuloCmp && <td className="r">{tq ? formatarDelta(t.sobra_prevista - tq.sobra_prevista, "brl") : "—"}</td>}
@@ -247,11 +255,11 @@ export default function FluxoCaixaView(props: PropsRelatorio) {
                     return (
                       <tr key={d.data} className="clic" onClick={(e) => { if (!(e.target as HTMLElement).closest("button")) consultas(d.data, d.data, `Fluxo de caixa › ${d.data.split("-").reverse().join("/")}`); }}>
                         <td><button type="button" className="rl-linkbtn" onClick={() => consultas(d.data, d.data, `Fluxo de caixa › ${d.data.split("-").reverse().join("/")}`)}
-                          aria-label={`${d.data.split("-").reverse().join("/")}: ver os lançamentos em Consultas`}>{d.data.slice(8)}/{d.data.slice(5, 7)}</button>
+                          aria-label={`${d.data.split("-").reverse().join("/")}: ver os lançamentos em Consultas`}>{d.data.slice(8)}/{d.data.slice(5, 7)}<ChevronRight size={14} aria-hidden /></button>
                           {prev && <span className="sub">previsto (em aberto ou agendado)</span>}</td>
                         <td className="r">{d.entradas + d.previsto_entradas ? brl(d.entradas + d.previsto_entradas) : <span className="mut">—</span>}</td>
                         <td className="r">{d.saidas + d.previsto_saidas ? brl(d.saidas + d.previsto_saidas) : <span className="mut">—</span>}</td>
-                        <td className={`r${d.sobra < 0 ? " neg" : ""}`}>{brl(d.sobra)}</td>
+                        <td className="r">{brl(d.sobra)}</td>
                         <td className={`r${d.acumulado < 0 ? " neg" : ""}`}><b>{brl(d.acumulado)}</b></td>
                       </tr>
                     );
@@ -296,13 +304,13 @@ function ContasFluxo({ dados, titulo, onAbrir }: { dados: RespostaFluxo; titulo:
     <section className="rl-painel" aria-label={titulo}>
       <h3 className="rl-tit">{titulo}</h3>
       <div className="rl-tw">
-        <table className="fazenda-table rl-tab">
+        <table className="fazenda-table rl-tab rl-cx-conta">
           <caption className="rl-sr">{titulo}</caption>
           <thead><tr><th scope="col">Conta gerencial</th><th scope="col" className="r">Entrou</th><th scope="col" className="r">Saiu</th></tr></thead>
           <tbody>
             {dados.contas.map((c) => (
               <tr key={c.codigo ?? c.nome} className="clic" onClick={(e) => { if (!(e.target as HTMLElement).closest("button")) onAbrir(c); }}>
-                <td><button type="button" className="rl-linkbtn" onClick={() => onAbrir(c)} aria-label={`${c.nome}: ver os lançamentos em Consultas`}>{c.nome}</button></td>
+                <td><button type="button" className="rl-linkbtn" onClick={() => onAbrir(c)} aria-label={`${c.nome}: ver os lançamentos em Consultas`}>{c.nome}<ChevronRight size={14} aria-hidden /></button></td>
                 <td className="r">{c.entradas ? brl(c.entradas) : <span className="mut">—</span>}</td>
                 <td className="r">{c.saidas ? brl(c.saidas) : <span className="mut">—</span>}</td>
               </tr>

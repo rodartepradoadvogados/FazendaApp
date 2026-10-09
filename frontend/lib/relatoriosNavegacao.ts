@@ -64,6 +64,8 @@ export const REDIRECIONAMENTOS: Record<string, string> = {
   // Fase C1 (Caixa): as telas antigas deram lugar às do molde.
   caixa_real: "rel_caixa",
   fluxo: "rel_fluxo",
+  // T7: o nome curto do grupo (links escritos à mão, ?ir=caixa) abre o primeiro relatório dele, o Caixa real.
+  caixa: "rel_caixa",
   // Fase C2: as quatro telas de custo viraram as visões de "Custos do leite" (?visao=).
   custo_litro_leite: "custos", custo_vaca_lote: "custos", custo_hectare: "custos", custo_safra: "custos",
   // Fase C3: o orçamento no molde (a tela anterior continua em "orcamento_itens").

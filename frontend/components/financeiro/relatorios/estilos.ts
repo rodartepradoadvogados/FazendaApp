@@ -72,6 +72,8 @@ button.rl-kpi{cursor:pointer}button.rl-kpi:hover{background:var(--surface-2)}
 /* Painéis, gráfico */
 .rl-painel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:.85rem .95rem;min-width:0}
 .rl-tit{font-size:.75rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text-accent);margin:0 0 .65rem}
+.rl-cab-painel{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.4rem .75rem;margin:0 0 .65rem}
+.rl-cab-painel .rl-tit{margin:0}
 .rl-graf svg.rl-svg{display:block;width:100%;height:auto;overflow:visible}
 .rl-graf text{fill:var(--text-muted);font-size:12px;font-family:var(--font-body)}
 .rl-graf .forte{fill:var(--text);font-weight:700}

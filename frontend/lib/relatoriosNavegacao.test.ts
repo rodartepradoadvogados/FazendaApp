@@ -23,6 +23,10 @@ test("nenhum relatório antigo some: cada id antigo cai num relatório da árvor
   assert.equal(idDoRelatorio("fluxo"), "rel_fluxo");
   assert.equal(idDoRelatorio("caixa_real"), "rel_caixa");
   assert.equal(grupoDe("caixa_real")!.label, "Caixa");
+  // T7: os três nomes antigos do Caixa abrem as telas novas (nenhum sobra apontando para a tela de antes).
+  assert.equal(idDoRelatorio("caixa"), "rel_caixa");
+  assert.equal(grupoDe("caixa")!.label, "Caixa");
+  for (const id of ["caixa", "caixa_real", "fluxo"]) assert.ok(RELATORIOS_NO_MOLDE.has(idDoRelatorio(id)), id);
   // A DRE por conta (tela anterior, com a classificação) continua acessível.
   assert.ok(IDS_RELATORIOS.has("dre_contas"));
   // Fase C: Plano › Orçamento no molde; as telas anteriores do orçamento e dos cenários continuam.

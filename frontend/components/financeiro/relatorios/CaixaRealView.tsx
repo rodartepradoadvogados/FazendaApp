@@ -9,7 +9,7 @@
 // Período, comparação, regime e centro ficam travados com o porquê: o caixa
 // olha de hoje para a frente e soma todas as contas bancárias.
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CalendarClock, Calculator, CheckCircle2, CircleAlert, ExternalLink, Landmark } from "lucide-react";
+import { AlertTriangle, CalendarClock, Calculator, CheckCircle2, ChevronRight, CircleAlert, ExternalLink, Landmark } from "lucide-react";
 import { fetchCaixaReal, fetchFundoReservaSugerido, type CaixaReal } from "@/lib/api";
 import { fetchFolegoCaixa, type Folego } from "@/lib/apiRelatoriosCaixa";
 import { ESTADO_INICIAL, brl } from "@/lib/relatorioContexto";
@@ -103,7 +103,12 @@ export default function CaixaRealView(props: PropsRelatorio) {
   const kpis: KpiDef[] = r ? [
     {
       chave: "menor", rotulo: `Menor saldo nos próximos ${dias} dias`, valor: r.menor.saldo, formato: "brl0", bom: "neutro", negativoEmVermelho: true,
-      selo: r.primeiroNegativo ? <span className="rl-selo" style={{ borderColor: "var(--st-venc-line)", background: "var(--st-venc-bg)", color: "var(--st-venc-fg)" }}><CircleAlert size={12} aria-hidden /> aperta em {dm(r.primeiroNegativo)}</span> : undefined,
+      // Status em texto + ícone, igual aos chips da DRE: aperta (vermelho), fura a reserva (âmbar) ou sem aperto (verde).
+      selo: r.primeiroNegativo
+        ? <span className="rl-selo" style={{ borderColor: "var(--st-venc-line)", background: "var(--st-venc-bg)", color: "var(--st-venc-fg)" }}><CircleAlert size={12} aria-hidden /> aperta em {dm(r.primeiroNegativo)}</span>
+        : r.primeiroAbaixoReserva
+          ? <span className="rl-selo" style={{ borderColor: "var(--st-logo-line)", background: "var(--st-logo-bg)", color: "var(--st-logo-fg)" }}><AlertTriangle size={12} aria-hidden /> fura a reserva em {dm(r.primeiroAbaixoReserva)}</span>
+          : <span className="rl-selo" style={{ borderColor: "var(--st-pago-line)", background: "var(--st-pago-bg)", color: "var(--st-pago-fg)" }}><CheckCircle2 size={12} aria-hidden /> sem aperto</span>,
       sub: <>{diaSemana(r.menor.data)}, {dmy(r.menor.data)} · {r.primeiroNegativo ? `fica negativo a partir de ${dm(r.primeiroNegativo)}` : "não fica negativo"}{reserva.valor > 0 ? ` · reserva${reserva.origem === "sugerida" ? " sugerida" : ""} ${brl0(reserva.valor)}` : ""}</>,
       onAbrir: () => { const p = periodoDe(r.menor.data); if (p) abrirPeriodo(p); },
     },
@@ -197,24 +202,26 @@ export default function CaixaRealView(props: PropsRelatorio) {
   const rotuloReserva = reserva.origem === "parametro" ? `Reserva: até ${brl0(reserva.valor)}${reserva.meses ? ` (${reserva.meses.toLocaleString("pt-BR")} meses de saída)` : ""}`
     : `Reserva sugerida: ${brl0(reserva.valor)} (${reserva.meses} meses de saída)`;
 
+  // O horizonte é controle do gráfico (não da tela): mora no cabeçalho do painel, como o "Por semana / Por dia" da linha do tempo.
+  const horizonte = (
+    <div className="rl-campo" style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: ".5rem", minWidth: 0, maxWidth: "100%" }} role="group" aria-label="Horizonte da projeção">
+      <span className="rl-rot" id="rl-cx-hor">Projetar os próximos</span>
+      <div className="rl-seg" role="group" aria-labelledby="rl-cx-hor">
+        {HORIZONTES.map((h) => (
+          <button key={h} type="button" aria-pressed={dias === h} onClick={() => { if (h !== dias) mudarDias(h === 90 ? "" : String(h)); }}>{h} dias</button>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
     <RelatorioShell ctx={ctx} hoje={hoje} centros={centros} grupo="Caixa" nome="Caixa real" pergunta="Quando o caixa aperta?"
       onIrGrupo={props.onIrGrupo} niveis={det ? [{ rotulo: nomeDet }] : []} onVoltarNivel={() => abrirDet("")}
       estado={estado} erro={erro} onTentarDeNovo={() => { setErro(null); setTentativa((t) => t + 1); }} vazio={vazioUi}
       frase={!det && r ? fraseCaixa(r, reserva, brl0, saldoPendente) : []} kpis={det ? undefined : kpis} avisos={det ? null : avisos} exportar={exportar}>
       <style>{CSS_CAIXA}</style>
-      <div className="rl-acoes rl-noprint" role="group" aria-label="Horizonte da projeção" style={{ justifyContent: "space-between" }}>
-        <div className="rl-campo" style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: ".5rem", minWidth: 0, maxWidth: "100%" }}>
-          <span className="rl-rot" id="rl-cx-hor">Projetar os próximos</span>
-          <div className="rl-seg" role="group" aria-labelledby="rl-cx-hor">
-            {HORIZONTES.map((h) => (
-              <button key={h} type="button" aria-pressed={dias === h} onClick={() => { if (h !== dias) mudarDias(h === 90 ? "" : String(h)); }}>{h} dias</button>
-            ))}
-          </div>
-        </div>
-      </div>
       {!det && r && (<>
-        <PainelGrafico titulo="Saldo projetado, dia a dia"
+        <PainelGrafico titulo="Saldo projetado, dia a dia" acoes={horizonte}
           legenda={<LegendaSaldo reserva={reserva.valor > 0} compra={!!(sim && sim.ok)} marcos={marcos.length > 0} />}
           tabela={{ cabecalho: ["Data", "Saldo previsto", ...(sim && sim.ok ? ["Com a compra"] : [])], linhas: serie
             .map((p, i) => ({ p, i }))
@@ -256,8 +263,8 @@ export default function CaixaRealView(props: PropsRelatorio) {
 
       {!det && r && (
         <section className="rl-painel" aria-labelledby="rl-cx-linha" id="rl-cx-linha">
-          <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: ".5rem", marginBottom: ".6rem" }}>
-            <h3 className="rl-tit" style={{ margin: 0 }}>O que entra e sai, {vis === "semana" ? "semana a semana" : "dia a dia"}</h3>
+          <div className="rl-cab-painel">
+            <h3 className="rl-tit">O que entra e sai, {vis === "semana" ? "semana a semana" : "dia a dia"}</h3>
             <div className="rl-seg rl-noprint" role="group" aria-label="Agrupar a linha do tempo">
               <button type="button" aria-pressed={vis === "semana"} onClick={() => vis !== "semana" && mudarVis("")}>Por semana</button>
               <button type="button" aria-pressed={vis === "dia"} onClick={() => vis !== "dia" && mudarVis("dia")}>Por dia</button>
@@ -277,7 +284,7 @@ export default function CaixaRealView(props: PropsRelatorio) {
                   <tr key={p.chave} className="clic" onClick={(e) => { if (!(e.target as HTMLElement).closest("button")) abrirPeriodo(p); }}>
                     <td>
                       <button type="button" className="rl-linkbtn" onClick={() => abrirPeriodo(p)} aria-label={`${p.ini === p.fim ? dmy(p.ini) : `${dm(p.ini)} a ${dm(p.fim)}`}: abrir o que vence`}>
-                        {p.ini === p.fim ? `${diaSemana(p.ini)} ${dm(p.ini)}` : `${dm(p.ini)} a ${dm(p.fim)}`}
+                        {p.ini === p.fim ? `${diaSemana(p.ini)} ${dm(p.ini)}` : `${dm(p.ini)} a ${dm(p.fim)}`}<ChevronRight size={14} aria-hidden />
                       </button>
                       <span className="sub">{p.itens ? `${p.itens} compromisso${p.itens > 1 ? "s" : ""}` : "nada vence"}{p.menorSaldo < 0 ? " · fica negativo" : ""}</span>
                       {(p.entradas > 0 || p.saidas > 0) && <span className="sub rl-cx-estreita">{p.entradas ? `entra ${brl(p.entradas)}` : ""}{p.entradas && p.saidas ? " · " : ""}{p.saidas ? `sai ${brl(p.saidas)}` : ""}</span>}
@@ -371,7 +378,8 @@ export default function CaixaRealView(props: PropsRelatorio) {
                 {(dados.folga_minima ?? 0) < 0 ? " — a reserva é furada em algum dia." : " — a reserva fica intacta."}
               </p>
             </>) : reserva.origem === "sugerida" ? (<>
-              <p style={{ margin: "0 0 .4rem", fontSize: ".86rem" }}>Nenhuma reserva definida. Pelo histórico, a sugestão é <b>{brl0(reserva.valor)}</b> ({reserva.meses} meses de saída média).</p>
+              <p style={{ margin: "0 0 .4rem", fontSize: "1.3rem", fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{brl0(reserva.valor)} <span className="rl-selo" style={{ verticalAlign: "middle" }}>sugerida</span></p>
+              <p style={{ margin: "0 0 .4rem", fontSize: ".84rem", color: "var(--text-muted)" }}>Nenhuma reserva definida. Pelo histórico, a sugestão cobre {reserva.meses} meses de saída média.</p>
               <p style={{ margin: 0, fontSize: ".8rem", color: "var(--text-muted)" }}>Para adotar, grave em <a href="/configuracoes?aba=parametros" style={{ color: "var(--text-accent)", fontWeight: 600 }}>Configurações › Parâmetros</a>, no campo “Caixa Real — fundo de reserva”.</p>
             </>) : (
               <p style={{ margin: 0, fontSize: ".84rem", color: "var(--text-muted)" }}>Sem reserva definida e sem histórico de saídas para sugerir uma: a tela só alerta quando o caixa fica negativo.</p>
