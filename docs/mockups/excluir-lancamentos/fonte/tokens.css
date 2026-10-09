@@ -1,0 +1,43 @@
+/* Tokens ESPELHADOS de frontend/app/globals.css (tema claro/escuro + paleta AZUL).
+   Nenhum valor novo: só os nomes e valores que o app já usa. */
+:root, :root[data-theme="claro"] {
+  color-scheme: light;
+  --pasture: #4E7A5A;
+  --vinho: #0B2038;        /* paleta azul: marinho */
+  --vinho-light: #2C4A6B;
+  --vinho-dark: #071A2E;
+  --dourado: #B9831F;
+  --dourado-light: #E0A63C;
+  --bg: #F1F1EF;
+  --surface: #FFFFFF;
+  --surface-2: #E9E9E6;
+  --border: #DBDBD7;
+  --border-strong: #C7C7C2;
+  --text: #1E1B18;
+  --text-muted: #6E665C;
+  --green: color-mix(in srgb, var(--pasture) 80%, black);
+  --green-light: var(--pasture);
+  --red: #A8341C;
+  --amber: #D97706;
+  --blue: #1E6FA8;
+  --alert-fg: var(--red);
+  --overlay: rgba(30, 20, 25, 0.45);
+  --thead-bg: #F1F4F8;
+  --thead-fg: var(--vinho);
+  --r-sm: 2px;
+  --shadow-sm: 0 1px 4px rgba(20, 30, 45, 0.10);
+}
+:root[data-theme="escuro"] {
+  color-scheme: dark;
+  --bg: color-mix(in srgb, var(--vinho) 12%, #050304);
+  --surface: color-mix(in srgb, var(--vinho) 14%, #0F0A0C);
+  --surface-2: color-mix(in srgb, var(--vinho) 16%, #170F13);
+  --border: color-mix(in srgb, var(--vinho) 22%, #2A1A20);
+  --border-strong: color-mix(in srgb, var(--vinho) 30%, #3A2A30);
+  --text: #F0E8EC;
+  --text-muted: #9B8A91;
+  --alert-fg: #E07070;
+  --overlay: rgba(0, 0, 0, 0.7);
+  --thead-bg: linear-gradient(135deg, var(--vinho), var(--vinho-dark));
+  --thead-fg: var(--dourado-light);
+}
