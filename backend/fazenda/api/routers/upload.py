@@ -47,6 +47,7 @@ from fazenda.parsers.plano_conta_gerencial import parse_plano_conta_gerencial
 from fazenda.parsers.reprodutivo import parse_reprodutivo
 from fazenda.parsers.sanidade import parse_sanidade
 from fazenda.rules import lactacao as regras_lactacao
+from fazenda.rules.plano_padrao import garantir_contas_do_sistema
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -157,8 +158,18 @@ async def _upsert_plano_conta_gerencial(content: bytes, session: Session, fazend
     session.commit()
     for conta in _carimbar(contas, fazenda_id):
         session.add(conta)
+    session.flush()
+    # Contas do SISTEMA (3.03.01.16 Retenções, 3.03.01.17 Vales e adiantamentos)
+    # não vêm no CSV do Ideagri e este upsert apaga e reinsere TUDO: sem isto a
+    # reimportação as levaria embora e o vale/retenção voltaria a ficar sem
+    # conta. Só cria se o plano trouxer o grupo 3.03.01; não sobrescreve conta
+    # que o CSV já traga com o mesmo código. Ver rules/plano_padrao.py.
+    garantidas = garantir_contas_do_sistema(session, fazenda_id)
     session.commit()
-    return {"tipo": "plano_conta_gerencial", "registros": len(contas)}
+    resposta = {"tipo": "plano_conta_gerencial", "registros": len(contas)}
+    if garantidas.criadas:
+        resposta["contas_do_sistema_criadas"] = garantidas.criadas
+    return resposta
 
 
 # Campos que o CSV do Ideagri realmente carrega — é só isto que uma
