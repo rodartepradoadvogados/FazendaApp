@@ -5,8 +5,9 @@ do escritório **Rodarte Prado Advogados**.
 
 ## O cofre é a memória comum
 
-O cofre `Projetos-Obsidian` fica no computador do Jairo e é sincronizado com a VPS
-pelo Syncthing. É compartilhado entre o **Claude Code**, os **bots do Hermes** e o Jairo.
+O cofre `Projetos-Obsidian` vive no **Google Drive** (conta
+rodartepradoadvogados@gmail.com) e é sincronizado com a VPS por **rclone, a cada 5 minutos**.
+É compartilhado entre o **Claude Code**, os **bots do Hermes** e o Jairo.
 
 ```
 Projetos-Obsidian/
