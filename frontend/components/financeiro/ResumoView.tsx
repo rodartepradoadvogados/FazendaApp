@@ -21,6 +21,7 @@ import {
 } from "@/lib/api";
 import type { Lanc } from "@/lib/financeiroTipos";
 import { diasAte, hojeLocal } from "@/lib/financeiroSituacao";
+import { useRegrasV2 } from "@/lib/useRegrasV2";
 import {
   PERIODOS, abertasPagar, abreviar, colunasGrafico, dataPorExtenso, diasValidos, drill, faturaFechandoEmBreve,
   ordenarFaturas, plural, posicao, proximaParcelaContrato, quandoVence, r2, topoEixo, vencidaMaisAntiga,
@@ -308,7 +309,7 @@ export default function ResumoView(p: Props) {
 
   useEffect(() => {
     let vivo = true;
-    fetchContasCorrentes()
+    fetchContasCorrentes(hojeLocal())
       .then((d) => { if (vivo) setContas({ estado: "ok", dados: d }); })
       .catch(() => { if (vivo) setContas({ estado: "erro" }); });
     fetchFaturas()
@@ -343,6 +344,10 @@ export default function ResumoView(p: Props) {
     ? cartoes.dados.flatMap((c) => c.faturas.filter((f) => f.status !== "paga" && (f.valor_total ?? 0) > 0).map((f) => ({ ...f, apelido: c.cartao.apelido })))
     : []), [cartoes]);
   const totalCartao = r2(cartaoEmCurso.reduce((a, f) => a + (f.valor_total ?? 0), 0));
+  // Regras v2 (Fase A, PR 5 — decisão do dono): cada compra no cartão é uma nota em
+  // aberto até a fatura ser paga, então a fatura JÁ ENTRA em "A pagar".
+  const regrasV2 = useRegrasV2();
+  const cartaoNasContas = useMemo(() => r2(abertas.filter((l) => l.fatura_cartao_id).reduce((a, l) => a + l.valor, 0)), [abertas]);
 
   // ── o que pede ação ─────────────────────────────────────────────────────
   const v0 = useMemo(() => vencidaMaisAntiga(abertas, hoje), [abertas, hoje]);
@@ -579,7 +584,9 @@ export default function ResumoView(p: Props) {
               <p className="rs-nota"><Info size={13} aria-hidden /><span>{plural(pos.semVencimento.n, "conta sem vencimento", "contas sem vencimento")} (<b>{formatBRL(pos.semVencimento.valor)}</b>) {pos.semVencimento.n === 1 ? "entra" : "entram"} só no total a pagar.</span></p>
             )}
             <p className="rs-nota"><Layers size={13} aria-hidden /><span>Notas de fatura aberta já contam em A pagar.</span></p>
-            {totalCartao > 0 && (
+            {regrasV2 ? (cartaoNasContas > 0 && (
+              <p className="rs-nota"><CreditCard size={13} aria-hidden /><span>Inclui <b>{formatBRL(cartaoNasContas)}</b> de faturas de cartão (cada compra é uma nota, paga pela fatura).</span></p>
+            )) : totalCartao > 0 && (
               <p className="rs-nota"><CreditCard size={13} aria-hidden /><span>A fatura do cartão (<b>{formatBRL(totalCartao)}</b> em curso) não entra nestes totais: vira lançamento quando é paga.</span></p>
             )}
           </section>

@@ -95,6 +95,22 @@ class ContaGerencial(SQLModel, table=True):
     # | "abatimento" (o desconto reduz o valor da própria conta). Só desconto
     # aceita abatimento. Só muda número com a flag `financeiro_regras_v2`.
     diferenca_tipo: Optional[str] = None
+    # Conta corrente do pagamento/recebimento (Fase A, PR 6 — saldo por FK, não
+    # mais pelo texto livre de `conta_bancaria`, que continua como rótulo de
+    # exibição). Preenchida na baixa quando o rótulo casa com uma conta da
+    # fazenda; o histórico é ligado pelo comando `scripts.backfill_conta_corrente`.
+    conta_corrente_id: Optional[int] = Field(default=None, foreign_key="conta_corrente.id", index=True)
+    # Quem gerou esta linha automaticamente (Fase A): "caixa_retirada" (saque do
+    # caixa do funcionário pelo banco, PR 6), "backfill_cartao" (nota por compra
+    # de fatura de cartão JÁ PAGA pela nota genérica — só classifica a DRE, o
+    # dinheiro continua contado uma vez, pela genérica: fica fora de saldo,
+    # Caixa Real e Fluxo), "backfill_cartao_aberta" (nota de compra de fatura
+    # ainda não paga, PR 5). NULL = lançamento comum.
+    gerado_por: Optional[str] = None
+    # Fatura de CARTÃO a que esta nota de compra pertence (Fase A, PR 5 — cartão
+    # por item): uma nota por compra, competência = data da compra, vencimento =
+    # o da fatura. Só se paga PELA FATURA (a baixa individual/lote recusa 409).
+    fatura_cartao_id: Optional[int] = Field(default=None, foreign_key="fatura_cartao.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +211,14 @@ class LancamentoItem(SQLModel, table=True):
     # Natureza econômica SÓ deste item (sobrepõe a da nota — ver
     # ContaGerencial.natureza_fin e rules/natureza.py). NULL = a da nota.
     natureza_fin: Optional[str] = None
+    # Item criado pelo SISTEMA para um lançamento automático (folha, férias,
+    # 13º, rescisão, guia, contrato, empreita, diária, vale, caixa do
+    # funcionário) — Fase A, PR 2/3, ver rules/lancamento_automatico.py. O
+    # valor é o PAPEL do item na nota ("folha_salario", "folha_retidos", ...).
+    # NULL = item lançado por gente (a esmagadora maioria). Só existe com a
+    # flag financeiro_regras_v2 ligada ou depois do backfill; as regras antigas
+    # dos relatórios ignoram estes itens (a nota volta a ser lida como antes).
+    gerado_por: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +354,13 @@ class ContaCorrente(SQLModel, table=True):
     numero_conta: str
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Saldo conferido com o extrato no fim do dia `data_saldo_abertura` (Fase A,
+    # PR 6). O saldo calculado parte dele e soma só os pagamentos DEPOIS dessa
+    # data, até hoje. Campo na conta (decisão Q12), não lançamento: não polui
+    # Fluxo, DRE nem Consultas. Os dois vêm juntos ou nenhum. Só é lido com a
+    # flag `financeiro_regras_v2`.
+    saldo_abertura: Optional[float] = None
+    data_saldo_abertura: Optional[date] = None
 
 
 # ---------------------------------------------------------------------------
@@ -815,6 +846,12 @@ class FaturaCartao(SQLModel, table=True):
     numero_lancamento: Optional[str] = None  # → ContaGerencial, só quando paga
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Fase A, PR 5 (cartão por item, flag financeiro_regras_v2): o que foi pago
+    # na fatura e a diferença para o total (rateada entre as notas das compras,
+    # como na fatura de fornecedor). Sem a flag, a fatura paga continua gerando
+    # a nota genérica de `numero_lancamento`.
+    valor_pago: Optional[float] = None
+    desconto_acrescimo: Optional[float] = None
 
 
 class LancamentoCartao(SQLModel, table=True):
@@ -839,6 +876,8 @@ class LancamentoCartao(SQLModel, table=True):
     observacao: Optional[str] = None
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Nota (ContaGerencial) desta compra — Fase A, PR 5 (cartão por item).
+    numero_lancamento: Optional[str] = Field(default=None, index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -861,6 +900,25 @@ class CurvaABC(SQLModel, table=True):
     valor_acumulado: Optional[float] = None
     perc_acumulado: Optional[float] = None
     perc_total: Optional[float] = None
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Conta gerencial padrão de cada ORIGEM de lançamento automático (Fase A,
+# PR 2) — Configurações > Parâmetros financeiros > Contas automáticas. Ex.:
+# origem "folha_salario" → conta "3.03.01.01 Salários". Uma linha por
+# (fazenda, origem). `natureza_fin` sobrepõe a natureza padrão da origem
+# (ex.: vale = ADIANTAMENTO). Ver rules/lancamento_automatico.py::ORIGENS.
+# ---------------------------------------------------------------------------
+class ContaPadraoOrigem(SQLModel, table=True):
+    __tablename__ = "conta_padrao_origem"
+    __table_args__ = (UniqueConstraint("fazenda_id", "origem", name="uq_conta_padrao_origem_fazenda_origem"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    origem: str = Field(index=True)
+    codigo_conta_gerencial: Optional[str] = None
+    natureza_fin: Optional[str] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
 

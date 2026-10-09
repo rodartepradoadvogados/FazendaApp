@@ -2,13 +2,14 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
-  AlertTriangle, CheckCircle2, Clock, Circle, Layers, Pencil, Receipt, Plus, Repeat, Search, X, Filter, ChevronUp, ChevronDown, MoreHorizontal, Wallet, Undo2,
+  AlertTriangle, CalendarClock, CheckCircle2, Clock, Circle, CreditCard, Layers, Pencil, Receipt, Plus, Repeat, Search, X, Filter, ChevronUp, ChevronDown, MoreHorizontal, Wallet, Undo2,
 } from "lucide-react";
 import { formatBRL, formatDate, ehAdmin, estornarPagamentoLancamento, fetchCartoesCredito, fetchFaturasCartao, type FaturaCartao } from "@/lib/api";
 import type { Lanc } from "@/lib/financeiroTipos";
 import { FAIXAS, diasAte, faixaDe, hojeLocal, situacaoDe, somaDias, somaValores, type FaixaId, type Situacao } from "@/lib/financeiroSituacao";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { casaBusca } from "@/lib/busca";
+import { useRegrasV2 } from "@/lib/useRegrasV2";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { FiltrosSalvos } from "@/components/FiltrosSalvos";
@@ -59,6 +60,7 @@ const ICONE_SITUACAO: Record<Situacao["id"], ReactNode> = {
   fatura: <Layers size={13} aria-hidden />,
   parcial: <Circle size={13} aria-hidden />,
   paga: <CheckCircle2 size={13} aria-hidden />,
+  agendada: <CalendarClock size={13} aria-hidden />,
 };
 
 export function PilulaSituacao({ s }: { s: Situacao }) {
@@ -72,6 +74,7 @@ type Ord = { chave: "numero" | "venc" | "desc" | "forn" | "valor"; dir: "asc" | 
 
 export default function ContasListaView(p: Props) {
   const admin = ehAdmin();
+  const regrasV2 = useRegrasV2();
   const receber = p.tipo === "receita";
   const hoje = hojeLocal();
   const nomeLista = receber ? "Contas a receber" : "Contas a pagar";
@@ -189,7 +192,8 @@ export default function ContasListaView(p: Props) {
 
   // ── seleção em lote ─────────────────────────────────────────────────
   const [sel, setSel] = useState<Set<number>>(new Set());
-  const selecionaveis = (r: Lanc) => !r.fatura_id;
+  // Nota de fatura de fornecedor ou de compra no cartão (PR 5): só se paga pela fatura.
+  const selecionaveis = (r: Lanc) => !r.fatura_id && !r.fatura_cartao_id;
   const selecionadas = ordenadas.filter((r) => sel.has(r.id));
   const alternar = (id: number) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const paginaSel = pag.linhasPagina.filter(selecionaveis);
@@ -222,7 +226,7 @@ export default function ContasListaView(p: Props) {
     if (abriuAlvo.current || !p.documentoInicial) return;
     const achadas = abertas.filter((r) => casaBusca(`${r.numero_documento || ""} ${r.numero_lancamento || ""} ${r.numero_os_orcamento || ""} ${r.numero_boleto || ""}`, p.documentoInicial!));
     abriuAlvo.current = true;
-    if (achadas.length === 1 && !achadas[0].fatura_id) setBaixa(achadas[0]);
+    if (achadas.length === 1 && selecionaveis(achadas[0])) setBaixa(achadas[0]);
   }, [abertas, p.documentoInicial]);
 
   const ordenar = (chave: NonNullable<Ord>["chave"]) => setOrd((o) => (o?.chave === chave ? (o.dir === "asc" ? { chave, dir: "desc" } : null) : { chave, dir: "asc" }));
@@ -373,7 +377,7 @@ export default function ContasListaView(p: Props) {
         </div>
       </div>
 
-      {cartoes.length > 0 && (
+      {cartoes.length > 0 && !regrasV2 && (
         <div className="card mb-2" style={{ padding: "0.5rem 0.8rem", display: "flex", alignItems: "center", gap: "0.7rem", flexWrap: "wrap", fontSize: "0.8rem" }}>
           <span className="st-pill fat"><Layers size={13} aria-hidden /> Cartão de crédito</span>
           <span>{cartoes.map((c) => `${c.rotulo}: ${formatBRL(c.valor)} (vence ${formatDate(c.venc)})`).join(" · ")}</span>
@@ -418,6 +422,7 @@ export default function ContasListaView(p: Props) {
                 const mostraGrupo = !ord && (!anterior || chaveGrupo(anterior) !== chaveGrupo(r));
                 const g = subtotal.get(chaveGrupo(r));
                 const fat = !!r.fatura_id;
+                const fatCartao = !!r.fatura_cartao_id;
                 return (
                   <RowFragment key={r.id}>
                     {mostraGrupo && g && (
@@ -441,6 +446,7 @@ export default function ContasListaView(p: Props) {
                           {r.centro_custo && <span className="st-chip" style={{ fontSize: "0.68rem", padding: "0 8px" }}>{r.centro_custo}</span>}
                           {(r.tipo_documento || r.numero_documento) && <span className="st-chip" style={{ fontSize: "0.68rem", padding: "0 8px" }}>{r.tipo_documento ? `${r.tipo_documento} ` : ""}{r.numero_documento || ""}</span>}
                           {fat && <button type="button" onClick={() => p.onAbrirFatura(r)} className="st-pill fat" style={{ cursor: "pointer" }} title="Abrir a fatura desta nota"><Layers size={11} aria-hidden /> fatura</button>}
+                          {fatCartao && <button type="button" onClick={p.onAbrirCartao} className="st-pill fat" style={{ cursor: "pointer" }} title="Compra no cartão: abrir Cartão de crédito"><CreditCard size={11} aria-hidden /> cartão</button>}
                           {r.origem_preventivo && <a href="/protocolos?aba=acompanhamento" className="st-chip" style={{ fontSize: "0.68rem", padding: "0 8px", textDecoration: "none" }} title={`Nasceu do agendamento de ${r.origem_preventivo.protocolo}`}>Protocolo preventivo · {r.origem_preventivo.protocolo}</a>}
                           {(r.itens || []).some((it) => it.eh_vale) && <span className="st-chip" style={{ fontSize: "0.68rem", padding: "0 8px" }} title="Item lançado como vale — fora dos relatórios gerenciais">vale</span>}
                         </div>
@@ -449,12 +455,14 @@ export default function ContasListaView(p: Props) {
                       <td className="c-val" style={{ textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{formatBRL(r.valor)}</td>
                       {admin && <td className="c-usr" style={{ fontSize: "0.75rem" }}>{r.usuario_nome ?? "—"}</td>}
                       <td className="c-act" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                        {fat
+                        {fatCartao
+                          ? <button className="btn-ghost" style={{ fontSize: "0.74rem" }} onClick={p.onAbrirCartao} title="Compra no cartão: só se paga pela fatura do cartão"><CreditCard size={12} /> Pagar pela fatura do cartão →</button>
+                          : fat
                           ? <button className="btn-ghost" style={{ fontSize: "0.74rem" }} onClick={() => p.onAbrirFatura(r)} title="Nota de fatura só se paga pela parcela da fatura"><Layers size={12} /> Pagar pela fatura →</button>
                           : <button className={s.id === "vencida" ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.74rem", minHeight: 32 }} onClick={() => setBaixa(r)}
                               title={`Registrar ${receber ? "o recebimento" : "o pagamento"} desta conta (data, conta, forma, comprovante)`}><Wallet size={12} /> Dar baixa</button>}
                       </td>
-                      <td className="c-menu"><MenuLinha r={r} onEditar={p.onEditar} onRecibo={p.onRecibo} onInserirEmFatura={p.onInserirEmFatura} podeInserir={!receber && !!r.fornecedor && !fat} /></td>
+                      <td className="c-menu"><MenuLinha r={r} onEditar={p.onEditar} onRecibo={p.onRecibo} onInserirEmFatura={p.onInserirEmFatura} podeInserir={!receber && !!r.fornecedor && !fat && !fatCartao} /></td>
                     </tr>
                   </RowFragment>
                 );

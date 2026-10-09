@@ -42,7 +42,9 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.api.routers.financeiro import ItemIn, LancamentoIn, criar_lancamento, rotulo_conta_corrente
+from fazenda.rules import cartao_por_item
 from fazenda.rules.datas import hoje_local
+from fazenda.rules.parametros import regras_v2_ativas
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import CartaoCredito, ContaCorrente, FaturaCartao, LancamentoCartao, Usuario
@@ -235,8 +237,25 @@ def _fechar_se_vencida(session: Session, fatura: FaturaCartao, cartao: CartaoCre
     return _congelar_fatura(session, fatura, cartao)
 
 
+# Colunas novas do PR 5 (cartão por item): só aparecem com a flag
+# `financeiro_regras_v2` — sem ela, o fluxo do cartão responde as mesmas chaves de antes.
+_CAMPOS_FATURA_V2 = ("valor_pago", "desconto_acrescimo")
+_CAMPOS_COMPRA_V2 = ("numero_lancamento",)
+
+
+def _sem_campos_v2(d: dict, campos: tuple[str, ...], regras_v2: bool) -> dict:
+    if not regras_v2:
+        for campo in campos:
+            d.pop(campo, None)
+    return d
+
+
+def _dump_compra(compra: LancamentoCartao, regras_v2: bool) -> dict:
+    return _sem_campos_v2(compra.model_dump(), _CAMPOS_COMPRA_V2, regras_v2)
+
+
 def _dump_fatura(session: Session, fatura: FaturaCartao) -> dict:
-    d = fatura.model_dump()
+    d = _sem_campos_v2(fatura.model_dump(), _CAMPOS_FATURA_V2, regras_v2_ativas(session, fatura.fazenda_id))
     if fatura.status == "aberta":
         itens = session.exec(select(LancamentoCartao).where(LancamentoCartao.fatura_id == fatura.id)).all()
         d["valor_total"] = round(sum(i.valor for i in itens), 2)
@@ -266,7 +285,8 @@ def extrato_cartao(
     itens = session.exec(
         select(LancamentoCartao).where(LancamentoCartao.fatura_id == fatura.id).order_by(LancamentoCartao.data_compra)
     ).all()
-    return {"cartao": _dump_cartao(cartao), "fatura": _dump_fatura(session, fatura), "lancamentos": [i.model_dump() for i in itens]}
+    regras_v2 = regras_v2_ativas(session, cartao.fazenda_id)
+    return {"cartao": _dump_cartao(cartao), "fatura": _dump_fatura(session, fatura), "lancamentos": [_dump_compra(i, regras_v2) for i in itens]}
 
 
 @router.get("/cartoes/{cartao_id}/faturas")
@@ -341,9 +361,16 @@ def criar_lancamento_cartao(
         usuario_id=user.id if isinstance(user, Usuario) else None,
     )
     session.add(lanc)
+    regras_v2 = regras_v2_ativas(session, cartao.fazenda_id)
+    if regras_v2:
+        # Fase A, PR 5: a compra nasce como NOTA em aberto (competência = data
+        # da compra, vencimento = o da fatura) — entra na DRE pela conta dela,
+        # em Contas a pagar e no Caixa Real; só se paga pela fatura.
+        session.flush()
+        cartao_por_item.nova_nota_da_compra(session, cartao, fatura, lanc, usuario_id=lanc.usuario_id)
     session.commit()
     session.refresh(lanc)
-    return {**lanc.model_dump(), "competencia": fatura.competencia}
+    return {**_dump_compra(lanc, regras_v2), "competencia": fatura.competencia}
 
 
 # ---------------------------------------------------------------------------
@@ -355,6 +382,10 @@ class PagarFaturaCartaoIn(BaseModel):
     codigo_conta_gerencial: Optional[str] = None
     nome_conta_gerencial: Optional[str] = None
     centro_custo: Optional[str] = None
+    # Só com as regras v2 (PR 5): o que foi pago de fato (padrão = o total da
+    # fatura; a diferença é rateada entre as notas) e o comprovante.
+    valor_pago: Optional[float] = None
+    numero_documento_pagamento: Optional[str] = None
 
 
 @router.post("/cartoes/faturas/{fatura_id}/pagar", status_code=201)
@@ -371,6 +402,8 @@ def pagar_fatura_cartao(
         raise HTTPException(status_code=400, detail="Esta fatura já foi paga")
     if not fatura.valor_total or fatura.valor_total <= 0:
         raise HTTPException(status_code=400, detail="Fatura sem lançamentos — nada a pagar")
+    if regras_v2_ativas(session, fazenda_id):
+        return _pagar_fatura_v2(session, fatura, cartao, dados, user)
 
     conta_bancaria_str = None
     if cartao.conta_bancaria_id:
@@ -399,3 +432,102 @@ def pagar_fatura_cartao(
     session.commit()
     session.refresh(fatura)
     return {**_dump_fatura(session, fatura), "lancamento": resultado}
+
+
+def _conta_do_cartao(session: Session, cartao: CartaoCredito) -> tuple[str | None, int | None]:
+    if cartao.conta_bancaria_id:
+        conta = session.get(ContaCorrente, cartao.conta_bancaria_id)
+        if conta and conta.fazenda_id == cartao.fazenda_id:
+            return rotulo_conta_corrente(conta), conta.id
+    return None, None
+
+
+def _pagar_fatura_v2(
+    session: Session, fatura: FaturaCartao, cartao: CartaoCredito, dados: PagarFaturaCartaoIn, user,
+) -> dict:
+    """Regras v2 (PR 5): pagar a fatura = baixar TODAS as notas das compras de
+    uma vez (mesma data, conta e forma). Pago diferente do total: a diferença é
+    rateada entre as notas em centavos (sobra na última), como na fatura de
+    fornecedor, e vira `desconto_acrescimo` de cada uma (juros/desconto em
+    Outras, PR 7). Nenhuma nota genérica."""
+    usuario_id = user.id if isinstance(user, Usuario) else None
+    notas = cartao_por_item.garantir_notas(session, cartao, fatura, usuario_id)
+    if any(n.data_pagamento is not None for n in notas):
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Há nota desta fatura já baixada — confira a fatura antes de pagar.")
+    soma = round(sum(n.valor_total or 0 for n in notas), 2)
+    if round(soma - (fatura.valor_total or 0), 2) != 0:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=(
+            f"As notas da fatura somam R$ {soma:.2f} e a fatura fechou em R$ {fatura.valor_total:.2f}. "
+            "Confira as compras antes de pagar."))
+    pago = round(dados.valor_pago if dados.valor_pago is not None else soma, 2)
+    if pago <= 0:
+        session.rollback()
+        raise HTTPException(status_code=400, detail="O valor pago deve ser maior que zero.")
+    data_pagamento = dados.data_pagamento or hoje_local()
+    rotulo, conta_id = _conta_do_cartao(session, cartao)
+    cotas = cartao_por_item.ratear_diferenca([n.valor_total or 0 for n in notas], pago)
+    try:
+        for nota, cota in zip(notas, cotas):
+            nota.data_pagamento = data_pagamento
+            nota.valor_pago = round((nota.valor_total or 0) + cota, 2)
+            nota.desconto_acrescimo = cota
+            nota.diferenca_tipo = None
+            nota.conta_bancaria = rotulo
+            nota.conta_corrente_id = conta_id
+            nota.forma_pagamento = "transferencia" if rotulo else None
+            nota.numero_documento_pagamento = dados.numero_documento_pagamento
+            nota.atualizado_em = datetime.utcnow()
+            session.add(nota)
+        fatura.status = "paga"
+        fatura.valor_pago = pago
+        fatura.desconto_acrescimo = round(pago - soma, 2)
+        fatura.atualizado_em = datetime.utcnow()
+        session.add(fatura)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    session.refresh(fatura)
+    return {
+        **_dump_fatura(session, fatura), "lancamento": None,
+        "notas_pagas": [n.numero_lancamento for n in notas], "diferenca": round(pago - soma, 2),
+    }
+
+
+class EstornarFaturaCartaoIn(BaseModel):
+    motivo: str
+
+
+@router.post("/cartoes/faturas/{fatura_id}/estornar-pagamento")
+def estornar_pagamento_fatura_cartao(
+    fatura_id: int, dados: EstornarFaturaCartaoIn, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Regras v2 (PR 5): desfaz o pagamento da fatura — as notas das compras
+    voltam a "em aberto" juntas e a fatura volta a "fechada" (uma nota de
+    fatura não se estorna sozinha: recusa 409). Fatura paga pela nota genérica
+    antiga: estorne a nota genérica no Financeiro."""
+    if not regras_v2_ativas(session, fazenda_id):
+        raise HTTPException(status_code=409, detail="Disponível só com as regras novas do Financeiro.")
+    if not (dados.motivo or "").strip():
+        raise HTTPException(status_code=400, detail="Informe o motivo do estorno.")
+    fatura = _fatura_ou_404(session, fatura_id, fazenda_id)
+    if fatura.status != "paga":
+        raise HTTPException(status_code=409, detail="Esta fatura não está paga.")
+    if fatura.numero_lancamento:
+        raise HTTPException(status_code=409, detail=(
+            f"Esta fatura foi paga pela nota {fatura.numero_lancamento} (regras antigas): estorne essa nota no Financeiro."))
+    notas = cartao_por_item.notas_da_fatura(session, fatura)
+    for nota in notas:
+        nota.data_pagamento = nota.valor_pago = nota.conta_bancaria = nota.conta_corrente_id = None
+        nota.forma_pagamento = nota.numero_documento_pagamento = nota.desconto_acrescimo = nota.diferenca_tipo = None
+        nota.atualizado_em = datetime.utcnow()
+        session.add(nota)
+    fatura.status, fatura.valor_pago, fatura.desconto_acrescimo = "fechada", None, None
+    fatura.atualizado_em = datetime.utcnow()
+    session.add(fatura)
+    session.commit()
+    session.refresh(fatura)
+    return {**_dump_fatura(session, fatura), "notas_estornadas": [n.numero_lancamento for n in notas]}

@@ -16,7 +16,10 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import Animal, ContaGerencial, Usuario, VendaAnimal
-from fazenda.api.routers.financeiro import ParcelaIn, _proximo_numero_lancamento
+from fazenda.api.routers.financeiro import (
+    ParcelaIn, _proximo_numero_lancamento, _valor_pago_na_criacao, resolver_conta_corrente_id,
+)
+from fazenda.rules.parametros import regras_v2_ativas
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules.comissao import FORMAS_COMISSAO, criar_comissao
 
@@ -160,8 +163,10 @@ def registrar_venda(
         )
         if paga_agora:
             registro.data_pagamento = dados.data_pagamento
-            registro.valor_pago = dados.valor_pago
+            # Fase A, PR 6: sem valor_pago informado, vale o da nota (com a flag).
+            registro.valor_pago = _valor_pago_na_criacao(regras_v2_ativas(session, fazenda_id), dados.valor_pago, valor_liquido)
             registro.conta_bancaria = dados.conta_bancaria
+            registro.conta_corrente_id = resolver_conta_corrente_id(session, fazenda_id, dados.conta_bancaria)
             registro.numero_documento_pagamento = dados.numero_documento_pagamento
         session.add(registro)
 

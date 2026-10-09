@@ -222,7 +222,18 @@ def montar_cascata_dre(
       • registro com `linha_forcada` (uma das 9 linhas atribuíveis) entra
         nessa linha, sem passar pelo plano de contas: são as pseudocontas de
         rules/juros_descontos.py — juros/desconto da baixa em OUTRAS_REC_DESP
-        (PR 7) e desconto da nota de receita em DEDUCAO_IMPOSTOS (PR 4).
+        (PR 7) e desconto da nota de receita em DEDUCAO_IMPOSTOS (PR 4) — e a
+        multa/juros da guia de FGTS/DCTF (PR 3);
+      • `nao_classificado` e `fora_da_dre` (e cada grupo) trazem também
+        `total_receita`, `total_despesa`, `liquido` e, por conta, `receita`,
+        `despesa` e `liquido` (PR 2).
+    O `valor` continua sendo MAGNITUDE (>= 0) também com as regras v2: o
+    item redutor de uma nota (ex.: "(−) INSS retido" da folha pelo bruto,
+    PR 3) chega aqui com o `tipo` INVERTIDO (despesa → receita), nunca com
+    valor negativo — é o par (tipo, linha) que dá o sinal. Na linha de
+    pessoal, o "(−) Outros descontos" da folha abate o bruto; fora da DRE, o
+    retido entra no lado receita da obrigação e a guia que o quita no lado
+    despesa (o `liquido` da obrigação mostra o que ainda falta recolher).
     """
     por_linha: dict[str, dict] = {
         chave: {"receita": 0.0, "despesa": 0.0, "contas": {}} for chave in CODIGOS_ATRIBUIVEIS
@@ -336,12 +347,23 @@ def montar_cascata_dre(
         parado ali", não um saldo com sinal de cascata."""
         contas = sorted(
             (
-                {"codigo": codigo, "nome": info["nome"], "valor": round(info["receita"] + info["despesa"], 2)}
+                {"codigo": codigo, "nome": info["nome"], "valor": round(info["receita"] + info["despesa"], 2),
+                 **({"receita": info["receita"], "despesa": info["despesa"],
+                     "liquido": round(info["receita"] - info["despesa"], 2)} if regras_v2 else {})}
                 for codigo, info in bucket_contas.items()
             ),
             key=lambda c: -abs(c["valor"]),
         )
-        return {"total": round(sum(c["valor"] for c in contas), 2), "contas": contas}
+        resultado = {"total": round(sum(c["valor"] for c in contas), 2), "contas": contas}
+        if regras_v2:
+            # Regras v2 (PR 2, P1 "não classificado soma receita e despesa"):
+            # os dois lados separados — o total continua a magnitude parada
+            # (compatível), mas a tela mostra "R$ X de receita e R$ Y de
+            # despesa sem classificação" e o líquido de cada conta.
+            resultado["total_receita"] = round(sum(c["receita"] for c in contas), 2)
+            resultado["total_despesa"] = round(sum(c["despesa"] for c in contas), 2)
+            resultado["liquido"] = round(resultado["total_receita"] - resultado["total_despesa"], 2)
+        return resultado
 
     fora_da_dre = _bucket_a_parte(fora_da_dre_contas)
     if regras_v2:

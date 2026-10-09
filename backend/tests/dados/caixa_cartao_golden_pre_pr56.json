@@ -1,0 +1,1585 @@
+{
+ "caixa_real_90": {
+  "compromissos_sem_vencimento": 0,
+  "contas": [
+   {
+    "id": 1,
+    "nome": "AUD Banco · Agência 0000 · Conta corrente 0000-0",
+    "saldo": -101600.0
+   }
+  ],
+  "dias": 90,
+  "folga_minima": -102400.0,
+  "fundo_reserva": 0.0,
+  "primeiro_dia_abaixo_da_reserva": null,
+  "primeiro_dia_negativo": "2026-10-08",
+  "saldo_final": -102400.0,
+  "saldo_inicial": -101600.0,
+  "serie": [
+   {
+    "data": "2026-10-08",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-09",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-10",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-11",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-12",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-13",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-14",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-15",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-16",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-17",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-18",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-19",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-20",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-21",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-22",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-23",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-24",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-25",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-26",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-27",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-28",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-29",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101600.0
+   },
+   {
+    "data": "2026-10-30",
+    "entradas": 0.0,
+    "itens": [
+     {
+      "data_original": "2026-10-30",
+      "descricao": "Ração fazenda, Ração cachorro funcionário",
+      "tipo": "despesa",
+      "valor": 800.0,
+      "vencido": false
+     }
+    ],
+    "saidas": 800.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-10-31",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-01",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-02",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-03",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-04",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-05",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-06",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-07",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-08",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-09",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-10",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-11",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-12",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-13",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-14",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-15",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-16",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-17",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-18",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-19",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-20",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-21",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-22",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-23",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-24",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-25",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-26",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-27",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-28",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-29",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-11-30",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-01",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-02",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-03",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-04",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-05",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-06",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-07",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-08",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-09",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-10",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-11",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-12",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-13",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-14",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-15",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-16",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-17",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-18",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-19",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-20",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-21",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-22",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-23",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-24",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-25",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-26",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-27",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-28",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-29",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-30",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2026-12-31",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2027-01-01",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2027-01-02",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2027-01-03",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2027-01-04",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2027-01-05",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   },
+   {
+    "data": "2027-01-06",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102400.0
+   }
+  ],
+  "total_entradas": 0.0,
+  "total_saidas": 800.0,
+  "variacao": -800.0
+ },
+ "caixa_real_90_depois": {
+  "compromissos_sem_vencimento": 0,
+  "contas": [
+   {
+    "id": 1,
+    "nome": "AUD Banco · Agência 0000 · Conta corrente 0000-0",
+    "saldo": -101900.0
+   }
+  ],
+  "dias": 90,
+  "folga_minima": -102700.0,
+  "fundo_reserva": 0.0,
+  "primeiro_dia_abaixo_da_reserva": null,
+  "primeiro_dia_negativo": "2026-10-08",
+  "saldo_final": -102700.0,
+  "saldo_inicial": -101900.0,
+  "serie": [
+   {
+    "data": "2026-10-08",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-09",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-10",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-11",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-12",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-13",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-14",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-15",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-16",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-17",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-18",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-19",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-20",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-21",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-22",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-23",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-24",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-25",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-26",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-27",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-28",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-29",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -101900.0
+   },
+   {
+    "data": "2026-10-30",
+    "entradas": 0.0,
+    "itens": [
+     {
+      "data_original": "2026-10-30",
+      "descricao": "Ração fazenda, Ração cachorro funcionário",
+      "tipo": "despesa",
+      "valor": 800.0,
+      "vencido": false
+     }
+    ],
+    "saidas": 800.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-10-31",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-01",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-02",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-03",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-04",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-05",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-06",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-07",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-08",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-09",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-10",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-11",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-12",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-13",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-14",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-15",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-16",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-17",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-18",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-19",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-20",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-21",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-22",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-23",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-24",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-25",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-26",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-27",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-28",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-29",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-11-30",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-01",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-02",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-03",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-04",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-05",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-06",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-07",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-08",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-09",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-10",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-11",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-12",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-13",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-14",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-15",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-16",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-17",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-18",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-19",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-20",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-21",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-22",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-23",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-24",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-25",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-26",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-27",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-28",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-29",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-30",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2026-12-31",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2027-01-01",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2027-01-02",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2027-01-03",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2027-01-04",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2027-01-05",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   },
+   {
+    "data": "2027-01-06",
+    "entradas": 0.0,
+    "itens": [],
+    "saidas": 0.0,
+    "saldo": -102700.0
+   }
+  ],
+  "total_entradas": 0.0,
+  "total_saidas": 800.0,
+  "variacao": -800.0
+ },
+ "cartao2_compra": {
+  "cartao_id": 2,
+  "centro_custo": null,
+  "codigo_conta_gerencial": "8.2",
+  "competencia": "2026-11",
+  "data_compra": "2026-10-08",
+  "descricao": "Vacina no cartão 2",
+  "fatura_id": 3,
+  "fazenda_id": 1,
+  "id": 3,
+  "nome_conta_gerencial": null,
+  "observacao": null,
+  "parcela_num": null,
+  "parcela_total": null,
+  "usuario_id": null,
+  "valor": 300.0
+ },
+ "cartao2_fechar": {
+  "cartao_id": 2,
+  "competencia": "2026-11",
+  "data_fechamento": "2026-11-05",
+  "data_vencimento": "2026-11-15",
+  "fazenda_id": 1,
+  "id": 3,
+  "milhas_acumuladas": null,
+  "numero_lancamento": null,
+  "status": "fechada",
+  "valor_total": 300.0
+ },
+ "cartao2_pagar": {
+  "cartao_id": 2,
+  "competencia": "2026-11",
+  "data_fechamento": "2026-11-05",
+  "data_vencimento": "2026-11-15",
+  "fazenda_id": 1,
+  "id": 3,
+  "lancamento": {
+   "avisos_estoque": [],
+   "ids": [
+    14
+   ],
+   "natureza_fin": null,
+   "numero_lancamento": "LC-2026-00001",
+   "vales_criados": [],
+   "valor_bruto": 300.0,
+   "valor_liquido": 300.0
+  },
+  "milhas_acumuladas": null,
+  "numero_lancamento": "LC-2026-00001",
+  "status": "paga",
+  "valor_total": 300.0
+ },
+ "cartao_extrato_2031_03": {
+  "cartao": {
+   "apelido": "AUD Cartão",
+   "ativo": true,
+   "banco_emissor": null,
+   "bandeira": null,
+   "conta_bancaria_id": null,
+   "controla_milhas": false,
+   "dia_fechamento": 5,
+   "dia_vencimento": 15,
+   "fazenda_id": 1,
+   "id": 1,
+   "limite": null,
+   "melhor_dia_compra": 6,
+   "milhas_por_real": null
+  },
+  "fatura": {
+   "cartao_id": 1,
+   "competencia": "2031-03",
+   "data_fechamento": "2031-03-05",
+   "data_vencimento": "2031-03-15",
+   "fazenda_id": 1,
+   "id": 1,
+   "milhas_acumuladas": null,
+   "numero_lancamento": "LC-2031-00011",
+   "status": "paga",
+   "valor_total": 800.0
+  },
+  "lancamentos": [
+   {
+    "cartao_id": 1,
+    "centro_custo": null,
+    "codigo_conta_gerencial": "8.2",
+    "data_compra": "2031-03-03",
+    "descricao": "Ração no cartão",
+    "fatura_id": 1,
+    "fazenda_id": 1,
+    "id": 1,
+    "nome_conta_gerencial": null,
+    "observacao": null,
+    "parcela_num": null,
+    "parcela_total": null,
+    "usuario_id": null,
+    "valor": 800.0
+   }
+  ]
+ },
+ "cartao_extrato_atual": {
+  "cartao": {
+   "apelido": "AUD Cartão",
+   "ativo": true,
+   "banco_emissor": null,
+   "bandeira": null,
+   "conta_bancaria_id": null,
+   "controla_milhas": false,
+   "dia_fechamento": 5,
+   "dia_vencimento": 15,
+   "fazenda_id": 1,
+   "id": 1,
+   "limite": null,
+   "melhor_dia_compra": 6,
+   "milhas_por_real": null
+  },
+  "fatura": {
+   "cartao_id": 1,
+   "competencia": "2026-11",
+   "data_fechamento": "2026-11-05",
+   "data_vencimento": "2026-11-15",
+   "fazenda_id": 1,
+   "id": 2,
+   "milhas_acumuladas": null,
+   "numero_lancamento": null,
+   "status": "aberta",
+   "valor_total": 500.0
+  },
+  "lancamentos": [
+   {
+    "cartao_id": 1,
+    "centro_custo": null,
+    "codigo_conta_gerencial": "8.6",
+    "data_compra": "2026-10-08",
+    "descricao": "Peça (fatura aberta)",
+    "fatura_id": 2,
+    "fazenda_id": 1,
+    "id": 2,
+    "nome_conta_gerencial": null,
+    "observacao": null,
+    "parcela_num": null,
+    "parcela_total": null,
+    "usuario_id": null,
+    "valor": 500.0
+   }
+  ]
+ },
+ "cartao_faturas": [
+  {
+   "cartao_id": 1,
+   "competencia": "2031-03",
+   "data_fechamento": "2031-03-05",
+   "data_vencimento": "2031-03-15",
+   "fazenda_id": 1,
+   "id": 1,
+   "milhas_acumuladas": null,
+   "numero_lancamento": "LC-2031-00011",
+   "status": "paga",
+   "valor_total": 800.0
+  },
+  {
+   "cartao_id": 1,
+   "competencia": "2026-11",
+   "data_fechamento": "2026-11-05",
+   "data_vencimento": "2026-11-15",
+   "fazenda_id": 1,
+   "id": 2,
+   "milhas_acumuladas": null,
+   "numero_lancamento": null,
+   "status": "aberta",
+   "valor_total": 500.0
+  }
+ ],
+ "contas_a_pagar_90": [
+  {
+   "acrescimo_nota": null,
+   "centro_custo": "Pecuária Leiteira",
+   "classificacao": null,
+   "codigo_conta": null,
+   "conta_bancaria": null,
+   "data_competencia": "2031-03-18",
+   "data_emissao": "2031-03-18",
+   "data_pagamento": null,
+   "data_pedido": null,
+   "data_prevista_entrada": null,
+   "data_vencimento": "2026-10-30",
+   "data_vencimento_cartao": null,
+   "desconto_acrescimo": null,
+   "desconto_nota": null,
+   "descricao": "Ração fazenda, Ração cachorro funcionário",
+   "diferenca_tipo": null,
+   "entregue": null,
+   "fatura_id": null,
+   "fazenda_id": 1,
+   "forma_pagamento": null,
+   "fornecedor_cliente": "AUD-L9",
+   "id": 9,
+   "natureza_fin": null,
+   "numero_boleto": null,
+   "numero_documento_pagamento": null,
+   "numero_lancamento": "LC-2031-00009",
+   "numero_nota": null,
+   "numero_os_orcamento": null,
+   "origem": "manual",
+   "origem_preventivo": null,
+   "parcela_num": 1,
+   "parcela_total": 1,
+   "patrimonio_id": null,
+   "pedido_id": null,
+   "quantidade": null,
+   "responsavel": null,
+   "tipo": "despesa",
+   "tipo_documento": null,
+   "usuario_id": null,
+   "usuario_nome": null,
+   "valor_pago": null,
+   "valor_total": 1000.0,
+   "valor_unitario": null
+  }
+ ],
+ "contas_correntes": [
+  {
+   "agencia": "0000",
+   "ativo": true,
+   "banco": "AUD Banco",
+   "fazenda_id": 1,
+   "id": 1,
+   "numero_conta": "0000-0",
+   "rotulo": "AUD Banco · Agência 0000 · Conta corrente 0000-0",
+   "saldo": -101600.0
+  }
+ ],
+ "contas_correntes_depois": [
+  {
+   "agencia": "0000",
+   "ativo": true,
+   "banco": "AUD Banco",
+   "fazenda_id": 1,
+   "id": 1,
+   "numero_conta": "0000-0",
+   "rotulo": "AUD Banco · Agência 0000 · Conta corrente 0000-0",
+   "saldo": -101900.0
+  }
+ ],
+ "fundo_reserva": {
+  "atual": 0.0,
+  "meses_considerados": [],
+  "meses_folga": 3.0,
+  "sugerido": 0.0
+ }
+}

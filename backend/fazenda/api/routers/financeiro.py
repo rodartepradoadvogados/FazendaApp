@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy import text
-from sqlmodel import Session, select
+from sqlmodel import Session, or_, select
 
 from fazenda.auth import exigir_admin, exigir_nao_consultor, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
@@ -27,8 +27,11 @@ from fazenda.models import (
 )
 from fazenda.rules import caixa_funcionario, estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
-from fazenda.rules.vale_item import ajuste_vale_por_conta, eh_item_de_vale, sem_itens_de_vale, valor_gerencial
-from fazenda.rules import juros_descontos
+from fazenda.rules.vale_item import (
+    ajuste_vale_por_conta, eh_item_de_vale, sem_itens_automaticos, sem_itens_de_vale, valor_caixa_parcela, valor_gerencial,
+)
+from fazenda.rules import juros_descontos, saldo_conta
+from fazenda.rules import lancamento_automatico  # registra os listeners dos itens automáticos (PR 2/3)
 from fazenda.rules.email import enviar_email
 from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, mapear_centro_custo, valor_gerencial_por_centro_custo
 from fazenda.rules.leitura_documento import MIME_ACEITOS, ler_documento
@@ -96,6 +99,7 @@ def rotulo_conta_corrente(c: ContaCorrente) -> str:
 
 def calcular_saldos_contas_correntes(
     session: Session, contas: list[ContaCorrente], fazenda_id: int | None,
+    *, regras_v2: bool = False, ate: date | None = None,
 ) -> dict[int, float]:
     """
     Saldo "entradas − saídas" de cada conta corrente — nunca persistido,
@@ -106,7 +110,14 @@ def calcular_saldos_contas_correntes(
        livre, preenchida na baixa — ver pagar_lancamento/criar_lancamento)
        bate com o rótulo da conta: despesa subtrai, receita soma.
     2. TransferenciaContas onde a conta é origem (subtrai) ou destino (soma).
+
+    Com `regras_v2` (flag `financeiro_regras_v2`, Fase A PR 6) o saldo é o de
+    `saldos_contas_v2` até `ate` (padrão: hoje em Brasília): parte do saldo de
+    abertura, não soma pagamento agendado (data futura), casa pela FK
+    `conta_corrente_id`. Sem a flag, exatamente o cálculo de antes.
     """
+    if regras_v2:
+        return {cid: s.saldo for cid, s in saldos_contas_v2(session, contas, fazenda_id, ate or hoje_local()).items()}
     if not contas:
         return {}
     saldos: dict[int, float] = {c.id: 0.0 for c in contas}
@@ -138,6 +149,87 @@ def calcular_saldos_contas_correntes(
             saldos[t.conta_destino_id] += t.valor
 
     return {cid: round(v, 2) for cid, v in saldos.items()}
+
+
+def saldos_contas_v2(
+    session: Session, contas: list[ContaCorrente], fazenda_id: int | None, ate: date,
+) -> dict[int, "saldo_conta.SaldoConta"]:
+    """Saldo de cada conta com as regras v2 (ver fazenda/rules/saldo_conta.py):
+    saldo de abertura + pagamentos depois da abertura até `ate` ± transferências;
+    pagamento com data de caixa depois de `ate` vai para `agendados`. Casa pela
+    FK `conta_corrente_id`; linha sem FK (histórico não ligado) cai no rótulo
+    exato, como o cálculo antigo."""
+    if not contas:
+        return {}
+    saldos = {
+        c.id: saldo_conta.novo_saldo(c.id, c.saldo_abertura, c.data_saldo_abertura, ate) for c in contas
+    }
+    ids_por_rotulo: dict[str, list[int]] = {}
+    for c in contas:
+        ids_por_rotulo.setdefault(rotulo_conta_corrente(c), []).append(c.id)
+
+    query = select(ContaGerencial).where(
+        ContaGerencial.data_pagamento != None,  # noqa: E711
+        or_(
+            ContaGerencial.conta_corrente_id.in_(list(saldos)),
+            (ContaGerencial.conta_corrente_id == None) & ContaGerencial.conta_bancaria.in_(list(ids_por_rotulo)),  # noqa: E711
+        ),
+    )
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    for lanc in session.exec(query).all():
+        if lanc.conta_corrente_id is not None:
+            destinos = [lanc.conta_corrente_id] if lanc.conta_corrente_id in saldos else []
+        else:
+            destinos = ids_por_rotulo.get(lanc.conta_bancaria or "", [])
+        for cid in destinos:
+            saldo_conta.aplicar_lancamento(saldos[cid], lanc)
+
+    query_transf = select(TransferenciaContas)
+    if fazenda_id is not None:
+        query_transf = query_transf.where(TransferenciaContas.fazenda_id == fazenda_id)
+    for t in session.exec(query_transf).all():
+        if t.conta_origem_id in saldos:
+            saldo_conta.aplicar_transferencia(saldos[t.conta_origem_id], t.data, t.valor, entrada=False)
+        if t.conta_destino_id in saldos:
+            saldo_conta.aplicar_transferencia(saldos[t.conta_destino_id], t.data, t.valor, entrada=True)
+    return saldos
+
+
+def resolver_conta_corrente_id(
+    session: Session, fazenda_id: int | None, rotulo: str | None, conta_corrente_id: int | None = None,
+) -> int | None:
+    """FK da conta corrente de um pagamento (Fase A, PR 6). `conta_corrente_id`
+    explícito precisa ser da fazenda (404). Sem ele, liga só quando o rótulo
+    livre casa EXATAMENTE com uma conta da fazenda — o resto (texto digitado,
+    importado) fica para o backfill e a lista de revisão. Gravado sempre: só é
+    LIDO com a flag `financeiro_regras_v2`."""
+    if conta_corrente_id is not None:
+        conta = session.get(ContaCorrente, conta_corrente_id)
+        if not conta or (fazenda_id is not None and conta.fazenda_id != fazenda_id):
+            raise HTTPException(status_code=404, detail="Conta corrente não encontrada")
+        return conta.id
+    if not rotulo:
+        return None
+    query = select(ContaCorrente)
+    if fazenda_id is not None:
+        query = query.where(ContaCorrente.fazenda_id == fazenda_id)
+    candidatas = [c.id for c in session.exec(query).all() if rotulo_conta_corrente(c) == rotulo]
+    return candidatas[0] if len(candidatas) == 1 else None
+
+
+def _valor_pago_na_criacao(regras_v2: bool, valor_pago: float | None, valor_parcela: float) -> float | None:
+    """Lançamento que já nasce pago (Fase A, PR 6 — `valor_pago` obrigatório):
+    com a flag, sem `valor_pago` informado vale o da parcela (antes gravava
+    None e `desconto_acrescimo = −valor`, o L6 da auditoria) e valor pago ≤ 0
+    é recusado. Sem a flag, como sempre."""
+    if not regras_v2:
+        return valor_pago
+    if valor_pago is None:
+        return round(valor_parcela, 2)
+    if valor_pago <= 0:
+        raise HTTPException(status_code=400, detail="O valor pago deve ser maior que zero.")
+    return valor_pago
 
 
 def seed_parametros_financeiros(session: Session) -> None:
@@ -279,6 +371,8 @@ class ParcelaIn(BaseModel):
     conta_bancaria: Optional[str] = None
     forma_pagamento: Optional[str] = None
     numero_documento_pagamento: Optional[str] = None
+    # FK da conta corrente (Fase A, PR 6); sem ela, liga pelo rótulo exato.
+    conta_corrente_id: Optional[int] = None
 
 
 class ValeItemNovoIn(BaseModel):
@@ -395,6 +489,7 @@ class LancamentoIn(BaseModel):
     data_pagamento: Optional[date] = None
     valor_pago: Optional[float] = None
     conta_bancaria: Optional[str] = None
+    conta_corrente_id: Optional[int] = None  # FK da conta (PR 6); sem ela, pelo rótulo exato
     numero_documento_pagamento: Optional[str] = None
     forma_pagamento: Optional[str] = None
     # Vincula esta nota fiscal/recibo a um Pedido (Pedidos > módulo próprio) —
@@ -433,6 +528,7 @@ class PagamentoIn(BaseModel):
     valor_pago: float
     retencao_caixa: Optional[RetencaoCaixaIn] = None
     conta_bancaria: Optional[str] = None
+    conta_corrente_id: Optional[int] = None  # FK da conta (PR 6); sem ela, pelo rótulo exato
     numero_documento_pagamento: Optional[str] = None
     forma_pagamento: Optional[str] = None
     data_vencimento_cartao: Optional[date] = None
@@ -455,6 +551,7 @@ class BaixaLoteIn(BaseModel):
     lancamento_ids: list[int]
     data_pagamento: date
     conta_bancaria: Optional[str] = None
+    conta_corrente_id: Optional[int] = None
     forma_pagamento: Optional[str] = None
     data_vencimento_cartao: Optional[date] = None
     numero_documento_pagamento: Optional[str] = None
@@ -467,6 +564,7 @@ class BaixaLoteItemIn(BaseModel):
     data_pagamento: date
     valor_pago: float
     conta_bancaria: Optional[str] = None
+    conta_corrente_id: Optional[int] = None
     forma_pagamento: Optional[str] = None
     data_vencimento_cartao: Optional[date] = None
     numero_documento_pagamento: Optional[str] = None
@@ -534,7 +632,7 @@ def _proximo_numero_lancamento(session: Session, ano: int) -> str:
 
 def _periodo_filtradas_dre(
     session: Session, data_inicio: date, data_fim: date, centro_custo: Optional[str], regime: str,
-    fazenda_id: int | None,
+    fazenda_id: int | None, *, regras_v2: bool = False,
 ) -> tuple[list[ContaGerencial], dict[int, float]]:
     """Contas do período (por competência ou caixa) já com o valor gerencial
     de cada uma calculado — vale de funcionário/empreiteiro descontado
@@ -544,7 +642,11 @@ def _periodo_filtradas_dre(
     /financeiro/dre e GET /financeiro/dre/conferencia — a MESMA lista/valores
     que sustentam `receitas_total`/`despesas_total` sustentam a cascata.
     Com as regras v2, quem monta registros passa os valores ainda por
-    `_valores_com_abatimento`."""
+    `_valores_com_abatimento`.
+
+    Regras v2, PR 6 (R3): no regime de caixa a data é a de CAIXA
+    (`saldo_conta.data_caixa`) — a compra no cartão avulso entra no vencimento
+    do cartão, não no dia da compra."""
     query = select(ContaGerencial)
     if fazenda_id is not None:
         query = query.where(ContaGerencial.fazenda_id == fazenda_id)
@@ -552,7 +654,10 @@ def _periodo_filtradas_dre(
 
     periodo = []
     for c in contas:
-        data_ref = c.data_competencia if regime == "competencia" else c.data_pagamento
+        if regime == "competencia":
+            data_ref = c.data_competencia
+        else:
+            data_ref = saldo_conta.data_caixa(c) if regras_v2 else c.data_pagamento
         if data_ref and data_inicio <= data_ref <= data_fim:
             periodo.append(c)
 
@@ -624,7 +729,17 @@ def _registros_dre_para_cascata(
     `codigo_origem` = conta do item — é por ele que o RMCA acha a receita
     líquida do leite). Itens − deduções = o mesmo valor gerencial de antes:
     a receita líquida não muda. Nota de despesa: inalterada (o desconto
-    continua rateado nos itens)."""
+    continua rateado nos itens).
+
+    Itens gerados pelo sistema (PR 2/3, `LancamentoItem.gerado_por`, ver
+    rules/lancamento_automatico.py): com as regras v2 entram como qualquer
+    item — a folha pelo bruto, com os redutores (retidos, vale, FGTS a
+    recolher) somando o líquido. Fatia NEGATIVA (item redutor) vira registro
+    de MAGNITUDE com o `tipo` invertido e `redutor=True` (quem soma
+    magnitudes — custos, orçado × realizado — subtrai). Item gerado sem conta
+    configurada ganha um pseudocódigo ("(sem conta: ...)" vira pendência
+    "Configure as contas automáticas"). Sem as regras v2 esses itens são
+    IGNORADOS: a nota é lida exatamente como antes do PR 2."""
     regras_v2 = contexto_natureza is not None
     numeros = {c.numero_lancamento for c in filtradas if c.numero_lancamento}
     itens_por_numero: dict[str, list[LancamentoItem]] = {}
@@ -636,6 +751,8 @@ def _registros_dre_para_cascata(
         if fazenda_id is not None:
             query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
         for it in session.exec(query_itens).all():
+            if it.gerado_por and not regras_v2:
+                continue
             bruto_por_numero[it.numero_lancamento] = round(
                 bruto_por_numero.get(it.numero_lancamento, 0.0) + (it.valor_total or 0), 2)
             if eh_item_de_vale(it):
@@ -715,7 +832,7 @@ def _registros_dre_para_cascata(
                 _deducao(c, fatia_deducao, it.codigo_conta_gerencial, it)
             if fatia == 0:
                 continue
-            registros.append({
+            registro = {
                 "codigo_conta": it.codigo_conta_gerencial,
                 "tipo": it.tipo or c.tipo,
                 "valor": fatia,
@@ -726,9 +843,57 @@ def _registros_dre_para_cascata(
                     contexto_natureza.natureza(item=it, conta=c, codigo_conta=it.codigo_conta_gerencial)
                     if contexto_natureza is not None else None
                 ),
-            })
+            }
+            if regras_v2 and it.gerado_por:
+                _ajustar_registro_automatico(registro, it)
+            registros.append(registro)
 
     return registros, fallback_notas
+
+
+def _ajustar_registro_automatico(registro: dict, item: LancamentoItem) -> None:
+    """Regras v2, PR 2/3: item gerado pelo sistema (ver rules/lancamento_automatico.py).
+    - sem conta configurada: pseudocódigo (custo → "(sem conta: ...)", que
+      cai em "não classificado" e vira pendência; obrigação/adiantamento →
+      só o nome, já que a natureza explícita o tira da DRE);
+    - multa e juros da guia: linha forçada em Outras receitas e despesas;
+    - fatia negativa (redutor: retidos, vale, FGTS a recolher, outros
+      descontos): magnitude com o tipo invertido e `redutor=True`."""
+    papel = lancamento_automatico.PAPEIS.get(item.gerado_por)
+    registro["papel"] = item.gerado_por
+    registro["origem_automatica"] = lancamento_automatico.origem_do_papel(item.gerado_por)
+    if papel is not None and papel.linha_forcada:
+        registro.update({"codigo_conta": "(multa e juros de guias)", "descricao": "Multa e juros de guias de encargos",
+                         "linha_forcada": papel.linha_forcada, "natureza": OPERACIONAL})
+    elif not registro.get("codigo_conta"):
+        registro["codigo_conta"] = lancamento_automatico.rotulo_sem_conta(item.gerado_por)
+        registro["descricao"] = item.produto
+    if (registro.get("valor") or 0) < 0:
+        registro["valor"] = round(-registro["valor"], 2)
+        registro["tipo"] = "receita" if registro["tipo"] == "despesa" else "despesa"
+        registro["redutor"] = True
+
+
+def _pendencias_contas_automaticas(registros: list[dict]) -> list[dict]:
+    """Origens automáticas com item de CUSTO sem conta configurada no período:
+    a folha (ou o contrato, a diária...) caiu em "não classificado". A saída é
+    configurar a conta em Parâmetros financeiros > Contas automáticas (e
+    rodar o backfill para o que já foi gerado)."""
+    pendentes: dict[str, dict] = {}
+    for r in registros:
+        codigo = r.get("codigo_conta") or ""
+        if not r.get("papel") or not codigo.startswith("(sem conta"):
+            continue
+        origem = r.get("origem_automatica") or "?"
+        info = lancamento_automatico.ORIGENS.get(origem)
+        entrada = pendentes.setdefault(origem, {
+            "origem": origem, "rotulo": info.rotulo if info else origem, "valor": 0.0, "lancamentos": 0,
+            "motivo": "Configure a conta automática desta origem em Parâmetros financeiros > Contas automáticas.",
+        })
+        sinal = -1 if r.get("redutor") else 1
+        entrada["valor"] = round(entrada["valor"] + sinal * (r.get("valor") or 0.0), 2)
+        entrada["lancamentos"] += 1
+    return sorted(pendentes.values(), key=lambda x: -abs(x["valor"]))
 
 
 def _registros_diferenca_baixa(
@@ -916,7 +1081,8 @@ def calcular_dre(
     impacto (scripts/impacto_relatorios_v2.py) rodar o motor antigo e o novo
     sobre os mesmos dados. `regras_v2=False` reproduz exatamente a DRE de
     antes da Fase A; `sobrepor_*` simula naturezas sem gravar nada."""
-    filtradas, valores = _periodo_filtradas_dre(session, data_inicio, data_fim, centro_custo, regime, fazenda_id)
+    filtradas, valores = _periodo_filtradas_dre(
+        session, data_inicio, data_fim, centro_custo, regime, fazenda_id, regras_v2=regras_v2)
 
     receitas = sum(valores.get(c.id, 0.0) for c in filtradas if c.tipo == "receita")
     despesas = sum(valores.get(c.id, 0.0) for c in filtradas if c.tipo == "despesa")
@@ -976,6 +1142,8 @@ def calcular_dre(
         resposta["regras_v2"] = True
         resposta["resultado_baixas_periodo"] = baixas
         resposta["pendencias_natureza"] = _pendencias_natureza(registros, filtradas)
+        # PR 2: folha/contrato/diária... gerados sem conta automática configurada.
+        resposta["pendencias_contas_automaticas"] = _pendencias_contas_automaticas(registros)
         # Rastreio das linhas novas (PR 7): de onde veio cada juro/desconto.
         resposta["diferencas_baixa"] = [
             {k: r[k] for k in ("numero_lancamento", "conta_id", "data_pagamento", "codigo_conta", "tipo", "valor", "natureza")}
@@ -1099,6 +1267,10 @@ def custos_operacionais_periodo(
         if r.get("tipo_nota") != "despesa":
             continue
         valor = r.get("valor") or 0.0
+        if r.get("redutor"):
+            # Item redutor da folha pelo bruto (PR 3): retido/vale/FGTS a
+            # recolher saem do fora; "(−) outros descontos" abate pessoal.
+            valor = -valor
         natureza = r.get("natureza") or OPERACIONAL
         if not entra_nos_custos(natureza):
             fora[natureza] = round(fora.get(natureza, 0.0) + valor, 2)
@@ -1155,12 +1327,20 @@ def dre_conferencia(
     /financeiro/dre parar de jogar essas contas no balde `nao_classificado`.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    regras_v2 = regras_v2_ativas(session, fazenda_id)
     filtradas, valores = _periodo_filtradas_dre(session, data_inicio, data_fim, centro_custo, regime, fazenda_id)
-    registros, _fallback_notas = _registros_dre_para_cascata(session, filtradas, valores, centro_custo, fazenda_id)
+    # Regras v2 (PR 2): a conferência enxerga o que a DRE enxerga — natureza
+    # resolvida (obrigação/adiantamento da folha não é "falta classificar") e
+    # receita/despesa separadas no não classificado.
+    contexto = _contexto_natureza(session, fazenda_id) if regras_v2 else None
+    registros, _fallback_notas = _registros_dre_para_cascata(
+        session, filtradas, _valores_com_abatimento(filtradas, valores) if regras_v2 else valores,
+        centro_custo, fazenda_id, contexto,
+    )
     mapa_linha = _mapa_linha_por_codigo(session, fazenda_id)
     # Depreciação não é conta do plano — não participa da conferência de
     # classificação, só entra na cascata em si (GET /financeiro/dre).
-    resultado = montar_cascata_dre(registros, mapa_linha)
+    resultado = montar_cascata_dre(registros, mapa_linha, regras_v2=regras_v2)
 
     resposta = {
         "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
@@ -1169,7 +1349,10 @@ def dre_conferencia(
         "total": resultado["nao_classificado"]["total"],
         "contas": resultado["nao_classificado"]["contas"],
     }
-    if regras_v2_ativas(session, fazenda_id):
+    if regras_v2:
+        resposta["total_receita"] = resultado["nao_classificado"]["total_receita"]
+        resposta["total_despesa"] = resultado["nao_classificado"]["total_despesa"]
+        resposta["contas_automaticas_pendentes"] = _pendencias_contas_automaticas(registros)
         # Regras v2: contas do plano cujo NOME sugere outra natureza (ex.:
         # "Máquinas e equipamentos", "Principal do financiamento") e que ainda
         # não têm natureza própria. Só SUGESTÃO — nada é aplicado sozinho.
@@ -1249,6 +1432,9 @@ def listar_lancamentos(
             "vale_pessoa_id": vale_pessoa_id,
             "vale_pessoa_nome": nomes_pessoa.get(vale_pessoa_id) if vale_pessoa_id else None,
             "natureza_fin": it.natureza_fin,
+            # Item criado pelo sistema numa nota automática (folha, contrato,
+            # vale...; PR 2/3) — o papel dele na nota. NULL = lançado por gente.
+            "gerado_por": it.gerado_por,
         })
 
     contas = session.exec(query_contas).all()
@@ -1283,12 +1469,17 @@ def listar_lancamentos(
     # Contas nascidas de um agendamento preventivo (fatia 9): link de volta ao agendamento.
     from fazenda.rules.financeiro_preventivo import origem_preventivo_das_contas
     origens_preventivo = origem_preventivo_das_contas(session, None, fazenda_id)
+    # Regras v2 (PR 6, R3): o "caixa" da linha é a data em que o dinheiro sai
+    # do banco (cartão avulso: vencimento do cartão). Sem a flag, como antes.
+    regras_v2 = regras_v2_ativas(session, fazenda_id)
 
     registros = []
     for c in contas:
         dc = c.data_competencia
-        dp = c.data_pagamento
+        dp = saldo_conta.data_caixa(c) if regras_v2 else c.data_pagamento
+        extras_v2 = {"data_caixa": dp.isoformat() if dp else None} if regras_v2 else {}
         registros.append({
+            **extras_v2,
             "origem_preventivo": origens_preventivo.get(c.id),
             "id": c.id,
             "numero_lancamento": c.numero_lancamento,
@@ -1327,7 +1518,7 @@ def listar_lancamentos(
             "origem": c.origem,
             "itens": itens_por_lancamento.get(c.numero_lancamento or "", []),
             "data_competencia": dc.isoformat() if dc else None,
-            "data_pagamento": dp.isoformat() if dp else None,
+            "data_pagamento": c.data_pagamento.isoformat() if c.data_pagamento else None,
             "data_vencimento": c.data_vencimento.isoformat() if c.data_vencimento else None,
             "data_emissao": c.data_emissao.isoformat() if c.data_emissao else None,
             "data_prevista_entrada": c.data_prevista_entrada.isoformat() if c.data_prevista_entrada else None,
@@ -1335,6 +1526,9 @@ def listar_lancamentos(
             "patrimonio_id": c.patrimonio_id,
             "natureza_fin": c.natureza_fin,
             "natureza_resolvida": _natureza_resolvida(c),
+            "conta_corrente_id": c.conta_corrente_id,
+            "gerado_por": c.gerado_por,
+            "fatura_cartao_id": c.fatura_cartao_id,
             "mes_competencia": f"{dc.year}-{dc.month:02d}" if dc else None,
             "ano_competencia": dc.year if dc else None,
             "mes_caixa": f"{dp.year}-{dp.month:02d}" if dp else None,
@@ -1695,16 +1889,48 @@ class ContaCorrenteIn(BaseModel):
     ativo: bool = True
 
 
+_CAMPOS_CONTA_CORRENTE_V2 = ("saldo_abertura", "data_saldo_abertura")
+
+
+def _dump_conta_corrente(c: ContaCorrente, regras_v2: bool, saldo: "saldo_conta.SaldoConta | float") -> dict:
+    """Conta corrente para a API. Sem a flag, exatamente as chaves de antes
+    (os campos novos de abertura ficam de fora); com ela, o saldo vem com a
+    abertura, a data de referência, os agendados e a pendência."""
+    base = c.model_dump()
+    if not regras_v2:
+        for campo in _CAMPOS_CONTA_CORRENTE_V2:
+            base.pop(campo, None)
+        return {**base, "rotulo": rotulo_conta_corrente(c), "saldo": saldo}
+    return {
+        **base, "rotulo": rotulo_conta_corrente(c), "saldo": saldo.saldo,
+        "saldo_ate": saldo.ate.isoformat(),
+        "agendado_liquido": saldo.agendado_liquido,
+        "agendados_quantidade": len(saldo.agendados),
+        "pendente_saldo_abertura": saldo.pendente_abertura,
+        "aviso": saldo_conta.AVISO_SEM_SALDO_ABERTURA if saldo.pendente_abertura else None,
+    }
+
+
 @router.get("/contas-correntes")
 def listar_contas_correntes(
+    hoje: Optional[date] = Query(None, description="'Hoje' do front (hojeLocal); só com as regras v2"),
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
     query = select(ContaCorrente)
     if fazenda_id is not None:
         query = query.where(ContaCorrente.fazenda_id == fazenda_id)
     contas = session.exec(query.order_by(ContaCorrente.banco, ContaCorrente.agencia)).all()
+    if regras_v2_ativas(session, fazenda_id):
+        saldos_v2 = saldos_contas_v2(session, contas, fazenda_id, hoje or hoje_local())
+        return [_dump_conta_corrente(c, True, saldos_v2[c.id]) for c in contas]
     saldos = calcular_saldos_contas_correntes(session, contas, fazenda_id)
-    return [{**c.model_dump(), "rotulo": rotulo_conta_corrente(c), "saldo": saldos.get(c.id, 0.0)} for c in contas]
+    return [_dump_conta_corrente(c, False, saldos.get(c.id, 0.0)) for c in contas]
+
+
+def _dump_conta_corrente_atual(session: Session, c: ContaCorrente, fazenda_id: int | None) -> dict:
+    if regras_v2_ativas(session, fazenda_id):
+        return _dump_conta_corrente(c, True, saldos_contas_v2(session, [c], fazenda_id, hoje_local())[c.id])
+    return _dump_conta_corrente(c, False, calcular_saldos_contas_correntes(session, [c], fazenda_id).get(c.id, 0.0))
 
 
 @router.post("/contas-correntes")
@@ -1715,7 +1941,9 @@ def criar_conta_corrente(
     session.add(c)
     session.commit()
     session.refresh(c)
-    return {**c.model_dump(), "rotulo": rotulo_conta_corrente(c), "saldo": 0.0}
+    if regras_v2_ativas(session, fazenda_id):
+        return _dump_conta_corrente_atual(session, c, fazenda_id)
+    return _dump_conta_corrente(c, False, 0.0)
 
 
 @router.put("/contas-correntes/{conta_id}")
@@ -1731,8 +1959,37 @@ def atualizar_conta_corrente(
     session.add(c)
     session.commit()
     session.refresh(c)
-    saldo = calcular_saldos_contas_correntes(session, [c], fazenda_id).get(c.id, 0.0)
-    return {**c.model_dump(), "rotulo": rotulo_conta_corrente(c), "saldo": saldo}
+    return _dump_conta_corrente_atual(session, c, fazenda_id)
+
+
+class SaldoAberturaIn(BaseModel):
+    """Saldo do EXTRATO no fim do dia `data_saldo_abertura`. Os dois juntos, ou
+    os dois vazios (remove a abertura)."""
+    saldo_abertura: Optional[float] = None
+    data_saldo_abertura: Optional[date] = None
+
+
+@router.put("/contas-correntes/{conta_id}/saldo-abertura")
+def definir_saldo_abertura(
+    conta_id: int, dados: SaldoAberturaIn, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Fase A, PR 6: o saldo de partida da conta (decisão Q12 — campo na conta,
+    não lançamento). Com a flag `financeiro_regras_v2`, o saldo de hoje passa a
+    ser esta abertura + o que foi pago/recebido DEPOIS desta data. Só admin."""
+    c = session.get(ContaCorrente, conta_id)
+    if not c or c.fazenda_id != fazenda_id:
+        raise HTTPException(status_code=404, detail="Conta corrente não encontrada")
+    if (dados.saldo_abertura is None) != (dados.data_saldo_abertura is None):
+        raise HTTPException(status_code=400, detail="Informe o saldo de abertura e a data dele juntos.")
+    if dados.data_saldo_abertura is not None and dados.data_saldo_abertura > hoje_local():
+        raise HTTPException(status_code=400, detail="A data do saldo de abertura não pode ser futura.")
+    c.saldo_abertura = round(dados.saldo_abertura, 2) if dados.saldo_abertura is not None else None
+    c.data_saldo_abertura = dados.data_saldo_abertura
+    session.add(c)
+    session.commit()
+    session.refresh(c)
+    return _dump_conta_corrente_atual(session, c, fazenda_id)
 
 
 class TransferenciaContasIn(BaseModel):
@@ -2147,6 +2404,100 @@ def atualizar_natureza_plano(
 
 
 # ---------------------------------------------------------------------------
+# Contas automáticas (Fase A, PR 2) — a conta gerencial padrão de cada origem
+# de lançamento automático (folha, férias, 13º, rescisão, encargos, contrato,
+# empreita, diária, vale, caixa do funcionário). Ver
+# rules/lancamento_automatico.py. Valem só com a flag financeiro_regras_v2.
+# ---------------------------------------------------------------------------
+class ContaAutomaticaIn(BaseModel):
+    # None = sem conta (a origem vira pendência, ou usa a conta de reserva).
+    codigo_conta_gerencial: Optional[str] = None
+    # None = a natureza padrão da origem (ex.: vale = adiantamento).
+    natureza_fin: Optional[str] = None
+
+
+def _contas_automaticas_resposta(session: Session, fazenda_id: int | None) -> dict:
+    from fazenda.models import ContaPadraoOrigem
+
+    query_plano = select(PlanoContaGerencial)
+    if fazenda_id is not None:
+        query_plano = query_plano.where(PlanoContaGerencial.fazenda_id == fazenda_id)
+    plano = session.exec(query_plano).all()
+    nomes = {p.codigo: p.nome for p in plano}
+    linhas = {
+        cfg_linha.origem: cfg_linha for cfg_linha in session.exec(
+            select(ContaPadraoOrigem).where(ContaPadraoOrigem.fazenda_id == fazenda_id)
+        ).all()
+    } if fazenda_id is not None else {}
+    cfg = lancamento_automatico.carregar_configuracao(session, fazenda_id)
+    origens = []
+    for origem in lancamento_automatico.ORIGENS.values():
+        linha = linhas.get(origem.chave)
+        resolvida = cfg.conta(origem.chave)
+        origens.append({
+            "origem": origem.chave, "rotulo": origem.rotulo, "ajuda": origem.ajuda,
+            "natureza_padrao": origem.natureza,
+            "codigo_conta_gerencial": linha.codigo_conta_gerencial if linha else None,
+            "nome_conta": nomes.get(linha.codigo_conta_gerencial) if linha and linha.codigo_conta_gerencial else None,
+            "natureza_fin": linha.natureza_fin if linha else None,
+            "reserva": origem.reserva,
+            # Conta que vale HOJE (a própria ou a da reserva) — None = pendência.
+            "conta_efetiva": resolvida.codigo,
+            "conta_efetiva_de": resolvida.origem_usada,
+            "sugestao": None if (linha and linha.codigo_conta_gerencial) else lancamento_automatico.sugerir_conta(origem.chave, plano),
+        })
+    return {"regras_v2": regras_v2_ativas(session, fazenda_id), "origens": origens}
+
+
+@router.get("/contas-automaticas")
+def listar_contas_automaticas(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """As origens de lançamento automático, a conta padrão de cada uma (e a
+    sugestão pelo nome do plano de contas, que NUNCA é aplicada sozinha)."""
+    return _contas_automaticas_resposta(session, fazenda_id_seguro(fazenda_id))
+
+
+@router.put("/contas-automaticas/{origem}")
+def atualizar_conta_automatica(
+    origem: str, dados: ContaAutomaticaIn, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Define a conta padrão de uma origem. Só administrador (decisão
+    gerencial, como a linha da DRE). Vale para as notas automáticas criadas
+    daqui em diante e para os itens que ainda estavam sem conta (que ganham a
+    conta nova na próxima mudança da nota ou pelo backfill); não reescreve a
+    conta de item que o usuário já classificou."""
+    from fazenda.models import ContaPadraoOrigem
+
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if origem not in lancamento_automatico.ORIGENS:
+        raise HTTPException(status_code=404, detail="Origem de lançamento automático desconhecida")
+    try:
+        natureza = normalizar_natureza(dados.natureza_fin)
+    except ValueError as erro:
+        raise HTTPException(status_code=400, detail=str(erro)) from None
+    codigo = (dados.codigo_conta_gerencial or "").strip() or None
+    if codigo is not None:
+        existe = session.exec(select(PlanoContaGerencial).where(
+            PlanoContaGerencial.codigo == codigo, PlanoContaGerencial.fazenda_id == fazenda_id,
+        )).first()
+        if not existe:
+            raise HTTPException(status_code=404, detail="Conta gerencial não encontrada no plano desta fazenda")
+    linha = session.exec(select(ContaPadraoOrigem).where(
+        ContaPadraoOrigem.fazenda_id == fazenda_id, ContaPadraoOrigem.origem == origem,
+    )).first()
+    if linha is None:
+        linha = ContaPadraoOrigem(fazenda_id=fazenda_id, origem=origem)
+    linha.codigo_conta_gerencial = codigo
+    linha.natureza_fin = natureza
+    linha.atualizado_em = datetime.utcnow()
+    session.add(linha)
+    session.commit()
+    return _contas_automaticas_resposta(session, fazenda_id)
+
+
+# ---------------------------------------------------------------------------
 # Vínculo financeiro ↔ sanitário/reprodutivo — despesas em contas gerenciais
 # marcadas (ex.: "3.03.02.11 - Veterinário/zootecnista", ver
 # PlanoContaGerencial.pede_vinculo_sanitario_reprodutivo) podem ser associadas
@@ -2407,7 +2758,7 @@ def rmca_gerencial(
         return leite_e_alimentacao_por_registros(
             registros_competencia_v2(session, fazenda_id, data_inicio, data_fim), codigos_receita, codigos_custo,
         )
-    query_itens = sem_itens_de_vale(select(LancamentoItem))
+    query_itens = sem_itens_automaticos(sem_itens_de_vale(select(LancamentoItem)))
     if fazenda_id is not None:
         query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
     itens = [
@@ -2540,7 +2891,7 @@ def calcular_custo_litro_leite(
     if regras_v2:
         return _custo_litro_leite_v2(session, fazenda_id, data_inicio, data_fim, plano, codigos_custo)
 
-    query_itens = sem_itens_de_vale(select(LancamentoItem))
+    query_itens = sem_itens_automaticos(sem_itens_de_vale(select(LancamentoItem)))
     if fazenda_id is not None:
         query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
     itens = [
@@ -2622,6 +2973,7 @@ def _custo_litro_leite_v2(
 @router.get("/caixa-real")
 def caixa_real(
     dias: int | None = None,
+    hoje: Optional[date] = Query(None, description="'Hoje' do front (hojeLocal); só com as regras v2"),
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
     _: Usuario = Depends(exigir_admin),
@@ -2640,6 +2992,8 @@ def caixa_real(
     vencimento; conta vencida e não paga entra no primeiro dia (ver o motor).
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    if regras_v2_ativas(session, fazenda_id):
+        return _caixa_real_v2(session, fazenda_id, dias, hoje or hoje_local())
     hoje = hoje_local()
     horizonte = dias if dias and dias > 0 else caixa_dias_projecao()
 
@@ -2697,9 +3051,87 @@ def caixa_real(
     return projecao
 
 
+def _caixa_real_v2(session: Session, fazenda_id: int | None, dias: int | None, hoje: date) -> dict:
+    """Caixa Real com as regras v2 (Fase A, PR 6 e PR 5):
+
+    - saldo de partida = saldo de HOJE de cada conta (abertura + movimentos até
+      hoje — `saldos_contas_v2`); sem saldo de abertura a conta entra com a
+      soma dos movimentos e vai para `saldo_abertura_pendente` (a tela pede
+      "informe o saldo de abertura" em vez de fingir um número);
+    - pagamento já baixado com data FUTURA (agendado) entra na projeção na
+      data dele, marcado `agendado` — e não no saldo de hoje;
+    - compromisso em aberto pelo valor que vai SAIR do banco
+      (`valor_caixa_parcela`): sem o desconto do vale de item (P0-7 — o acerto
+      do vale é com o funcionário);
+    - a nota da compra no cartão (PR 5) é um compromisso em aberto no
+      vencimento da fatura, marcado `fatura_cartao`."""
+    horizonte = dias if dias and dias > 0 else caixa_dias_projecao()
+    query_contas = select(ContaCorrente)
+    if fazenda_id is not None:
+        query_contas = query_contas.where(ContaCorrente.fazenda_id == fazenda_id)
+    contas = session.exec(query_contas).all()
+    saldos = saldos_contas_v2(session, contas, fazenda_id, hoje)
+    saldo_inicial = round(sum(x.saldo for x in saldos.values()), 2)
+
+    query = select(ContaGerencial).where(ContaGerencial.data_pagamento == None)  # noqa: E711
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    compromissos = []
+    sem_vencimento = 0
+    for c in session.exec(query).all():
+        valor = valor_caixa_parcela(c)
+        if not valor:
+            continue
+        if not c.data_vencimento:
+            sem_vencimento += 1
+            continue
+        compromisso = {"data": c.data_vencimento, "valor": valor, "tipo": c.tipo,
+                       "descricao": c.descricao or c.numero_lancamento}
+        if c.fatura_cartao_id is not None:
+            compromisso["fatura_cartao"] = True
+        compromissos.append(compromisso)
+
+    fim = date.fromordinal(hoje.toordinal() + max(horizonte, 0))
+    agendados_fora = {"quantidade": 0, "total_saidas": 0.0, "total_entradas": 0.0}
+    for s_conta in saldos.values():
+        for a in s_conta.agendados:
+            if a["data"] > fim:
+                agendados_fora["quantidade"] += 1
+                chave = "total_entradas" if a["tipo"] == "receita" else "total_saidas"
+                agendados_fora[chave] = round(agendados_fora[chave] + a["valor"], 2)
+                continue
+            compromissos.append({"data": a["data"], "valor": a["valor"], "tipo": a["tipo"],
+                                 "descricao": a["descricao"], "agendado": True})
+
+    projecao = projetar_caixa(
+        saldo_inicial=saldo_inicial, compromissos=compromissos, inicio=hoje, dias=horizonte,
+        fundo_reserva=caixa_fundo_reserva(),
+    )
+    projecao["dias"] = horizonte
+    projecao["contas"] = [
+        {
+            "id": c.id, "nome": rotulo_conta_corrente(c), "saldo": saldos[c.id].saldo,
+            "saldo_abertura": saldos[c.id].saldo_abertura,
+            "data_saldo_abertura": saldos[c.id].data_saldo_abertura.isoformat() if saldos[c.id].data_saldo_abertura else None,
+            "pendente_saldo_abertura": saldos[c.id].pendente_abertura,
+        }
+        for c in contas
+    ]
+    projecao["compromissos_sem_vencimento"] = sem_vencimento
+    projecao["regras_v2"] = True
+    projecao["hoje"] = hoje.isoformat()
+    projecao["saldo_abertura_pendente"] = [
+        {"id": c.id, "nome": rotulo_conta_corrente(c)} for c in contas if saldos[c.id].pendente_abertura
+    ]
+    projecao["agendados_fora_da_janela"] = agendados_fora
+    projecao["avisos"] = [saldo_conta.AVISO_SEM_SALDO_ABERTURA] if projecao["saldo_abertura_pendente"] or not contas else []
+    return projecao
+
+
 @router.get("/caixa-real/fundo-reserva-sugerido")
 def fundo_reserva_sugerido(
     meses_historico: int = 6,
+    hoje: Optional[date] = Query(None, description="'Hoje' do front (hojeLocal); só com as regras v2"),
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
     _: Usuario = Depends(exigir_admin),
@@ -2710,7 +3142,8 @@ def fundo_reserva_sugerido(
     sazonalidade forte e uma média de poucos meses erra para os dois lados,
     então aplicar sozinho seria fingir uma precisão que o número não tem."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    hoje = hoje_local()
+    regras_v2 = regras_v2_ativas(session, fazenda_id)
+    hoje = (hoje or hoje_local()) if regras_v2 else hoje_local()
     primeiro_do_mes = hoje.replace(day=1)
 
     query = select(ContaGerencial).where(
@@ -2719,6 +3152,30 @@ def fundo_reserva_sugerido(
     )
     if fazenda_id is not None:
         query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+
+    if regras_v2:
+        # Regras v2 (PR 6/P0-7): o que de fato saiu do banco em cada mês
+        # fechado — valor pago, sem descontar vale de item, na data de caixa
+        # (cartão avulso no vencimento do cartão); a nota de classificação do
+        # backfill do cartão não conta (o dinheiro está na nota genérica).
+        por_mes_v2: dict[str, float] = {}
+        for c in session.exec(query).all():
+            dc = saldo_conta.data_caixa(c)
+            if not saldo_conta.conta_entra_no_caixa(c) or dc is None or dc >= primeiro_do_mes:
+                continue
+            if (primeiro_do_mes.year - dc.year) * 12 + (primeiro_do_mes.month - dc.month) > meses_historico:
+                continue
+            chave = dc.strftime("%Y-%m")
+            por_mes_v2[chave] = por_mes_v2.get(chave, 0.0) + abs(valor_caixa_parcela(c))
+        meses_v2 = sorted(por_mes_v2.items())
+        folga_v2 = caixa_meses_folga_sugestao()
+        return {
+            "sugerido": sugerir_fundo_reserva([v for _m, v in meses_v2], folga_v2),
+            "meses_folga": folga_v2,
+            "meses_considerados": [{"mes": m, "saidas": round(v, 2)} for m, v in meses_v2],
+            "atual": caixa_fundo_reserva(),
+            "regras_v2": True,
+        }
 
     por_mes: dict[str, float] = {}
     candidatas: list[ContaGerencial] = []
@@ -3537,6 +3994,8 @@ def criar_lancamento(
     if valor_liquido <= 0:
         raise HTTPException(status_code=400, detail="O valor líquido do lançamento deve ser positivo")
 
+    # Fase A, PR 6: `valor_pago` obrigatório no que já nasce pago (com a flag).
+    regras_v2 = regras_v2_ativas(session, fazenda_id)
     ano = (dados.data_emissao or dados.data_competencia or hoje_local()).year
     numero_lancamento = _proximo_numero_lancamento(session, ano)
     data_competencia = dados.data_competencia or dados.data_emissao
@@ -3628,12 +4087,14 @@ def criar_lancamento(
                 numero_boleto=numero_boleto,
             )
             if p.data_pagamento:
+                valor_pago_parcela = _valor_pago_na_criacao(regras_v2, p.valor_pago, p.valor)
                 conta.data_pagamento = p.data_pagamento
-                conta.valor_pago = p.valor_pago
+                conta.valor_pago = valor_pago_parcela
                 conta.conta_bancaria = p.conta_bancaria
+                conta.conta_corrente_id = resolver_conta_corrente_id(session, fazenda_id, p.conta_bancaria, p.conta_corrente_id)
                 conta.numero_documento_pagamento = p.numero_documento_pagamento
                 conta.forma_pagamento = p.forma_pagamento
-                conta.desconto_acrescimo = round((p.valor_pago or 0) - p.valor, 2)
+                conta.desconto_acrescimo = round((valor_pago_parcela or 0) - p.valor, 2)
             criados.append(conta)
     else:
         registro = ContaGerencial(
@@ -3647,12 +4108,15 @@ def criar_lancamento(
             numero_boleto=dados.numero_boleto,
         )
         if dados.data_pagamento:
+            valor_pago_nota = _valor_pago_na_criacao(regras_v2, dados.valor_pago, valor_liquido)
             registro.data_pagamento = dados.data_pagamento
-            registro.valor_pago = dados.valor_pago
+            registro.valor_pago = valor_pago_nota
             registro.conta_bancaria = dados.conta_bancaria
+            registro.conta_corrente_id = resolver_conta_corrente_id(
+                session, fazenda_id, dados.conta_bancaria, dados.conta_corrente_id)
             registro.numero_documento_pagamento = dados.numero_documento_pagamento
             registro.forma_pagamento = dados.forma_pagamento
-            registro.desconto_acrescimo = round((dados.valor_pago or 0) - valor_liquido, 2)
+            registro.desconto_acrescimo = round((valor_pago_nota or 0) - valor_liquido, 2)
         criados.append(registro)
 
     for it in itens_criados:
@@ -4088,6 +4552,14 @@ def _criar_parcelas_diferenca(session: Session, registro: ContaGerencial, parcel
 def _recusar_se_em_fatura(registro: ContaGerencial) -> None:
     """Nota de fatura de fornecedor só é paga/estornada pela PARCELA da fatura (baixa todas as notas de uma vez);
     baixar uma nota isolada deixaria a parcela da fatura meio paga."""
+    if getattr(registro, "fatura_cartao_id", None):
+        # Fase A, PR 5: a nota de uma compra no cartão só se paga (e se estorna)
+        # pela fatura do cartão — baixar uma isolada deixaria a fatura meio paga.
+        raise HTTPException(
+            status_code=409,
+            detail=f"A nota {registro.numero_lancamento or registro.id} é uma compra no cartão de crédito. "
+            "Pague ou estorne pela fatura do cartão (Financeiro › Cartão de crédito).",
+        )
     if getattr(registro, "fatura_id", None):
         raise HTTPException(
             status_code=409,
@@ -4110,6 +4582,10 @@ def pagar_lancamento(
 
     if dados.forma_pagamento == "credito" and not dados.data_vencimento_cartao:
         raise HTTPException(status_code=400, detail="Informe a data de vencimento do cartão")
+    regras_v2 = regras_v2_ativas(session, fazenda_id)
+    if regras_v2 and dados.valor_pago <= 0:
+        raise HTTPException(status_code=400, detail="O valor pago deve ser maior que zero.")
+    conta_corrente_id = resolver_conta_corrente_id(session, registro.fazenda_id, dados.conta_bancaria, dados.conta_corrente_id)
 
     diferenca = round(dados.valor_pago - (registro.valor_total or 0), 2)
     if dados.parcelas_diferenca:
@@ -4126,6 +4602,7 @@ def pagar_lancamento(
     registro.data_pagamento = dados.data_pagamento
     registro.valor_pago = dados.valor_pago
     registro.conta_bancaria = dados.conta_bancaria
+    registro.conta_corrente_id = conta_corrente_id
     registro.numero_documento_pagamento = dados.numero_documento_pagamento
     registro.forma_pagamento = dados.forma_pagamento
     registro.data_vencimento_cartao = dados.data_vencimento_cartao if dados.forma_pagamento == "credito" else None
@@ -4156,7 +4633,13 @@ def pagar_lancamento(
     session.refresh(registro)
     for nova in novas:
         session.refresh(nova)
-    return {**registro.model_dump(), "parcelas_diferenca_criadas": [n.model_dump() for n in novas]}
+    resposta = {**registro.model_dump(), "parcelas_diferenca_criadas": [n.model_dump() for n in novas]}
+    if regras_v2:
+        # Pagamento com data futura = AGENDADO (decisão do dono): não entra no
+        # saldo de hoje, aparece no Caixa Real na data dele. A tela confirma
+        # antes de enviar ("Agendar pagamento para dd/mm?").
+        resposta["agendado"] = saldo_conta.eh_agendado(registro, hoje_local())
+    return resposta
 
 
 @router.put("/lancamentos/baixa-lote")
@@ -4181,6 +4664,7 @@ def baixa_lote(
         if _r and (fazenda_id is None or _r.fazenda_id == fazenda_id):
             _recusar_se_em_fatura(_r)
 
+    conta_corrente_lote = resolver_conta_corrente_id(session, fazenda_id, dados.conta_bancaria, dados.conta_corrente_id)
     baixados = []
     nao_encontrados = []
     for lancamento_id in dados.lancamento_ids:
@@ -4193,6 +4677,7 @@ def baixa_lote(
         registro.desconto_acrescimo = 0.0
         registro.diferenca_tipo = None
         registro.conta_bancaria = dados.conta_bancaria
+        registro.conta_corrente_id = conta_corrente_lote
         registro.forma_pagamento = dados.forma_pagamento
         registro.data_vencimento_cartao = dados.data_vencimento_cartao if dados.forma_pagamento == "credito" else None
         registro.numero_documento_pagamento = dados.numero_documento_pagamento
@@ -4223,6 +4708,8 @@ def baixa_lote_detalhada(
     for it in dados.itens:
         if it.forma_pagamento == "credito" and not it.data_vencimento_cartao:
             raise HTTPException(status_code=400, detail=f"Informe o vencimento do cartão do lançamento {it.lancamento_id}")
+    if regras_v2_ativas(session, fazenda_id) and any(it.valor_pago <= 0 for it in dados.itens):
+        raise HTTPException(status_code=400, detail="O valor pago de cada lançamento deve ser maior que zero.")
 
     for it in dados.itens:
         _r = session.get(ContaGerencial, it.lancamento_id)
@@ -4280,6 +4767,7 @@ def baixa_lote_detalhada(
         registro.desconto_acrescimo = 0 if it.parcelas_diferenca else round(it.valor_pago - (registro.valor_total or 0), 2)
         registro.diferenca_tipo = tipos_diferenca.get(it.lancamento_id)
         registro.conta_bancaria = it.conta_bancaria
+        registro.conta_corrente_id = resolver_conta_corrente_id(session, fazenda_id, it.conta_bancaria, it.conta_corrente_id)
         registro.forma_pagamento = it.forma_pagamento
         registro.data_vencimento_cartao = it.data_vencimento_cartao if it.forma_pagamento == "credito" else None
         registro.numero_documento_pagamento = it.numero_documento_pagamento
@@ -4295,6 +4783,49 @@ def baixa_lote_detalhada(
         "baixados": len(baixados), "nao_encontrados": nao_encontrados,
         "parcelas_diferenca_criadas": [n.model_dump() for n in todas_novas],
     }
+
+
+@router.get("/conta-corrente/revisao")
+def revisao_conta_corrente(
+    session: Session = Depends(get_session), fazenda_id: int = Depends(get_fazenda_id_escrita),
+    _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Fase A, PR 6: "Lançamentos sem conta bancária identificada" — o que o
+    backfill (`scripts.backfill_conta_corrente`) ligaria sozinho (`ligaveis`,
+    com a regra de casamento) e o que precisa de alguém escolher a conta
+    (`revisao`). Só leitura."""
+    from fazenda.rules import backfill_conta_corrente
+
+    plano = backfill_conta_corrente.planejar(session, fazenda_id)
+    return {"ligaveis": plano.mudancas, "revisao": plano.revisao}
+
+
+class ContaCorrenteLoteIn(BaseModel):
+    lancamento_ids: list[int]
+    conta_corrente_id: int
+
+
+@router.put("/lancamentos/conta-corrente-lote")
+def vincular_conta_corrente_lote(
+    dados: ContaCorrenteLoteIn, session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Liga em lote os lançamentos da lista de revisão a uma conta corrente
+    (seletor em lote). Só o vínculo muda — nada de valor, data ou rótulo."""
+    if not dados.lancamento_ids:
+        raise HTTPException(status_code=400, detail="Selecione ao menos um lançamento")
+    conta_id = resolver_conta_corrente_id(session, fazenda_id, None, dados.conta_corrente_id)
+    ligados, nao_encontrados = [], []
+    for lancamento_id in dados.lancamento_ids:
+        registro = session.get(ContaGerencial, lancamento_id)
+        if not registro or registro.fazenda_id != fazenda_id:
+            nao_encontrados.append(lancamento_id)
+            continue
+        registro.conta_corrente_id = conta_id
+        session.add(registro)
+        ligados.append(lancamento_id)
+    session.commit()
+    return {"ligados": len(ligados), "nao_encontrados": nao_encontrados, "conta_corrente_id": conta_id}
 
 
 # Definido DEPOIS de /baixa-lote de propósito: uma rota de segmento único como
@@ -4614,6 +5145,7 @@ def estornar_lancamento(
     registro.data_pagamento = None
     registro.valor_pago = None
     registro.conta_bancaria = None
+    registro.conta_corrente_id = None
     registro.numero_documento_pagamento = None
     registro.forma_pagamento = None
     registro.data_vencimento_cartao = None

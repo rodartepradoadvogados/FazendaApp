@@ -7112,26 +7112,34 @@ export type LinhaDre = {
   valor: number; contas?: { codigo: string | null; nome: string | null; valor: number }[];
 };
 
-export type ContaDre = { codigo: string | null; nome: string | null; valor: number };
+export type ContaDre = {
+  codigo: string | null; nome: string | null; valor: number;
+  // Só com as regras novas (Fase A, PR 2): os dois lados separados.
+  receita?: number; despesa?: number; liquido?: number;
+};
+
+// Fase A, PR 2: origem automática (folha, contrato...) com custo sem conta configurada.
+export type PendenciaContaAutomatica = { origem: string; rotulo: string; valor: number; lancamentos: number; motivo: string };
 
 export type DreResposta = {
   periodo: { inicio: string; fim: string };
   regime: string; centro_custo: string | null;
   receitas_total: number; despesas_total: number; resultado: number;
   cascata: LinhaDre[];
-  nao_classificado: { total: number; contas: ContaDre[] };
+  nao_classificado: { total: number; contas: ContaDre[]; total_receita?: number; total_despesa?: number; liquido?: number };
   fora_da_dre: {
     total: number; contas: ContaDre[];
     // Só com as regras novas (Fase A) ligadas na fazenda: o "fora da DRE"
     // agrupado por natureza (investimento, financiamento, capital...).
     por_natureza?: Record<string, number>;
-    grupos?: { natureza: string; rotulo: string; total: number; contas: ContaDre[] }[];
+    grupos?: { natureza: string; rotulo: string; total: number; contas: ContaDre[]; liquido?: number }[];
   };
   depreciacao_periodo: { total: number; inconsistencias: { item: string; numero: string | null; motivo: string }[] };
   // Presentes só quando a fazenda usa as regras novas (financeiro_regras_v2).
   regras_v2?: boolean;
   resultado_baixas_periodo?: { total: number; itens: { patrimonio_id: number; nome: string; data_baixa: string; resultado: number }[] };
   pendencias_natureza?: { numero_lancamento: string | null; descricao: string | null; fornecedor: string | null; valor: number; motivo: string }[];
+  pendencias_contas_automaticas?: PendenciaContaAutomatica[];
 };
 
 export async function fetchDreCascata(params: {
@@ -7166,6 +7174,29 @@ export async function classificarContaDre(codigo: string, linhaDre: string | nul
   return res.json();
 }
 
+// --- Fase A, PR 2: contas automáticas (conta padrão de cada origem de lançamento automático)
+export type OrigemContaAutomatica = {
+  origem: string; rotulo: string; ajuda: string; natureza_padrao: string;
+  codigo_conta_gerencial: string | null; nome_conta: string | null; natureza_fin: string | null;
+  reserva: string | null; conta_efetiva: string | null; conta_efetiva_de: string | null;
+  sugestao: { codigo: string; nome: string } | null;
+};
+
+export async function fetchContasAutomaticas(): Promise<{ regras_v2: boolean; origens: OrigemContaAutomatica[] }> {
+  const res = await authFetch(`${API}/financeiro/contas-automaticas`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Contas automáticas: ${res.status}`);
+  return res.json();
+}
+
+export async function salvarContaAutomatica(origem: string, codigo: string | null, naturezaFin: string | null = null) {
+  const res = await authFetch(`${API}/financeiro/contas-automaticas/${encodeURIComponent(origem)}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ codigo_conta_gerencial: codigo, natureza_fin: naturezaFin }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar a conta automática"); }
+  return res.json() as Promise<{ regras_v2: boolean; origens: OrigemContaAutomatica[] }>;
+}
+
 // --- Fase A: natureza do lançamento e regras novas dos relatórios -------------
 export async function fetchRegrasV2(): Promise<{ ativa: boolean; chave: string }> {
   const res = await authFetch(`${API}/financeiro/regras-v2`, { cache: "no-store" });
@@ -7190,22 +7221,41 @@ export type CaixaReal = {
   variacao: number; fundo_reserva: number; folga_minima: number; dias: number;
   primeiro_dia_negativo: string | null; primeiro_dia_abaixo_da_reserva: string | null;
   compromissos_sem_vencimento: number;
-  contas: { id: number; nome: string; saldo: number }[];
+  contas: {
+    id: number; nome: string; saldo: number;
+    // Regras v2 (Fase A, PR 6): o saldo parte do saldo de abertura conferido com o extrato.
+    saldo_abertura?: number | null; data_saldo_abertura?: string | null; pendente_saldo_abertura?: boolean;
+  }[];
   serie: {
     data: string; entradas: number; saidas: number; saldo: number;
-    itens: { descricao: string | null; valor: number; tipo: string; vencido: boolean; data_original: string }[];
+    itens: {
+      descricao: string | null; valor: number; tipo: string; vencido: boolean; data_original: string;
+      // Regras v2: pagamento já baixado com data futura; nota de compra no cartão (fatura aberta).
+      agendado?: boolean; fatura_cartao?: boolean;
+    }[];
   }[];
+  // Só com as regras v2 (Fase A, PR 6).
+  regras_v2?: boolean;
+  hoje?: string;
+  saldo_abertura_pendente?: { id: number; nome: string }[];
+  agendados_fora_da_janela?: { quantidade: number; total_saidas: number; total_entradas: number };
+  avisos?: string[];
 };
 
-export async function fetchCaixaReal(dias?: number): Promise<CaixaReal> {
-  const q = dias ? `?dias=${dias}` : "";
+/** `hoje` = hojeLocal() do front (o servidor usa Brasília; só vale com as regras v2). */
+export async function fetchCaixaReal(dias?: number, hoje?: string): Promise<CaixaReal> {
+  const p = new URLSearchParams();
+  if (dias) p.set("dias", String(dias));
+  if (hoje) p.set("hoje", hoje);
+  const q = p.toString() ? `?${p.toString()}` : "";
   const res = await authFetch(`${API}/financeiro/caixa-real${q}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Caixa Real: ${res.status}`);
   return res.json();
 }
 
-export async function fetchFundoReservaSugerido(mesesHistorico = 6) {
-  const res = await authFetch(`${API}/financeiro/caixa-real/fundo-reserva-sugerido?meses_historico=${mesesHistorico}`, { cache: "no-store" });
+export async function fetchFundoReservaSugerido(mesesHistorico = 6, hoje?: string) {
+  const h = hoje ? `&hoje=${encodeURIComponent(hoje)}` : "";
+  const res = await authFetch(`${API}/financeiro/caixa-real/fundo-reserva-sugerido?meses_historico=${mesesHistorico}${h}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Fundo de reserva sugerido: ${res.status}`);
   return res.json();
 }
@@ -7270,11 +7320,15 @@ export type FaturaCartao = {
   id: number; cartao_id: number; competencia: string; data_fechamento: string; data_vencimento: string;
   valor_total: number | null; milhas_acumuladas: number | null; status: "aberta" | "fechada" | "paga";
   numero_lancamento: string | null;
+  // Regras v2 (Fase A, PR 5): pago e diferença rateada entre as notas das compras.
+  valor_pago?: number | null; desconto_acrescimo?: number | null;
 };
 export type LancamentoCartao = {
   id: number; cartao_id: number; fatura_id: number; data_compra: string; descricao: string;
   codigo_conta_gerencial: string | null; nome_conta_gerencial: string | null; centro_custo: string | null;
   valor: number; parcela_num: number | null; parcela_total: number | null; observacao: string | null;
+  // Regras v2 (Fase A, PR 5): a nota (lançamento) desta compra.
+  numero_lancamento?: string | null;
 };
 export type LancamentoCartaoPayload = {
   data_compra: string; descricao: string; codigo_conta_gerencial?: string | null;
@@ -7339,7 +7393,9 @@ export async function fecharFaturaCartao(faturaId: number): Promise<FaturaCartao
 
 export async function pagarFaturaCartao(faturaId: number, dados: {
   data_pagamento?: string | null; codigo_conta_gerencial?: string | null; nome_conta_gerencial?: string | null; centro_custo?: string | null;
-} = {}): Promise<FaturaCartao & { lancamento: any }> {
+  // Regras v2 (PR 5): o que foi pago (padrão = total; a diferença é rateada entre as notas).
+  valor_pago?: number | null; numero_documento_pagamento?: string | null;
+} = {}): Promise<FaturaCartao & { lancamento: Record<string, unknown> | null; notas_pagas?: string[]; diferenca?: number }> {
   const res = await authFetch(`${API}/financeiro/cartoes/faturas/${faturaId}/pagar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -7481,10 +7537,25 @@ export type ContaCorrenteCadastro = {
   // calcular_saldos_contas_correntes no backend. Soma lançamentos pagos
   // vinculados à conta + transferências entre contas.
   saldo: number;
+  // Regras v2 (Fase A, PR 6): saldo de abertura conferido com o extrato; o
+  // saldo acima é o de HOJE (pagamento com data futura fica em agendado).
+  saldo_abertura?: number | null; data_saldo_abertura?: string | null;
+  saldo_ate?: string; agendado_liquido?: number; agendados_quantidade?: number;
+  pendente_saldo_abertura?: boolean; aviso?: string | null;
 };
-export async function fetchContasCorrentes(): Promise<ContaCorrenteCadastro[]> {
-  const res = await authFetch(`${API}/financeiro/contas-correntes`, { cache: "no-store" });
+/** `hoje` = hojeLocal() do front (só vale com as regras v2). */
+export async function fetchContasCorrentes(hoje?: string): Promise<ContaCorrenteCadastro[]> {
+  const q = hoje ? `?hoje=${encodeURIComponent(hoje)}` : "";
+  const res = await authFetch(`${API}/financeiro/contas-correntes${q}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Contas correntes error: ${res.status}`);
+  return res.json();
+}
+/** Saldo do extrato no fim do dia `data_saldo_abertura` (os dois juntos; null nos dois remove). Só admin. */
+export async function definirSaldoAbertura(id: number, dados: { saldo_abertura: number | null; data_saldo_abertura: string | null }): Promise<ContaCorrenteCadastro> {
+  const res = await authFetch(`${API}/financeiro/contas-correntes/${id}/saldo-abertura`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao salvar o saldo de abertura"); }
   return res.json();
 }
 export async function criarContaCorrente(dados: { banco: string; agencia: string; numero_conta: string; ativo?: boolean }) {

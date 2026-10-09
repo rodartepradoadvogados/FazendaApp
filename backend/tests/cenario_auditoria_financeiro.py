@@ -169,3 +169,56 @@ def ler_relatorios_estaveis(c) -> dict:
         "rmca_mar": get("/financeiro/rmca", **mar),
         "orcamento_mar": get("/planejamento/orcamento/comparativo", ano=2031, mes_inicio=3, mes_fim=3),
     }
+
+
+# ---------------------------------------------------------------------------
+# Caixa Real, saldo e fluxo do cartão (golden do PR 5/PR 6)
+# ---------------------------------------------------------------------------
+# Estas leituras DEPENDEM de "hoje" (o L9 vence em hoje+22, a compra aberta do
+# cartão é de hoje): o golden é gerado e conferido com o relógio PARADO neste
+# dia (fazenda.rules.datas.agora_local substituído), e o cenário montado com
+# `montar_cenario(..., hoje=HOJE_GOLDEN_CAIXA)`.
+HOJE_GOLDEN_CAIXA = date(2026, 10, 8)
+_CARIMBOS = {"criado_em", "atualizado_em"}
+
+
+def sem_carimbo(dados):
+    """Tira os carimbos de hora (criado_em/atualizado_em), que mudam a cada execução."""
+    if isinstance(dados, dict):
+        return {k: sem_carimbo(v) for k, v in dados.items() if k not in _CARIMBOS}
+    if isinstance(dados, list):
+        return [sem_carimbo(v) for v in dados]
+    return dados
+
+
+def ler_caixa_e_cartao(c, ids: dict, hoje: date) -> dict:
+    """Saldo das contas, Caixa Real, fundo de reserva, Contas a pagar e o fluxo
+    completo do cartão (compra → fechar → pagar) — o que o PR 5/PR 6 NÃO podem
+    mudar com a flag desligada. Muda o cenário (paga uma fatura nova no fim):
+    chame por último."""
+    def get(p, **q):
+        return _ok(c.get(p, params=q), p)
+
+    def post(p, b):
+        return _ok(c.post(p, json=b), p)
+
+    cart = ids["cartao_id"]
+    saida = {
+        "contas_correntes": get("/financeiro/contas-correntes"),
+        "caixa_real_90": get("/financeiro/caixa-real", dias=90),
+        "fundo_reserva": get("/financeiro/caixa-real/fundo-reserva-sugerido"),
+        "contas_a_pagar_90": get("/financeiro/contas-a-pagar", dias=90, data_referencia=hoje.isoformat()),
+        "cartao_extrato_atual": get(f"/financeiro/cartoes/{cart}/extrato"),
+        "cartao_extrato_2031_03": get(f"/financeiro/cartoes/{cart}/extrato", competencia="2031-03"),
+        "cartao_faturas": get(f"/financeiro/cartoes/{cart}/faturas"),
+    }
+    cart2 = post("/financeiro/cartoes", {"apelido": "AUD Cartão 2", "dia_fechamento": 5, "dia_vencimento": 15,
+                                         "conta_bancaria_id": ids["conta_corrente_id"]})
+    compra = post(f"/financeiro/cartoes/{cart2['id']}/lancamentos", {
+        "data_compra": hoje.isoformat(), "descricao": "Vacina no cartão 2", "codigo_conta_gerencial": "8.2", "valor": 300})
+    saida["cartao2_compra"] = compra
+    saida["cartao2_fechar"] = post(f"/financeiro/cartoes/faturas/{compra['fatura_id']}/fechar", {})
+    saida["cartao2_pagar"] = post(f"/financeiro/cartoes/faturas/{compra['fatura_id']}/pagar", {"data_pagamento": hoje.isoformat()})
+    saida["contas_correntes_depois"] = get("/financeiro/contas-correntes")
+    saida["caixa_real_90_depois"] = get("/financeiro/caixa-real", dias=90)
+    return sem_carimbo(saida)

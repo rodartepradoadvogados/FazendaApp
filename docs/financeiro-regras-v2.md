@@ -2,8 +2,9 @@
 
 Correção dos números dos Relatórios do Financeiro em PRs pequenos, cada um ligado
 **fazenda a fazenda** por uma flag. Este arquivo cobre o PR 0 (rede de segurança),
-o PR 1 (natureza do lançamento), o PR 7 (juros e descontos da baixa) e o PR 4
-(receita do leite). A auditoria completa, com causa-raiz e a ordem
+o PR 1 (natureza do lançamento), o PR 7 (juros e descontos da baixa), o PR 4
+(receita do leite), o PR 2 (contas automáticas), o PR 3 (folha pelo bruto), o PR 6
+(saldo de abertura e Caixa Real) e o PR 5 (cartão de crédito por item). A auditoria completa, com causa-raiz e a ordem
 dos PRs seguintes, ficou no relatório da Fase A (`SOLUCOES.md`, fora do repositório).
 
 ## 1. A flag `financeiro_regras_v2`
@@ -123,7 +124,9 @@ Para cada mês: as 15 linhas da DRE (competência e caixa), fora da DRE (total e
 por natureza), não classificado, numeradores de custo por hectare e por vaca,
 depreciação e, por safra, o numerador do custo da safra. Colunas: `antes`
 (regras antigas), `depois` (regras novas com os dados de hoje), `depois_com_backfill`
-(simulando o backfill sem gravá-lo) e os Δ. O CSV de lançamentos lista cada
+(simulando o backfill sem gravá-lo) e os Δ. A seção `saldo` (PR 6) traz, por
+conta corrente, o saldo de hoje antigo × novo, os agendados, a falta de saldo
+de abertura e quantos lançamentos o backfill do vínculo liga ou manda para revisão. O CSV de lançamentos lista cada
 registro que muda de lugar, com o motivo. A conexão abre em modo só leitura
 (`PRAGMA query_only` / `SET TRANSACTION READ ONLY`) e termina em `rollback()`.
 Mesmo assim: rode num dump restaurado, nunca na produção.
@@ -193,16 +196,192 @@ pago − valor da conta) passa a ter destino na DRE. Regras em
   inteiros que toca (`periodo` = o efetivo, `periodo_solicitado`,
   `periodo_ajustado_para_mes_fechado`, `avisos`).
 
-## 8. O que fica para os próximos PRs
+## 8. Contas automáticas e folha pelo bruto (PR 2 e PR 3)
+
+Folha, férias, 13º, rescisão, guias de FGTS/DCTF, contratos, empreitas,
+diárias (pagamento e acerto), vales (em dinheiro, avulso, devolução, assumido
+pela fazenda) e o caixa do funcionário/do time (entrada, retenção, estorno)
+nasciam sem conta e sem item: caíam em "não classificado" e a folha entrava
+pelo líquido. Regras em `fazenda/rules/lancamento_automatico.py`.
+
+- **Contas automáticas** (tabela `conta_padrao_origem`, migração aditiva
+  `a7c4e2d9f1b3`; tela *Configurações > Parâmetros financeiros > Contas
+  automáticas*, `GET/PUT /financeiro/contas-automaticas[/{origem}]`, só
+  administrador): uma conta gerencial por origem (`folha_salario`,
+  `folha_ferias`, `folha_13`, `rescisao`, `encargo_fgts`,
+  `encargo_inss_patronal`, `obrigacao_inss_irrf_retidos`, `contrato`,
+  `empreita`, `diaria`, `vale`, `caixa_entrada`, `caixa_retencao`). Férias, 13º,
+  rescisão, encargos, prêmios e vale assumido sem conta própria usam a de
+  salários; empreita e diária, a de contratos. A tela mostra uma **sugestão**
+  pelo nome do plano ("Salários"...), que nunca é aplicada sozinha.
+- **Com a flag ligada**, toda nota automática NOVA nasce com `codigo_conta` e um
+  `LancamentoItem` por linha econômica (`gerado_por` = o papel), somando o
+  `valor_total` (o que se paga). Quem cria e mantém os itens são os listeners
+  de sessão do módulo (ponto único para os 15 pontos de criação e para os
+  caminhos que reescrevem o líquido: edição, self-heals, rubricas, retenção no
+  pagamento, estorno). Nota com item de gente (reclassificada no Financeiro) não
+  é tocada; nota apagada leva os itens gerados.
+- **Folha pelo bruto** (decisões do dono): `Salário e verbas` (bruto + verbas)
+  em pessoal; `(−) Outros descontos` (cota de VT, coparticipação) abate o
+  pessoal; `(−) INSS e IRRF retidos`, `(−) Vale descontado`, `(−) Retenção do
+  caixa` e `(−) FGTS/DCTF a recolher` ficam fora da DRE (obrigação/adiantamento);
+  `FGTS (provisão)` e `Encargos da DCTF (provisão)` entram em pessoal (encargo
+  sem guia usa a provisão). Na DRE de caixa a folha inteira entra na data do
+  pagamento do líquido. 13º e rescisão: bruto − retidos (− vale); o 13º cai na
+  competência dele (sem provisão mensal, Q5).
+- **Guias**: FGTS = provisionado nas folhas da competência (obrigação) +
+  excedente (encargo) + multa/juros (*Outras*); DCTF = retidos de folha, 13º e
+  rescisão do mês + provisionado (obrigação) + excedente patronal (encargo) +
+  multa/juros. Nenhum real conta duas vezes.
+- **Contrato, empreita, diária**: o custo é o valor **contratado**; o vale
+  avulso abatido da parcela é adiantamento e a retenção do caixa no pagamento é
+  obrigação (regras de domínio inalteradas: só administrador, só parcela de
+  contrato/empreita/diária). Vale em dinheiro/avulso e devolução = adiantamento;
+  entrada no caixa = pessoal; estorno espelha o original.
+- **DRE (flag ligada)**: item redutor vira registro de magnitude com o tipo
+  invertido (`redutor`); custos por ha/vaca/safra e orçado × realizado subtraem.
+  Item gerado sem conta vai para *não classificado* como "(sem conta: …)" e a
+  DRE/conferência listam `pendencias_contas_automaticas` /
+  `contas_automaticas_pendentes`. **Não classificado e fora da DRE** passam a
+  trazer `total_receita`, `total_despesa`, `liquido` (e por conta), em vez de
+  só somar receita com despesa.
+- **Flag desligada**: nada é criado e os relatórios antigos **ignoram** itens
+  com `gerado_por` (RMCA, custo por litro, orçado × realizado e a DRE leem a
+  nota como antes) — por isso o backfill pode rodar antes de ligar a flag sem
+  mudar número.
+- **Consultas** (decisão do dono): os lançamentos da folha aparecem, com
+  `origem: "auto"`, o tipo de documento e os itens (`gerado_por`).
+
+**Backfill do histórico** (`fazenda/rules/backfill_itens_automaticos.py`):
+
+```
+python -m scripts.backfill_itens_automaticos --fazenda N                      # simulação
+python -m scripts.backfill_itens_automaticos --fazenda N --csv plano.csv
+python -m scripts.backfill_itens_automaticos --fazenda N --aplicar            # imprime o LOTE
+python -m scripts.backfill_itens_automaticos --fazenda N --reverter LOTE --aplicar
+```
+
+Só nota automática reconhecida, sem item e sem conta (a classificada à mão é
+preservada e listada); cria os mesmos itens que a nota teria hoje e preenche a
+conta de item gerado que nasceu sem conta. Nunca muda `valor_total`,
+`valor_pago` nem a conta da nota. Cada item criado é uma linha
+`__criado__` no `migracao_log_financeiro`; reverter apaga só o que ainda é do
+lote. O `downgrade` da migração apaga todos os itens com `gerado_por`.
+
+**Limites conscientes**: o vale de ITEM de nota continua fora do CMV do
+fornecedor (não vira registro de adiantamento próprio; a folha mostra o
+desconto); reembolso/indenização lançados como rubrica entram em "Salário e
+verbas"; a guia é recomposta quando ela ou uma folha da competência muda, mas
+não quando muda um 13º/rescisão; desligar a flag depois de ligada mantém os
+itens (os relatórios antigos os ignoram).
+
+## 9. Saldo de abertura e Caixa Real (PR 6)
+
+Regras em `fazenda/rules/saldo_conta.py`; Caixa Real em `financeiro._caixa_real_v2`.
+Com a flag desligada, saldo, Caixa Real, fundo de reserva, Contas a pagar e o
+fluxo do cartão saem como antes — travado por
+`tests/dados/caixa_cartao_golden_pre_pr56.json` (gerado pelo código de antes,
+com o relógio parado; `tests/dados/gerar_golden_caixa_cartao.py`).
+
+- **Saldo de abertura** (decisão Q12: campo na conta, não lançamento):
+  `conta_corrente.saldo_abertura` + `data_saldo_abertura`, gravados em
+  `PUT /financeiro/contas-correntes/{id}/saldo-abertura` (só admin; os dois
+  juntos; data não pode ser futura). Tela: Parâmetros financeiros › Conta
+  corrente › Editar.
+- **Saldo de hoje** = abertura + pagamentos/recebimentos com
+  `data_saldo_abertura < data de caixa ≤ hoje` ± transferências no mesmo
+  intervalo. Sem abertura, é a soma dos movimentos e a resposta traz
+  `pendente_saldo_abertura` e o aviso "Informe o saldo de abertura" (o Caixa
+  Real mostra a pendência no lugar do número). `GET /financeiro/contas-correntes`,
+  `/caixa-real` e `/caixa-real/fundo-reserva-sugerido` aceitam `?hoje=` (o
+  `hojeLocal()` do front); sem ele, `hoje_local()` (Brasília).
+- **Vínculo por FK**: `conta_gerencial.conta_corrente_id`, gravado em toda
+  baixa (individual, lote, lote detalhado, criação já paga, compra/venda de
+  animal, compra de sêmen) quando o rótulo casa exatamente com uma conta da
+  fazenda, ou pelo `conta_corrente_id` explícito (404 se for de outra
+  fazenda). Linha sem FK ainda casa pelo rótulo exato (histórico).
+  O histórico se liga pelo comando
+  `python -m scripts.backfill_conta_corrente --fazenda N [--csv revisao.csv] [--aplicar] [--reverter LOTE]`
+  (exato → normalizado: banco + dígitos da agência seguidos dos da conta →
+  banco único: só o nome do banco e uma conta nele); o que sobra vai para a
+  lista de revisão (`GET /financeiro/conta-corrente/revisao`) e se liga em lote
+  (`PUT /financeiro/lancamentos/conta-corrente-lote`, admin). Log em
+  `migracao_log_financeiro`, reversível por lote.
+- **`valor_pago` obrigatório**: com a flag, lançamento que já nasce pago sem
+  `valor_pago` grava o valor da parcela (antes: `None` e `desconto_acrescimo
+  = −valor`, o L6); valor pago ≤ 0 → 400 (criação, baixa, lote detalhado). O
+  histórico NÃO é reescrito: o saldo lê pago sem `valor_pago` pelo valor da
+  parcela (igual ao Livro do front).
+- **Pagamento com data futura = agendado** (Q13): não entra no saldo de hoje;
+  aparece no Caixa Real na data dele com `agendado: true` (os que passam da
+  janela ficam em `agendados_fora_da_janela`). A baixa responde `agendado`;
+  a tela confirma antes ("Agendar pagamento para dd/mm?") e a lista mostra
+  "Agendada para dd/mm" (`data_caixa`, só com a flag, em `GET /lancamentos`).
+- **Cartão avulso** (`forma_pagamento="credito"`): a data de caixa é o
+  vencimento do cartão — saldo, Caixa Real, DRE de caixa e `mes_caixa` da lista.
+- **Retirada do caixa do funcionário pelo banco** (pix/transferência/débito
+  com conta; dinheiro não): gera `ContaGerencial` despesa paga, natureza
+  `OBRIGACAO` (fora da DRE e dos custos), `gerado_por="caixa_retirada"`,
+  ligada ao movimento pelo `numero_lancamento`. Estorno = receita contrária na
+  data do estorno; exclusão da retirada apaga o lançamento.
+- **Caixa Real sem o desconto do vale** (P0-7): compromisso em aberto vale o
+  que vai sair do banco (`vale_item.valor_caixa_parcela`): o boleto inteiro,
+  com o vale de item dentro (o acerto é com o funcionário). O fundo de reserva
+  sugerido soma o valor pago, na data de caixa, também sem o ajuste do vale.
+- O Livro caixa (Consultas, com conta escolhida) parte do saldo de abertura.
+- Migração `a7c4e2d9b351` (aditiva, idempotente, reversível): as colunas
+  acima e `conta_gerencial.gerado_por`.
+
+## 10. Cartão de crédito por item (PR 5)
+
+Regras em `fazenda/rules/cartao_por_item.py`; rotas em `cartao_credito.py`.
+Com a flag desligada, compra, fechamento e pagamento da fatura funcionam como
+antes (nota genérica "Fatura X"), com as mesmas chaves de resposta (golden).
+
+- **Uma nota por compra**, na hora da compra: `ContaGerencial` + item com a
+  conta e o centro da compra, competência = data da compra, vencimento = o da
+  fatura, `fatura_cartao_id` = a fatura (`lancamento_cartao.numero_lancamento`
+  aponta a nota). IOF, anuidade e juros do rotativo são **compras próprias**
+  (Q14), lançadas numa conta própria.
+- **Contas a pagar e Caixa Real**: a nota em aberto entra no total a pagar
+  (decisão a do dono) e na projeção, no vencimento da fatura (`fatura_cartao`
+  no item do Caixa Real). A lista mostra "Em fatura do cartão" e o botão
+  "Pagar pela fatura do cartão".
+- **Só se paga pela fatura**: baixa individual, lote, lote detalhado e estorno
+  de uma nota de cartão → 409. `POST /financeiro/cartoes/faturas/{id}/pagar`
+  (fatura fechada) baixa TODAS as notas de uma vez (data, conta do cartão,
+  comprovante); `valor_pago` diferente do total → a diferença é rateada em
+  centavos entre as notas (a sobra na última), como na fatura de fornecedor, e
+  vira juros/desconto em Outras (PR 7). A fatura guarda `valor_pago` e
+  `desconto_acrescimo`; nenhuma nota genérica é criada. Compra lançada antes da
+  flag ganha a nota no pagamento. `POST .../estornar-pagamento` desfaz (as
+  notas voltam a aberto juntas).
+- **DRE**: competência no mês da compra; caixa no mês do pagamento da fatura.
+- **Histórico**: `python -m scripts.backfill_cartao_por_item --fazenda N
+  [--csv x.csv] [--aplicar] [--reverter LOTE]` (exige a flag ligada). Compra
+  de fatura aberta/fechada ganha a nota em aberto; compra de fatura já paga
+  ganha a nota já paga na data da genérica, SEM conta bancária
+  (`gerado_por="backfill_cartao"`: só classifica a DRE — saldo, Caixa Real,
+  fundo de reserva e as somas do front a ignoram), e a genérica vira
+  `OBRIGACAO` (fora da DRE; continua sendo o único movimento de dinheiro). O
+  resto vai para revisão. A reversão apaga as notas criadas, salvo as que
+  mudaram depois (conflito).
+- Migração `b9d3f5a1c864` (aditiva, idempotente, reversível).
+
+## 11. O que fica para os próximos PRs
+
+Com tudo o que já entrou ligado (PRs 1, 7, 4, 2, 3, 6 e 5: contas automáticas,
+os backfills da folha e do cartão, a natureza do plano e a flag), o cenário da
+auditoria em março/2031 fecha como o relatório previa: receita líquida 9.850,
+CMV 8.300, pessoal 4.840, EBITDA −3.290, resultado −4.290, numerador de custos
+13.140 (COT 14.140) e custo por litro 0,8276
+(`test_pr2_pr3_pr5_pr6_cenario_com_tudo_ligado`). Os campos legados da DRE
+(e-mail do Portal) ainda mostram o número antigo: é o PR 8.
 
 O teste do cenário marca cada número ainda errado com `xfail(strict=True)` e o
 nome do PR que o corrige; o PR que acertar o número é obrigado a tirar o xfail.
 
 | PR | O que resolve |
 |---|---|
-| 2 | folha, contratos, diárias e vales nascem com conta (não classificado = 0) |
-| 3 | folha pelo bruto e encargos (pessoal de março = 4.840) |
-| 5 | cartão por item (CMV com a compra do cartão; fatura em Contas a pagar e no Caixa Real) |
-| 6 | saldo de abertura, pagamento futuro como agendado, `valor_pago` obrigatório, Caixa Real sem desconto de vale |
 | 8 | DRE única (campos legados, Portal, Capa) e orçamento com totais separados |
 | 9 | COE/COT com rateio: "Todos" sem filtro, depreciação por centro |

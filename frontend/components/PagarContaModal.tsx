@@ -10,6 +10,8 @@ import { Modal } from "@/components/Modal";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { Dropzone } from "@/components/Dropzone";
 import { RetencaoCaixaCampos } from "@/components/RetencaoCaixaCampos";
+import { hojeLocal, perguntaAgendamento } from "@/lib/financeiroSituacao";
+import { useRegrasV2 } from "@/lib/useRegrasV2";
 import {
   anexarArquivoLancamentoPorId, fetchOpcoesFinanceiro, formatBRL, formatDate, marcarPagoFinanceiro, type RetencaoCaixaIn,
 } from "@/lib/api";
@@ -38,7 +40,9 @@ export type ContaParaPagar = {
 export function PagarContaModal({ conta, onClose, onPago }: {
   conta: ContaParaPagar; onClose: () => void; onPago: () => void;
 }) {
-  const hoje = new Date().toISOString().slice(0, 10);
+  // Data local (toISOString é UTC: depois das 21h em Brasília já seria amanhã).
+  const hoje = hojeLocal();
+  const regrasV2 = useRegrasV2();
   const [data, setData] = useState(hoje);
   const [valor, setValor] = useState(String(conta.valorPrevisto));
   const [forma, setForma] = useState("");
@@ -62,6 +66,9 @@ export function PagarContaModal({ conta, onClose, onPago }: {
     if (!data) { setErro("Informe a data do pagamento."); return; }
     if (!(Number(valor) > 0)) { setErro("Informe o valor pago."); return; }
     if (forma === "credito" && !vencCartao) { setErro("Informe o vencimento do cartão."); return; }
+    // Regras v2 (Fase A, PR 6): data futura = pagamento agendado; confirma antes.
+    const pergunta = perguntaAgendamento([data], regrasV2);
+    if (pergunta && !window.confirm(pergunta)) return;
     setSalvando(true);
     try {
       const corpo = {

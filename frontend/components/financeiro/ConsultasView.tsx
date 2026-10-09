@@ -16,7 +16,8 @@ import type { ContaPlano } from "@/lib/contaGerencial";
 import { caminhoAncestrais } from "@/lib/contaGerencial";
 import { hojeLocal, situacaoDe, somaDias } from "@/lib/financeiroSituacao";
 import {
-  ehAdmin, estornarPagamentoLancamento, formatBRL, formatDate, listarAnexosLancamentoPorId, urlAnexoLancamento,
+  ehAdmin, estornarPagamentoLancamento, fetchContasCorrentes, formatBRL, formatDate, listarAnexosLancamentoPorId, urlAnexoLancamento,
+  type ContaCorrenteCadastro,
 } from "@/lib/api";
 import { casaBusca } from "@/lib/busca";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
@@ -249,7 +250,14 @@ export default function ConsultasView(props: Props): React.JSX.Element {
   const linhas = useMemo(() => filtrarRealizados(regs, f, casaBusca), [regs, f]);
   const resumo = useMemo(() => resumir(linhas, f.movimento), [linhas, f.movimento]);
   const ordenadas = useMemo(() => ordenarLinhas(linhas, ordem), [linhas, ordem]);
-  const livro = useMemo(() => montarLivro(regs, linhas, f), [regs, linhas, f]);
+  // Regras v2 (Fase A, PR 6): o livro da conta parte do saldo de abertura cadastrado nela.
+  const [contasCorrentes, setContasCorrentes] = useState<ContaCorrenteCadastro[]>([]);
+  useEffect(() => { fetchContasCorrentes(hojeLocal()).then(setContasCorrentes).catch(() => {}); }, []);
+  const abertura = useMemo(() => {
+    const c = contasCorrentes.find((x) => x.rotulo === f.banco);
+    return c && c.saldo_abertura != null && c.data_saldo_abertura ? { saldo: c.saldo_abertura, data: c.data_saldo_abertura } : null;
+  }, [contasCorrentes, f.banco]);
+  const livro = useMemo(() => montarLivro(regs, linhas, f, abertura), [regs, linhas, f, abertura]);
   const pagLista = usePaginacao(ordenadas);
   const pagLivro = usePaginacao(livro.linhas);
   const ativos = contarFiltrosAtivos(f, padrao);
