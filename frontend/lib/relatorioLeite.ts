@@ -194,7 +194,7 @@ export function serieRmca(r: RespostaRmcaVaca | null): PontoLitro[] {
     const rec = ok ? m.receita_vaca_dia : null, com = ok ? m.comida_vaca_dia : null;
     const ambos = rec != null && com != null;
     return {
-      comp: m.competencia, preco: rec, custo: com,
+      comp: m.competencia, preco: rec, custo: com, estimado: false,
       faixaPos: ambos && rec! >= com! ? [com!, rec!] : null,
       faixaNeg: ambos && com! > rec! ? [rec!, com!] : null,
     };
