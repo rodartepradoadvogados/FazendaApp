@@ -36,7 +36,13 @@ export const GRUPOS_RELATORIOS: GrupoRelatorio[] = [
 ];
 
 /** Relatórios novos, feitos no molde único (os outros continuam na tela de antes até a Fase C). */
-export const RELATORIOS_NO_MOLDE = new Set(["rel_litro", "rel_dre", "rel_caixa", "rel_fluxo", "rel_livro", "rel_orcamento", "rel_cenarios"]);
+export const RELATORIOS_NO_MOLDE = new Set([
+  "rel_litro", "rel_dre", // Fase B (Resultado)
+  "rel_caixa", "rel_fluxo", "rel_livro", // Fase C1 (Caixa)
+  "custos", "rmca", // Fase C2 (Leite)
+  "rel_orcamento", "rel_cenarios", // Fase C3 (Plano)
+  "compra_venda_animais", "compra_semen", // Fase C2 (Registros)
+]);
 
 /** Ids antigos que mudaram de lugar → onde estão agora. */
 export const REDIRECIONAMENTOS: Record<string, string> = {
@@ -44,8 +50,15 @@ export const REDIRECIONAMENTOS: Record<string, string> = {
   // Fase C1 (Caixa): as telas antigas deram lugar às do molde.
   caixa_real: "rel_caixa",
   fluxo: "rel_fluxo",
+  // Fase C2: as quatro telas de custo viraram as visões de "Custos do leite" (?visao=).
+  custo_litro_leite: "custos", custo_vaca_lote: "custos", custo_hectare: "custos", custo_safra: "custos",
   // Fase C3: o orçamento no molde (a tela anterior continua em "orcamento_itens").
   orcamento: "rel_orcamento",
+};
+
+/** Id antigo de custo → a visão de "Custos do leite" que ele abre (?visao=). */
+export const VISAO_DO_ID_ANTIGO: Record<string, string> = {
+  custo_litro_leite: "litro", custo_vaca_lote: "lote", custo_hectare: "ha", custo_safra: "safra",
 };
 
 export function idDoRelatorio(id: string): string {

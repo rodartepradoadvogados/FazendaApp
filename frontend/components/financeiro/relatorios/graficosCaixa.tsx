@@ -6,9 +6,11 @@
 // por token; "sai" e "faltou" são hachurados (nunca só cor). Movimento: a linha
 // se desenha e as barras crescem na entrada; ao trocar de contexto as barras
 // mudam de altura (morph); tudo desligado em prefers-reduced-motion.
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
-import { brl, num, MENOS } from "@/lib/relatorioContexto";
+import { useState, type KeyboardEvent, type MouseEvent } from "react";
+import { brl } from "@/lib/relatorioContexto";
 import { dm } from "@/lib/relatorioCaixa";
+// Medida do contêiner e número compacto: os mesmos do molde (graficos.tsx), um só lugar.
+import { compacto, useLargura } from "./graficos";
 
 export const CSS_CAIXA = `
 .rl-cx-svg{display:block;width:100%;height:auto;overflow:visible;touch-action:pan-y}
@@ -39,28 +41,6 @@ export const CSS_CAIXA = `
 @media (max-width:640px){.rl-leg .rl-cx-leg-es{display:none}.rl-cx-larga{display:none}.rl-cx-estreita{display:block!important}}
 @media print{.rl-cx-desenha{stroke-dasharray:none!important;stroke-dashoffset:0!important}}
 `;
-
-function useLargura<T extends HTMLElement>(padrao = 880) {
-  const ref = useRef<T>(null);
-  const [w, setW] = useState(padrao);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const medir = () => setW(Math.max(280, Math.round(el.clientWidth)));
-    medir();
-    const ro = new ResizeObserver(medir);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, w] as const;
-}
-
-export const compacto = (v: number) => {
-  const a = Math.abs(v), s = v < 0 ? MENOS : "";
-  if (a >= 1e6) return `${s}${num(a / 1e6, 1)} mi`;
-  if (a >= 1000) return `${s}${num(a / 1000, a >= 1e4 ? 0 : 1)} mil`;
-  return `${s}${num(a, 0)}`;
-};
 
 function nice(v: number) {
   if (v <= 0) return 1;

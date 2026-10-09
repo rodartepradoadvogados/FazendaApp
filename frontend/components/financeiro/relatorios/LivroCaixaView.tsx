@@ -93,7 +93,7 @@ export default function LivroCaixaView(props: PropsRelatorio) {
       ? { chave: "inv", rotulo: "Investimentos pagos", valor: t.investimentos, cmp: tq?.investimentos ?? null, formato: "brl0", bom: "neutro",
         sub: "Despesa no mês do pagamento, sem depreciação" }
       // Regras antigas: sem natureza não há investimento separado — trava com o porquê, nunca outro número.
-      : { chave: "qtd", rotulo: "Lançamentos no livro", valor: t.quantidade, cmp: tq?.quantidade ?? null, formato: "num0", bom: "neutro",
+      : { chave: "qtd", rotulo: "Lançamentos no livro", valor: t.quantidade, cmp: tq?.quantidade ?? null, formato: "num", bom: "neutro",
         selo: <span className="rl-selo"><Lock size={11} aria-hidden /> investimento: regras novas</span>,
         sub: "A separação custeio × investimento chega com as regras novas dos relatórios" },
   ] : [];

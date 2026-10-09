@@ -114,7 +114,7 @@ export default function CaixaRealView(props: PropsRelatorio) {
       onAbrir: () => document.getElementById("rl-cx-contas")?.scrollIntoView({ behavior: "smooth", block: "start" }),
     },
     {
-      chave: "folego", rotulo: "Fôlego", valor: folego?.folego_dias ?? null, formato: "num0", unidade: " dias", bom: "neutro",
+      chave: "folego", rotulo: "Fôlego", valor: folego?.folego_dias ?? null, formato: "num", unidade: " dias", bom: "neutro",
       sub: folego?.saida_media_diaria ? `Saldo ÷ ${brl0(folego.saida_media_diaria)}/dia de saída média nos últimos ${folego.dias_janela} dias` : "Sem saídas nos últimos 90 dias para medir",
     },
     {

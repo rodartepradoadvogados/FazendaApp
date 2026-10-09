@@ -10,7 +10,7 @@ import type { PontoLitro } from "@/lib/relatorioLitro";
 import { brl, mesCurto, num, MENOS } from "@/lib/relatorioContexto";
 import { useMovimentoReduzido } from "./RelatorioShell";
 
-function useLargura<T extends HTMLElement>(padrao = 880) {
+export function useLargura<T extends HTMLElement>(padrao = 880) {
   const ref = useRef<T>(null);
   const [w, setW] = useState(padrao);
   useEffect(() => {
@@ -25,7 +25,7 @@ function useLargura<T extends HTMLElement>(padrao = 880) {
   return [ref, w] as const;
 }
 
-const compacto = (v: number) => {
+export const compacto = (v: number) => {
   const a = Math.abs(v), s = v < 0 ? MENOS : "";
   if (a >= 1e6) return `${s}${num(a / 1e6, 1)} mi`;
   if (a >= 1000) return `${s}${num(a / 1000, a >= 1e4 ? 0 : 1)} mil`;
@@ -102,11 +102,21 @@ export function LegendaCascata() {
   </>);
 }
 
+/** Nomes das duas linhas e das faixas (padrão: preço × custo por litro). Fase C: o RMCA usa o mesmo
+ *  gráfico com receita × comida por vaca/dia — um componente só, mudam os rótulos e a unidade. */
+export type NomesDuasLinhas = { preco: string; custo: string; sobra: string; falta: string; sufixo: string };
+const NOMES_LITRO: NomesDuasLinhas = {
+  preco: "Preço líquido", custo: "Custo de custeio (COE/L)", sobra: "Sobra do custeio", falta: "Falta", sufixo: "/L",
+};
+
 /** Preço líquido × custo de custeio por litro, 12 meses; a área entre as linhas é a sobra (ou a falta, hachurada). */
-export function GraficoPrecoCusto({ pontos, descricao }: { pontos: PontoLitro[]; descricao: string }) {
+export function GraficoPrecoCusto({ pontos, descricao, nomes = NOMES_LITRO }: { pontos: PontoLitro[]; descricao: string; nomes?: NomesDuasLinhas }) {
   const reduz = useMovimentoReduzido();
   const dados = pontos.map((p) => ({ ...p, rot: mesCurto(p.comp) }));
   const fmt = (v: number) => `R$ ${num(v, 2)}`;
+  // Eixo largo o bastante para "R$ 25,00" (RMCA por vaca/dia) sem quebrar o rótulo.
+  const maior = Math.max(0, ...pontos.flatMap((p) => [Math.abs(p.preco ?? 0), Math.abs(p.custo ?? 0)]));
+  const larguraEixo = maior >= 100 ? 86 : maior >= 10 ? 76 : 64;
   return (
     <div role="img" aria-label={descricao} style={{ width: "100%", height: 280 }}>
       <ResponsiveContainer width="100%" height="100%">
@@ -119,25 +129,26 @@ export function GraficoPrecoCusto({ pontos, descricao }: { pontos: PontoLitro[];
           </defs>
           <CartesianGrid stroke="var(--border)" vertical={false} />
           <XAxis dataKey="rot" tick={{ fill: "var(--text-muted)", fontSize: 11 }} tickLine={false} axisLine={{ stroke: "var(--border-strong, var(--border))" }} interval="preserveStartEnd" minTickGap={8} />
-          <YAxis tickFormatter={fmt} tick={{ fill: "var(--text-muted)", fontSize: 11 }} width={64} tickLine={false} axisLine={false} domain={["auto", "auto"]} />
+          <YAxis tickFormatter={fmt} tick={{ fill: "var(--text-muted)", fontSize: 11 }} width={larguraEixo} tickLine={false} axisLine={false} domain={["auto", "auto"]} />
           <Tooltip
             contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", color: "var(--text)", fontSize: "0.8rem" }}
-            formatter={(v, nome) => (Array.isArray(v) ? [`${fmt(Number(v[1]) - Number(v[0]))}/L`, String(nome)] : [`${fmt(Number(v))}/L`, String(nome)])} />
-          <Area dataKey="faixaPos" name="Sobra do custeio" stroke="none" fill="var(--rl-margem)" isAnimationActive={!reduz} animationDuration={450} connectNulls={false} />
-          <Area dataKey="faixaNeg" name="Falta" stroke="none" fill="url(#rll-neg)" isAnimationActive={!reduz} animationDuration={450} connectNulls={false} />
-          <Line dataKey="custo" name="Custo de custeio (COE/L)" stroke="var(--rl-n1)" strokeWidth={2.2} dot={{ r: 3, fill: "var(--rl-n1)" }} isAnimationActive={!reduz} animationDuration={450} connectNulls={false} />
-          <Line dataKey="preco" name="Preço líquido" stroke="var(--rl-a)" strokeWidth={2.6} dot={{ r: 3, fill: "var(--rl-a)" }} isAnimationActive={!reduz} animationDuration={450} connectNulls={false} />
+            formatter={(v, nome) => (Array.isArray(v) ? [`${fmt(Number(v[1]) - Number(v[0]))}${nomes.sufixo}`, String(nome)] : [`${fmt(Number(v))}${nomes.sufixo}`, String(nome)])} />
+          <Area dataKey="faixaPos" name={nomes.sobra} stroke="none" fill="var(--rl-margem)" isAnimationActive={!reduz} animationDuration={450} connectNulls={false} />
+          <Area dataKey="faixaNeg" name={nomes.falta} stroke="none" fill="url(#rll-neg)" isAnimationActive={!reduz} animationDuration={450} connectNulls={false} />
+          <Line dataKey="custo" name={nomes.custo} stroke="var(--rl-n1)" strokeWidth={2.2} dot={{ r: 3, fill: "var(--rl-n1)" }} isAnimationActive={!reduz} animationDuration={450} connectNulls={false} />
+          <Line dataKey="preco" name={nomes.preco} stroke="var(--rl-a)" strokeWidth={2.6} dot={{ r: 3, fill: "var(--rl-a)" }} isAnimationActive={!reduz} animationDuration={450} connectNulls={false} />
         </ComposedChart>
       </ResponsiveContainer>
     </div>
   );
 }
 
-export function LegendaPrecoCusto() {
+export function LegendaPrecoCusto({ textos }: { textos?: [string, string, string, string] } = {}) {
+  const [a, b, c, d] = textos ?? ["Preço líquido do leite", "Custo de custeio por litro", "Sobra (preço acima do custo)", "Falta (custo acima do preço)"];
   return (<>
-    <span style={{ color: "var(--rl-a)" }}><i className="ln" />Preço líquido do leite</span>
-    <span style={{ color: "var(--rl-n1)" }}><i className="ln" />Custo de custeio por litro</span>
-    <span><i style={{ background: "var(--rl-margem)" }} />Sobra (preço acima do custo)</span>
-    <span><i style={{ background: "repeating-linear-gradient(-45deg,var(--st-venc-bg) 0 3px,var(--st-venc-fg) 3px 4.5px)" }} />Falta (custo acima do preço)</span>
+    <span style={{ color: "var(--rl-a)" }}><i className="ln" />{a}</span>
+    <span style={{ color: "var(--rl-n1)" }}><i className="ln" />{b}</span>
+    <span><i style={{ background: "var(--rl-margem)" }} />{c}</span>
+    <span><i style={{ background: "repeating-linear-gradient(-45deg,var(--st-venc-bg) 0 3px,var(--st-venc-fg) 3px 4.5px)" }} />{d}</span>
   </>);
 }

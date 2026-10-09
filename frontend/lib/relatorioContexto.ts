@@ -286,14 +286,15 @@ export function litros(v: number): string {
   return `${num(v, 0)}${NB}L`;
 }
 
-/** `num0`: número inteiro sem unidade (ex.: dias de fôlego — a unidade vai à parte). */
-export type FormatoNumero = "brl" | "brl0" | "brlL" | "pct" | "litros" | "num0";
+/** `num`: número inteiro sem unidade — contagem (vacas, cabeças, doses, lançamentos) ou dias de fôlego;
+ *  a unidade, se houver, vai à parte. Um valor que arredonda para 0 nunca vira "−0". */
+export type FormatoNumero = "brl" | "brl0" | "brlL" | "pct" | "litros" | "num";
 export function formatar(v: number, f: FormatoNumero): string {
   if (f === "brl0") return brl(v, 0);
   if (f === "brlL") return brl(v, 2);
   if (f === "pct") return `${v < 0 ? MENOS : ""}${num(v, 1)}%`; // já em pontos percentuais
   if (f === "litros") return litros(v);
-  if (f === "num0") return `${v < 0 && Math.round(v) !== 0 ? MENOS : ""}${num(v, 0)}`;
+  if (f === "num") return `${v < 0 && Math.round(v) !== 0 ? MENOS : ""}${num(v, 0)}`;
   return brl(v, 2);
 }
 /** Variação absoluta no formato do número (pct vira "p.p."). */
@@ -301,7 +302,7 @@ export function formatarDelta(abs: number, f: FormatoNumero): string {
   const s = abs > 0 ? "+" : MENOS;
   if (f === "pct") return `${s}${num(abs, 1)} p.p.`;
   if (f === "litros") return `${s}${litros(abs)}`;
-  if (f === "num0") return `${s}${num(abs, 0)}`;
+  if (f === "num") return `${s}${num(abs, 0)}`;
   if (f === "brl0") return brlSinal(abs, 0);
   return brlSinal(abs, 2);
 }

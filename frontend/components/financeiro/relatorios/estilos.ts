@@ -83,7 +83,8 @@ button.rl-kpi{cursor:pointer}button.rl-kpi:hover{background:var(--surface-2)}
 .rl-dois{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:.75rem}
 
 /* Tabela Atual | Comparação | Δ | Δ% */
-/* position:relative: o texto só para leitor de tela (absoluto) das células roladas não vaza para fora do card. */
+/* position:relative: o texto só para leitor de tela (.rl-sr, absoluto) das células roladas fica DENTRO da
+   rolagem da tabela — sem ele vazava do card e a página rolava de lado a 390 px (achado por C1 e C2). */
 .rl-tw{overflow-x:auto;position:relative;border:1px solid var(--border);border-radius:var(--r-sm)}
 .rl-tab{margin:0}
 .rl-tab th.r,.rl-tab td.r{text-align:right;white-space:nowrap}

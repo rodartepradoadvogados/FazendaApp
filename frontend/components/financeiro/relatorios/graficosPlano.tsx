@@ -4,28 +4,15 @@
 // longos legíveis em qualquer largura, cada linha abre a DRE) e o saldo de caixa
 // de 12 meses dos cenários (recharts). Cores só por token; verde/vermelho só
 // para melhor/pior, sempre com a palavra ao lado.
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { type KeyboardEvent } from "react";
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { brl, mesCurto, num, MENOS } from "@/lib/relatorioContexto";
 import type { DesvioLinha } from "@/lib/relatorioOrcamento";
 import { useMovimentoReduzido } from "./RelatorioShell";
+import { useLargura } from "./graficos";
 
-function useLargura<T extends HTMLElement>(padrao = 880) {
-  const ref = useRef<T>(null);
-  const [w, setW] = useState(padrao);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const medir = () => setW(Math.max(280, Math.round(el.clientWidth)));
-    medir();
-    const ro = new ResizeObserver(medir);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, w] as const;
-}
-
-const compacto = (v: number) => {
+/** Como o `compacto` do molde, mas com o sinal "+" (desvio para os dois lados). */
+const compactoSinal = (v: number) => {
   const a = Math.abs(v), s = v < 0 ? MENOS : v > 0 ? "+" : "";
   if (a >= 1e6) return `${s}${num(a / 1e6, 1)} mi`;
   if (a >= 1000) return `${s}${num(a / 1000, a >= 1e4 ? 0 : 1)} mil`;
@@ -61,7 +48,7 @@ export function DesvioPorLinha({ linhas, porLitro, onAbrir, descricao }: {
           const sem = (porLitro ? l.desvioL : l.desvio) == null;
           const fill = sem ? "none" : l.melhor == null ? "var(--rl-n3)" : l.melhor ? "var(--st-pago-fg)" : "url(#rlp-pior)";
           const nome = estreito && l.nome.length > 16 ? `${l.nome.slice(0, 15)}…` : l.nome;
-          const valor = sem ? "" : porLitro ? sinal(v, 3) + "/L" : estreito ? compacto(v) : sinal(v, 0);
+          const valor = sem ? "" : porLitro ? sinal(v, 3) + "/L" : estreito ? compactoSinal(v) : sinal(v, 0);
           const palavra = sem ? "sem orçamento" : l.melhor == null ? "no plano" : l.melhor ? "melhor" : "pior";
           return (
             <g key={l.chave} {...(onAbrir ? {
@@ -111,7 +98,7 @@ const ESTILO: Record<SerieSaldo["estilo"], { cor: string; w: number; dash?: stri
 export function GraficoSaldo({ rotulos, series, reserva, descricao }: { rotulos: string[]; series: SerieSaldo[]; reserva: number; descricao: string }) {
   const reduz = useMovimentoReduzido();
   const dados = rotulos.map((rot, i) => Object.fromEntries([["rot", rot], ...series.map((s, k) => [`s${k}`, s.vals[i]])]));
-  const fmt = (v: number) => compacto(v).replace(/^\+/, "");
+  const fmt = (v: number) => compactoSinal(v).replace(/^\+/, "");
   return (
     <div role="img" aria-label={descricao} style={{ width: "100%", height: 300 }}>
       <ResponsiveContainer width="100%" height="100%">
