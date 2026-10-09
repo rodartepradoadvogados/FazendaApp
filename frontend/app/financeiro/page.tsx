@@ -1,5 +1,5 @@
 "use client";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Circle, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
   Paperclip, Pencil, ShoppingCart, Target, TrendingUp, Compass, Trash2, Wrench, AlertTriangle, Repeat, CreditCard, ArrowLeft, Award, Undo2,
@@ -12,7 +12,7 @@ import {
   // Onda 2 — listas fechadas, código PAT e baixa do patrimônio
   fetchOpcoesPatrimonio, gerarCodigosPatrimonio, baixarPatrimonio, estornarBaixaPatrimonio, type OpcoesPatrimonio,
   // Onda 3b — DRE em cascata / Onda 4 — Caixa Real
-  fetchDreCascata, classificarContaDre, type DreResposta, type RateioDepreciacao, atualizarNaturezaLancamento, fetchRegrasV2, type NaturezaDiferenca,
+  atualizarNaturezaLancamento, fetchRegrasV2, type NaturezaDiferenca,
   fetchPessoas, formatBRL, formatDate,
   atualizarLancamentoFinanceiro, ehAdmin,
   fetchCentrosCusto,
@@ -34,7 +34,7 @@ import { ServicoPicker } from "@/components/ServicoPicker";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
 import NovoServicoRapido from "@/components/NovoServicoRapido";
 import {
-  ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
+  ComposedChart, Bar, Line, LineChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid,
 } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { Dropzone } from "@/components/Dropzone";
@@ -71,11 +71,10 @@ const COLUNAS_LIVRO = [
 import type { Lanc } from "@/lib/financeiroTipos";
 import { NATUREZAS_FIN, rotuloNatureza } from "@/lib/naturezaFin";
 
-type Rel = "fluxo" | "dre" | "dre_contas" | "classificar" | "painel_dono" | "reguas_referencia" | "pacote_contador" | "fechamento_mes" | "conciliacao" | "rel_litro" | "rel_dre" | "rel_caixa" | "rel_fluxo" | "rel_livro" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "rel_orcamento" | "rel_cenarios" | "orcamento_itens" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos" | "resumo";
+type Rel = "fluxo" | "dre" | "classificar" | "painel_dono" | "reguas_referencia" | "pacote_contador" | "fechamento_mes" | "conciliacao" | "rel_litro" | "rel_dre" | "rel_caixa" | "rel_fluxo" | "rel_livro" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "rel_orcamento" | "rel_cenarios" | "orcamento_itens" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos" | "resumo";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "caixa_real", label: "Caixa Real", icon: TrendingUp, desc: "Projeção de liquidez: quanto tem hoje e como o saldo evolui com os compromissos já lançados" },
-  { id: "dre_contas", label: "DRE por conta (tela anterior)", icon: FileText, desc: "Resultado em cascata com a classificação das contas — a DRE da fazenda nova está em Relatórios › Resultado" },
   { id: "livro", label: "Livro Caixa", icon: BookOpen, desc: "Lançamentos com saldo acumulado" },
   { id: "extrato", label: "Extrato completo", icon: Receipt, desc: "Todos os lançamentos, com ou sem baixa" },
   { id: "rmca", label: "RMCA", icon: BarChart3, desc: "Receita do leite menos custo de alimentação — gerencial e físico lado a lado" },
@@ -123,7 +122,7 @@ const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas", "a_pagar",
 const ICONE_GRUPO: Record<string, LucideIcon> = { "rg-painel": LayoutGrid, "rg-resultado": TrendingUp, "rg-caixa": Wallet, "rg-leite": Milk, "rg-plano": Target, "rg-registros": ListChecks, "rg-contador": FileArchive };
 const ICONE_RELATORIO: Record<string, LucideIcon> = {
   painel_dono: LayoutGrid, reguas_referencia: Ruler,
-  rel_litro: Milk, rel_dre: FileText, classificar: Tags, dre_contas: FileText, rel_caixa: TrendingUp, rel_fluxo: Wallet, rel_livro: BookOpen, custos: BarChart3, rmca: BarChart3,
+  rel_litro: Milk, rel_dre: FileText, classificar: Tags, rel_caixa: TrendingUp, rel_fluxo: Wallet, rel_livro: BookOpen, custos: BarChart3, rmca: BarChart3,
   rel_orcamento: Target, rel_cenarios: Compass, orcamento_itens: Target, planejamento_financeiro: Compass, compra_venda_animais: ShoppingCart, compra_semen: ShoppingCart,
   pacote_contador: FileArchive, fechamento_mes: LockKeyhole, conciliacao: ArrowLeftRight,
 };
@@ -195,9 +194,9 @@ import ContasListaView, { PilulaSituacao } from "@/components/financeiro/ContasL
 import ConsultasView from "@/components/financeiro/ConsultasView";
 import OndeFoiParar from "@/components/financeiro/OndeFoiParar";
 import ResumoView from "@/components/financeiro/ResumoView";
-import { ehNotaSoDeClassificacao, hojeLocal, perguntaAgendamento, situacaoDe, valorCompetencia, valorRealizado } from "@/lib/financeiroSituacao";
+import { ehNotaSoDeClassificacao, hojeLocal, perguntaAgendamento, situacaoDe, valorRealizado } from "@/lib/financeiroSituacao";
 import { useRegrasV2 } from "@/lib/useRegrasV2";
-import { apresentacaoSituacao, kpisDre, regimeDaUrl, type RegimeDre } from "@/lib/dreUnica";
+import { apresentacaoSituacao } from "@/lib/dreUnica";
 import { migrarFiltrosSalvosAntigos } from "@/lib/financeiroFiltrosMigracao";
 // Fase B dos Relatórios: molde único, árvore por pergunta e as duas primeiras telas novas.
 import { GRUPOS_RELATORIOS, IDS_RELATORIOS, RELATORIOS_NO_MOLDE, VISAO_DO_ID_ANTIGO, grupoDe, idDoRelatorio } from "@/lib/relatoriosNavegacao";
@@ -378,25 +377,6 @@ export default function FinanceiroPage() {
   const [novoLancAberto, setNovoLancAberto] = useState<"despesa" | "receita" | null>(null);
   const [novoLancArquivo, setNovoLancArquivo] = useState<File | null>(null);
   const { nomes: nomesResponsaveisNovo } = usePessoasAtivas();
-  // Fase A, PR 8 (DRE única): UM controle de regime para a aba DRE inteira
-  // (indicadores, gráfico, cascata e detalhamento), guardado na URL
-  // (?regime=caixa) — antes a cascata tinha um seletor próprio e os
-  // indicadores ficavam sempre em competência.
-  // (Lido da URL já no primeiro render do cliente: o seletor só aparece na
-  // aba DRE, que nunca é a inicial, então não há diferença de hidratação.)
-  const [regimeDre, setRegimeDre] = useState<RegimeDre>(() => (typeof window === "undefined" ? "competencia" : regimeDaUrl(window.location.search)));
-  const regrasV2Pagina = useRegrasV2();
-  const [dreDados, setDreDados] = useState<DreResposta | null>(null);
-  const [dreErro, setDreErro] = useState<string | null>(null);
-  const dreRequisicao = useRef(0);
-  const mudarRegimeDre = (r: RegimeDre) => {
-    setRegimeDre(r);
-    const qs = new URLSearchParams(window.location.search);
-    if (r === "caixa") qs.set("regime", "caixa"); else qs.delete("regime");
-    const busca = qs.toString();
-    window.history.replaceState(null, "", `${window.location.pathname}${busca ? `?${busca}` : ""}${window.location.hash}`);
-  };
-
   // Vindo da Agenda (link "Ir para Financeiro" de uma conta a pagar/receber
   // vencendo) — abre a sub-aba de Pagamento/Recebimento certa e já pré-seleciona
   // a nota informada, em vez de dar baixa direto na lista.
@@ -532,7 +512,6 @@ export default function FinanceiroPage() {
   // Data relevante por aba: DRE = competência; Contas = campo escolhido no
   // filtro único de período (emissão por padrão); fluxo/livro = pagamento.
   const campoData = (r: Lanc) => {
-    if (rel === "dre_contas") return r.data_competencia;
     if (CONTAS_IDS.has(rel)) {
       if (campoPeriodoContas === "emissao") return r.data_emissao || r.data_competencia;
       if (campoPeriodoContas === "vencimento") return r.data_vencimento || r.data_competencia;
@@ -540,7 +519,7 @@ export default function FinanceiroPage() {
     }
     return r.data_pagamento;
   };
-  const campoMes = (r: Lanc) => (rel === "dre_contas" ? r.mes_competencia : r.mes_caixa);
+  const campoMes = (r: Lanc) => r.mes_caixa;
 
   const filtrados = useMemo(() => {
     if (CONTAS_IDS.has(rel)) {
@@ -584,29 +563,10 @@ export default function FinanceiroPage() {
   }, [regs, contasBase, rel, inicio, fim, centro, contaBanco, relTipo, relFornecedor, relProduto, relDocumento, relConta, campoPeriodoContas]);
 
   // Valor que cada relatório soma: caixa = o efetivamente pago/recebido; DRE (competência) = o valor da parte, sem contar duas vezes o restante reparcelado.
-  const valorDoRel = (r: Lanc) => (rel === "dre_contas" ? valorCompetencia(r) : valorRealizado(r));
+  const valorDoRel = (r: Lanc) => valorRealizado(r);
   const receitas = filtrados.filter((r) => r.tipo === "receita").reduce((a, r) => a + valorDoRel(r), 0);
   const despesas = filtrados.filter((r) => r.tipo === "despesa").reduce((a, r) => a + valorDoRel(r), 0);
   const resultado = receitas - despesas;
-
-  // A DRE do servidor (cascata + resumo) — uma busca só para a aba inteira.
-  // O filtro de período vazio significa "mostra tudo", mas o endpoint exige
-  // as duas datas: uma janela bem larga reproduz isso. O centro de custo do
-  // filtro vale para a cascata só com as regras novas (antes, a cascata era
-  // sempre da fazenda inteira — comportamento mantido nas regras antigas).
-  const dreDe = inicio || "2000-01-01";
-  const dreAte = fim || `${new Date().getFullYear() + 1}-12-31`;
-  const centroDre = regrasV2Pagina ? (centro || null) : null;
-  const carregarDre = useCallback(() => {
-    if (rel !== "dre_contas" || !regs) return;
-    const minha = ++dreRequisicao.current;
-    fetchDreCascata({ data_inicio: dreDe, data_fim: dreAte, regime: regimeDre, centro_custo: centroDre })
-      .then((d) => { if (minha === dreRequisicao.current) { setDreDados(d); setDreErro(null); } })
-      .catch((e) => { if (minha === dreRequisicao.current) setDreErro(e.message); });
-  }, [rel, regs, dreDe, dreAte, regimeDre, centroDre]);
-  useEffect(() => { carregarDre(); }, [carregarDre]);
-  // KPIs e gráfico da DRE: o resumo do servidor (regras novas) ou, sem ele, a soma de antes.
-  const kpis = kpisDre(dreDados, { receitas, despesas });
 
   // Fluxo de caixa mensal (com saldo acumulado)
   const fluxoMensal = useMemo(() => {
@@ -648,34 +608,6 @@ export default function FinanceiroPage() {
     const partes = codigoFolha.split(".");
     return partes.map((_, i) => partes.slice(0, i + 1).join("."));
   };
-
-  // DRE por conta gerencial — hierárquico, usando o NOME real do plano de
-  // contas (Configurações > Importar dados). Lançamentos sem conta classificada
-  // continuam aparecendo à parte, por descrição (comportamento antigo).
-  const dreContas = useMemo(() => {
-    const by = new Map<string, { conta: string; nome: string; codigo: string; nivel: number; receitas: number; despesas: number }>();
-    filtrados.forEach((r) => {
-      const codigoFolha = r.conta_completa || r.codigo_conta || "";
-      if (!codigoFolha) {
-        const k = r.descricao || "(sem conta)";
-        const e = by.get(k) ?? { conta: k, nome: k, codigo: "", nivel: 0, receitas: 0, despesas: 0 };
-        if (r.tipo === "receita") e.receitas += valorDoRel(r); else e.despesas += valorDoRel(r);
-        by.set(k, e);
-        return;
-      }
-      const niveis = propagarPorHierarquia(codigoFolha);
-      niveis.forEach((codigo, i) => {
-        const nomeConhecido = nomePorCodigo.get(codigo);
-        const ehFolha = i === niveis.length - 1;
-        if (!nomeConhecido && !ehFolha) return; // nível intermediário sem nome cadastrado — não gera linha "só número"
-        const nome = nomeConhecido || (r.descricao || codigo);
-        const e = by.get(codigo) ?? { conta: codigo, nome, codigo, nivel: i + 1, receitas: 0, despesas: 0 };
-        if (r.tipo === "receita") e.receitas += valorDoRel(r); else e.despesas += valorDoRel(r);
-        by.set(codigo, e);
-      });
-    });
-    return Array.from(by.values()).map((x) => ({ ...x, saldo: x.receitas - x.despesas })).sort((a, b) => a.conta.localeCompare(b.conta));
-  }, [filtrados, nomePorCodigo]);
 
   // Meses presentes no período filtrado (para as colunas do detalhamento).
   const mesesFluxo = useMemo(() => Array.from(new Set(filtrados.map(campoMes).filter(Boolean))).sort() as string[], [filtrados, rel]);
@@ -782,15 +714,8 @@ export default function FinanceiroPage() {
               codigo={relConta} nome={relContaNome}
               onChange={(c, n) => { setRelConta(c); setRelContaNome(n); }} /></div>
         </>}
-        {rel === "dre_contas" && (
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Regime</label>
-            <select style={inputStyle} value={regimeDre} onChange={(e) => mudarRegimeDre(e.target.value as RegimeDre)}>
-              <option value="competencia">Competência (quando aconteceu)</option>
-              <option value="caixa">Caixa (quando foi pago)</option>
-            </select></div>
-        )}
         <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", paddingBottom: "0.4rem" }}>
-          {!CONTAS_IDS.has(rel) && rel !== "dre_contas" && <>Regime: <strong style={{ color: "var(--dourado-light)" }}>caixa</strong> · </>}
+          {!CONTAS_IDS.has(rel) && <>Regime: <strong style={{ color: "var(--dourado-light)" }}>caixa</strong> · </>}
           {filtrados.length} lançamento{filtrados.length === 1 ? "" : "s"}
         </span>
       </div>
@@ -927,12 +852,6 @@ export default function FinanceiroPage() {
             <KPI v={formatBRL(resultado)} l="Saldo do período" c={resultado >= 0 ? "var(--green-light)" : "var(--amber)"} />
             <KPI v={fluxoMensal.length ? formatBRL(fluxoMensal[fluxoMensal.length - 1].acumulado) : "—"} l="Saldo acumulado" c="var(--dourado-light)" />
           </>}
-          {rel === "dre_contas" && <>
-            <KPI v={formatBRL(kpis.receita)} l={kpis.fonte === "servidor" ? "Receita líquida" : "Receita"} c="var(--green-light)" />
-            <KPI v={formatBRL(kpis.despesa)} l="Despesa" c="var(--red)" />
-            <KPI v={formatBRL(kpis.resultado)} l={kpis.fonte === "servidor" ? "Resultado líquido" : "Resultado"} c={kpis.resultado >= 0 ? "var(--green-light)" : "var(--amber)"} />
-            <KPI v={kpis.margemPct != null ? `${kpis.margemPct.toLocaleString("pt-BR")}%` : "—"} l="Margem" c={kpis.resultado >= 0 ? "var(--green-light)" : "var(--amber)"} />
-          </>}
           {rel === "livro" && <>
             <KPI v={formatBRL(receitas)} l="Entradas" c="var(--green-light)" />
             <KPI v={formatBRL(despesas)} l="Saídas" c="var(--red)" />
@@ -940,23 +859,6 @@ export default function FinanceiroPage() {
             <KPI v={String(livro.length)} l="Lançamentos" />
           </>}
         </div>
-
-        {/* Onda 3b — a cascata de 15 linhas é a leitura principal da DRE.
-            Usa o MESMO período do filtro da página (início/fim), para a tela
-            não ter dois controles de data dizendo coisas diferentes. */}
-        {rel === "dre_contas" && (
-          <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", margin: "-0.5rem 0 1rem" }}>
-            {kpis.fonte === "servidor" ? (<>
-              Indicadores da DRE do servidor ({regimeDre === "caixa" ? "caixa" : "competência"}): o mesmo resultado da cascata, do
-              e-mail do Portal e da Capa. Compra de bem, financiamento, aporte e adiantamento ficam fora; a depreciação entra.
-              {kpis.foraDaDre ? <> Fora do resultado no período: <strong>{formatBRL(kpis.foraDaDre)}</strong>.</> : null}
-              {kpis.naoClassificado ? <> Sem classificação: <strong style={{ color: "var(--amber)" }}>{formatBRL(kpis.naoClassificado)}</strong>.</> : null}
-            </>) : (<>
-              Indicadores somados dos lançamentos por competência (regras antigas){regimeDre === "caixa" ? "; o regime escolhido vale para a cascata abaixo" : ""}.
-            </>)}
-          </p>
-        )}
-        {rel === "dre_contas" && <DreCascataView dataInicio={inicio} dataFim={fim} dados={dreDados} erro={dreErro} onRecarregar={carregarDre} />}
 
         {/* Diário/Mensal — só se aplica ao Fluxo de Caixa */}
         {rel === "fluxo" && (
@@ -972,7 +874,7 @@ export default function FinanceiroPage() {
 
         {/* Gráfico do consolidado */}
         <div className="card mb-4">
-          <div className="card-header mb-3">{rel === "fluxo" ? `Fluxo de Caixa ${visaoFluxo === "diario" ? "diário" : "mensal"} (entradas × saídas × acumulado)` : rel === "dre_contas" ? "Receita × Despesa × Resultado" : "Saldo Acumulado"}</div>
+          <div className="card-header mb-3">{rel === "fluxo" ? `Fluxo de Caixa ${visaoFluxo === "diario" ? "diário" : "mensal"} (entradas × saídas × acumulado)` : "Saldo Acumulado"}</div>
           {rel === "fluxo" && visaoFluxo === "mensal" && (
             <ResponsiveContainer width="100%" height={280}>
               <ComposedChart data={fluxoMensal}>
@@ -1006,16 +908,6 @@ export default function FinanceiroPage() {
               </p>
             )}
           </>)}
-          {rel === "dre_contas" && (
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={[{ n: "Receita", v: kpis.receita, f: "var(--green-light)" }, { n: "Despesa", v: kpis.despesa, f: "var(--red)" }, { n: "Resultado", v: Math.abs(kpis.resultado), f: kpis.resultado >= 0 ? "var(--dourado)" : "var(--amber)" }]}>
-                <XAxis dataKey="n" tick={{ fill: "var(--text-muted)", fontSize: 11 }} />
-                <YAxis tickFormatter={brk} tick={{ fill: "var(--text-muted)", fontSize: 10 }} width={48} />
-                <Tooltip formatter={(v: any) => formatBRL(Number(v))} contentStyle={tip} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
-                <Bar dataKey="v" barSize={70}>{[0, 1, 2].map((i) => <Cell key={i} fill={["var(--green-light)", "var(--red)", kpis.resultado >= 0 ? "var(--dourado)" : "var(--amber)"][i]} />)}</Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          )}
           {rel === "livro" && (<>
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={livro.filter((_, i) => i % Math.ceil(livro.length / 150 || 1) === 0)}>
@@ -1038,8 +930,8 @@ export default function FinanceiroPage() {
         <div className="card mb-4">
           <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.4rem" }}>
             <span>
-              {rel === "fluxo" ? `Fluxo ${visaoFluxo === "diario" ? "Diário" : "Mensal"}` : rel === "dre_contas" ? "Detalhamento por Conta Gerencial" : "Lançamentos"}
-              {rel !== "livro" && !(rel === "dre_contas" && kpis.fonte === "servidor") && <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}> (clique numa linha para ver os lançamentos)</span>}
+              {rel === "fluxo" ? `Fluxo ${visaoFluxo === "diario" ? "Diário" : "Mensal"}` : "Lançamentos"}
+              {rel !== "livro" && <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}> (clique numa linha para ver os lançamentos)</span>}
             </span>
             {rel === "livro" && (
               <ExportarBotoes titulo="Livro Caixa" nomeArquivoBase="livro_caixa" colunas={COLUNAS_LIVRO}
@@ -1105,67 +997,6 @@ export default function FinanceiroPage() {
                 })}</tbody>
               </table>
             )}
-            {rel === "dre_contas" && kpis.fonte === "servidor" && dreDados && (<>
-              {/* Regras novas (PR 8): o detalhamento sai da MESMA cascata do
-                  servidor — antes era outra soma, no cliente, com o trator,
-                  o aporte e o principal dentro. */}
-              <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
-                Cada conta gerencial na linha da DRE em que ela entrou ({regimeDre === "caixa" ? "caixa" : "competência"}). O que ficou
-                fora do resultado e o que falta classificar estão nos quadros da cascata, acima.
-              </p>
-              <table className="fazenda-table">
-                <thead><tr><th>Linha da DRE</th><th>Conta gerencial</th><th style={{ textAlign: "right" }}>Valor</th></tr></thead>
-                <tbody>{(dreDados.cascata ?? []).filter((l) => !l.eh_subtotal && (l.contas?.length ?? 0) > 0).flatMap((l) => (l.contas ?? []).map((c) => (
-                  <tr key={`${l.chave}-${c.codigo || c.nome}`}>
-                    <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.rotulo}</td>
-                    <td style={{ fontSize: "0.8rem" }}>
-                      {c.nome}{c.codigo && c.codigo !== c.nome ? <span style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginLeft: "0.4rem" }}>{c.codigo}</span> : null}
-                    </td>
-                    <td style={{ textAlign: "right", fontWeight: 600, color: l.operador === "-" ? "var(--red)" : c.valor < 0 ? "var(--amber)" : "var(--green-light)" }}>
-                      {l.operador === "-" && c.valor !== 0 ? "− " : ""}{formatBRL(Math.abs(c.valor))}
-                    </td>
-                  </tr>
-                )))}</tbody>
-              </table>
-            </>)}
-            {rel === "dre_contas" && kpis.fonte === "cliente" && (<>
-              <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
-                Resultado por <strong>conta gerencial</strong> do seu plano de contas (por competência), com a
-                hierarquia completa — uma conta de grupo soma o total das contas abaixo dela. Clique numa conta{" "}
-                <span style={{ color: "var(--text-muted)" }}>▾</span> para ver os lançamentos.
-              </p>
-              <table className="fazenda-table">
-                <thead><tr><th></th><th>Conta gerencial</th><th style={{ textAlign: "right" }}>Receitas</th><th style={{ textAlign: "right" }}>Despesas</th><th style={{ textAlign: "right" }}>Saldo</th></tr></thead>
-                <tbody>{dreContas.map((c) => {
-                  const aberto = exp.has("dre:" + c.conta);
-                  const itens = aberto ? filtrados.filter((r) => {
-                    const codigo = r.conta_completa || r.codigo_conta || "";
-                    if (!c.codigo) return (r.descricao || "(sem conta)") === c.conta;
-                    return codigo === c.codigo || codigo.startsWith(c.codigo + ".");
-                  }).sort((a, b) => b.valor - a.valor) : [];
-                  return (
-                    <Fragment key={c.conta}>
-                      <tr onClick={() => toggleExp("dre:" + c.conta)} title="Clique para ver os lançamentos desta conta" style={{ cursor: "pointer" }}>
-                        <td style={{ width: 18, color: "var(--text-muted)" }}>{aberto ? "▾" : "▸"}</td>
-                        <td style={{ fontWeight: c.nivel <= 1 ? 700 : 600, paddingLeft: `${Math.max(0, c.nivel - 1) * 1.1}rem` }}>
-                          {c.nome}{c.codigo && c.codigo !== c.nome ? <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem", marginLeft: "0.4rem" }}>{c.codigo}</span> : null}
-                        </td>
-                        <td style={{ textAlign: "right", color: "var(--green-light)" }}>{c.receitas ? formatBRL(c.receitas) : "—"}</td>
-                        <td style={{ textAlign: "right", color: "var(--red)" }}>{c.despesas ? formatBRL(c.despesas) : "—"}</td>
-                        <td style={{ textAlign: "right", fontWeight: 700, color: c.saldo >= 0 ? "var(--green-light)" : "var(--amber)" }}>{formatBRL(c.saldo)}</td>
-                      </tr>
-                      {aberto && itens.map((r, i) => (
-                        <tr key={c.conta + ":" + i} style={{ background: "var(--surface-2)" }}>
-                          <td></td>
-                          <td colSpan={2} style={{ fontSize: "0.75rem" }}>{formatDate(r.data_pagamento || r.data_competencia || "")} <span style={{ color: "var(--text-muted)" }}>· {r.fornecedor || "—"}</span></td>
-                          <td colSpan={2} style={{ textAlign: "right", fontSize: "0.78rem", color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{r.tipo === "receita" ? "+" : "−"}{formatBRL(r.valor)}</td>
-                        </tr>
-                      ))}
-                    </Fragment>
-                  );
-                })}</tbody>
-              </table>
-            </>)}
             {rel === "livro" && (
               <table className="fazenda-table">
                 <thead><tr>
@@ -4231,313 +4062,6 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   );
 }
 
-
-// ---------------------------------------------------------------------------
-// Onda 3b — DRE Gerencial em cascata (15 linhas) + classificação de contas
-// ---------------------------------------------------------------------------
-
-/** Rótulos das 9 linhas atribuíveis + o escape hatch, para o seletor de
- *  classificação. A ordem e os textos espelham ESPECIFICACAO_LINHAS no
- *  backend (fazenda/rules/dre.py) — quem valida é o backend; isto aqui é só
- *  a apresentação. */
-const LINHAS_DRE_ATRIBUIVEIS: { valor: string; rotulo: string }[] = [
-  { valor: "RECEITA_VENDAS", rotulo: "Receita de vendas" },
-  { valor: "DEDUCAO_IMPOSTOS", rotulo: "Deduções de impostos" },
-  { valor: "CUSTO_VARIAVEL", rotulo: "Custo variável (CPV/CMV)" },
-  { valor: "DESPESA_VARIAVEL", rotulo: "Despesas variáveis" },
-  { valor: "GASTOS_PESSOAL", rotulo: "Gastos com pessoal" },
-  { valor: "DESPESAS_OPERACIONAIS", rotulo: "Despesas operacionais" },
-  { valor: "DEPRECIACAO_AMORT_EXAUSTAO", rotulo: "Depreciação, amortização e exaustão" },
-  { valor: "OUTRAS_REC_DESP", rotulo: "Outras receitas e despesas" },
-  { valor: "TRIBUTOS_IR_CSLL", rotulo: "Tributos (IRPJ e CSLL)" },
-  { valor: "NAO_ENTRA_NA_DRE", rotulo: "— Não entra na DRE (principal de financiamento, transferência, aporte)" },
-];
-
-/** Fase A, PR 9: como a depreciação entrou no filtro de centro de custo —
- *  bens do centro inteiros + a fatia rateada dos bens sem centro. */
-function NotaRateioDepreciacao({ rateio }: { rateio: RateioDepreciacao }) {
-  return (
-    <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
-      Centro {rateio.centro_custo}: {formatBRL(rateio.depreciacao_bens_do_centro)} dos bens do centro
-      {rateio.depreciacao_bens_sem_centro ? <> + {formatBRL(rateio.depreciacao_rateada)} de {formatBRL(rateio.depreciacao_bens_sem_centro)} dos
-        bens sem centro ({(rateio.participacao * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% das despesas operacionais do período)</> : null}.
-      {rateio.aviso && <span style={{ display: "block", color: "var(--amber)", marginTop: "0.2rem" }}>{rateio.aviso}</span>}
-    </p>
-  );
-}
-
-/** Fase A, PR 8: a cascata recebe a DRE já buscada pela página (uma busca, um
- *  regime — o do filtro do topo), em vez de buscar a sua com um seletor de
- *  regime próprio. */
-function DreCascataView({ dataInicio, dataFim, dados, erro: erroCarga, onRecarregar }: {
-  dataInicio: string; dataFim: string; dados: DreResposta | null; erro: string | null; onRecarregar: () => void;
-}) {
-  const [erroAcao, setErroAcao] = useState<string | null>(null);
-  const [abertas, setAbertas] = useState<Set<string>>(new Set());
-  const [salvando, setSalvando] = useState<string | null>(null);
-  const erro = erroAcao || erroCarga;
-
-  // O filtro de período da página começa VAZIO, e vazio ali significa "sem
-  // filtro — mostra tudo" (a página traduz para uma janela bem larga, porque
-  // o endpoint exige as duas datas).
-  const semFiltroDePeriodo = !dataInicio || !dataFim;
-  const de = dataInicio || "2000-01-01";
-  const ate = dataFim || `${new Date().getFullYear() + 1}-12-31`;
-
-  const classificar = async (codigo: string, linha: string) => {
-    setSalvando(codigo);
-    setErroAcao(null);
-    try {
-      await classificarContaDre(codigo, linha || null);
-      onRecarregar();
-    } catch (e) { setErroAcao((e as Error).message); } finally { setSalvando(null); }
-  };
-
-  const alternar = (chave: string) => setAbertas((atual) => {
-    const proxima = new Set(atual);
-    if (proxima.has(chave)) proxima.delete(chave); else proxima.add(chave);
-    return proxima;
-  });
-
-  return (
-    <div>
-      {erro && <div className="alert-critico mb-3"><span>{erro}</span></div>}
-      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {dados && (() => {
-        // Frontend e backend sobem em velocidades diferentes (Vercel em ~2min;
-        // Railway recompila e roda migração). Na janela em que o site novo
-        // conversa com a API antiga, estes campos chegam indefinidos — e um
-        // `.map` em undefined derrubava a tela inteira do Financeiro, porque
-        // esta página não tem barreira de erro. Normalizar aqui faz a tela
-        // degradar com um aviso em vez de morrer, hoje e em todo deploy futuro.
-        const cascata = dados.cascata ?? [];
-        const naoClassificado = dados.nao_classificado ?? { total: 0, contas: [] };
-        const foraDaDre = dados.fora_da_dre ?? { total: 0, contas: [] };
-        const depreciacao = dados.depreciacao_periodo ?? { total: 0, inconsistencias: [] };
-        const apiAntiga = !dados.cascata;
-        return <>
-        {apiAntiga && (
-          <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
-            <p style={{ fontSize: "0.85rem", color: "var(--amber)", margin: 0 }}>
-              <strong>A cascata de 15 linhas ainda não está disponível neste servidor.</strong>{" "}
-              O site já está atualizado, mas a API ainda responde na versão anterior — normalmente
-              é o servidor terminando de subir. Atualize a página em alguns minutos. O gráfico e o
-              detalhamento por conta, abaixo, seguem funcionando normalmente.
-            </p>
-          </div>
-        )}
-        {/* Fase A, PR 2: folha/contrato/diária gerados sem conta automática. */}
-        {(dados.pendencias_contas_automaticas?.length ?? 0) > 0 && (
-          <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
-            <div className="card-header mb-2" style={{ color: "var(--amber)" }}>Configure as contas automáticas</div>
-            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
-              Lançamentos que o sistema cria sozinho estão sem conta e caíram em “não classificado”. Escolha a conta de
-              cada origem em Configurações › Parâmetros financeiros › Contas automáticas.
-            </p>
-            <ul style={{ fontSize: "0.76rem", margin: 0 }}>
-              {dados.pendencias_contas_automaticas!.map((p) => (
-                <li key={p.origem}>• {p.rotulo}: {formatBRL(p.valor)} ({p.lancamentos} item(ns))</li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {/* Contas ainda sem classificação — a DRE nunca finge que fecha, então
-            elas ficam FORA de todos os subtotais até serem classificadas. */}
-        {naoClassificado.total !== 0 && (
-          <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
-            <div className="card-header mb-2" style={{ color: "var(--amber)" }}>
-              {naoClassificado.total_receita !== undefined && naoClassificado.total_despesa !== undefined
-                // Regras novas (Fase A, PR 2): receita e despesa separadas, nunca somadas.
-                ? `Sem classificação: ${formatBRL(naoClassificado.total_receita)} de receita e ${formatBRL(naoClassificado.total_despesa)} de despesa em ${naoClassificado.contas.length} conta(s)`
-                : `Falta classificar ${formatBRL(Math.abs(naoClassificado.total))} em ${naoClassificado.contas.length} conta(s)`}
-            </div>
-            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-              Estes valores <strong>não entram em nenhuma linha</strong> da cascata abaixo — nem nos subtotais.
-              A DRE prefere mostrar o buraco a fechar com um número errado. Escolha a linha de cada conta:
-            </p>
-            <div className="overflow-x-auto">
-              <table className="fazenda-table" style={{ margin: 0 }}>
-                <thead><tr><th>Conta</th><th style={{ textAlign: "right" }}>Valor</th><th style={{ width: "22rem" }}>Linha da DRE</th></tr></thead>
-                <tbody>
-                  {naoClassificado.contas.map((c) => (
-                    <tr key={c.codigo || c.nome}>
-                      <td style={{ fontSize: "0.78rem" }}>
-                        {c.codigo && <span style={{ color: "var(--text-muted)", marginRight: "0.4rem" }}>{c.codigo}</span>}
-                        {c.nome}
-                      </td>
-                      <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(c.valor)}</td>
-                      <td>
-                        {c.codigo && !c.codigo.startsWith("(") ? (
-                          <select
-                            style={{ ...selStyleLote, width: "100%" }}
-                            disabled={salvando === c.codigo}
-                            defaultValue=""
-                            onChange={(e) => e.target.value && classificar(c.codigo!, e.target.value)}
-                          >
-                            <option value="">{salvando === c.codigo ? "Salvando…" : "Escolher linha…"}</option>
-                            {LINHAS_DRE_ATRIBUIVEIS.map((l) => <option key={l.valor} value={l.valor}>{l.rotulo}</option>)}
-                          </select>
-                        ) : (
-                          <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                            {c.codigo?.startsWith("(sem conta")
-                              ? "Lançamento automático sem conta — configure em Parâmetros financeiros › Contas automáticas."
-                              : "Sem código de conta — classifique pelo plano de contas."}
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* A cascata */}
-        <div className="card mb-4">
-          <div className="card-header mb-3">
-            DRE Gerencial — {semFiltroDePeriodo
-              ? "todo o período (use o filtro acima para restringir)"
-              : `${new Date(de + "T12:00:00").toLocaleDateString("pt-BR")} a ${new Date(ate + "T12:00:00").toLocaleDateString("pt-BR")}`}
-            {" · "}{dados.regime === "caixa" ? "regime de caixa" : "regime de competência"}
-            {dados.centro_custo ? ` · ${dados.centro_custo}` : ""}
-          </div>
-          <div className="overflow-x-auto">
-            <table className="fazenda-table" style={{ margin: 0 }}>
-              <tbody>
-                {cascata.map((linha) => {
-                  const temContas = (linha.contas?.length || 0) > 0;
-                  const aberta = abertas.has(linha.chave);
-                  const negativo = linha.valor < 0;
-                  return (
-                    <Fragment key={linha.chave}>
-                      <tr
-                        onClick={() => temContas && alternar(linha.chave)}
-                        style={{
-                          cursor: temContas ? "pointer" : "default",
-                          background: linha.eh_subtotal ? "var(--bg-elevated)" : undefined,
-                          borderTop: linha.eh_subtotal ? "1px solid var(--border)" : undefined,
-                        }}
-                      >
-                        <td style={{
-                          fontWeight: linha.eh_subtotal ? 700 : 400,
-                          fontSize: linha.eh_subtotal ? "0.85rem" : "0.8rem",
-                          paddingLeft: linha.eh_subtotal ? "0.75rem" : "1.75rem",
-                        }}>
-                          {temContas && <span style={{ color: "var(--text-muted)", marginRight: "0.4rem" }}>{aberta ? "▾" : "▸"}</span>}
-                          {linha.rotulo}
-                          {!linha.eh_subtotal && (
-                            <span style={{ color: "var(--text-muted)", marginLeft: "0.5rem", fontSize: "0.7rem" }}>
-                              {linha.operador === "-" ? "(subtrai)" : linha.operador === "±" ? "(líquido)" : ""}
-                            </span>
-                          )}
-                        </td>
-                        <td style={{
-                          textAlign: "right",
-                          fontWeight: linha.eh_subtotal ? 700 : 500,
-                          fontSize: linha.eh_subtotal ? "0.9rem" : "0.82rem",
-                          color: linha.eh_subtotal
-                            ? (negativo ? "var(--red)" : "var(--green-light)")
-                            : linha.operador === "-" ? "var(--red)" : undefined,
-                          whiteSpace: "nowrap",
-                        }}>
-                          {linha.operador === "-" && linha.valor !== 0 ? "− " : ""}{formatBRL(Math.abs(linha.valor))}
-                        </td>
-                      </tr>
-                      {aberta && linha.contas?.map((c) => (
-                        <tr key={`${linha.chave}-${c.codigo || c.nome}`} style={{ background: "var(--bg-base)" }}>
-                          <td style={{ paddingLeft: "3rem", fontSize: "0.74rem", color: "var(--text-muted)" }}>
-                            {c.codigo && <span style={{ marginRight: "0.4rem" }}>{c.codigo}</span>}{c.nome}
-                          </td>
-                          <td style={{ textAlign: "right", fontSize: "0.74rem", color: "var(--text-muted)" }}>{formatBRL(c.valor)}</td>
-                        </tr>
-                      ))}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Depreciação: o elo com o Patrimônio, que não existia antes da Onda 3 */}
-          <div className="card">
-            <div className="card-header mb-2">Depreciação do período</div>
-            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-              Calculada a partir do cadastro de Patrimônio pelo método de cada bem. É despesa
-              que <strong>não é saída de caixa</strong> — por isso entra aqui e não no Caixa Real.
-            </p>
-            <KPI v={formatBRL(depreciacao.total)} l="Depreciação, amortização e exaustão" c="var(--amber)" />
-            {depreciacao.rateio && <NotaRateioDepreciacao rateio={depreciacao.rateio} />}
-            {depreciacao.inconsistencias.length > 0 && (
-              <ul style={{ marginTop: "0.75rem", fontSize: "0.72rem", color: "var(--amber)" }}>
-                {depreciacao.inconsistencias.slice(0, 5).map((m, i) => (
-                  <li key={i}>• {m.item}{m.numero ? ` (Nº ${m.numero})` : ""}: {m.motivo}</li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          {/* Fora da DRE de propósito — o escape hatch consciente */}
-          <div className="card">
-            <div className="card-header mb-2">Fora da DRE (por decisão)</div>
-            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-              Contas marcadas como <strong>Não entra na DRE</strong>: principal de financiamento,
-              transferência entre contas próprias, aporte de sócio. Não é "falta classificar" —
-              é decisão registrada. Principal de financiamento é saída de caixa que{" "}
-              <strong>não é despesa</strong>; só o juro é despesa, e vai em Outras receitas e despesas.
-            </p>
-            <KPI v={formatBRL(foraDaDre.total)} l={`${foraDaDre.contas.length} conta(s)`} />
-            {foraDaDre.grupos && foraDaDre.grupos.length > 0 ? (
-              // Regras novas (Fase A): o que ficou fora, agrupado pelo motivo.
-              <div style={{ marginTop: "0.75rem" }}>
-                {foraDaDre.grupos.map((g) => (
-                  <div key={g.natureza} style={{ marginBottom: "0.6rem" }}>
-                    <div className="flex items-center justify-between" style={{ fontSize: "0.74rem", fontWeight: 600, color: "var(--text)" }}>
-                      <span>{g.rotulo}</span><span style={{ whiteSpace: "nowrap" }}>{formatBRL(g.total)}</span>
-                    </div>
-                    <ul style={{ fontSize: "0.72rem", color: "var(--text-muted)", margin: "0.2rem 0 0 0.6rem" }}>
-                      {g.contas.slice(0, 4).map((c) => (
-                        <li key={c.codigo || c.nome}>• {c.nome} — {formatBRL(c.valor)}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-              </div>
-            ) : foraDaDre.contas.length > 0 && (
-              <ul style={{ marginTop: "0.75rem", fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                {foraDaDre.contas.slice(0, 6).map((c) => (
-                  <li key={c.codigo || c.nome}>• {c.nome} — {formatBRL(c.valor)}</li>
-                ))}
-              </ul>
-            )}
-            {dados.regras_v2 && (
-              <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>
-                Regras novas ligadas: compra de bem, financiamento, aporte e adiantamento ficam fora pelo tipo
-                do lançamento (a natureza), qualquer que seja a conta. A depreciação continua entrando.
-              </p>
-            )}
-            {(dados.pendencias_natureza?.length ?? 0) > 0 && (
-              <div style={{ marginTop: "0.6rem", fontSize: "0.72rem", color: "var(--amber)" }}>
-                <strong>Investimento sem bem no Patrimônio (não vai depreciar):</strong>
-                <ul style={{ margin: "0.2rem 0 0 0.6rem" }}>
-                  {dados.pendencias_natureza!.slice(0, 5).map((p) => (
-                    <li key={p.numero_lancamento || p.descricao || String(p.valor)}>
-                      • {p.numero_lancamento ? `${p.numero_lancamento} — ` : ""}{p.descricao || p.fornecedor} — {formatBRL(p.valor)}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        </div>
-        </>;
-      })()}
-    </div>
-  );
-}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Planejamento > Orçamento

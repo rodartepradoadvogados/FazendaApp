@@ -27,8 +27,10 @@ test("nenhum relatório antigo some: cada id antigo cai num relatório da árvor
   assert.equal(idDoRelatorio("caixa"), "rel_caixa");
   assert.equal(grupoDe("caixa")!.label, "Caixa");
   for (const id of ["caixa", "caixa_real", "fluxo"]) assert.ok(RELATORIOS_NO_MOLDE.has(idDoRelatorio(id)), id);
-  // A DRE por conta (tela anterior, com a classificação) continua acessível.
-  assert.ok(IDS_RELATORIOS.has("dre_contas"));
+  // T2: a DRE por conta (tela anterior) saiu; links salvos com ?sub=dre_contas abrem a tela Classificar.
+  assert.ok(!IDS_RELATORIOS.has("dre_contas"));
+  assert.equal(idDoRelatorio("dre_contas"), "classificar");
+  assert.equal(grupoDe("dre_contas")!.label, "Resultado");
   // Fase C: Plano › Orçamento no molde; as telas anteriores do orçamento e dos cenários continuam.
   assert.equal(idDoRelatorio("orcamento"), "rel_orcamento");
   assert.equal(grupoDe("orcamento")!.label, "Plano");
@@ -68,7 +70,7 @@ test("integração da Fase C: árvore coerente — toda tela nova no molde, tela
   const ordem = GRUPOS_RELATORIOS.map((g) => [g.label, g.itens.map((i) => i.id)]);
   assert.deepEqual(ordem, [
     ["Painel", ["painel_dono"]],
-    ["Resultado", ["rel_litro", "rel_dre", "classificar", "dre_contas"]],
+    ["Resultado", ["rel_litro", "rel_dre", "classificar"]],
     ["Caixa", ["rel_caixa", "rel_fluxo", "rel_livro"]],
     ["Leite", ["custos", "rmca", "reguas_referencia"]],
     ["Plano", ["rel_orcamento", "rel_cenarios", "orcamento_itens", "planejamento_financeiro"]],
