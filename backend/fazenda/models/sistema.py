@@ -178,13 +178,59 @@ class SolicitacaoExclusao(SQLModel, table=True):
     tipo: str
     id_alvo: str
     titulo: Optional[str] = None  # descrição do alvo no momento do pedido (snapshot p/ exibição)
-    status: str = "pendente"       # pendente | aprovada | rejeitada
+    status: str = "pendente"       # pendente | aprovada | rejeitada | arquivada | cancelada
     solicitado_por: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     decidido_por: Optional[str] = None
     decidido_em: Optional[datetime] = None
     motivo_rejeicao: Optional[str] = None
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    # Fase 1 ("Excluir lançamentos"): motivo do solicitante, risco calculado na
+    # hora do pedido e foto do impacto (Impacto.dict() como JSON) para o admin
+    # comparar com o impacto calculado "agora" e ver o que mudou desde o pedido.
+    motivo: Optional[str] = None
+    risco: Optional[str] = None
+    impacto_resumo_json: Optional[str] = None
+
+
+class SolicitacaoExclusaoApoio(SQLModel, table=True):
+    """Um segundo usuário pediu a exclusão do MESMO alvo que já estava pendente
+    — vira um "apoio" ao pedido existente em vez de um pedido duplicado (Fase 1,
+    deduplicação). O admin vê um pedido com N apoiadores."""
+
+    __tablename__ = "solicitacao_exclusao_apoio"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    solicitacao_id: int = Field(foreign_key="solicitacao_exclusao.id", index=True)
+    username: str
+    motivo: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ExclusaoRegistro(SQLModel, table=True):
+    """Trilha de auditoria de exclusões (Fase 1) — também para administrador.
+    Guarda quem apagou/aprovou/rejeitou/arquivou/cancelou, o resumo do impacto e
+    um snapshot das linhas apagadas PARA RESTAURAÇÃO futura (Fase 4). `snapshot_json`
+    NUNCA carrega CPF nem dado de saúde de pessoa (LGPD)."""
+
+    __tablename__ = "exclusao_registro"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    codigo: str = Field(index=True)  # "EX-AAAA-NNNN" (sequência por fazenda e ano)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    username: Optional[str] = None
+    papel: Optional[str] = None
+    acao: str = Field(index=True)  # apagou | aprovou | rejeitou | arquivou | cancelou
+    tipo: Optional[str] = None
+    id_alvo: Optional[str] = None
+    titulo: Optional[str] = None
+    motivo: Optional[str] = None
+    resumo_json: Optional[str] = None   # JSON {apagado[], revertido[], avisos[]}
+    snapshot_json: Optional[str] = None  # JSON das linhas apagadas, sem dado sensível
+    solicitacao_id: Optional[int] = None
+    solicitado_por: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
 # ---------------------------------------------------------------------------

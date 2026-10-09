@@ -145,7 +145,7 @@ class TestExclusaoSecagemFunciona:
             item = s.exec(select(Estoque).where(Estoque.nome == "Cefalexina LA")).first()
             assert item.quantidade == 990
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "secagem", "id": str(secagem_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "secagem", "id": str(secagem_id), "motivo": "teste"})
         assert r.status_code == 200
         assert r.json()["status"] == "excluido"
 
@@ -189,7 +189,7 @@ class TestExclusaoSecagemFunciona:
         assert r.status_code == 200
         assert any("programada" in i for i in r.json()["impacto"])
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "secagem", "id": str(secagem_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "secagem", "id": str(secagem_id), "motivo": "teste"})
         assert r.status_code == 200
 
         with _sessao(engine) as s:
@@ -252,7 +252,7 @@ class TestExclusaoSecagemAprovacao:
             secagem_id = s.exec(select(Secagem).where(Secagem.numero_matriz == "9005")).first().id
 
         _como_operador()
-        r = c.post("/exclusoes/confirmar", json={"tipo": "secagem", "id": str(secagem_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "secagem", "id": str(secagem_id), "motivo": "teste"})
         assert r.status_code == 200
         assert r.json()["status"] == "solicitado"
 

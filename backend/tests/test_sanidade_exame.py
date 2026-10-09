@@ -351,7 +351,7 @@ class TestEditarExcluirResultadoExame:
     def test_admin_exclui_direto_e_desfaz_a_descartar(self, client):
         c, engine = client
         _, resultado_id = self._lancar_positivo(c)
-        r = c.post("/exclusoes/confirmar", json={"tipo": "exame_resultado", "id": str(resultado_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "exame_resultado", "id": str(resultado_id), "motivo": "teste"})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "excluido"
         assert c.get("/sanidade/exames/resultados").json() == []
@@ -361,13 +361,13 @@ class TestEditarExcluirResultadoExame:
 
     def test_excluir_id_inexistente_da_404(self, client):
         c, _ = client
-        r = c.post("/exclusoes/confirmar", json={"tipo": "exame_resultado", "id": "999999"})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "exame_resultado", "id": "999999", "motivo": "teste"})
         assert r.status_code == 404
 
     def test_operador_gera_solicitacao_pendente(self, client_operador):
         c, engine = client_operador
         _, resultado_id = self._lancar_positivo(c)
-        r = c.post("/exclusoes/confirmar", json={"tipo": "exame_resultado", "id": str(resultado_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "exame_resultado", "id": str(resultado_id), "motivo": "teste"})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "solicitado"
         # Nada foi excluído nem revertido ainda — só o admin aprovando.

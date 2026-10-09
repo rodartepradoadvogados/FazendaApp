@@ -315,7 +315,7 @@ class TestExclusaoDaDiariaEncerrada:
         d = _diaria(c)
         c.put(f"/cadastro/diarias/{d['id']}/encerrar", json={"data_encerramento": date.today().isoformat()})
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "diaria", "id": str(d["id"])})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "diaria", "id": str(d["id"]), "motivo": "teste"})
         assert r.status_code == 200, r.text
         with Session(engine) as s:
             assert s.exec(select(ContaGerencial)).all() == []
@@ -329,6 +329,9 @@ class TestExclusaoDaDiariaEncerrada:
             "data_pagamento": date.today().isoformat(), "valor_pago": 500.0,
         })
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "diaria", "id": str(d["id"])})
-        assert r.status_code == 400
-        assert "já foi paga" in r.json()["detail"]
+        r = c.post("/exclusoes/confirmar", json={"tipo": "diaria", "id": str(d["id"]), "motivo": "teste"})
+        assert r.status_code == 409
+        bloqueio = r.json()["detail"]["bloqueia"]
+        assert bloqueio
+        texto = " ".join(f"{b.get('titulo', '')} {b.get('motivo', '')} {b.get('fazer', '')}" for b in bloqueio)
+        assert "paga" in texto.lower()

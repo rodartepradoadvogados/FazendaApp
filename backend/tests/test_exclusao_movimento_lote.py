@@ -126,7 +126,7 @@ class TestExclusaoMovimentoLoteFunciona:
             animal = s.exec(select(Animal).where(Animal.numero == "9001")).first()
             assert animal.grupo_primario == "LOTE-B - Novilhas"
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "movimento_lote", "id": str(mov_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "movimento_lote", "id": str(mov_id), "motivo": "teste"})
         assert r.status_code == 200
         assert r.json()["status"] == "excluido"
 
@@ -161,7 +161,7 @@ class TestExclusaoMovimentoLoteFunciona:
         impacto = r.json()["impacto"]
         assert any("posterior" in i and "NÃO será alterado" in i for i in impacto)
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "movimento_lote", "id": str(mov_antigo_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "movimento_lote", "id": str(mov_antigo_id), "motivo": "teste"})
         assert r.status_code == 200
         assert r.json()["status"] == "excluido"
 
@@ -190,7 +190,7 @@ class TestExclusaoMovimentoLoteFunciona:
         assert r.status_code == 200
         assert any("não tinha lote registrado" in i for i in r.json()["impacto"])
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "movimento_lote", "id": str(mov_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "movimento_lote", "id": str(mov_id), "motivo": "teste"})
         assert r.status_code == 200
 
         with _sessao(engine) as s:
@@ -243,7 +243,7 @@ class TestExclusaoMovimentoLoteAprovacao:
             mov_id = s.exec(select(MovimentoLote)).first().id
 
         _como_operador()
-        r = c.post("/exclusoes/confirmar", json={"tipo": "movimento_lote", "id": str(mov_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "movimento_lote", "id": str(mov_id), "motivo": "teste"})
         assert r.status_code == 200
         assert r.json()["status"] == "solicitado"
 

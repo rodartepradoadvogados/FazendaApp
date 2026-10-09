@@ -228,7 +228,7 @@ class TestExcluirMovimentoEstoqueViaMotorGenerico:
         return c.post("/exclusoes/impacto", json={"tipo": "movimento_estoque", "id": str(mov_id)})
 
     def _confirmar(self, c, mov_id: int):
-        return c.post("/exclusoes/confirmar", json={"tipo": "movimento_estoque", "id": str(mov_id)})
+        return c.post("/exclusoes/confirmar", json={"tipo": "movimento_estoque", "id": str(mov_id), "motivo": "teste"})
 
     def test_excluir_devolve_o_saldo_exato(self, client):
         c, engine = client
@@ -278,11 +278,11 @@ class TestExcluirMovimentoEstoqueViaMotorGenerico:
             s.commit()
 
         r = self._impacto(c, 1)
-        assert r.status_code == 400
-        assert "sanidade" in r.json()["detail"]
+        assert r.status_code == 200
+        assert r.json()["bloqueia"]  # bloqueado: lista de bloqueios não vazia
 
         r = self._confirmar(c, 1)
-        assert r.status_code == 400
+        assert r.status_code == 409
 
     def test_excluir_movimento_com_pedido_item_da_400(self, client):
         c, engine = client
@@ -294,8 +294,12 @@ class TestExcluirMovimentoEstoqueViaMotorGenerico:
             ))
             s.commit()
 
+        r = self._impacto(c, 1)
+        assert r.status_code == 200
+        assert r.json()["bloqueia"]
+
         r = self._confirmar(c, 1)
-        assert r.status_code == 400
+        assert r.status_code == 409
 
     def test_movimento_de_outra_fazenda_nao_aparece_na_busca_e_da_404_no_impacto(self, client):
         c, engine = client
@@ -362,7 +366,7 @@ class TestExcluirMovimentoEstoqueViaMotorGenerico:
             s.commit()
 
         _como_operador()
-        r = c.post("/exclusoes/confirmar", json={"tipo": "movimento_estoque", "id": "1"})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "movimento_estoque", "id": "1", "motivo": "teste"})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "solicitado"
 

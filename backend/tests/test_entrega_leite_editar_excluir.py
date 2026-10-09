@@ -167,7 +167,7 @@ class TestExcluirEntregaLeite:
         antes = c.get("/producao/relatorio-controle-entrega", params={"data_inicio": "2026-06-01", "data_fim": "2026-06-30"}).json()
         assert antes["entrega_projetada_kg"] is not None
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "entrega_leite", "id": str(rid)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "entrega_leite", "id": str(rid), "motivo": "teste"})
         assert r.status_code == 200
         assert r.json()["status"] == "excluido"
 
@@ -214,7 +214,7 @@ class TestExcluirEntregaLeite:
         anterior = main.app.dependency_overrides[get_current_user]
         main.app.dependency_overrides[get_current_user] = lambda: _FakeOperador()
         try:
-            r = c.post("/exclusoes/confirmar", json={"tipo": "entrega_leite", "id": str(rid)})
+            r = c.post("/exclusoes/confirmar", json={"tipo": "entrega_leite", "id": str(rid), "motivo": "teste"})
         finally:
             main.app.dependency_overrides[get_current_user] = anterior
         assert r.status_code == 200

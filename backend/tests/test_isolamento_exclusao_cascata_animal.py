@@ -168,7 +168,8 @@ class TestCaracterizacaoDaCascataDeAnimal:
 
     def test_confirmar_apaga_a_cascata_da_propria_fazenda(self, client):
         c, engine = client
-        r = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": NUMERO},
+        r = c.post("/exclusoes/confirmar",
+                   json={"tipo": "animal", "id": NUMERO, "motivo": "teste", "confirmacao": NUMERO},
                    headers=_cabecalho("admin2", 2))
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "excluido"
@@ -186,7 +187,8 @@ class TestCascataDeAnimalNaoAtravessaFazenda:
 
     def test_excluir_animal_da_fazenda_2_nao_apaga_nada_da_fazenda_1(self, client):
         c, engine = client
-        r = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": NUMERO},
+        r = c.post("/exclusoes/confirmar",
+                   json={"tipo": "animal", "id": NUMERO, "motivo": "teste", "confirmacao": NUMERO},
                    headers=_cabecalho("admin2", 2))
         assert r.status_code == 200, r.text
         assert _contagem(engine, 1) == CHEIO, (
@@ -224,7 +226,8 @@ class TestCascataDeAnimalNaoAtravessaFazenda:
         """O outro caminho até `_alvos`: o operador SOLICITA, o admin aprova.
         A exclusão de verdade acontece dentro de `aprovar_pendente`."""
         c, engine = client
-        r = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": NUMERO},
+        r = c.post("/exclusoes/confirmar",
+                   json={"tipo": "animal", "id": NUMERO, "motivo": "teste", "confirmacao": NUMERO},
                    headers=_cabecalho("operador2", 2))
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "solicitado"
@@ -236,7 +239,8 @@ class TestCascataDeAnimalNaoAtravessaFazenda:
             )
             sol_id = sol.id
 
-        r = c.post(f"/exclusoes/pendentes/{sol_id}/aprovar", headers=_cabecalho("admin2", 2))
+        r = c.post(f"/exclusoes/pendentes/{sol_id}/aprovar",
+                   json={"confirmacao": NUMERO}, headers=_cabecalho("admin2", 2))
         assert r.status_code == 200, r.text
         assert _contagem(engine, 1) == CHEIO, (
             "a aprovação da solicitação da fazenda 2 apagou histórico da fazenda 1"
@@ -270,7 +274,8 @@ class TestCascataDePartoNaoAtravessaFazenda:
             ).first()
             parto_id = parto_f2.id
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "parto", "id": str(parto_id)},
+        r = c.post("/exclusoes/confirmar",
+                   json={"tipo": "parto", "id": str(parto_id), "motivo": "teste"},
                    headers=_cabecalho("admin2", 2))
         assert r.status_code == 200, r.text
 

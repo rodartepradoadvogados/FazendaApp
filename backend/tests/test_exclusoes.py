@@ -42,6 +42,7 @@ from fazenda.models import (
     Sanidade,
     Servico,
     SolicitacaoExclusao,
+    Usuario,
 )
 
 
@@ -60,6 +61,15 @@ def client(monkeypatch):
 
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(database, "engine", engine)
+
+    # O router grava trilha de auditoria (`ExclusaoRegistro.usuario_id` com FK
+    # pra `usuario.id`) — o admin/operador fake da fixture precisa de uma linha
+    # real na tabela `usuario` pra essa FK não estourar no SQLite (PRAGMA
+    # foreign_keys=ON acima).
+    with Session(engine) as s:
+        s.add(Usuario(id=1, username="teste", senha_hash="x", papel="admin"))
+        s.add(Usuario(id=2, username="operador1", senha_hash="x", papel="operador"))
+        s.commit()
 
     def _get_session_override():
         with Session(engine) as session:
@@ -117,7 +127,7 @@ class TestExclusaoAnimal:
             s.add(Servico(numero_matriz="999", data_servico=date(2026, 1, 1)))
             s.commit()
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "999"})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "999", "motivo": "teste", "confirmacao": "999"})
         assert r.status_code == 200
         assert r.json()["status"] == "excluido"
 
@@ -160,7 +170,7 @@ class TestExclusaoAnimal:
         assert any("lactação" in i for i in impacto)
         assert any("foto" in i for i in impacto)
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "1291"})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "1291", "motivo": "teste", "confirmacao": "1291"})
         assert r.status_code == 200
         assert r.json()["status"] == "excluido"
 
@@ -192,7 +202,7 @@ class TestExclusaoParto:
             parto_id = s.exec(select(Parto).where(Parto.numero_matriz == "300")).first().id
             assert s.exec(select(AgendaManual).where(AgendaManual.numero_animal == "300")).first() is not None
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "parto", "id": str(parto_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "parto", "id": str(parto_id), "motivo": "teste"})
         assert r.status_code == 200, r.text
 
         with _sessao(engine) as s:
@@ -216,7 +226,7 @@ class TestExclusaoParto:
             parto_id = s.exec(select(Parto).where(Parto.numero_matriz == "301")).first().id
             assert s.exec(select(Animal).where(Animal.numero == "301-1")).first() is not None
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "parto", "id": str(parto_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "parto", "id": str(parto_id), "motivo": "teste"})
         assert r.status_code == 200, r.text
 
         with _sessao(engine) as s:
@@ -241,7 +251,7 @@ class TestExclusaoParto:
             s.add(ControleLeiteiro(numero_matriz="302-1", data_controle=date(2026, 8, 1), producao_kg=1))
             s.commit()
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "parto", "id": str(parto_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "parto", "id": str(parto_id), "motivo": "teste"})
         assert r.status_code == 200, r.text
 
         with _sessao(engine) as s:
@@ -265,7 +275,7 @@ class TestExclusaoParto:
             ).days
             parto_id = s.exec(select(Parto).where(Parto.numero_matriz == "303")).first().id
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "parto", "id": str(parto_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "parto", "id": str(parto_id), "motivo": "teste"})
         assert r.status_code == 200, r.text
 
         with _sessao(engine) as s:
@@ -284,7 +294,7 @@ class TestExclusaoParto:
             partos = s.exec(select(Parto).where(Parto.numero_matriz == "304").order_by(Parto.data_parto)).all()
             parto_antigo_id, parto_recente_id = partos[0].id, partos[1].id
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "parto", "id": str(parto_recente_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "parto", "id": str(parto_recente_id), "motivo": "teste"})
         assert r.status_code == 200, r.text
 
         with _sessao(engine) as s:
@@ -315,7 +325,7 @@ class TestExclusaoCompraSemen:
             s.refresh(compra)
             compra_id = compra.id
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "compra_semen", "id": str(compra_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "compra_semen", "id": str(compra_id), "motivo": "teste"})
         assert r.status_code == 200, r.text
 
         with _sessao(engine) as s:
@@ -351,7 +361,7 @@ class TestExclusaoFinanceiro:
             s.commit()
             ids = [row.id for row in s.exec(__import__("sqlmodel").select(ContaGerencial)).all()]
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "financeiro", "id": str(ids[0])})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "financeiro", "id": str(ids[0]), "motivo": "teste"})
         assert r.status_code == 200
 
         with _sessao(engine) as s:
@@ -366,7 +376,7 @@ class TestExclusaoFinanceiro:
             s.commit()
             id_ = s.exec(__import__("sqlmodel").select(ContaGerencial)).first().id
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "financeiro", "id": str(id_)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "financeiro", "id": str(id_), "motivo": "teste"})
         assert r.status_code == 200
         assert r.json()["status"] == "excluido"
 
@@ -469,7 +479,7 @@ class TestNovosTiposDeCadastro:
             s.add(Lote(codigo="09", nome="Teste"))
             s.commit()
         lote_id = c.get("/exclusoes/buscar", params={"tipo": "lote", "termo": "Teste"}).json()[0]["id"]
-        r = c.post("/exclusoes/confirmar", json={"tipo": "lote", "id": str(lote_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "lote", "id": str(lote_id), "motivo": "teste"})
         assert r.status_code == 200
         assert r.json()["status"] == "excluido"
         with _sessao(engine) as s:
@@ -489,7 +499,7 @@ class TestNovosTiposDeCadastro:
         r = c.post("/exclusoes/impacto", json={"tipo": "fornecedor", "id": str(fid)})
         assert any("1 item" in i for i in r.json()["impacto"])
 
-        r2 = c.post("/exclusoes/confirmar", json={"tipo": "fornecedor", "id": str(fid)})
+        r2 = c.post("/exclusoes/confirmar", json={"tipo": "fornecedor", "id": str(fid), "motivo": "teste"})
         assert r2.status_code == 200
         with _sessao(engine) as s:
             assert s.get(Fornecedor, fid) is None
@@ -502,7 +512,7 @@ class TestNovosTiposDeCadastro:
             s.add(MotivoMovimentacao(nome="Reagrupamento teste"))
             s.commit()
         mid = c.get("/exclusoes/buscar", params={"tipo": "motivo_movimentacao", "termo": "Reagrupamento"}).json()[0]["id"]
-        r = c.post("/exclusoes/confirmar", json={"tipo": "motivo_movimentacao", "id": str(mid)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "motivo_movimentacao", "id": str(mid), "motivo": "teste"})
         assert r.status_code == 200
 
     def test_bloqueia_exclusao_de_pessoa_com_folha(self, client):
@@ -517,7 +527,7 @@ class TestNovosTiposDeCadastro:
             pid = p.id
 
         r = c.post("/exclusoes/confirmar", json={"tipo": "pessoa", "id": str(pid)})
-        assert r.status_code == 400
+        assert r.status_code == 409
 
     def test_exclui_pessoa_sem_vinculos(self, client):
         c, engine = client
@@ -525,7 +535,7 @@ class TestNovosTiposDeCadastro:
             s.add(Pessoa(nome="Sem vínculo", tipo="Diarista"))
             s.commit()
         pid = c.get("/exclusoes/buscar", params={"tipo": "pessoa", "termo": "Sem vínculo"}).json()[0]["id"]
-        r = c.post("/exclusoes/confirmar", json={"tipo": "pessoa", "id": str(pid)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "pessoa", "id": str(pid), "motivo": "teste"})
         assert r.status_code == 200
 
     def test_exclui_principio_ativo_e_desvincula_calendario(self, client):
@@ -545,7 +555,7 @@ class TestNovosTiposDeCadastro:
             s.commit()
             pa_id = pa.id
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "principio_ativo", "id": str(pa_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "principio_ativo", "id": str(pa_id), "motivo": "teste"})
         assert r.status_code == 200
         with _sessao(engine) as s:
             regra = s.exec(select(CalendarioSanitario)).first()
@@ -564,7 +574,7 @@ class TestNovosTiposDeCadastro:
             eid = evento.id
 
         r = c.post("/exclusoes/confirmar", json={"tipo": "evento_sanitario", "id": str(eid)})
-        assert r.status_code == 400
+        assert r.status_code == 409
 
     def test_bloqueia_exclusao_de_protocolo_com_lancamento(self, client):
         c, engine = client
@@ -579,7 +589,7 @@ class TestNovosTiposDeCadastro:
             pid = protocolo.id
 
         r = c.post("/exclusoes/confirmar", json={"tipo": "protocolo_sanitario", "id": str(pid)})
-        assert r.status_code == 400
+        assert r.status_code == 409
 
     def test_exclui_protocolo_sem_lancamento_cascade_etapas(self, client):
         c, engine = client
@@ -592,7 +602,7 @@ class TestNovosTiposDeCadastro:
             s.commit()
             pid = protocolo.id
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "protocolo_sanitario", "id": str(pid)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "protocolo_sanitario", "id": str(pid), "motivo": "teste"})
         assert r.status_code == 200
         with _sessao(engine) as s:
             assert s.get(ProtocoloSanitario, pid) is None
@@ -629,7 +639,7 @@ class TestFluxoAprovacaoOperador:
         anterior = main.app.dependency_overrides[get_current_user]
         main.app.dependency_overrides[get_current_user] = lambda: _FakeOperador()
         try:
-            return c.post("/exclusoes/confirmar", json={"tipo": tipo, "id": id_})
+            return c.post("/exclusoes/confirmar", json={"tipo": tipo, "id": id_, "motivo": "teste"})
         finally:
             main.app.dependency_overrides[get_current_user] = anterior
 
@@ -726,7 +736,7 @@ class TestFluxoAprovacaoOperador:
         with _sessao(engine) as s:
             sol_id = s.exec(select(SolicitacaoExclusao)).first().id
 
-        r_rejeita = c.post(f"/exclusoes/pendentes/{sol_id}/rejeitar", json={})
+        r_rejeita = c.post(f"/exclusoes/pendentes/{sol_id}/rejeitar", json={"motivo": "Não procede"})
         assert r_rejeita.status_code == 200
 
         r = c.post(f"/exclusoes/pendentes/{sol_id}/aprovar")
@@ -774,7 +784,7 @@ class TestEstornoDeEstoqueNaExclusao:
             assert s.exec(select(Estoque).where(Estoque.nome == "Vacina X")).first().quantidade == 90.0
             assert s.exec(select(ProtocoloSanitarioAplicacao)).first().realizada is True
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "protocolo_sanitario_lancamento", "id": str(lancamento_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "protocolo_sanitario_lancamento", "id": str(lancamento_id), "motivo": "teste"})
         assert r.status_code == 200, r.text
         assert r.json()["avisos"] == []
 
@@ -809,7 +819,7 @@ class TestEstornoDeEstoqueNaExclusao:
         with _sessao(engine) as s:
             assert s.exec(select(Estoque).where(Estoque.nome == "SincroCP")).first().quantidade == 99.0
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "protocolo_iatf_lancamento", "id": str(lancamento_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "protocolo_iatf_lancamento", "id": str(lancamento_id), "motivo": "teste"})
         assert r.status_code == 200, r.text
         assert r.json()["avisos"] == []
 
@@ -836,7 +846,7 @@ class TestEstornoDeEstoqueNaExclusao:
         with _sessao(engine) as s:
             assert s.exec(select(EstoqueSemen).where(EstoqueSemen.touro_nome == "Coors")).first().doses == 29
 
-        r2 = c.post("/exclusoes/confirmar", json={"tipo": "servico", "id": str(servico_id)})
+        r2 = c.post("/exclusoes/confirmar", json={"tipo": "servico", "id": str(servico_id), "motivo": "teste"})
         assert r2.status_code == 200, r2.text
         assert r2.json()["avisos"] == []
 
@@ -873,7 +883,7 @@ class TestEstornoDeEstoqueNaExclusao:
             assert s.get(Servico, servico_1_id).ult_ocorrencia == 0
             assert s.get(Servico, servico_2_id).ult_ocorrencia == 1
 
-        r3 = c.post("/exclusoes/confirmar", json={"tipo": "servico", "id": str(servico_2_id)})
+        r3 = c.post("/exclusoes/confirmar", json={"tipo": "servico", "id": str(servico_2_id), "motivo": "teste"})
         assert r3.status_code == 200, r3.text
 
         with _sessao(engine) as s:
@@ -900,7 +910,7 @@ class TestEstornoDeEstoqueNaExclusao:
         with _sessao(engine) as s:
             assert s.exec(select(Estoque).where(Estoque.nome == "Antibiótico avulso")).first().quantidade == 40.0
 
-        r2 = c.post("/exclusoes/confirmar", json={"tipo": "sanidade", "id": str(sanidade_id)})
+        r2 = c.post("/exclusoes/confirmar", json={"tipo": "sanidade", "id": str(sanidade_id), "motivo": "teste"})
         assert r2.status_code == 200, r2.text
         assert r2.json()["avisos"] == []
 
@@ -915,7 +925,7 @@ class TestEstornoDeEstoqueNaExclusao:
             s.commit()
             sanidade_id = s.exec(select(Sanidade)).first().id
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "sanidade", "id": str(sanidade_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "sanidade", "id": str(sanidade_id), "motivo": "teste"})
         assert r.status_code == 200
         assert r.json()["avisos"] == []
         with _sessao(engine) as s:

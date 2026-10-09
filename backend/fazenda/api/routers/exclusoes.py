@@ -8,11 +8,12 @@ fato) ou rejeitar.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+import json
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, delete, or_
 from sqlmodel import Session, select
 
 from fazenda.auth import exigir_admin, exigir_fazenda_da_operacao, get_current_user, get_fazenda_atual_id
@@ -20,6 +21,8 @@ from fazenda.database import get_session
 from fazenda.rules import estoque_baixa
 from fazenda.rules import lactacao as regras_lactacao
 from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.rules import exclusao_risco
+from fazenda.rules.exclusao_impacto import Bloqueio, ExclusaoBloqueada, Impacto, Linha
 from fazenda.rules.exclusao_tipos import REGISTRO
 from fazenda.rules.exclusao_tipos._base import _br, _contem, _dentro_periodo
 from fazenda.rules.farmacia_multi_principio import checar_e_desvincular_exclusao_principio
@@ -40,6 +43,7 @@ from fazenda.models import (
     Estoque,
     EstoqueSemen,
     EventoSanitario,
+    ExclusaoRegistro,
     ExtratoLinha,
     FolhaPagamento,
     FolhaRubrica,
@@ -65,6 +69,7 @@ from fazenda.models import (
     Secagem,
     Servico,
     SolicitacaoExclusao,
+    SolicitacaoExclusaoApoio,
     Usuario,
     ValeFuncionario,
     VendaAnimal,
@@ -533,15 +538,12 @@ def _bloquear_conta_referenciada(session: Session, contas: list) -> None:
     if session.exec(select(ExtratoLinha).where(ExtratoLinha.lancamento_id.in_(ids))).first() is not None:
         referencias.append("linha pareada no extrato bancário")
     if referencias:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Não dá para excluir este lançamento ainda: ele continua ligado a "
-                + " e ".join(referencias)
-                + ". Desfaça esse vínculo antes, ou peça a um administrador que o faça "
-                "por você (a exclusão em cascata desses vínculos chega numa próxima etapa)."
-            ),
-        )
+        raise ExclusaoBloqueada(Bloqueio(
+            titulo="Lançamento ligado a outros registros",
+            motivo="Continua ligado a " + " e ".join(referencias) + ".",
+            fazer="Desfaça esse vínculo antes, ou peça a um administrador que o faça "
+                  "(a exclusão em cascata desses vínculos chega numa próxima etapa).",
+        ))
 
 
 def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None) -> tuple[list[str], list]:
@@ -1074,11 +1076,11 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         n_folha = len(session.exec(query_folha).all())
         n_vale = len(session.exec(query_vale).all())
         if n_folha or n_vale:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Não é possível excluir {pessoa.nome}: há {n_folha} lançamento(s) de folha e "
-                       f"{n_vale} vale(s) registrados para essa pessoa. Exclua-os primeiro (aba Financeiro).",
-            )
+            raise ExclusaoBloqueada(Bloqueio(
+                titulo=f"Pessoa {pessoa.nome} tem folha ou vale",
+                motivo=f"há {n_folha} lançamento(s) de folha e {n_vale} vale(s) registrados para essa pessoa.",
+                fazer="Exclua-os primeiro (aba Financeiro).",
+            ))
         return [f"Pessoa {pessoa.nome}"], [pessoa]
 
     if tipo == "principio_ativo":
@@ -1123,11 +1125,11 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             query_calendario = query_calendario.where(CalendarioSanitario.fazenda_id == fazenda_id)
         n_calendario = len(session.exec(query_calendario).all())
         if n_calendario:
-            raise HTTPException(
-                status_code=400,
-                detail=f'Não é possível excluir "{evento.nome}": há {n_calendario} regra(s) do calendário '
-                       "sanitário usando esse evento. Exclua-as primeiro.",
-            )
+            raise ExclusaoBloqueada(Bloqueio(
+                titulo=f'Evento "{evento.nome}" está em uso',
+                motivo=f"há {n_calendario} regra(s) do calendário sanitário usando esse evento.",
+                fazer="Exclua essas regras primeiro.",
+            ))
         return [f"Evento sanitário {evento.nome}"], [evento]
 
     if tipo == "protocolo_sanitario":
@@ -1139,11 +1141,11 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             query_lancamentos = query_lancamentos.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
         n_lancamentos = len(session.exec(query_lancamentos).all())
         if n_lancamentos:
-            raise HTTPException(
-                status_code=400,
-                detail=f'Não é possível excluir "{protocolo.nome}": há {n_lancamentos} lançamento(s) já feito(s) '
-                       "com esse protocolo (histórico em Sanidade/Agenda).",
-            )
+            raise ExclusaoBloqueada(Bloqueio(
+                titulo=f'Protocolo "{protocolo.nome}" está em uso',
+                motivo=f"há {n_lancamentos} lançamento(s) já feito(s) com esse protocolo (histórico em Sanidade/Agenda).",
+                fazer="É histórico — não dá para apagar.",
+            ))
         query_etapas = select(ProtocoloSanitarioEtapa).where(ProtocoloSanitarioEtapa.protocolo_id == protocolo.id)
         etapas = session.exec(query_etapas).all()
         impacto = [f"Protocolo sanitário {protocolo.nome}"]
@@ -1432,6 +1434,72 @@ def _estornar_estoque_dos_alvos(session: Session, alvos: list, fazenda_id: int |
     return avisos
 
 
+def _descrever_reversoes(session: Session, alvos: list, fazenda_id: int | None) -> tuple[list[Linha], list[Linha]]:
+    """Descreve, SEM aplicar, o que a exclusão vai reverter/ajustar (e os avisos).
+    Espelha as MESMAS condições dos helpers de aplicação — serve para o bloco
+    `reverter`/`avisos` do impacto e para o risco ("tem reversão → médio").
+    Somente-leitura: não toca nada na sessão."""
+    reverter: list[Linha] = []
+    avisos: list[Linha] = []
+
+    # 1. Estoque baixado por estes objetos volta (mesmas guardas de _estornar_estoque_dos_alvos).
+    n_movs = 0
+    for obj in alvos:
+        origens = _ORIGENS_POR_CLASSE.get(type(obj))
+        if not origens or getattr(obj, "id", None) is None:
+            continue
+        if getattr(obj, "ativo", True) is False:
+            continue
+        q = select(MovimentoEstoque).where(
+            MovimentoEstoque.origem_tipo.in_(origens),
+            MovimentoEstoque.origem_id == obj.id,
+            MovimentoEstoque.movimento.in_(["Aplicação", "Entrada de compra"]),
+        )
+        if fazenda_id is not None:
+            q = q.where(MovimentoEstoque.fazenda_id == fazenda_id)
+        n_movs += len(session.exec(q).all())
+    if n_movs:
+        reverter.append(Linha(
+            titulo="Estoque",
+            consequencia=f"{n_movs} movimentação(ões) de estoque será(ão) desfeita(s) — o que saiu volta.",
+            qtd=n_movs,
+            chip="Mexe no estoque",
+        ))
+
+    servicos = [o for o in alvos if isinstance(o, Servico)]
+
+    # 2. A IA/cobertura vigente sai → a anterior volta a valer.
+    if any(getattr(s, "ult_ocorrencia", 0) == 1 for s in servicos):
+        reverter.append(Linha(titulo="Inseminação anterior volta a valer", consequencia="A inseminação de antes volta a ser a atual.", chip="Mexe na reprodução"))
+
+    # 3. Perda de prenhez disparada por este serviço é desfeita.
+    ids_servico = {s.id for s in servicos if s.id is not None}
+    if ids_servico:
+        q = select(Servico).where(Servico.perda_causada_por_servico_id.in_(ids_servico))
+        if fazenda_id is not None:
+            q = q.where(Servico.fazenda_id == fazenda_id)
+        if session.exec(q).first() is not None:
+            reverter.append(Linha(titulo="Perda de prenhez desfeita", consequencia="A perda marcada por esta inseminação some."))
+
+    partos = [o for o in alvos if isinstance(o, Parto)]
+    if partos:
+        reverter.append(Linha(
+            titulo="Lactação",
+            consequencia="A lactação aberta pelo parto é removida e a anterior é reaberta.",
+            chip="Mexe na lactação",
+        ))
+        reverter.append(Linha(titulo="Dias em leite (DEL)", consequencia="O DEL da matriz é recalculado."))
+
+    if any(isinstance(o, Secagem) for o in alvos):
+        reverter.append(Linha(titulo="Lactação reaberta", consequencia="A secagem tinha fechado a lactação; ela volta a ficar aberta.", chip="Mexe na lactação"))
+
+    # 4. Vale gerado por item da nota é desfeito.
+    if any(isinstance(o, LancamentoItem) and eh_item_de_vale(o) for o in alvos):
+        reverter.append(Linha(titulo="Vale desfeito", consequencia="O desconto do vale some e o abatimento volta à empreita/parcela."))
+
+    return reverter, avisos
+
+
 def _excluir_alvos_em_ordem(session: Session, alvos: list) -> None:
     """Apaga cada objeto de `alvos` com um flush logo em seguida, na ordem
     INVERSA à que `_alvos()` devolve (que é sempre [raiz, *dependentes] — ex.:
@@ -1459,6 +1527,131 @@ def _excluir_alvos_em_ordem(session: Session, alvos: list) -> None:
 class ExclusaoIn(BaseModel):
     tipo: str
     id: str
+    motivo: str | None = None
+    confirmacao: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Fase 1 — impacto estruturado, risco, trilha e pedidos
+# ---------------------------------------------------------------------------
+
+_CAMPOS_SENSIVEIS = ("cpf", "senha", "password", "token", "documento")
+
+
+def _montar_impacto(tipo: str, id_: str, session: Session, fazenda_id: int | None) -> Impacto:
+    """Impacto estruturado de UM item. Captura bloqueio (`ExclusaoBloqueada`) e
+    devolve no bloco `bloqueia` em vez de estourar 400."""
+    item = {"tipo": tipo, "id": id_, "titulo": f"{tipo} #{id_}"}
+    try:
+        itens, objetos = _alvos(tipo, id_, session, fazenda_id=fazenda_id)
+    except ExclusaoBloqueada as e:
+        return Impacto(item=item, bloqueia=[e.bloqueio])
+    if itens:
+        item["titulo"] = itens[0]
+    impacto = Impacto(item=item, apagar=[Linha(titulo=s, consequencia="") for s in itens])
+    reverter, avisos = _descrever_reversoes(session, objetos, fazenda_id)
+    impacto.reverter = reverter
+    impacto.avisos = avisos
+    _forcar_risco_do_tipo(impacto, tipo)
+    impacto.risco = exclusao_risco.calcular(impacto)
+    impacto.porque = exclusao_risco.porque(impacto)
+    return impacto
+
+
+def _forcar_risco_do_tipo(impacto: Impacto, tipo: str) -> None:
+    """Ficha de animal apaga todo o histórico → risco SEMPRE alto."""
+    if tipo == "animal":
+        impacto.risco = "alto"
+        impacto.porque = ["apaga a ficha e todo o histórico"]
+
+
+def _confirmacao_esperada(tipo: str, id_alvo: str) -> str:
+    """Decisão #3 do dono: risco alto de FICHA DE ANIMAL pede o número do animal;
+    os demais tipos pedem a palavra "APAGAR"."""
+    if tipo == "animal":
+        return (id_alvo or "").strip()
+    return "APAGAR"
+
+
+def _serializar(impacto: Impacto) -> dict:
+    d = impacto.dict()
+    d["impacto"] = [linha.titulo for linha in impacto.apagar]  # compat list[str]
+    return d
+
+
+def _exigir_motivo_e_confirmacao(dados: ExclusaoIn, risco: str, eh_admin: bool, exigir_confirmacao: bool) -> None:
+    """O servidor repete as exigências da tela (não é a tela que protege):
+    422 sem motivo quando o nível exige; 422 sem a confirmação certa no risco alto."""
+    if exclusao_risco.exige_motivo(risco, eh_admin) and not (dados.motivo or "").strip():
+        raise HTTPException(status_code=422, detail={"codigo": "motivo_obrigatorio", "risco": risco})
+    if exigir_confirmacao and risco == "alto":
+        esperado = _confirmacao_esperada(dados.tipo, dados.id)
+        if (dados.confirmacao or "").strip() != esperado:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "codigo": "confirmacao_invalida",
+                    "risco": risco,
+                    "esperado": "o número do animal" if dados.tipo == "animal" else "APAGAR",
+                },
+            )
+
+
+def _snapshot_objeto(obj) -> dict:
+    """Serializa um objeto para o snapshot da trilha, SEM CPF/token/documento
+    (LGPD — o snapshot serve para restaurar por FK, não para reproduzir o dado pessoal)."""
+    out = {"__tipo__": type(obj).__name__}
+    for col in type(obj).__table__.columns:
+        nome = col.name
+        if any(s in nome.lower() for s in _CAMPOS_SENSIVEIS):
+            continue
+        valor = getattr(obj, nome, None)
+        if isinstance(valor, (str, int, float, bool)) or valor is None:
+            out[nome] = valor
+        else:
+            out[nome] = str(valor)
+    return out
+
+
+def _proximo_codigo_trilha(session: Session, fazenda_id: int | None) -> str:
+    """Código EX-AAAA-NNNN, sequência por fazenda e ano."""
+    ano = datetime.utcnow().year
+    prefixo = f"EX-{ano}-"
+    ultimo = session.exec(
+        select(ExclusaoRegistro.codigo)
+        .where(ExclusaoRegistro.fazenda_id == fazenda_id, ExclusaoRegistro.codigo.like(f"{prefixo}%"))
+        .order_by(ExclusaoRegistro.codigo.desc())
+    ).first()
+    n = 1
+    if ultimo:
+        try:
+            n = int(ultimo.rsplit("-", 1)[1]) + 1
+        except (ValueError, IndexError):
+            n = 1
+    return f"{prefixo}{n:04d}"
+
+
+def _gravar_trilha(
+    session: Session, fazenda_id: int | None, user, acao: str, tipo: str, id_alvo: str, titulo: str,
+    motivo: str | None = None, resumo: dict | None = None, snapshot: list[dict] | None = None,
+    solicitacao_id: int | None = None, solicitado_por: str | None = None,
+) -> str:
+    codigo = _proximo_codigo_trilha(session, fazenda_id)
+    session.add(ExclusaoRegistro(
+        codigo=codigo, fazenda_id=fazenda_id, usuario_id=getattr(user, "id", None),
+        username=getattr(user, "username", None), papel=getattr(user, "papel", None),
+        acao=acao, tipo=tipo, id_alvo=id_alvo, titulo=titulo, motivo=motivo,
+        resumo_json=json.dumps(resumo, ensure_ascii=False, default=str) if resumo is not None else None,
+        snapshot_json=json.dumps(snapshot, ensure_ascii=False, default=str) if snapshot is not None else None,
+        solicitacao_id=solicitacao_id, solicitado_por=solicitado_por,
+    ))
+    # Decisão #4 do dono: a trilha é guardada por 30 dias e depois expurga.
+    limite = datetime.utcnow() - timedelta(days=30)
+    session.exec(delete(ExclusaoRegistro).where(
+        ExclusaoRegistro.fazenda_id == fazenda_id,
+        ExclusaoRegistro.criado_em < limite,
+    ))
+    return codigo
 
 
 @router.post("/impacto")
@@ -1466,8 +1659,12 @@ def impacto(
     dados: ExclusaoIn, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    itens, _ = _alvos(dados.tipo, dados.id, session, fazenda_id=fazenda_id_seguro(fazenda_id))
-    return {"impacto": itens}
+    """Impacto PUR0: computa e descarta a sessão no fim — as mutações que
+    `_alvos`/`tipo.alvos` fazem (ex.: saldo de estoque) só valem na confirmação."""
+    try:
+        return _serializar(_montar_impacto(dados.tipo, dados.id, session, fazenda_id_seguro(fazenda_id)))
+    finally:
+        session.rollback()
 
 
 @router.post("/confirmar")
@@ -1477,11 +1674,35 @@ def confirmar(
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """Admin exclui na hora. Operador só registra uma solicitação pendente."""
+    """Admin exclui na hora (risco/motivo/confirmação no servidor + trilha).
+    Operador registra um pedido pendente, deduplicado."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    itens, alvos = _alvos(dados.tipo, dados.id, session, fazenda_id=fazenda_id)
+    eh_admin = user.papel == "admin"
 
-    if user.papel == "admin":
+    try:
+        itens, alvos = _alvos(dados.tipo, dados.id, session, fazenda_id=fazenda_id)
+    except ExclusaoBloqueada as e:
+        raise HTTPException(status_code=409, detail=_serializar(
+            Impacto(item={"tipo": dados.tipo, "id": dados.id, "titulo": e.bloqueio.titulo}, bloqueia=[e.bloqueio]),
+        ))
+
+    titulo = itens[0] if itens else f"{dados.tipo} #{dados.id}"
+    impacto = Impacto(
+        item={"tipo": dados.tipo, "id": dados.id, "titulo": titulo},
+        apagar=[Linha(titulo=s, consequencia="") for s in itens],
+    )
+    reverter_d, avisos_d = _descrever_reversoes(session, alvos, fazenda_id)
+    impacto.reverter = reverter_d
+    impacto.avisos = avisos_d
+    _forcar_risco_do_tipo(impacto, dados.tipo)
+    risco = exclusao_risco.calcular(impacto)
+    impacto.risco = risco
+    impacto.porque = exclusao_risco.porque(impacto)
+
+    _exigir_motivo_e_confirmacao(dados, risco, eh_admin, exigir_confirmacao=eh_admin)
+
+    if eh_admin:
+        snapshot = [_snapshot_objeto(o) for o in alvos]
         _desvincular_vales_dos_alvos(session, alvos, fazenda_id)
         _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
         _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
@@ -1490,29 +1711,48 @@ def confirmar(
         _reajustar_del_dias_apos_excluir_parto(session, alvos, fazenda_id)
         avisos = _estornar_estoque_dos_alvos(session, alvos, fazenda_id, dados.tipo)
         _excluir_alvos_em_ordem(session, alvos)
+        codigo = _gravar_trilha(
+            session, fazenda_id, user, "apagou", dados.tipo, dados.id, titulo,
+            motivo=dados.motivo, resumo={"apagado": itens, "revertido": [], "avisos": avisos},
+            snapshot=snapshot,
+        )
         session.commit()
-        return {"status": "excluido", "itens": itens, "avisos": avisos}
+        return {"status": "excluido", "comprovante": codigo, "itens": itens, "avisos": avisos}
 
-    # `_alvos()` pode ter side effects de reversão (ex.: saldo de estoque em
-    # `estoque.py::_alvos_movimento_estoque`, "A descartar" em
-    # `sanidade.py::_alvos_exame_resultado`) escritos na sessão via
-    # `session.add(...)` — pensados pra rodar só quando a exclusão acontece
-    # de fato (aqui mesmo, no ramo admin acima, ou em `aprovar_pendente`, que
-    # chama `_alvos()` de novo na hora de aprovar). Uma mera SOLICITAÇÃO não
-    # pode carregar esses efeitos: descarta com rollback antes de gravar a
-    # `SolicitacaoExclusao` — sem isso, `session.commit()` logo abaixo
-    # persistiria a reversão junto, como se já tivesse sido aprovada.
+    # Operador → pedido pendente. `_alvos()` pode ter side effects (reversão de
+    # saldo etc.) pensados para rodar só na exclusão de fato — descarta antes de
+    # gravar o pedido.
     session.rollback()
+    pendente = session.exec(
+        select(SolicitacaoExclusao).where(
+            SolicitacaoExclusao.fazenda_id == fazenda_id,
+            SolicitacaoExclusao.tipo == dados.tipo,
+            SolicitacaoExclusao.id_alvo == dados.id,
+            SolicitacaoExclusao.status == "pendente",
+        )
+    ).first()
+    if pendente:
+        if pendente.solicitado_por == user.username:
+            return {"status": "ja_pedido", "id": pendente.id}
+        session.add(SolicitacaoExclusaoApoio(
+            solicitacao_id=pendente.id, username=user.username, motivo=dados.motivo,
+        ))
+        session.commit()
+        return {"status": "apoiado", "id": pendente.id}
+
     solicitacao = SolicitacaoExclusao(
         tipo=dados.tipo,
         id_alvo=dados.id,
-        titulo=itens[0] if itens else f"{dados.tipo} #{dados.id}",
+        titulo=titulo,
         solicitado_por=user.username,
         fazenda_id=fazenda_id,
+        motivo=dados.motivo,
+        risco=risco,
+        impacto_resumo_json=json.dumps(impacto.dict(), ensure_ascii=False, default=str),
     )
     session.add(solicitacao)
     session.commit()
-    return {"status": "solicitado", "itens": itens}
+    return {"status": "solicitado", "id": solicitacao.id, "itens": itens}
 
 
 @router.get("/pendentes", dependencies=[Depends(exigir_admin)])
@@ -1524,12 +1764,42 @@ def listar_pendentes(
     if fazenda_id is not None:
         query = query.where(SolicitacaoExclusao.fazenda_id.in_((fazenda_id, None)))
     sols = session.exec(query.order_by(SolicitacaoExclusao.criado_em.desc())).all()
-    return [s.model_dump() for s in sols]
+
+    out = []
+    for sol in sols:
+        d = sol.model_dump()
+        apoios = session.exec(
+            select(SolicitacaoExclusaoApoio).where(SolicitacaoExclusaoApoio.solicitacao_id == sol.id)
+        ).all()
+        d["apoiadores"] = [a.username for a in apoios]
+        try:
+            impacto = _montar_impacto(sol.tipo, sol.id_alvo, session, fazenda_id)
+            d["alvo_existe"] = True
+            d["impacto"] = _serializar(impacto)
+        except ExclusaoBloqueada as e:
+            d["alvo_existe"] = True
+            d["impacto"] = _serializar(Impacto(
+                item={"tipo": sol.tipo, "id": sol.id_alvo, "titulo": sol.titulo or ""}, bloqueia=[e.bloqueio],
+            ))
+        except HTTPException as ex:
+            if ex.status_code == 404:
+                d["alvo_existe"] = False
+            else:
+                raise
+        finally:
+            session.rollback()
+        out.append(d)
+    return out
+
+
+class AprovarIn(BaseModel):
+    confirmacao: str | None = None
 
 
 @router.post("/pendentes/{sol_id}/aprovar", dependencies=[Depends(exigir_admin)])
 def aprovar_pendente(
     sol_id: int,
+    dados: AprovarIn = AprovarIn(),
     user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -1541,7 +1811,37 @@ def aprovar_pendente(
     if fazenda_id is not None and sol.fazenda_id not in (None, fazenda_id):
         raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
 
-    _, alvos = _alvos(sol.tipo, sol.id_alvo, session, fazenda_id=fazenda_id)
+    try:
+        itens, alvos = _alvos(sol.tipo, sol.id_alvo, session, fazenda_id=fazenda_id)
+    except ExclusaoBloqueada as e:
+        raise HTTPException(status_code=409, detail=_serializar(
+            Impacto(item={"tipo": sol.tipo, "id": sol.id_alvo, "titulo": e.bloqueio.titulo}, bloqueia=[e.bloqueio]),
+        ))
+    except HTTPException as ex:
+        if ex.status_code == 404:
+            raise HTTPException(status_code=410, detail="O alvo já não existe (foi apagado ou mudou). Arquivar este pedido.")
+        raise
+
+    titulo = itens[0] if itens else (sol.titulo or f"{sol.tipo} #{sol.id_alvo}")
+    impacto = Impacto(
+        item={"tipo": sol.tipo, "id": sol.id_alvo, "titulo": titulo},
+        apagar=[Linha(titulo=s, consequencia="") for s in itens],
+    )
+    reverter_d, avisos_d = _descrever_reversoes(session, alvos, fazenda_id)
+    impacto.reverter = reverter_d
+    impacto.avisos = avisos_d
+    _forcar_risco_do_tipo(impacto, sol.tipo)
+    risco = exclusao_risco.calcular(impacto)
+    impacto.risco = risco
+    impacto.porque = exclusao_risco.porque(impacto)
+
+    if risco == "alto" and (dados.confirmacao or "").strip() != _confirmacao_esperada(sol.tipo, sol.id_alvo):
+        raise HTTPException(status_code=422, detail={
+            "codigo": "confirmacao_invalida", "risco": risco,
+            "esperado": "o número do animal" if sol.tipo == "animal" else "APAGAR",
+        })
+
+    snapshot = [_snapshot_objeto(o) for o in alvos]
     _desvincular_vales_dos_alvos(session, alvos, fazenda_id)
     _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
     _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
@@ -1554,8 +1854,13 @@ def aprovar_pendente(
     sol.decidido_por = user.username
     sol.decidido_em = datetime.utcnow()
     session.add(sol)
+    codigo = _gravar_trilha(
+        session, fazenda_id, user, "aprovou", sol.tipo, sol.id_alvo, titulo,
+        motivo=sol.motivo, resumo={"apagado": itens, "revertido": [], "avisos": avisos},
+        snapshot=snapshot, solicitacao_id=sol.id, solicitado_por=sol.solicitado_por,
+    )
     session.commit()
-    return {"aprovado": True, "avisos": avisos}
+    return {"aprovado": True, "comprovante": codigo, "avisos": avisos}
 
 
 class RejeitarIn(BaseModel):
@@ -1577,10 +1882,132 @@ def rejeitar_pendente(
     if fazenda_id is not None and sol.fazenda_id not in (None, fazenda_id):
         raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
 
+    motivo = (dados.motivo or "").strip()
+    if len(motivo) < 3:
+        raise HTTPException(status_code=422, detail={"codigo": "motivo_rejeicao_obrigatorio"})
+
     sol.status = "rejeitada"
     sol.decidido_por = user.username
     sol.decidido_em = datetime.utcnow()
-    sol.motivo_rejeicao = dados.motivo
+    sol.motivo_rejeicao = motivo
     session.add(sol)
+    _gravar_trilha(
+        session, fazenda_id, user, "rejeitou", sol.tipo, sol.id_alvo, sol.titulo or "",
+        motivo=motivo, solicitacao_id=sol.id, solicitado_por=sol.solicitado_por,
+    )
     session.commit()
     return {"rejeitado": True}
+
+
+@router.post("/pendentes/{sol_id}/arquivar", dependencies=[Depends(exigir_admin)])
+def arquivar_pendente(
+    sol_id: int,
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Alvo sumiu → o admin arquiva o pedido (não há mais o que apagar)."""
+    sol = session.get(SolicitacaoExclusao, sol_id)
+    if not sol or sol.status != "pendente":
+        raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if fazenda_id is not None and sol.fazenda_id not in (None, fazenda_id):
+        raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
+    sol.status = "arquivada"
+    sol.decidido_por = user.username
+    sol.decidido_em = datetime.utcnow()
+    session.add(sol)
+    _gravar_trilha(
+        session, fazenda_id, user, "arquivou", sol.tipo, sol.id_alvo, sol.titulo or "",
+        solicitacao_id=sol.id, solicitado_por=sol.solicitado_por,
+    )
+    session.commit()
+    return {"arquivado": True}
+
+
+@router.post("/pendentes/{sol_id}/cancelar")
+def cancelar_pendente(
+    sol_id: int,
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """O solicitante desiste do próprio pedido ainda pendente."""
+    sol = session.get(SolicitacaoExclusao, sol_id)
+    if not sol or sol.status != "pendente":
+        raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if fazenda_id is not None and sol.fazenda_id not in (None, fazenda_id):
+        raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
+    if sol.solicitado_por != user.username:
+        raise HTTPException(status_code=403, detail="Só quem pediu pode cancelar")
+    sol.status = "cancelada"
+    sol.decidido_por = user.username
+    sol.decidido_em = datetime.utcnow()
+    session.add(sol)
+    _gravar_trilha(
+        session, fazenda_id, user, "cancelou", sol.tipo, sol.id_alvo, sol.titulo or "",
+        solicitacao_id=sol.id, solicitado_por=sol.solicitado_por,
+    )
+    session.commit()
+    return {"cancelado": True}
+
+
+@router.get("/meus")
+def meus_pedidos(
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(SolicitacaoExclusao).where(SolicitacaoExclusao.solicitado_por == user.username)
+    if fazenda_id is not None:
+        query = query.where(SolicitacaoExclusao.fazenda_id.in_((fazenda_id, None)))
+    sols = session.exec(query.order_by(SolicitacaoExclusao.criado_em.desc())).all()
+    return [s.model_dump() for s in sols]
+
+
+@router.get("/trilha", dependencies=[Depends(exigir_admin)])
+def listar_trilha(
+    acao: str | None = None,
+    tipo: str | None = None,
+    q: str | None = None,
+    limite: int = 100,
+    deslocamento: int = 0,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ExclusaoRegistro)
+    if fazenda_id is not None:
+        query = query.where(ExclusaoRegistro.fazenda_id.in_((fazenda_id, None)))
+    if acao:
+        query = query.where(ExclusaoRegistro.acao == acao)
+    if tipo:
+        query = query.where(ExclusaoRegistro.tipo == tipo)
+    if q:
+        query = query.where(or_(
+            ExclusaoRegistro.titulo.like(f"%{q}%"),
+            ExclusaoRegistro.username.like(f"%{q}%"),
+            ExclusaoRegistro.codigo.like(f"%{q}%"),
+        ))
+    regs = session.exec(
+        query.order_by(ExclusaoRegistro.criado_em.desc()).offset(deslocamento).limit(min(limite, 500))
+    ).all()
+    return [r.model_dump() for r in regs]
+
+
+@router.get("/comprovante/{codigo}", dependencies=[Depends(exigir_admin)])
+def comprovante(
+    codigo: str,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ExclusaoRegistro).where(ExclusaoRegistro.codigo == codigo)
+    if fazenda_id is not None:
+        query = query.where(ExclusaoRegistro.fazenda_id.in_((fazenda_id, None)))
+    reg = session.exec(query).first()
+    if not reg:
+        raise HTTPException(status_code=404, detail="Comprovante não encontrado")
+    return reg.model_dump()
