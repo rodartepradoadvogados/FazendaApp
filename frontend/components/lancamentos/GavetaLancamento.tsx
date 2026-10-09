@@ -1,7 +1,9 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+import { useOverlay } from "@/components/useOverlay";
+import { LARGURA_GAVETA_PADRAO } from "@/lib/janelas";
 
 /**
  * Container único de lançamento (redesign "Cooperativa", mockup 1e) — gaveta
@@ -21,10 +23,17 @@ import { X } from "lucide-react";
  * de largura da gaveta em vez de cobrir a tela — exatamente o bug que este
  * ticket pede pra evitar. Animar `right` (posição, não transform) não cria
  * esse bloco, então os popups continuam centralizados na tela toda.
+ *
+ * 09/10/2026 — também é a "janela travada" do Financeiro (Dar baixa): `largura`
+ * muda a largura e `fecharComEsc={false}` deixa só o X fechando. O Esc passa pela
+ * pilha de overlays (useOverlay): um Modal aberto aqui dentro fecha sozinho, sem
+ * levar a gaveta junto. Foco: vai para a gaveta ao abrir, fica preso nela (Tab) e
+ * volta a quem abriu ao fechar.
  */
 export function GavetaLancamento({
   aberto, onFechar, titulo, icone: Icone, aviso,
   mensagemSalva, onSalvarProximo, onConcluir,
+  largura = LARGURA_GAVETA_PADRAO, fecharComEsc = true,
   children,
 }: {
   aberto: boolean;
@@ -39,10 +48,24 @@ export function GavetaLancamento({
   mensagemSalva?: string | null;
   onSalvarProximo?: () => void;
   onConcluir?: () => void;
+  /** Largura CSS da gaveta (padrão: min(80vw, 1320px), a de Lançamentos). */
+  largura?: string;
+  /** Padrão true. false = janela travada: Esc não fecha, só o X (e o clique fora nunca fecha). */
+  fecharComEsc?: boolean;
   children: React.ReactNode;
 }) {
   const [montado, setMontado] = useState(false);
   useEffect(() => { setMontado(true); }, []);
+  // Uma gaveta montada já aberta (ex.: só existe enquanto há uma baixa) precisa de
+  // um quadro "fechada" antes de deslizar — senão nasceria parada, sem animação.
+  const [pronto, setPronto] = useState(false);
+  useEffect(() => {
+    if (!montado) return;
+    const id = requestAnimationFrame(() => setPronto(true));
+    return () => cancelAnimationFrame(id);
+  }, [montado]);
+  const visivel = aberto && pronto;
+  const painelRef = useRef<HTMLElement>(null);
 
   // Trava o scroll do fundo enquanto a gaveta está aberta — mesmo cuidado que
   // um modal de tela cheia teria, senão a página por trás rola junto no celular.
@@ -53,13 +76,36 @@ export function GavetaLancamento({
     return () => { document.body.style.overflow = prev; };
   }, [aberto]);
 
-  // Esc fecha — mesma convenção dos demais overlays do site.
+  // Esc — pela pilha de overlays: só o da frente reage, e só se `fecharComEsc`.
+  const { ehTopo } = useOverlay({ ativo: aberto, fecharComEsc, aoEsc: onFechar });
+
+  // Foco: entra na gaveta ao abrir (sem roubar o de um campo que já tenha autoFocus),
+  // fica preso nela com Tab/Shift+Tab e volta a quem abriu ao fechar. O ouvinte é
+  // nativo no <aside> de propósito: o React propaga eventos de portais pela árvore
+  // de componentes, e o Tab de um Modal aberto aqui dentro não pode cair neste laço.
   useEffect(() => {
-    if (!aberto) return;
-    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onFechar(); };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [aberto, onFechar]);
+    if (!aberto || !montado) return;
+    const painel = painelRef.current;
+    if (!painel) return;
+    const gatilho = document.activeElement as HTMLElement | null;
+    const seletorFocavel = 'a[href], button:not([disabled]), textarea, input:not([type="hidden"]), select, [tabindex]:not([tabindex="-1"])';
+    if (!painel.contains(document.activeElement)) painel.focus({ preventScroll: true });
+    function aoTeclar(e: KeyboardEvent) {
+      if (e.key !== "Tab" || !painel || !ehTopo()) return;
+      const focaveis = Array.from(painel.querySelectorAll<HTMLElement>(seletorFocavel)).filter((el) => el.offsetParent !== null);
+      if (!focaveis.length) { e.preventDefault(); painel.focus(); return; }
+      const [primeiro, ultimo] = [focaveis[0], focaveis[focaveis.length - 1]];
+      const ativo = document.activeElement;
+      if (e.shiftKey && (ativo === primeiro || ativo === painel)) { e.preventDefault(); ultimo.focus(); }
+      else if (!e.shiftKey && ativo === ultimo) { e.preventDefault(); primeiro.focus(); }
+      else if (!painel.contains(ativo)) { e.preventDefault(); primeiro.focus(); }
+    }
+    painel.addEventListener("keydown", aoTeclar);
+    return () => {
+      painel.removeEventListener("keydown", aoTeclar);
+      if (gatilho && gatilho.isConnected) gatilho.focus?.({ preventScroll: true });
+    };
+  }, [aberto, montado, ehTopo]);
 
   if (!montado) return null;
 
@@ -70,18 +116,22 @@ export function GavetaLancamento({
           do usuário): só o X do cabeçalho ou Esc fecham, para não perder um
           lançamento em andamento por um clique sem querer ao lado. */}
       <div
-        aria-hidden={!aberto}
+        aria-hidden={true}
         className="gaveta-lancamento-scrim"
         style={{
           position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 65,
           background: "var(--overlay)",
-          opacity: aberto ? 1 : 0,
+          opacity: visivel ? 1 : 0,
           pointerEvents: aberto ? "auto" : "none",
           transition: "opacity 0.2s ease",
         }}
       />
       <aside
+        ref={painelRef} tabIndex={-1}
         role="dialog" aria-modal="true" aria-label={titulo}
+        // Fechada, a gaveta fica fora da tela mas montada: `inert` tira o conteúdo
+        // dela do Tab e do leitor de tela.
+        aria-hidden={!aberto} inert={!aberto}
         onClick={(e) => e.stopPropagation()}
         className="gaveta-lancamento-painel"
         style={{
@@ -90,8 +140,8 @@ export function GavetaLancamento({
           // reagem à largura da JANELA, não à da gaveta, então precisam de
           // espaço de verdade para não ficar cramped (ver comentário em
           // globals.css sobre a força de 1 coluna que existia antes disto).
-          position: "fixed", bottom: 0, right: aberto ? 0 : "-100vw",
-          width: "min(80vw, 1320px)", minWidth: "min(330px, 100vw)", zIndex: 65,
+          position: "fixed", bottom: 0, right: visivel ? 0 : "-100vw",
+          width: largura, minWidth: "min(330px, 100vw)", maxWidth: "100vw", zIndex: 65, outline: "none",
           background: "var(--surface)", borderLeft: "1px solid var(--border)",
           boxShadow: "-6px 0 20px rgba(20,30,45,0.18)",
           display: "flex", flexDirection: "column",

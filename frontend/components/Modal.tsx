@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+import { useOverlay } from "@/components/useOverlay";
 
 // Duração da saída (ver .popup-fundo/.popup-caixa em globals.css) — precisa
 // bater com o CSS pra desmontar só depois da animação terminar visualmente.
@@ -24,9 +25,15 @@ const DURACAO_SAIDA_MS = 160;
  * pausa, a chamada de `onClose` do consumidor nunca teria como "esperar" a
  * animação antes de sumir o componente da árvore. `onClose` continua com a
  * mesma assinatura de sempre; quem chama este componente não muda nada.
+ *
+ * Esc (09/10/2026): vai pela pilha de overlays (useOverlay), então um
+ * Modal aberto dentro de uma gaveta ou de outro Modal é o único que reage ao Esc.
+ * `fecharComEsc={false}` trava a janela (baixa/pagamento): só o X fecha.
  */
-export function Modal({ title, onClose, width = "820px", zIndex = 90, children }: {
-  title: string; onClose: () => void; width?: string; zIndex?: number; children: React.ReactNode;
+export function Modal({ title, onClose, width = "820px", zIndex = 90, fecharComEsc = true, children }: {
+  title: string; onClose: () => void; width?: string; zIndex?: number;
+  /** Padrão true. false = janela travada: Esc não fecha (só o X). */
+  fecharComEsc?: boolean; children: React.ReactNode;
 }) {
   const [montado, setMontado] = useState(false);
   const [saindo, setSaindo] = useState(false);
@@ -44,9 +51,13 @@ export function Modal({ title, onClose, width = "820px", zIndex = 90, children }
     setTimeout(onClose, DURACAO_SAIDA_MS);
   }
 
-  // Foco preso dentro do diálogo (Tab/Shift+Tab não escapam), Esc fecha, e o
-  // foco volta pra quem abriu o modal ao fechar — sem isso, um usuário de
-  // teclado/leitor de tela perdia a posição no resto da página inteira.
+  // Esc: só o overlay do topo da pilha reage (ver useOverlay). Sai da pilha assim
+  // que começa a animação de saída, para um 2º Esc já cair no overlay de baixo.
+  const { ehTopo } = useOverlay({ ativo: montado && !saindo, fecharComEsc, aoEsc: fechar });
+
+  // Foco preso dentro do diálogo (Tab/Shift+Tab não escapam) e o foco volta pra
+  // quem abriu o modal ao fechar — sem isso, um usuário de teclado/leitor de
+  // tela perdia a posição no resto da página inteira.
   useEffect(() => {
     if (!montado) return;
     const caixa = caixaRef.current;
@@ -56,8 +67,7 @@ export function Modal({ title, onClose, width = "820px", zIndex = 90, children }
     (primeiro || caixa).focus();
 
     function aoTeclar(e: KeyboardEvent) {
-      if (e.key === "Escape") { e.preventDefault(); fechar(); return; }
-      if (e.key !== "Tab" || !caixa) return;
+      if (e.key !== "Tab" || !caixa || !ehTopo()) return;
       const focaveis = Array.from(caixa.querySelectorAll<HTMLElement>(seletorFocavel)).filter((el) => el.offsetParent !== null);
       if (!focaveis.length) return;
       const [primeiroFocavel, ultimoFocavel] = [focaveis[0], focaveis[focaveis.length - 1]];

@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { Mail, Save, Share2, X } from "lucide-react";
 import { Modal } from "@/components/Modal";
+import { larguraDobrada } from "@/lib/janelas";
 import { fetchDestinatarioRecibo, enviarReciboEmail } from "@/lib/api";
 import { gerarReciboPDF, type LancamentoRecibo } from "@/lib/export";
 import { baixarArquivo, ehApp, salvarArquivo } from "@/lib/nativo";
@@ -88,7 +89,7 @@ export function ReciboModal({ lanc, onClose, nota, semEmail = false }: {
   }
 
   return (
-    <Modal title={`Recibo${lanc.numero_lancamento ? ` — ${lanc.numero_lancamento}` : ""}`} onClose={onClose} width="440px">
+    <Modal title={`Recibo${lanc.numero_lancamento ? ` — ${lanc.numero_lancamento}` : ""}`} onClose={onClose} width={larguraDobrada(440)}>
       <div style={{ display: "flex", flexDirection: "column", gap: "0.8rem" }}>
         <p style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
           {lanc.tipo === "receita" ? "Recebemos de" : "Pagamos a"} <strong>{lanc.fornecedor || "—"}</strong> —{" "}

@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, Clock, Minus, Paperclip, Plus, Undo2, Users, Wallet } from "lucide-react";
 import { Modal } from "@/components/Modal";
+import { larguraDobrada } from "@/lib/janelas";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { Dropzone } from "@/components/Dropzone";
 import { useConfirmacao, BotaoArquivo } from "@/components/financeiro/folhaUi";
@@ -91,7 +92,7 @@ function NovoTimeModal({ onClose, onFeito }: { onClose: () => void; onFeito: (t:
     catch (e: any) { setErro(e.message); setSalvando(false); }
   }
   return (
-    <Modal title="Novo caixa do time" onClose={onClose} width="460px">
+    <Modal title="Novo caixa do time" onClose={onClose} width={larguraDobrada(460)}>
       <label style={lbl} htmlFor="nt-nome">Nome</label>
       <input id="nt-nome" style={campo} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex.: Turma da ordenha" />
       <div id="nt-auto" style={{ ...lbl, marginTop: "0.7rem" }}>Entram automaticamente (todos os ativos do tipo, atualiza sozinho)</div>
@@ -270,7 +271,7 @@ function EntradaTimeModal({ timeId, onClose, onFeito }: { timeId: number; onClos
     } catch (e: any) { setErro(e.message); setSalvando(false); }
   }
   return (
-    <Modal title="Entrada no caixa do time" onClose={onClose} width="520px">
+    <Modal title="Entrada no caixa do time" onClose={onClose} width={larguraDobrada(520)}>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div><label style={lbl} htmlFor="et-tipo">Tipo de entrada</label>
           <select id="et-tipo" style={campo} value={tipo} onChange={(e) => setTipo(e.target.value)}>{TIPOS.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}</select></div>
@@ -323,7 +324,7 @@ function AddMembrosModal({ timeId, onClose, onFeito }: { timeId: number; onClose
     try { await adicionarMembrosTime(timeId, Array.from(escolhidos), entrada); onFeito(); } catch (e: any) { setErro(e.message); }
   }
   return (
-    <Modal title="Adicionar membros por nome" onClose={onClose} width="460px">
+    <Modal title="Adicionar membros por nome" onClose={onClose} width={larguraDobrada(460)}>
       <label style={lbl} htmlFor="am-ent">Entra no caixa em</label>
       <input id="am-ent" type="date" style={{ ...campo, marginBottom: "0.6rem" }} value={entrada} onChange={(e) => setEntrada(e.target.value)} />
       <div style={{ maxHeight: 240, overflowY: "auto", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem" }}>
@@ -351,7 +352,7 @@ function EstornoTimeModal({ timeId, movId, onClose, onFeito }: { timeId: number;
     try { await estornarMovimentoTime(timeId, movId, motivo.trim()); onFeito(); } catch (e: any) { setErro(e.message); }
   }
   return (
-    <Modal title="Estornar entrada do caixa do time" onClose={onClose} width="460px">
+    <Modal title="Estornar entrada do caixa do time" onClose={onClose} width={larguraDobrada(460)}>
       <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginTop: 0 }}>Cria o movimento contrário com a data de hoje; o Financeiro recebe o lançamento contrário. Só é possível enquanto o valor não foi repartido.</p>
       <label style={lbl} htmlFor="est-m">Motivo (obrigatório)</label>
       <input id="est-m" style={campo} value={motivo} onChange={(e) => setMotivo(e.target.value)} />

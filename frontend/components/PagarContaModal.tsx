@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { Receipt, X } from "lucide-react";
 import { Modal } from "@/components/Modal";
+import { larguraDobrada } from "@/lib/janelas";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { Dropzone } from "@/components/Dropzone";
 import { RetencaoCaixaCampos } from "@/components/RetencaoCaixaCampos";
@@ -103,7 +104,7 @@ export function PagarContaModal({ conta, onClose, onPago }: {
   }
 
   return (
-    <Modal title="Registrar pagamento" onClose={onClose} width="520px">
+    <Modal title="Registrar pagamento" onClose={onClose} width={larguraDobrada(520)} fecharComEsc={false}>
       <p style={{ margin: "0 0 0.15rem", fontWeight: 600, fontSize: "0.92rem" }}>{conta.titulo}</p>
       <p style={{ margin: "0 0 0.8rem", color: "var(--text-muted)", fontSize: "0.78rem" }}>
         {conta.detalhe ? `${conta.detalhe} · ` : ""}

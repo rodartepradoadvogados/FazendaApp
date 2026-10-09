@@ -23,6 +23,7 @@ import {
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { Modal } from "@/components/Modal";
+import { larguraDobrada } from "@/lib/janelas";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
@@ -381,7 +382,7 @@ function ModalGerar({ modelo, onClose, onGerado }: { modelo: LancamentoRecorrent
   };
 
   return (
-    <Modal title={`Gerar lançamento — ${modelo.descricao}`} onClose={onClose} width="560px">
+    <Modal title={`Gerar lançamento — ${modelo.descricao}`} onClose={onClose} width={larguraDobrada(560)}>
       <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
         {modelo.fornecedor_cliente ? `${modelo.fornecedor_cliente} · ` : ""}{modelo.centro_custo || "Sem centro de custo"}
         {modelo.dia_vencimento ? ` · vencimento padrão dia ${modelo.dia_vencimento}` : ""}

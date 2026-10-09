@@ -9,6 +9,7 @@ import {
 } from "@/lib/api";
 import { SecaoRecolhivel, type ModoSecaoCategoria } from "@/components/ui";
 import { Modal } from "@/components/Modal";
+import { larguraDobrada } from "@/lib/janelas";
 import { Dropzone } from "@/components/Dropzone";
 import ValeAvulsoSection from "@/components/ValeAvulsoSection";
 import CalendarioDiasTrabalhados from "@/components/CalendarioDiasTrabalhados";
@@ -975,7 +976,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo, mostrar = "
       </>)}
 
       {pagandoId !== null && (
-        <Modal title="Registrar pagamento de diária" onClose={() => setPagandoId(null)} width="440px">
+        <Modal title="Registrar pagamento de diária" onClose={() => setPagandoId(null)} width={larguraDobrada(440)} fecharComEsc={false}>
           <div>
             <label style={lbl}>Data do pagamento</label>
             <input type="date" style={inputSm} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} />
@@ -1090,7 +1091,7 @@ export default function DiariaView({ deepLinkDiariaId, deepLinkModo, mostrar = "
           segue somando diária todo dia, invisível) e o vencimento da conta
           que vai nascer. */}
       {encerrandoDiaria && (
-        <Modal title={`Encerrar e cobrar — ${encerrandoDiaria.pessoa_nome}`} onClose={() => setEncerrandoDiaria(null)} width="560px">
+        <Modal title={`Encerrar e cobrar — ${encerrandoDiaria.pessoa_nome}`} onClose={() => setEncerrandoDiaria(null)} width={larguraDobrada(560)}>
           <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
             Confira o que foi apurado antes de fechar. Depois de encerrado, o valor deste período para de mudar.
           </p>

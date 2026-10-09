@@ -40,6 +40,7 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { Dropzone } from "@/components/Dropzone";
 import { ReciboModal } from "@/components/ReciboModal";
 import { Modal } from "@/components/Modal";
+import { larguraDobrada } from "@/lib/janelas";
 import { FaturasView } from "@/components/FaturasView";
 import { ModalInserirEmFatura } from "@/components/ModalInserirEmFatura";
 import { RetencaoCaixaCampos } from "@/components/RetencaoCaixaCampos";
@@ -2337,7 +2338,7 @@ function ModalBaixaPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio
   const label: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
 
   return (
-    <Modal title={`Baixar do ativo — ${item.codigo ? `${item.codigo} · ` : ""}${item.nome}`} onClose={onClose} width="560px">
+    <Modal title={`Baixar do ativo — ${item.codigo ? `${item.codigo} · ` : ""}${item.nome}`} onClose={onClose} width={larguraDobrada(560)} fecharComEsc={false}>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <div><label style={label}>Data da baixa</label>
@@ -2422,7 +2423,7 @@ function ModalValorMercadoPatrimonio({ item, onClose, onSalvo }: { item: ItemPat
   const label: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
 
   return (
-    <Modal title={`Atualizar valor de mercado — ${item.nome}`} onClose={onClose} width="420px">
+    <Modal title={`Atualizar valor de mercado — ${item.nome}`} onClose={onClose} width={larguraDobrada(420)}>
       <div className="space-y-3">
         <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
           Última avaliação: {item.valor_mercado_atual != null ? formatBRL(item.valor_mercado_atual) : "—"}
@@ -2750,7 +2751,7 @@ function ModalNovoCartao({ cartao, onClose, onSalvo }: { cartao: CartaoCredito |
   };
 
   return (
-    <Modal title={cartao ? `Editar cartão — ${cartao.apelido}` : "Novo cartão de crédito"} onClose={onClose} width="520px">
+    <Modal title={cartao ? `Editar cartão — ${cartao.apelido}` : "Novo cartão de crédito"} onClose={onClose} width={larguraDobrada(520)}>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <div style={{ gridColumn: "1 / -1" }}><label style={cartaoLabelStyle}>Apelido</label>
@@ -2942,7 +2943,7 @@ function ModalNovaCompraCartao({ cartaoId, onClose, onSalvo }: { cartaoId: numbe
   };
 
   return (
-    <Modal title="Nova compra no cartão" onClose={onClose} width="460px">
+    <Modal title="Nova compra no cartão" onClose={onClose} width={larguraDobrada(460)}>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <div><label style={cartaoLabelStyle}>Data da compra</label>
@@ -2993,7 +2994,7 @@ function ModalPagarFatura({ fatura, cartao, onClose, onSalvo }: { fatura: Fatura
   };
 
   return (
-    <Modal title={`Pagar fatura — ${cartao.apelido} (${fatura.competencia})`} onClose={onClose} width="420px">
+    <Modal title={`Pagar fatura — ${cartao.apelido} (${fatura.competencia})`} onClose={onClose} width={larguraDobrada(420)} fecharComEsc={false}>
       <div className="space-y-3">
         <p style={{ fontSize: "0.85rem" }}>
           Valor da fatura: <strong>{fatura.valor_total != null ? formatBRL(fatura.valor_total) : "—"}</strong>

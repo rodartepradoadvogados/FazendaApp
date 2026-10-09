@@ -7,6 +7,7 @@ import {
 } from "@/lib/api";
 import { competenciaAlvoDoVale, previaEstorno, valorDaReversao } from "@/lib/desfazerValeRegras";
 import { Modal } from "@/components/Modal";
+import { larguraDobrada } from "@/lib/janelas";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -148,7 +149,7 @@ export default function AcoesValeModal({
   }
 
   return (
-    <Modal title={`Vale de ${pessoaNome}`} onClose={onFechar} width="560px">
+    <Modal title={`Vale de ${pessoaNome}`} onClose={onFechar} width={larguraDobrada(560)}>
       {carregando && (
         <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.4rem" }}>
           <Loader2 size={14} className="animate-spin" /> Carregando o vale…

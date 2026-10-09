@@ -16,6 +16,7 @@ import {
 } from "@/lib/api";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { Modal } from "@/components/Modal";
+import { larguraDobrada } from "@/lib/janelas";
 import { EstiloFatura, PilulaFatura } from "@/components/financeiro/faturaVisual";
 
 const FormLancamentoLote = dynamic(() => import("@/components/FormLancamentoLote").then((m) => m.FormLancamentoLote), { ssr: false });
@@ -264,7 +265,7 @@ function ModalMotivo({ titulo, aviso, rotuloBotao, onClose, onConfirmar }: { tit
     try { await onConfirmar(motivo.trim()); } catch (e) { setErro(msgErro(e, "Erro.")); } finally { setSalvando(false); }
   }
   return (
-    <Modal title={titulo} onClose={onClose} width="520px">
+    <Modal title={titulo} onClose={onClose} width={larguraDobrada(520)}>
       <div className="fv-modal">
         <div className="fv-aviso logo" style={{ marginTop: 0, marginBottom: "0.8rem" }}><Info size={16} aria-hidden /><span>{aviso}</span></div>
         <label className="fv-lbl" htmlFor="mot-t">Motivo (obrigatório)</label>
@@ -314,7 +315,7 @@ function ModalPagar({ fatura, parcela, onClose, onFeita }: { fatura: FaturaDetal
     } catch (e) { setErro(msgErro(e, "Erro ao pagar.")); } finally { setSalvando(false); }
   }
   return (
-    <Modal title={`Pagar parcela ${parcela}/${fatura.parcelas.length} — ${fatura.rotulo}`} onClose={onClose} width="680px">
+    <Modal title={`Pagar parcela ${parcela}/${fatura.parcelas.length} — ${fatura.rotulo}`} onClose={onClose} width={larguraDobrada(680)} fecharComEsc={false}>
       <div className="fv-modal">
         <p style={{ marginBottom: "0.8rem" }}>Vencimento {br(p.vencimento)} · valor <strong className="fv-num">{formatBRL(p.valor)}</strong>. O pagamento baixa a parcela de todas as {fatura.notas} notas.</p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

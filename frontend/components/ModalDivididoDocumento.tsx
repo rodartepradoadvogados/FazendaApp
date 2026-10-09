@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { X, Info } from "lucide-react";
 import { Modal } from "@/components/Modal";
+import { useOverlay } from "@/components/useOverlay";
 
 /**
  * Mesma casca do Modal genérico, mas quando um documento (nota/recibo/boleto/
@@ -9,11 +10,16 @@ import { Modal } from "@/components/Modal";
  * formulário à direita — ocupando 80% do espaço do app, pra dar espaço real
  * pra ler o documento enquanto preenche/confere os campos. Sem documento
  * ainda, cai no Modal normal (mais estreito) — só divide "ao anexar".
+ *
+ * Dividida (com documento): janela TRAVADA — não fecha por clique fora nem por
+ * Esc, só pelo X (o clique fora fechava a janela e perdia o que já foi preenchido).
+ * Fica na pilha de overlays para o Esc não vazar para a janela que está por baixo.
  */
 export function ModalDivididoDocumento({ title, onClose, arquivo, children }: {
   title: string; onClose: () => void; arquivo: File | null; children: React.ReactNode;
 }) {
   const [url, setUrl] = useState<string | null>(null);
+  useOverlay({ ativo: !!arquivo, fecharComEsc: false, aoEsc: onClose });
 
   useEffect(() => {
     if (!arquivo) { setUrl(null); return; }
@@ -27,9 +33,9 @@ export function ModalDivididoDocumento({ title, onClose, arquivo, children }: {
   }
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
       display: "flex", alignItems: "center", justifyContent: "center", zIndex: 90, padding: "1rem" }}>
-      <div role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}
+      <div role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}
         style={{ width: "80vw", height: "80vh", maxWidth: "95vw", maxHeight: "92vh",
           background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)",
           display: "flex", flexDirection: "column", overflow: "hidden" }}>
