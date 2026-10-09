@@ -72,7 +72,7 @@ const COLUNAS_LIVRO = [
 import type { Lanc } from "@/lib/financeiroTipos";
 import { NATUREZAS_FIN, rotuloNatureza } from "@/lib/naturezaFin";
 
-type Rel = "fluxo" | "dre" | "dre_contas" | "rel_litro" | "rel_dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos" | "resumo";
+type Rel = "fluxo" | "dre" | "dre_contas" | "rel_litro" | "rel_dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "rel_orcamento" | "rel_cenarios" | "orcamento_itens" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos" | "resumo";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "caixa_real", label: "Caixa Real", icon: TrendingUp, desc: "Projeção de liquidez: quanto tem hoje e como o saldo evolui com os compromissos já lançados" },
@@ -118,12 +118,12 @@ const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
 // continuam exigindo dado existente, o que faz sentido (não tem o que
 // mostrar de fato).
 // "faturas" (Contas > Faturas de fornecedor) também dispensa lançamento prévio no banco.
-const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas", "a_pagar", "a_receber", "consultas", "custos", "resumo", "rel_litro", "rel_dre"]);
+const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas", "a_pagar", "a_receber", "consultas", "custos", "resumo", "rel_litro", "rel_dre", "rel_orcamento", "rel_cenarios"]);
 // Ícones da árvore de Relatórios por pergunta (lib/relatoriosNavegacao.ts).
 const ICONE_GRUPO: Record<string, LucideIcon> = { "rg-resultado": TrendingUp, "rg-caixa": Wallet, "rg-leite": Milk, "rg-plano": Target, "rg-registros": ListChecks };
 const ICONE_RELATORIO: Record<string, LucideIcon> = {
   rel_litro: Milk, rel_dre: FileText, dre_contas: FileText, caixa_real: TrendingUp, fluxo: Wallet, custos: BarChart3, rmca: BarChart3,
-  orcamento: Target, planejamento_financeiro: Compass, compra_venda_animais: ShoppingCart, compra_semen: ShoppingCart,
+  orcamento: Target, planejamento_financeiro: Compass, rel_orcamento: Target, rel_cenarios: Compass, orcamento_itens: Target, compra_venda_animais: ShoppingCart, compra_semen: ShoppingCart,
 };
 // Orçamento e Planejamento financeiro (Cenários) passaram para Relatórios › Plano (lib/relatoriosNavegacao.ts).
 // Inclui "extrato" mesmo não estando mais em CONTAS — Relatórios > Extrato
@@ -201,6 +201,8 @@ import { migrarFiltrosSalvosAntigos } from "@/lib/financeiroFiltrosMigracao";
 import { GRUPOS_RELATORIOS, IDS_RELATORIOS, grupoDe, idDoRelatorio } from "@/lib/relatoriosNavegacao";
 import DreFazendaView from "@/components/financeiro/relatorios/DreFazendaView";
 import ResultadoLitroView from "@/components/financeiro/relatorios/ResultadoLitroView";
+import OrcamentoPlanoView from "@/components/financeiro/relatorios/OrcamentoPlanoView";
+import CenariosView from "@/components/financeiro/relatorios/CenariosView";
 import type { PropsRelatorio } from "@/components/financeiro/relatorios/comum";
 import type { FiltroInicialConsultas } from "@/components/financeiro/ConsultasView";
 
@@ -858,6 +860,8 @@ export default function FinanceiroPage() {
           )
           : rel === "rel_dre" ? <DreFazendaView {...propsRelatorio} onClassificar={() => irPara("dre_contas")} />
           : rel === "rel_litro" ? <ResultadoLitroView {...propsRelatorio} />
+          : rel === "rel_orcamento" ? <OrcamentoPlanoView {...propsRelatorio} />
+          : rel === "rel_cenarios" ? <CenariosView {...propsRelatorio} />
           : rel === "custos" ? <CustosView base={custosBase} onBase={setCustosBase} />
           : rel === "caixa_real" ? <CaixaRealView />
           : rel === "faturas" || rel === "faturas_gestao" ? <FaturasView />
@@ -877,7 +881,7 @@ export default function FinanceiroPage() {
           : rel === "rmca" ? <RmcaView />
           : rel === "compra_venda_animais" ? <RelatorioCompraVendaAnimaisView />
           : rel === "compra_semen" ? <RelatorioCompraSemenView />
-          : rel === "orcamento" ? <OrcamentoView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} />
+          : rel === "orcamento" || rel === "orcamento_itens" ? <OrcamentoView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} />
           : rel === "planejamento_financeiro" ? <PlanejamentoFinanceiroView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} /> : <>
         <>
         {filtrosCard}

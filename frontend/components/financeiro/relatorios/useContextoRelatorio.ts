@@ -12,8 +12,10 @@ import {
   comparacaoDe, escreverContexto, lerContexto, periodoDe, type Comparacao, type EstadoContexto, type Periodo,
 } from "@/lib/relatorioContexto";
 
-/** Trava do relatório: o que ele NÃO deixa mudar e por quê (ex.: regras antigas = DRE da fazenda inteira). */
-export type TravasContexto = { cc?: string; reg?: EstadoContexto["reg"]; cmpOrcado?: boolean; porque?: string };
+/** Trava do relatório: o que ele NÃO deixa mudar e por quê (ex.: regras antigas = DRE da fazenda inteira).
+ *  `per`/`cmp` (Fase C): o relatório fixa o período (código) ou a comparação — a URL guarda o que a
+ *  pessoa escolheu nos outros relatórios; aqui vale a trava. */
+export type TravasContexto = { cc?: string; reg?: EstadoContexto["reg"]; cmpOrcado?: boolean; per?: string; cmp?: EstadoContexto["cmp"]; porque?: string };
 
 export function useContextoRelatorio(padrao: EstadoContexto, travas: TravasContexto = {}) {
   const padraoRef = useRef(padrao);
@@ -55,7 +57,9 @@ export function useContextoRelatorio(padrao: EstadoContexto, travas: TravasConte
     ...estado,
     ...(travas.cc ? { cc: travas.cc } : {}),
     ...(travas.reg ? { reg: travas.reg } : {}),
-  }), [estado, travas.cc, travas.reg]);
+    ...(travas.per ? { per: travas.per } : {}),
+    ...(travas.cmp ? { cmp: travas.cmp, cmpp: "" } : {}),
+  }), [estado, travas.cc, travas.reg, travas.per, travas.cmp]);
   const periodo: Periodo = useMemo(() => periodoDe(efetivo.per) ?? periodoDe(padrao.per)!, [efetivo.per, padrao.per]);
   const comparacao: Comparacao | null = useMemo(() => comparacaoDe(periodo, efetivo.cmp, efetivo.cmpp), [periodo, efetivo.cmp, efetivo.cmpp]);
 

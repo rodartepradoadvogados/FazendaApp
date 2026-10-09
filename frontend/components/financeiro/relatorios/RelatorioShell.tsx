@@ -266,11 +266,13 @@ export function RelatorioShell(props: {
   niveis?: Migalha[]; onVoltarNivel?: () => void; onIrGrupo?: () => void;
   estado: EstadoTela; erro?: string | null; onTentarDeNovo?: () => void; vazio?: ReactNode;
   frase?: { t: string; b?: boolean }[]; kpis?: KpiDef[]; avisos?: ReactNode;
+  /** Rótulo da comparação nos chips dos KPIs quando não é um período (Fase C: "orçado"). */
+  rotuloCmp?: string | null;
   children?: ReactNode;
   exportar: () => RelatorioParaExportar | null;
 }) {
   const { ctx, estado } = props;
-  const rotuloCmp = ctx.comparacao && ctx.comparacao.tipo === "periodo" ? ctx.comparacao.rotulo : null;
+  const rotuloCmp = props.rotuloCmp !== undefined ? props.rotuloCmp : ctx.comparacao && ctx.comparacao.tipo === "periodo" ? ctx.comparacao.rotulo : null;
   const tituloRef = useRef<HTMLHeadingElement>(null);
   const fazenda = typeof window === "undefined" ? "" : getFazendaAtual()?.nome || "";
   const contextoTexto = {

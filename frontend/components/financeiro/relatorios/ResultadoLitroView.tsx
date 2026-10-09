@@ -5,8 +5,10 @@
 // Os números vêm de GET /financeiro/resultado-por-litro, que reparte por litro a
 // MESMA DRE do servidor (mesmo regime e centro) — não há soma no navegador.
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Info } from "lucide-react";
 import { fetchResultadoPorLitro } from "@/lib/api";
+import { fetchOrcamentoRelatorio } from "@/lib/apiPlano";
+import { periodoDeMesesInteiros, type RespostaOrcamento } from "@/lib/relatorioOrcamento";
 import { ESTADO_INICIAL, REGIME_API, REGIME_NOME, brl, delta, deslocar, litros, mesCurto, num } from "@/lib/relatorioContexto";
 import {
   fraseLitro, linhasLitro, pendenciasLitro, serieLitro, temResultadoPorLitro, type RespostaLitro,
@@ -24,9 +26,10 @@ const selo = <span className="rl-selo" title="Conta feita com a separação vari
 export default function ResultadoLitroView(props: PropsRelatorio) {
   const { hoje, centros, ccPadrao } = props;
   const regras = useRegrasV2Estado();
+  // Fase C: "Comparar com: Orçado" = o orçamento de Plano › Orçamento repartido pelos litros entregues.
   const travas: TravasContexto = useMemo(() => (regras.ativa === false
-    ? { cc: "todos", cmpOrcado: false, porque: PORQUE_CENTRO_REGRAS_ANTIGAS }
-    : { cmpOrcado: false }), [regras.ativa]);
+    ? { cc: "todos", cmpOrcado: false, porque: `${PORQUE_CENTRO_REGRAS_ANTIGAS} O orçado como comparação também.` }
+    : {}), [regras.ativa]);
   const padrao = useMemo(() => ESTADO_INICIAL(hoje, ccPadrao), [hoje, ccPadrao]);
   const ctx = useContextoRelatorio(padrao, travas);
   const { periodo, comparacao, efetivo } = ctx;
@@ -51,12 +54,28 @@ export default function ResultadoLitroView(props: PropsRelatorio) {
     return () => { vivo = false; };
   }, [regras.ativa, periodo.ini, periodo.fim, cmpPeriodo?.ini, cmpPeriodo?.fim, efetivo.reg, centroApi, tentativa]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const [leituraOrc, setLeituraOrc] = useState<{ k: string; r: RespostaOrcamento | null; erro: string | null } | null>(null);
+  const cmpOrc = comparacao?.tipo === "orcado";
+  const orcPossivel = cmpOrc && regras.ativa === true && efetivo.reg === "comp" && periodoDeMesesInteiros(periodo);
+  const chaveOrc = `${periodo.ini}|${periodo.fim}|${centroApi ?? ""}|${tentativa}`;
+  useEffect(() => {
+    if (!orcPossivel) return;
+    let vivo = true;
+    fetchOrcamentoRelatorio({ data_inicio: periodo.ini, data_fim: periodo.fim, centro_custo: centroApi })
+      .then((r) => { if (vivo) setLeituraOrc({ k: chaveOrc, r, erro: null }); })
+      .catch((e) => { if (vivo) setLeituraOrc({ k: chaveOrc, r: null, erro: (e as Error).message }); });
+    return () => { vivo = false; };
+  }, [orcPossivel, chaveOrc]); // eslint-disable-line react-hooks/exhaustive-deps
+  const leituraValida = orcPossivel && leituraOrc?.k === chaveOrc ? leituraOrc : null;
+  const orc = leituraValida?.r ?? null, orcErro = leituraValida?.erro ?? null;
+  const orcAtivo = orcPossivel && !!orc?.tem_orcamento && !!orc.litro_orcado;
+
   const a = dados?.atual ?? null;
-  const b = cmpPeriodo ? dadosCmp?.atual ?? null : null;
-  const rotuloCmp = cmpPeriodo ? comparacao!.rotulo : null;
+  const b = cmpPeriodo ? dadosCmp?.atual ?? null : orcAtivo ? orc!.litro_orcado! : null;
+  const rotuloCmp = cmpPeriodo ? comparacao!.rotulo : orcAtivo ? "Orçado" : null;
   const ok = temResultadoPorLitro(a);
   const pend = pendenciasLitro(dados);
-  const estado = regras.ativa === null || (!dados && !erro) ? "carregando" : erro && !dados ? "erro" : !ok ? "vazio" : "ok";
+  const estado = regras.ativa === null || (!dados && !erro) || (orcPossivel && !orc && !orcErro) ? "carregando" : erro && !dados ? "erro" : !ok ? "vazio" : "ok";
   const linhas = useMemo(() => linhasLitro(a, b), [a, b]);
   const pontos = useMemo(() => serieLitro(dados), [dados]);
   const pe = a?.ponto_equilibrio ?? null;
@@ -100,7 +119,7 @@ export default function ResultadoLitroView(props: PropsRelatorio) {
     };
     return {
       titulo: "Resultado por litro", pergunta: "Quanto sobra de cada litro?",
-      contexto: { periodo: periodo.label, comparacao: cmpPeriodo?.label ?? null, regime: REGIME_NOME[efetivo.reg], centro: efetivo.cc === "todos" ? "todos os centros" : efetivo.cc },
+      contexto: { periodo: periodo.label, comparacao: cmpPeriodo?.label ?? (orcAtivo ? "o orçado" : null), regime: REGIME_NOME[efetivo.reg], centro: efetivo.cc === "todos" ? "todos os centros" : efetivo.cc },
       colunas: [
         { header: "Linha (R$ por litro)", tipo: "texto" }, { header: "Atual", tipo: "brlL" },
         ...(comCmp ? [{ header: rotuloCmp!, tipo: "brlL" as const }, { header: "Δ", tipo: "brlL" as const }, { header: "Δ%", tipo: "pct" as const }] : []),
@@ -133,16 +152,35 @@ export default function ResultadoLitroView(props: PropsRelatorio) {
     />
   );
 
-  const frase = a && ok ? fraseLitro({ periodo, regime: efetivo.reg, a, b, rotuloCmp, brl, delta: (x, y, bom) => delta(x, y, bom) }) : [];
+  const frase = a && ok ? fraseLitro({ periodo, regime: efetivo.reg, a, b: cmpPeriodo ? b : null, rotuloCmp: cmpPeriodo ? rotuloCmp : null, brl, delta: (x, y, bom) => delta(x, y, bom) }) : [];
+  if (orcAtivo && b?.margem_l != null && a && ok) {
+    const d = delta(a.margem_l, b.margem_l, "sobe");
+    frase.push({ t: " O orçado previa " }, { t: `${brl(b.margem_l)} por litro`, b: true }, { t: d && !d.igual ? ` de sobra — ${d.melhor ? "melhor" : "pior"} que o plano.` : " de sobra — no plano." });
+  }
+  const avisoOrc = !cmpOrc ? null : (() => {
+    const plano = <button type="button" className="lk" onClick={() => props.onIrRelatorio("rel_orcamento")}>Plano › Orçamento</button>;
+    if (regras.ativa !== true) return { info: false, t: "O orçado por litro usa as regras novas dos relatórios.", p: <>O orçado × realizado conta a conta está em {plano}.</> };
+    if (efetivo.reg === "caixa") return { info: false, t: "O orçamento é pelo mês do gasto.", p: <>Para comparar com o orçado, <button type="button" className="lk" onClick={() => ctx.mudar({ reg: "comp" })}>use o mês do gasto</button>.</> };
+    if (!periodoDeMesesInteiros(periodo)) return { info: false, t: "O orçamento é mensal.", p: "Escolha um período de meses inteiros para comparar com o orçado." };
+    if (orcErro) return { info: false, t: "Não foi possível ler o orçado.", p: <>{orcErro} Os números do litro não mudaram.</> };
+    if (orc && !orc.tem_orcamento) return { info: false, t: `Não há orçamento para ${periodo.label}.`, p: <>Crie em {plano}.</> };
+    if (orcAtivo) return { info: true, t: `Comparando com o orçado de ${periodo.label}, pelos mesmos ${litros(a?.litros ?? 0)} entregues.`, p: <>O orçamento ainda não tem litros previstos: o orçado de cada conta é dividido pelos litros que saíram. Conta a conta: {plano}.</> };
+    return null;
+  })();
   const soma = a ? Math.round(((a.comida_l ?? 0) + (a.pessoal_l ?? 0) + (a.outros_l ?? 0)) * 10000) / 10000 : 0;
 
   return (
     <RelatorioShell ctx={ctx} hoje={hoje} centros={centros} grupo="Resultado" nome="Resultado por litro" pergunta="Quanto sobra de cada litro?"
       onIrGrupo={props.onIrGrupo} estado={estado} erro={erro || regras.erro} onTentarDeNovo={() => { setErro(null); setTentativa((t) => t + 1); }} vazio={vazioUi}
-      frase={frase} kpis={kpis} exportar={exportar}
-      avisos={dados && dados.avisos.length > 0 ? (
-        <div className="rl-aviso info" role="status"><AlertTriangle size={18} aria-hidden /><div>{dados.avisos.map((x) => <p key={x} style={{ margin: 0 }}>{x}</p>)}</div></div>
-      ) : null}>
+      frase={frase} kpis={kpis} exportar={exportar} rotuloCmp={orcAtivo ? "o orçado" : undefined}
+      avisos={<>
+        {avisoOrc && (
+          <div className={`rl-aviso${avisoOrc.info ? " info" : ""}`} role="status">{avisoOrc.info ? <Info size={18} aria-hidden /> : <AlertTriangle size={18} aria-hidden />}<div><b>{avisoOrc.t}</b><p>{avisoOrc.p}</p></div></div>
+        )}
+        {dados && dados.avisos.length > 0 && (
+          <div className="rl-aviso info" role="status"><AlertTriangle size={18} aria-hidden /><div>{dados.avisos.map((x) => <p key={x} style={{ margin: 0 }}>{x}</p>)}</div></div>
+        )}
+      </>}>
       {a && ok && (<>
         <section className="rl-painel" aria-labelledby="rl-litro-barra">
           <h3 className="rl-tit" id="rl-litro-barra">Para onde vai cada litro · {periodo.curto}</h3>

@@ -22,8 +22,11 @@ export const GRUPOS_RELATORIOS: GrupoRelatorio[] = [
     { id: "rmca", label: "Sobra da comida (RMCA)" },
   ] },
   { id: "rg-plano", label: "Plano", pergunta: "Gastei o que planejei?", itens: [
-    { id: "orcamento", label: "Orçamento" },
-    { id: "planejamento_financeiro", label: "Cenários" },
+    { id: "rel_orcamento", label: "Orçamento" },
+    { id: "rel_cenarios", label: "Cenários" },
+    // Telas anteriores (paridade): item a item com observação e Importar para Pedidos.
+    { id: "orcamento_itens", label: "Orçamento item a item (tela anterior)" },
+    { id: "planejamento_financeiro", label: "Cenários por conta (tela anterior)" },
   ] },
   { id: "rg-registros", label: "Registros", pergunta: "De onde vem cada número?", itens: [
     { id: "compra_venda_animais", label: "Compra e venda de animais" },
@@ -32,11 +35,13 @@ export const GRUPOS_RELATORIOS: GrupoRelatorio[] = [
 ];
 
 /** Relatórios novos, feitos no molde único (os outros continuam na tela de antes até a Fase C). */
-export const RELATORIOS_NO_MOLDE = new Set(["rel_litro", "rel_dre"]);
+export const RELATORIOS_NO_MOLDE = new Set(["rel_litro", "rel_dre", "rel_orcamento", "rel_cenarios"]);
 
 /** Ids antigos que mudaram de lugar → onde estão agora. */
 export const REDIRECIONAMENTOS: Record<string, string> = {
   dre: "rel_dre",
+  // Fase C: o orçamento no molde (a tela anterior continua em "orcamento_itens").
+  orcamento: "rel_orcamento",
 };
 
 export function idDoRelatorio(id: string): string {
