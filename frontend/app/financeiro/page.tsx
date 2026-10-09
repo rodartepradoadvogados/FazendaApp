@@ -3,6 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Circle, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
   Paperclip, Pencil, ShoppingCart, Target, TrendingUp, Compass, Trash2, Wrench, AlertTriangle, Repeat, CreditCard, ArrowLeft, Award, Undo2,
+  Milk, ListChecks, type LucideIcon,
 } from "lucide-react";
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
@@ -71,11 +72,11 @@ const COLUNAS_LIVRO = [
 import type { Lanc } from "@/lib/financeiroTipos";
 import { NATUREZAS_FIN, rotuloNatureza } from "@/lib/naturezaFin";
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos" | "resumo";
+type Rel = "fluxo" | "dre" | "dre_contas" | "rel_litro" | "rel_dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos" | "resumo";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "caixa_real", label: "Caixa Real", icon: TrendingUp, desc: "Projeção de liquidez: quanto tem hoje e como o saldo evolui com os compromissos já lançados" },
-  { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado em cascata — receita de vendas até resultado líquido" },
+  { id: "dre_contas", label: "DRE por conta (tela anterior)", icon: FileText, desc: "Resultado em cascata com a classificação das contas — a DRE da fazenda nova está em Relatórios › Resultado" },
   { id: "livro", label: "Livro Caixa", icon: BookOpen, desc: "Lançamentos com saldo acumulado" },
   { id: "extrato", label: "Extrato completo", icon: Receipt, desc: "Todos os lançamentos, com ou sem baixa" },
   { id: "rmca", label: "RMCA", icon: BarChart3, desc: "Receita do leite menos custo de alimentação — gerencial e físico lado a lado" },
@@ -117,11 +118,14 @@ const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
 // continuam exigindo dado existente, o que faz sentido (não tem o que
 // mostrar de fato).
 // "faturas" (Contas > Faturas de fornecedor) também dispensa lançamento prévio no banco.
-const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas", "a_pagar", "a_receber", "consultas", "custos", "resumo"]);
-const PLANEJAMENTO: { id: Rel; label: string; icon: any; desc: string }[] = [
-  { id: "orcamento", label: "Orçamento", icon: Target, desc: "Planilha orçamentária por conta gerencial/centro de custo/mês, comparada ao realizado" },
-  { id: "planejamento_financeiro", label: "Planejamento financeiro", icon: TrendingUp, desc: "Cenários (otimista/realista/pessimista) com projeção de fluxo de caixa" },
-];
+const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas", "a_pagar", "a_receber", "consultas", "custos", "resumo", "rel_litro", "rel_dre"]);
+// Ícones da árvore de Relatórios por pergunta (lib/relatoriosNavegacao.ts).
+const ICONE_GRUPO: Record<string, LucideIcon> = { "rg-resultado": TrendingUp, "rg-caixa": Wallet, "rg-leite": Milk, "rg-plano": Target, "rg-registros": ListChecks };
+const ICONE_RELATORIO: Record<string, LucideIcon> = {
+  rel_litro: Milk, rel_dre: FileText, dre_contas: FileText, caixa_real: TrendingUp, fluxo: Wallet, custos: BarChart3, rmca: BarChart3,
+  orcamento: Target, planejamento_financeiro: Compass, compra_venda_animais: ShoppingCart, compra_semen: ShoppingCart,
+};
+// Orçamento e Planejamento financeiro (Cenários) passaram para Relatórios › Plano (lib/relatoriosNavegacao.ts).
 // Inclui "extrato" mesmo não estando mais em CONTAS — Relatórios > Extrato
 // completo precisa continuar se comportando como uma view de "Contas" (sem
 // período padrão implícito, filtros de tipo, etc.), igual já era antes de
@@ -193,6 +197,12 @@ import { ehNotaSoDeClassificacao, hojeLocal, perguntaAgendamento, situacaoDe, va
 import { useRegrasV2 } from "@/lib/useRegrasV2";
 import { apresentacaoSituacao, kpisDre, regimeDaUrl, type RegimeDre } from "@/lib/dreUnica";
 import { migrarFiltrosSalvosAntigos } from "@/lib/financeiroFiltrosMigracao";
+// Fase B dos Relatórios: molde único, árvore por pergunta e as duas primeiras telas novas.
+import { GRUPOS_RELATORIOS, IDS_RELATORIOS, grupoDe, idDoRelatorio } from "@/lib/relatoriosNavegacao";
+import DreFazendaView from "@/components/financeiro/relatorios/DreFazendaView";
+import ResultadoLitroView from "@/components/financeiro/relatorios/ResultadoLitroView";
+import type { PropsRelatorio } from "@/components/financeiro/relatorios/comum";
+import type { FiltroInicialConsultas } from "@/components/financeiro/ConsultasView";
 
 export default function FinanceiroPage() {
   const [regs, setRegs] = useState<Lanc[] | null>(null);
@@ -288,10 +298,24 @@ export default function FinanceiroPage() {
 
   // Telas antigas que deixaram de existir viram atalhos para o destino novo — assim
   // links profundos (?ir=…), a Agenda, o sino e os holerites continuam funcionando.
-  const [consultaInicial, setConsultaInicial] = useState<{ documento?: string; modo?: "lista" | "livro"; banco?: string } | null>(null);
+  const [consultaInicial, setConsultaInicial] = useState<FiltroInicialConsultas | null>(null);
   const [idsLote, setIdsLote] = useState<number[]>([]);
   const [folhaModo, setFolhaModo] = useState<"fechamento" | "holerites">("fechamento");
-  function irPara(destino: Rel, ref?: string | null) {
+  // Fase B dos Relatórios: navegar entre relatórios (e o drill até Consultas)
+  // empilha no histórico — o Voltar do navegador volta ao relatório anterior, com
+  // o mesmo contexto (período/comparação/regime/centro ficam na URL).
+  function empilharSub(id: string, det?: string) {
+    const q = new URLSearchParams(window.location.search);
+    // Já está lá (ex.: ?sub= de um link aberto agora, com o ?det= dele): não empilha nem apaga o detalhe.
+    if (q.get("sub") === id && (det === undefined || (q.get("det") || "") === det)) return;
+    q.set("sub", id);
+    if (det) q.set("det", det); else q.delete("det");
+    window.history.pushState(window.history.state, "", `${window.location.pathname}?${q.toString()}${window.location.hash}`);
+  }
+  function irPara(destinoBruto: Rel, ref?: string | null, opcoes?: { historico?: boolean; det?: string }) {
+    // Ids antigos que mudaram de lugar (ex.: "dre" → "rel_dre", a DRE da fazenda no molde novo).
+    const destino = idDoRelatorio(destinoBruto) as Rel;
+    if (opcoes?.historico !== false && IDS_RELATORIOS.has(destino) && typeof window !== "undefined") empilharSub(destino, opcoes?.det);
     setNotaAlvoRef(ref || null);
     setContasFiltro(null);
     switch (destino) {
@@ -354,9 +378,26 @@ export default function FinanceiroPage() {
     const ir = qs.get("ir");
     const ref = qs.get("ref");
     migrarFiltrosSalvosAntigos();
-    if (ir) irPara(ir as Rel, ref);
+    // Link salvo com um id antigo de relatório (ex.: ?sub=dre) abre o lugar novo.
+    const subAntigo = qs.get("sub");
+    if (ir) irPara(ir as Rel, ref, { historico: false });
+    else if (subAntigo && idDoRelatorio(subAntigo) !== subAntigo) irPara(subAntigo as Rel, null, { historico: false });
     else if (ref) setNotaAlvoRef(ref);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Voltar/Avançar do navegador entre relatórios (e de Consultas de volta ao relatório do drill).
+  const relAtual = useRef(rel);
+  useEffect(() => { relAtual.current = rel; }, [rel]);
+  useEffect(() => {
+    const aoVoltar = () => {
+      const sub = new URLSearchParams(window.location.search).get("sub");
+      if (!sub) return;
+      const alvo = idDoRelatorio(sub);
+      if (alvo !== relAtual.current && (IDS_RELATORIOS.has(alvo) || alvo === "consultas")) setRel(alvo as Rel);
+    };
+    window.addEventListener("popstate", aoVoltar);
+    return () => window.removeEventListener("popstate", aoVoltar);
   }, []);
 
   // Árvore de sub-navegação — a Sidebar desenha isto no lugar da lista de
@@ -375,10 +416,13 @@ export default function FinanceiroPage() {
     ] },
     // Só o que já foi pago ou recebido (substitui Pagas, Recebidas, Todas, Extrato e Livro Caixa).
     { id: "consultas", label: "Consultas", icon: Search },
-    { id: "relatorios-grupo", label: "Relatórios", icon: FileText, children: RELATORIOS.filter((r) => !["livro", "extrato", "custo_litro_leite", "custo_hectare", "custo_vaca_lote", "custo_safra"].includes(r.id))
-      .map((r) => ({ id: r.id, label: r.label, icon: r.icon }))
-      .concat([{ id: "custos", label: "Custos", icon: BarChart3 }]) },
-    { id: "planejamento-grupo", label: "Planejamento", icon: Compass, children: PLANEJAMENTO.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
+    // Fase B: Relatórios organizados por PERGUNTA (aba = grupo, sub-aba = relatório).
+    // Planejamento (Orçamento e Cenários) passou a ser o grupo "Plano" daqui — os
+    // ids não mudaram, então links salvos (?sub=orcamento) continuam valendo.
+    { id: "relatorios-grupo", label: "Relatórios", icon: FileText, children: GRUPOS_RELATORIOS.map((g) => ({
+      id: g.id, label: g.label, icon: ICONE_GRUPO[g.id] ?? FileText,
+      children: g.itens.map((i) => ({ id: i.id, label: i.label, icon: ICONE_RELATORIO[i.id] ?? BarChart3 })),
+    })) },
     // Patrimônio, Cartão de crédito e Documentos são destinos únicos — viram
     // folha direta (sem grupo "guarda-chuva" de 1 item só), economizando um
     // nível/clique da árvore de navegação.
@@ -461,7 +505,7 @@ export default function FinanceiroPage() {
   // Data relevante por aba: DRE = competência; Contas = campo escolhido no
   // filtro único de período (emissão por padrão); fluxo/livro = pagamento.
   const campoData = (r: Lanc) => {
-    if (rel === "dre") return r.data_competencia;
+    if (rel === "dre_contas") return r.data_competencia;
     if (CONTAS_IDS.has(rel)) {
       if (campoPeriodoContas === "emissao") return r.data_emissao || r.data_competencia;
       if (campoPeriodoContas === "vencimento") return r.data_vencimento || r.data_competencia;
@@ -469,7 +513,7 @@ export default function FinanceiroPage() {
     }
     return r.data_pagamento;
   };
-  const campoMes = (r: Lanc) => (rel === "dre" ? r.mes_competencia : r.mes_caixa);
+  const campoMes = (r: Lanc) => (rel === "dre_contas" ? r.mes_competencia : r.mes_caixa);
 
   const filtrados = useMemo(() => {
     if (CONTAS_IDS.has(rel)) {
@@ -513,7 +557,7 @@ export default function FinanceiroPage() {
   }, [regs, contasBase, rel, inicio, fim, centro, contaBanco, relTipo, relFornecedor, relProduto, relDocumento, relConta, campoPeriodoContas]);
 
   // Valor que cada relatório soma: caixa = o efetivamente pago/recebido; DRE (competência) = o valor da parte, sem contar duas vezes o restante reparcelado.
-  const valorDoRel = (r: Lanc) => (rel === "dre" ? valorCompetencia(r) : valorRealizado(r));
+  const valorDoRel = (r: Lanc) => (rel === "dre_contas" ? valorCompetencia(r) : valorRealizado(r));
   const receitas = filtrados.filter((r) => r.tipo === "receita").reduce((a, r) => a + valorDoRel(r), 0);
   const despesas = filtrados.filter((r) => r.tipo === "despesa").reduce((a, r) => a + valorDoRel(r), 0);
   const resultado = receitas - despesas;
@@ -527,7 +571,7 @@ export default function FinanceiroPage() {
   const dreAte = fim || `${new Date().getFullYear() + 1}-12-31`;
   const centroDre = regrasV2Pagina ? (centro || null) : null;
   const carregarDre = useCallback(() => {
-    if (rel !== "dre" || !regs) return;
+    if (rel !== "dre_contas" || !regs) return;
     const minha = ++dreRequisicao.current;
     fetchDreCascata({ data_inicio: dreDe, data_fim: dreAte, regime: regimeDre, centro_custo: centroDre })
       .then((d) => { if (minha === dreRequisicao.current) { setDreDados(d); setDreErro(null); } })
@@ -711,7 +755,7 @@ export default function FinanceiroPage() {
               codigo={relConta} nome={relContaNome}
               onChange={(c, n) => { setRelConta(c); setRelContaNome(n); }} /></div>
         </>}
-        {rel === "dre" && (
+        {rel === "dre_contas" && (
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Regime</label>
             <select style={inputStyle} value={regimeDre} onChange={(e) => mudarRegimeDre(e.target.value as RegimeDre)}>
               <option value="competencia">Competência (quando aconteceu)</option>
@@ -719,22 +763,37 @@ export default function FinanceiroPage() {
             </select></div>
         )}
         <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", paddingBottom: "0.4rem" }}>
-          {!CONTAS_IDS.has(rel) && rel !== "dre" && <>Regime: <strong style={{ color: "var(--dourado-light)" }}>caixa</strong> · </>}
+          {!CONTAS_IDS.has(rel) && rel !== "dre_contas" && <>Regime: <strong style={{ color: "var(--dourado-light)" }}>caixa</strong> · </>}
           {filtrados.length} lançamento{filtrados.length === 1 ? "" : "s"}
         </span>
       </div>
     </div>
   );
 
+  // Fase B: o que as telas novas de Relatórios recebem da página.
+  const propsRelatorio: PropsRelatorio = {
+    hoje: hojeLocal(),
+    centros,
+    ccPadrao: centros.includes("Pecuária Leiteira") ? "Pecuária Leiteira" : "todos",
+    onConsultas: (f) => {
+      setConsultaInicial({ ...f, chave: `${Date.now()}` });
+      empilharSub("consultas");
+      setNotaAlvoRef(null);
+      setRel("consultas");
+    },
+    onIrRelatorio: (id, det) => irPara(id as Rel, null, { det }),
+    onIrGrupo: () => { const g = grupoDe(rel); if (g && g.itens[0].id !== rel) irPara(g.itens[0].id as Rel); },
+  };
+
   return (
     <div className="p-6 animate-in">
-      <div className="mb-4 flex items-start justify-between gap-3" style={{ flexWrap: "wrap" }}>
+      <div className="mb-4 flex items-start justify-between gap-3 fin-cabecalho" style={{ flexWrap: "wrap" }}>
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 size={22} style={{ color: "var(--dourado)" }} /> Controle Financeiro</h1>
           {/* A tela de folha traz o próprio texto de papel logo abaixo (é ela
               que precisa dizer "aqui se fecha" × "lá só se consulta"); repetir
               a frase de relatório em cima dele confundia as duas coisas. */}
-          {!["resumo", "folha", "a_pagar", "a_receber", "consultas", "lote", "faturas_gestao", "caixa_funcionarios"].includes(rel) && (
+          {!["resumo", "folha", "a_pagar", "a_receber", "consultas", "lote", "faturas_gestao", "caixa_funcionarios", "rel_litro", "rel_dre"].includes(rel) && (
             <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
           )}
         </div>
@@ -797,6 +856,8 @@ export default function FinanceiroPage() {
               fornecedores={opcoesRel.fornecedores} produtos={opcoesProdutoRel} filtroInicial={consultaInicial || undefined}
               onRecibo={(l) => setRecibo({ ...l, reparcelamento: reparcelamentoDoRecibo(l) })} onEstornado={recarregar} onEditar={(l) => setEditando(l)} />
           )
+          : rel === "rel_dre" ? <DreFazendaView {...propsRelatorio} onClassificar={() => irPara("dre_contas")} />
+          : rel === "rel_litro" ? <ResultadoLitroView {...propsRelatorio} />
           : rel === "custos" ? <CustosView base={custosBase} onBase={setCustosBase} />
           : rel === "caixa_real" ? <CaixaRealView />
           : rel === "faturas" || rel === "faturas_gestao" ? <FaturasView />
@@ -828,7 +889,7 @@ export default function FinanceiroPage() {
             <KPI v={formatBRL(resultado)} l="Saldo do período" c={resultado >= 0 ? "var(--green-light)" : "var(--amber)"} />
             <KPI v={fluxoMensal.length ? formatBRL(fluxoMensal[fluxoMensal.length - 1].acumulado) : "—"} l="Saldo acumulado" c="var(--dourado-light)" />
           </>}
-          {rel === "dre" && <>
+          {rel === "dre_contas" && <>
             <KPI v={formatBRL(kpis.receita)} l={kpis.fonte === "servidor" ? "Receita líquida" : "Receita"} c="var(--green-light)" />
             <KPI v={formatBRL(kpis.despesa)} l="Despesa" c="var(--red)" />
             <KPI v={formatBRL(kpis.resultado)} l={kpis.fonte === "servidor" ? "Resultado líquido" : "Resultado"} c={kpis.resultado >= 0 ? "var(--green-light)" : "var(--amber)"} />
@@ -845,7 +906,7 @@ export default function FinanceiroPage() {
         {/* Onda 3b — a cascata de 15 linhas é a leitura principal da DRE.
             Usa o MESMO período do filtro da página (início/fim), para a tela
             não ter dois controles de data dizendo coisas diferentes. */}
-        {rel === "dre" && (
+        {rel === "dre_contas" && (
           <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", margin: "-0.5rem 0 1rem" }}>
             {kpis.fonte === "servidor" ? (<>
               Indicadores da DRE do servidor ({regimeDre === "caixa" ? "caixa" : "competência"}): o mesmo resultado da cascata, do
@@ -857,7 +918,7 @@ export default function FinanceiroPage() {
             </>)}
           </p>
         )}
-        {rel === "dre" && <DreCascataView dataInicio={inicio} dataFim={fim} dados={dreDados} erro={dreErro} onRecarregar={carregarDre} />}
+        {rel === "dre_contas" && <DreCascataView dataInicio={inicio} dataFim={fim} dados={dreDados} erro={dreErro} onRecarregar={carregarDre} />}
 
         {/* Diário/Mensal — só se aplica ao Fluxo de Caixa */}
         {rel === "fluxo" && (
@@ -873,7 +934,7 @@ export default function FinanceiroPage() {
 
         {/* Gráfico do consolidado */}
         <div className="card mb-4">
-          <div className="card-header mb-3">{rel === "fluxo" ? `Fluxo de Caixa ${visaoFluxo === "diario" ? "diário" : "mensal"} (entradas × saídas × acumulado)` : rel === "dre" ? "Receita × Despesa × Resultado" : "Saldo Acumulado"}</div>
+          <div className="card-header mb-3">{rel === "fluxo" ? `Fluxo de Caixa ${visaoFluxo === "diario" ? "diário" : "mensal"} (entradas × saídas × acumulado)` : rel === "dre_contas" ? "Receita × Despesa × Resultado" : "Saldo Acumulado"}</div>
           {rel === "fluxo" && visaoFluxo === "mensal" && (
             <ResponsiveContainer width="100%" height={280}>
               <ComposedChart data={fluxoMensal}>
@@ -907,7 +968,7 @@ export default function FinanceiroPage() {
               </p>
             )}
           </>)}
-          {rel === "dre" && (
+          {rel === "dre_contas" && (
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={[{ n: "Receita", v: kpis.receita, f: "var(--green-light)" }, { n: "Despesa", v: kpis.despesa, f: "var(--red)" }, { n: "Resultado", v: Math.abs(kpis.resultado), f: kpis.resultado >= 0 ? "var(--dourado)" : "var(--amber)" }]}>
                 <XAxis dataKey="n" tick={{ fill: "var(--text-muted)", fontSize: 11 }} />
@@ -939,8 +1000,8 @@ export default function FinanceiroPage() {
         <div className="card mb-4">
           <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.4rem" }}>
             <span>
-              {rel === "fluxo" ? `Fluxo ${visaoFluxo === "diario" ? "Diário" : "Mensal"}` : rel === "dre" ? "Detalhamento por Conta Gerencial" : "Lançamentos"}
-              {rel !== "livro" && !(rel === "dre" && kpis.fonte === "servidor") && <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}> (clique numa linha para ver os lançamentos)</span>}
+              {rel === "fluxo" ? `Fluxo ${visaoFluxo === "diario" ? "Diário" : "Mensal"}` : rel === "dre_contas" ? "Detalhamento por Conta Gerencial" : "Lançamentos"}
+              {rel !== "livro" && !(rel === "dre_contas" && kpis.fonte === "servidor") && <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}> (clique numa linha para ver os lançamentos)</span>}
             </span>
             {rel === "livro" && (
               <ExportarBotoes titulo="Livro Caixa" nomeArquivoBase="livro_caixa" colunas={COLUNAS_LIVRO}
@@ -1006,7 +1067,7 @@ export default function FinanceiroPage() {
                 })}</tbody>
               </table>
             )}
-            {rel === "dre" && kpis.fonte === "servidor" && dreDados && (<>
+            {rel === "dre_contas" && kpis.fonte === "servidor" && dreDados && (<>
               {/* Regras novas (PR 8): o detalhamento sai da MESMA cascata do
                   servidor — antes era outra soma, no cliente, com o trator,
                   o aporte e o principal dentro. */}
@@ -1029,7 +1090,7 @@ export default function FinanceiroPage() {
                 )))}</tbody>
               </table>
             </>)}
-            {rel === "dre" && kpis.fonte === "cliente" && (<>
+            {rel === "dre_contas" && kpis.fonte === "cliente" && (<>
               <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
                 Resultado por <strong>conta gerencial</strong> do seu plano de contas (por competência), com a
                 hierarquia completa — uma conta de grupo soma o total das contas abaixo dela. Clique numa conta{" "}

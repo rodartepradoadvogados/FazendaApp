@@ -142,6 +142,17 @@ test("filtro inicial por documento abre o período; contagem de filtros ativos",
   assert.equal(contarFiltrosAtivos({ ...p, movimento: "pagamento", produto: "Diesel" }, p), 2);
 });
 
+test("drill de um relatório (Fase B): mesmo período, regime (competência ou pagamento), centro e conta", () => {
+  const p = filtrosPadrao(HOJE);
+  const ini = aplicarFiltroInicial(p, { de: "2031-03-01", ate: "2031-03-31", periodoPor: "competencia", conta: "8.2", contaNome: "Ração", centro: "Pecuária Leiteira" });
+  assert.deepEqual([ini.de, ini.ate, ini.periodoPor, ini.conta, ini.contaNome, ini.centro], ["2031-03-01", "2031-03-31", "competencia", "8.2", "Ração", "Pecuária Leiteira"]);
+  // Por competência, a data que conta é a do mês do gasto (não a do pagamento).
+  const a = lanc({ data_competencia: "2031-03-10", data_pagamento: "2031-04-10", codigo_conta: "8.2", conta_completa: "8.2", centro_custo: "Pecuária Leiteira" });
+  const b = lanc({ data_competencia: "2031-02-27", data_pagamento: "2031-03-02", codigo_conta: "8.2", conta_completa: "8.2", centro_custo: "Pecuária Leiteira" });
+  assert.deepEqual(filtrarRealizados([a, b], ini, casaBusca).map((x) => x.l.id), [a.id]);
+  assert.deepEqual(filtrarRealizados([a, b], { ...ini, periodoPor: "pagamento" }, casaBusca).map((x) => x.l.id), [b.id]);
+});
+
 test("livro caixa: saldo acumulado SÓ com conta bancária escolhida", () => {
   const regs = [
     lanc({ tipo: "receita", valor_pago: 1000, conta_bancaria: "BB", data_pagamento: "2026-09-20" }), // antes do período

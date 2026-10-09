@@ -1,7 +1,7 @@
 // Exportação de relatórios/listas em Excel (.xlsx) e PDF — cabeçalho e tabelas
 // no padrão visual CowData (ver public/brand/cowdata-mark.svg e o mockup de
 // relatório aprovado), usado em todas as exportações do sistema.
-import { getUsuario } from "./api";
+import { getFazendaAtual, getUsuario } from "./api";
 import { baixarArquivo, salvarArquivo } from "./nativo";
 
 // "baixar" (padrão) só salva o arquivo, sem abrir nada — "compartilhar" abre
@@ -69,8 +69,11 @@ function formatarValor(v: unknown): string {
   return String(v);
 }
 
+// Data local (fuso do usuário) — toISOString() é UTC e, à noite no Brasil, já
+// carimbava o arquivo com o dia seguinte.
 function dataHoje(): string {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 /** Roda a geração/entrega de um arquivo mostrando um alerta visível se algo
@@ -114,7 +117,7 @@ async function carregarLogo(): Promise<string | null> {
  * esquerda; marca CowData + autor/data à direita; linha de base sutil. */
 function desenharCabecalhoPDF(
   doc: import("jspdf").jsPDF,
-  opts: { titulo: string; subtitulo?: string; usuario?: string; dataStr: string; logo: string | null; emissor?: string },
+  opts: { titulo: string; subtitulo?: string; usuario?: string; dataStr: string; logo: string | null; emissor?: string; fazenda?: string },
 ) {
   const pageWidth = doc.internal.pageSize.getWidth();
   const left = 14;
@@ -132,7 +135,7 @@ function desenharCabecalhoPDF(
   doc.setFont("helvetica", "bold");
   doc.setFontSize(7.5);
   doc.setTextColor(...COR_MUTED_CLARO_RGB);
-  doc.text(NOME_FAZENDA.toUpperCase(), left, 12, { charSpace: 0.6 });
+  doc.text((opts.fazenda || NOME_FAZENDA).toUpperCase(), left, 12, { charSpace: 0.6 });
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(15);
@@ -553,4 +556,175 @@ export async function gerarReciboPDF(lanc: LancamentoRecibo) {
   doc.text(`Recibo gerado por ${usuario?.nome || "—"} em ${dataStr}`, 14, cursorY + 10);
 
   return doc;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Relatórios do Financeiro (Fase B do redesenho) — exportação do molde único
+// (RelatorioShell): cabeçalho do CLIENTE (nome da fazenda atual, período,
+// comparação, regime e centro), NÚMEROS de verdade no Excel (célula numérica
+// com formato, não texto) e linhas de total em negrito. O PDF usa o mesmo
+// cabeçalho/estilo dos outros exports.
+// ───────────────────────────────────────────────────────────────────────────
+
+export type TipoColunaRelatorio = "texto" | "brl" | "brlL" | "pct" | "litros" | "num";
+export type ColunaRelatorio = { header: string; tipo: TipoColunaRelatorio; width?: number };
+/** `pct` vem em PONTOS percentuais (7,5 = 7,5%); o Excel recebe a fração. */
+export type LinhaRelatorio = { valores: (string | number | null)[]; total?: boolean; nivel?: number;
+  /** Formato desta linha quando difere do da coluna (ex.: uma linha de litros numa tabela em R$). */
+  tipos?: (TipoColunaRelatorio | undefined)[] };
+export type RelatorioParaExportar = {
+  titulo: string;
+  pergunta?: string;
+  contexto: { periodo: string; comparacao?: string | null; regime: string; centro: string };
+  colunas: ColunaRelatorio[];
+  linhas: LinhaRelatorio[];
+  notas?: string[];
+  nomeArquivoBase: string;
+};
+
+function nomeDaFazenda(): string {
+  return getFazendaAtual()?.nome || NOME_FAZENDA;
+}
+
+export function linhaDeContexto(c: RelatorioParaExportar["contexto"]): string {
+  return [`Período: ${c.periodo}`, c.comparacao ? `comparado com ${c.comparacao}` : null, `Regime: ${c.regime}`, `Centro de custo: ${c.centro}`]
+    .filter(Boolean).join(" · ");
+}
+
+const FORMATO_EXCEL: Record<TipoColunaRelatorio, string | undefined> = {
+  texto: undefined,
+  brl: '"R$" #,##0.00;-"R$" #,##0.00',
+  brlL: '"R$" #,##0.0000;-"R$" #,##0.0000',
+  pct: "0.0%;-0.0%",
+  litros: '#,##0" L"',
+  num: "#,##0.00",
+};
+
+function textoCelula(v: string | number | null, tipo: TipoColunaRelatorio): string {
+  if (v == null || v === "") return "—";
+  if (typeof v === "string") return v;
+  const menos = v < 0 ? "−" : "";
+  const abs = Math.abs(v);
+  const n = (casas: number) => abs.toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas });
+  if (tipo === "brl") return `${menos}R$ ${n(2)}`;
+  if (tipo === "brlL") return `${menos}R$ ${n(4)}`;
+  if (tipo === "pct") return `${menos}${n(1)}%`;
+  if (tipo === "litros") return `${menos}${n(0)} L`;
+  if (tipo === "num") return `${menos}${n(2)}`;
+  return String(v);
+}
+
+export async function exportarRelatorioExcel(r: RelatorioParaExportar, modo: ModoEntregaExport = "baixar") {
+  return comAlertaDeErro(async () => {
+    const ExcelJS = (await import("exceljs")).default;
+    const usuario = getUsuario();
+    const wb = new ExcelJS.Workbook();
+    wb.creator = usuario?.nome || "CowData";
+    wb.created = new Date();
+    const ws = wb.addWorksheet((r.titulo || "Relatório").replace(/[[\]*/\\?:]/g, "").slice(0, 31));
+    const nCols = Math.max(r.colunas.length, 1);
+    const cab = (linha: number, valor: string, font: Partial<import("exceljs").Font>) => {
+      ws.mergeCells(linha, 1, linha, nCols);
+      const c = ws.getCell(linha, 1);
+      c.value = valor; c.font = font; c.alignment = { horizontal: "left", wrapText: true };
+    };
+    cab(1, nomeDaFazenda(), { bold: true, size: 14, color: { argb: `FF${COR_VINHO}` } });
+    cab(2, r.pergunta ? `${r.titulo} — ${r.pergunta}` : r.titulo, { bold: true, size: 12 });
+    cab(3, linhaDeContexto(r.contexto), { size: 10 });
+    cab(4, `Gerado por ${usuario?.nome || "—"} em ${new Date().toLocaleDateString("pt-BR")}`, { italic: true, size: 9, color: { argb: "FF6B7280" } });
+    ws.addRow([]);
+    const head = ws.addRow(r.colunas.map((c) => c.header));
+    head.eachCell((c, i) => {
+      c.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: `FF${COR_VINHO}` } };
+      c.alignment = { horizontal: r.colunas[i - 1]?.tipo === "texto" ? "left" : "right" };
+    });
+    ws.views = [{ state: "frozen", ySplit: head.number }];
+    for (const linha of r.linhas) {
+      const row = ws.addRow(r.colunas.map((col, i) => {
+        const v = linha.valores[i];
+        if (v == null || v === "") return null;
+        if (typeof v === "number") return (linha.tipos?.[i] ?? col.tipo) === "pct" ? v / 100 : v;
+        return v;
+      }));
+      r.colunas.forEach((col, i) => {
+        const cell = row.getCell(i + 1);
+        const fmt = FORMATO_EXCEL[linha.tipos?.[i] ?? col.tipo];
+        if (fmt && typeof cell.value === "number") cell.numFmt = fmt;
+        if (i === 0 && linha.nivel) cell.alignment = { indent: linha.nivel };
+      });
+      if (linha.total) {
+        row.font = { bold: true };
+        row.eachCell((c) => { c.border = { top: { style: "thin", color: { argb: "FF9CA3AF" } } }; });
+      }
+    }
+    if (r.notas?.length) {
+      ws.addRow([]);
+      for (const n of r.notas) {
+        const row = ws.addRow([n]);
+        ws.mergeCells(row.number, 1, row.number, nCols);
+        row.getCell(1).font = { size: 9, color: { argb: "FF6B7280" } };
+        row.getCell(1).alignment = { wrapText: true };
+      }
+    }
+    r.colunas.forEach((c, i) => { ws.getColumn(i + 1).width = c.width || (c.tipo === "texto" ? 38 : 16); });
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    await entregarArquivo(blob, `${r.nomeArquivoBase}_${dataHoje()}.xlsx`, modo);
+  });
+}
+
+// A fonte padrão do jsPDF (Helvetica, WinAnsi) não tem "−", "Δ", "›" e "…": troca pelos equivalentes que ela tem.
+const paraPdf = (t: string) => t.replace(/Δ%/g, "Var. %").replace(/Δ/g, "Var.").replace(/[−–]/g, "-").replace(/›/g, ">").replace(/…/g, "...");
+
+export async function exportarRelatorioPDF(r0: RelatorioParaExportar, modo: ModoEntregaExport = "baixar") {
+  const r: RelatorioParaExportar = {
+    ...r0, titulo: paraPdf(r0.titulo),
+    contexto: { ...r0.contexto, periodo: paraPdf(r0.contexto.periodo), comparacao: r0.contexto.comparacao ? paraPdf(r0.contexto.comparacao) : r0.contexto.comparacao },
+    colunas: r0.colunas.map((c) => ({ ...c, header: paraPdf(c.header) })),
+    linhas: r0.linhas.map((l) => ({ ...l, valores: l.valores.map((v) => (typeof v === "string" ? paraPdf(v) : v)) })),
+    notas: r0.notas?.map(paraPdf),
+  };
+  return comAlertaDeErro(async () => {
+    const { default: jsPDF } = await import("jspdf");
+    const { default: autoTable } = await import("jspdf-autotable");
+    const usuario = getUsuario();
+    const logo = await carregarLogo();
+    const doc = new jsPDF({ orientation: r.colunas.length > 6 ? "landscape" : "portrait" });
+    const dataStr = new Date().toLocaleDateString("pt-BR");
+    const cabecalho = () => desenharCabecalhoPDF(doc, {
+      titulo: r.titulo, subtitulo: linhaDeContexto(r.contexto), usuario: usuario?.nome, dataStr, logo, fazenda: nomeDaFazenda(),
+    });
+    const totais = new Set(r.linhas.map((l, i) => (l.total ? i : -1)).filter((i) => i >= 0));
+    autoTable(doc, {
+      ...ESTILO_TABELA,
+      head: [r.colunas.map((c) => c.header.toUpperCase())],
+      body: r.linhas.map((l) => r.colunas.map((c, i) => {
+        const t = paraPdf(textoCelula(l.valores[i], l.tipos?.[i] ?? c.tipo));
+        return i === 0 && l.nivel ? `${"   ".repeat(l.nivel)}${t}` : t;
+      })),
+      columnStyles: Object.fromEntries(r.colunas.map((c, i) => [i, { halign: c.tipo === "texto" ? "left" : "right" }])),
+      startY: 31,
+      margin: { top: 31 },
+      didParseCell: (d) => {
+        if (d.section === "head") d.cell.styles.halign = r.colunas[d.column.index]?.tipo === "texto" ? "left" : "right";
+        if (d.section === "body" && totais.has(d.row.index)) d.cell.styles.fontStyle = "bold";
+      },
+      didDrawPage: cabecalho,
+    });
+    if (r.notas?.length) {
+      let y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(...COR_MUTED_RGB);
+      const largura = doc.internal.pageSize.getWidth() - 28;
+      for (const n of r.notas) {
+        const partes = doc.splitTextToSize(n, largura) as string[];
+        if (y + partes.length * 3.6 > doc.internal.pageSize.getHeight() - 12) { doc.addPage(); cabecalho(); y = 34; }
+        doc.text(partes, 14, y);
+        y += partes.length * 3.6 + 1.5;
+      }
+    }
+    await entregarArquivo(doc.output("blob"), `${r.nomeArquivoBase}_${dataHoje()}.pdf`, modo);
+  });
 }

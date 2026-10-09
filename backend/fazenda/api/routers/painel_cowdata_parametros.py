@@ -43,7 +43,7 @@ from fazenda.api.routers.painel_cowdata_cadastros import _fazendas_alvo, _fazend
 from fazenda.auth import exigir_area_painel_cowdata
 from fazenda.database import get_session, get_session_manutencao
 from fazenda.models import ParametroFazenda, Usuario
-from fazenda.rules.parametros import GRUPO_TITULOS
+from fazenda.rules.parametros import CHAVES_SO_DA_FAZENDA, GRUPO_TITULOS
 
 router = APIRouter(prefix="/painel-cowdata/parametros", tags=["painel-cowdata-parametros"])
 
@@ -87,6 +87,11 @@ def listar_parametros(
         # sim/não e data em lote.
         if linha.tipo == "select":
             continue
+        # Consentimento do cliente (ex.: exportar relatórios com réguas de
+        # referência, parecer jurídico 6.2): só o administrador da própria
+        # fazenda decide — nunca em massa pelo Painel.
+        if linha.chave in CHAVES_SO_DA_FAZENDA:
+            continue
         item = por_chave.setdefault(linha.chave, {
             "chave": linha.chave, "label": linha.label, "grupo": linha.grupo, "tipo": linha.tipo,
             "unidade": linha.unidade, "valor_global": None, "personalizado_em": [],
@@ -118,6 +123,11 @@ def aplicar_parametro(
     _: Usuario = Depends(exigir_area_painel_cowdata("cadastros")),
     session: Session = Depends(get_session_manutencao),
 ) -> dict:
+    if chave in CHAVES_SO_DA_FAZENDA:
+        raise HTTPException(
+            status_code=403,
+            detail="Este parâmetro é decisão do administrador de cada fazenda e não pode ser aplicado pelo Painel CowData.",
+        )
     global_row = session.exec(
         select(ParametroFazenda).where(ParametroFazenda.chave == chave, ParametroFazenda.fazenda_id.is_(None))
     ).first()

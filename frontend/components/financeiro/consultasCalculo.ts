@@ -12,7 +12,7 @@
 import type { Lanc } from "@/lib/financeiroTipos";
 
 export type Movimento = "pagamento" | "recebimento" | "ambos";
-export type CampoPeriodo = "emissao" | "vencimento" | "pagamento";
+export type CampoPeriodo = "emissao" | "vencimento" | "pagamento" | "competencia";
 export type ModoConsulta = "lista" | "livro";
 
 export type FiltrosConsulta = {
@@ -56,12 +56,19 @@ export function filtrosPadrao(hoje: string): FiltrosConsulta {
  * com nº de documento, abre o período (a nota pode ter sido paga em outro
  * mês); com conta bancária, já filtra por ela.
  */
-export function aplicarFiltroInicial(
-  padrao: FiltrosConsulta, ini?: { documento?: string; banco?: string } | null,
-): FiltrosConsulta {
+export type FiltroInicial = {
+  documento?: string; banco?: string;
+  /** Drill de um relatório (Fase B): o mesmo período, regime, centro e conta da linha clicada. */
+  de?: string; ate?: string; periodoPor?: CampoPeriodo; conta?: string; contaNome?: string; centro?: string;
+};
+export function aplicarFiltroInicial(padrao: FiltrosConsulta, ini?: FiltroInicial | null): FiltrosConsulta {
   let f = { ...padrao };
   if (ini?.documento) f = { ...f, de: "", ate: "", documento: ini.documento };
   if (ini?.banco) f = { ...f, banco: ini.banco };
+  if (ini?.de || ini?.ate) f = { ...f, de: ini.de || "", ate: ini.ate || "" };
+  if (ini?.periodoPor) f = { ...f, periodoPor: ini.periodoPor };
+  if (ini?.conta) f = { ...f, conta: ini.conta, contaNome: ini.contaNome || ini.conta };
+  if (ini?.centro) f = { ...f, centro: ini.centro };
   return f;
 }
 
@@ -101,6 +108,8 @@ export function valorDoItem(l: Lanc, produto: string): number {
 export function dataDoPeriodo(l: Lanc, campo: CampoPeriodo): string | null {
   if (campo === "emissao") return l.data_emissao;
   if (campo === "vencimento") return l.data_vencimento;
+  // Competência (o mês do gasto): é por ela que a DRE de competência soma.
+  if (campo === "competencia") return l.data_competencia;
   return l.data_pagamento;
 }
 

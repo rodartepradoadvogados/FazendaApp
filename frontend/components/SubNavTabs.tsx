@@ -169,7 +169,7 @@ function SubNavTabButton({ node, primaria, ativo, subNav, pathname }: {
         border: "none",
         borderBottom: ativo ? `2px solid var(${primaria ? "--dourado" : "--dourado-light"})` : "2px solid transparent",
         cursor: "pointer",
-        color: ativo ? (primaria ? "var(--vinho)" : "var(--text)") : "var(--text-muted)",
+        color: ativo ? (primaria ? "var(--text-accent)" : "var(--text)") : "var(--text-muted)",
         display: "flex",
         alignItems: "center",
         flexShrink: 0,

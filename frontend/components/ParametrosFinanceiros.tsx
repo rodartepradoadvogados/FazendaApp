@@ -31,7 +31,12 @@ const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surf
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 
 export default function ParametrosFinanceiros() {
-  const [aba, setAba] = useState<(typeof ABAS)[number][0]>("parametros");
+  // ?pf=<aba> abre direto a aba certa — é o "1 clique" das pendências de
+  // configuração dos Relatórios (ex.: ?sub=financeiro&pf=automaticas).
+  const [aba, setAba] = useState<(typeof ABAS)[number][0]>(() => {
+    const pf = typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("pf");
+    return (ABAS.find(([id]) => id === pf)?.[0] ?? "parametros");
+  });
 
   return (
     <div className="p-6 animate-in">

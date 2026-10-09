@@ -267,6 +267,17 @@ DEFINICOES: list[dict] = [
     {"chave": "financeiro_regras_v2", "grupo": "financeiro",
      "label": "Relatórios do Financeiro — usar as regras novas (Fase A: natureza do lançamento; compra de bem, principal e aporte fora da DRE e dos custos)",
      "valor": "false", "tipo": "bool"},
+    # Réguas de referência — compartilhamento (parecer jurídico de 08/10/2026,
+    # itens 6.2 e 7.7). PADRÃO DESLIGADO e só a linha DA FAZENDA vale (mesmo
+    # desenho de `financeiro_regras_v2`): quem liga é o administrador da
+    # fazenda, em Configurações > Parâmetros (PUT /parametros exige admin). O
+    # Painel CowData não aplica este parâmetro em massa — ver
+    # CHAVES_SO_DA_FAZENDA. Ligado, cada exportação com réguas ainda exige
+    # destinatário, finalidade e autorização expressa (POST
+    # /relatorios/exportacoes). Rótulo = texto 7.7 do parecer.
+    {"chave": "permitir_exportar_com_reguas", "grupo": "financeiro",
+     "label": "Permitir exportar relatórios com réguas de referência (Desligado por padrão. A cada envio, você informa o destinatário e autoriza.)",
+     "valor": "false", "tipo": "bool"},
     # ---- Alimentação: sobra de cocho ---------------------------------------
     # A sobra é o termômetro do trato. Sobra de menos significa cocho vazio
     # antes da hora — vaca que comeu menos do que a dieta previa, e produção
@@ -407,6 +418,34 @@ def regras_v2_ativas(session: Session, fazenda_id: int | None) -> bool:
     if linha is None:
         return False
     return (linha.valor or "").strip().lower() in ("1", "true", "sim", "yes")
+
+
+CHAVE_EXPORTAR_COM_REGUAS = "permitir_exportar_com_reguas"
+
+# Parâmetros que são decisão de CADA fazenda (consentimento do cliente) e que o
+# Painel CowData não pode aplicar em massa (ver painel_cowdata_parametros.py).
+CHAVES_SO_DA_FAZENDA = frozenset({CHAVE_EXPORTAR_COM_REGUAS})
+
+
+def exportar_com_reguas_permitido(session: Session, fazenda_id: int | None) -> bool:
+    """A fazenda liberou exportar/compartilhar relatórios com réguas de
+    referência (parecer 6.2)? Só a linha da própria fazenda conta; a global é
+    o modelo da tela. Sem fazenda, sempre não."""
+    if not isinstance(fazenda_id, int):
+        return False
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+
+    from fazenda.models import ParametroFazenda
+    try:
+        linha = session.exec(
+            select(ParametroFazenda).where(
+                ParametroFazenda.chave == CHAVE_EXPORTAR_COM_REGUAS,
+                ParametroFazenda.fazenda_id == fazenda_id,
+            )
+        ).first()
+    except (OperationalError, ProgrammingError):  # pragma: no cover - tabela ausente
+        return False
+    return bool(linha) and (linha.valor or "").strip().lower() in ("1", "true", "sim", "yes")
 
 
 def get_param(chave: str, padrao: float | int | None = None) -> float | int | None:

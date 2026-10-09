@@ -7534,6 +7534,19 @@ export async function fetchCustoLitroLeite(dataInicio: string, dataFim: string) 
   return res.json();
 }
 
+/** Fase B dos Relatórios: "Quanto sobra de cada litro?" — a DRE do servidor repartida por litro
+ *  (ver backend/fazenda/api/routers/relatorio_resultado_litro.py). Tipo da resposta em lib/relatorioLitro.ts. */
+export async function fetchResultadoPorLitro(params: {
+  data_inicio: string; data_fim: string; regime: "competencia" | "caixa"; centro_custo?: string | null; serie_meses?: number;
+}): Promise<import("@/lib/relatorioLitro").RespostaLitro> {
+  const q = new URLSearchParams({ data_inicio: params.data_inicio, data_fim: params.data_fim, regime: params.regime });
+  if (params.centro_custo) q.set("centro_custo", params.centro_custo);
+  if (params.serie_meses) q.set("serie_meses", String(params.serie_meses));
+  const res = await authFetch(`${API}/financeiro/resultado-por-litro?${q}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Resultado por litro: ${res.status}`); }
+  return res.json();
+}
+
 export async function fetchCustoHectare(dataInicio: string, dataFim: string, centroCusto?: string) {
   const qs = new URLSearchParams({ data_inicio: dataInicio, data_fim: dataFim });
   if (centroCusto) qs.set("centro_custo", centroCusto);
