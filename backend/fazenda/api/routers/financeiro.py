@@ -2596,6 +2596,14 @@ def _contas_automaticas_resposta(session: Session, fazenda_id: int | None) -> di
             # Conta que vale HOJE (a própria ou a da reserva) — None = pendência.
             "conta_efetiva": resolvida.codigo,
             "conta_efetiva_de": resolvida.origem_usada,
+            # Conta do SISTEMA (3.03.01.16/17) que vale enquanto a origem não
+            # tiver conta própria — só quando ela existe no plano da fazenda.
+            "conta_do_sistema": (
+                lancamento_automatico.conta_do_sistema_da_origem(origem.chave)
+                if resolvida.codigo is None
+                and lancamento_automatico.conta_do_sistema_da_origem(origem.chave) in cfg.contas_sistema
+                else None
+            ),
             "sugestao": None if (linha and linha.codigo_conta_gerencial) else lancamento_automatico.sugerir_conta(origem.chave, plano),
         })
     return {"regras_v2": regras_v2_ativas(session, fazenda_id), "origens": origens}
