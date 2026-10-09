@@ -4,12 +4,12 @@
 // sobra por litro (R$ e %), ponto de equilíbrio e 12 meses de preço × custo.
 // Os números vêm de GET /financeiro/resultado-por-litro, que reparte por litro a
 // MESMA DRE do servidor (mesmo regime e centro) — não há soma no navegador.
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Info } from "lucide-react";
 import { fetchResultadoPorLitro } from "@/lib/api";
 import { fetchOrcamentoRelatorio } from "@/lib/apiPlano";
 import { periodoDeMesesInteiros, type RespostaOrcamento } from "@/lib/relatorioOrcamento";
-import { ESTADO_INICIAL, REGIME_API, REGIME_NOME, brl, delta, deslocar, litros, mesCurto, num } from "@/lib/relatorioContexto";
+import { ESTADO_INICIAL, REGIME_API, REGIME_NOME, brl, delta, deslocar, litros, mesCurto, mesLongo, num } from "@/lib/relatorioContexto";
 import {
   fraseLitro, linhasLitro, pendenciasLitro, serieLitro, temResultadoPorLitro, type RespostaLitro,
 } from "@/lib/relatorioLitro";
@@ -18,6 +18,8 @@ import {
   Conferencia, NotasMetodo, PainelGrafico, RelatorioShell, TabelaComparacao, VazioQueEnsina, type KpiDef, type LinhaTabela,
 } from "./RelatorioShell";
 import { GraficoPrecoCusto, LegendaPrecoCusto } from "./graficos";
+import { ReproduzirAno, type ItemAno } from "./ReproduzirAno";
+import { useMorph } from "./movimento";
 import { useContextoRelatorio, type TravasContexto } from "./useContextoRelatorio";
 import { PORQUE_CENTRO_REGRAS_ANTIGAS, useRegrasV2Estado, type PropsRelatorio } from "./comum";
 
@@ -78,6 +80,18 @@ export default function ResultadoLitroView(props: PropsRelatorio) {
   const estado = regras.ativa === null || (!dados && !erro) || (orcPossivel && !orc && !orcErro) ? "carregando" : erro && !dados ? "erro" : !ok ? "vazio" : "ok";
   const linhas = useMemo(() => linhasLitro(a, b), [a, b]);
   const pontos = useMemo(() => serieLitro(dados), [dados]);
+  // "Reproduzir o ano": os valores do mês sob o cursor são os da série do SERVIDOR.
+  const itensAno: ItemAno[] = useMemo(() => (dados?.serie ?? []).map((m) => {
+    const ok = temResultadoPorLitro(m);
+    const v = (x: number | null) => (ok && x != null ? `${brl(x)}/L` : "—");
+    return { chave: m.competencia, rotulo: mesLongo(m.competencia), campos: [
+      { nome: "Preço líquido", texto: v(m.preco_liquido_l) }, { nome: "Custo de custeio", texto: v(m.coe_l) }, { nome: "Sobra do custeio", texto: v(m.margem_l) },
+    ] };
+  }), [dados]);
+  // O mês escolhido vale para ESTA resposta; trocou o contexto, o cursor volta ao último mês.
+  const [cursorSel, setCursorSel] = useState<{ de: RespostaLitro | null; i: number } | null>(null);
+  const indiceCursor = cursorSel && cursorSel.de === dados && cursorSel.i < itensAno.length ? cursorSel.i : Math.max(0, itensAno.length - 1);
+  const setMesCursor = useCallback((i: number) => setCursorSel({ de: dados, i }), [dados]);
   const pe = a?.ponto_equilibrio ?? null;
 
   const kpis: KpiDef[] = a && ok ? [
@@ -191,7 +205,8 @@ export default function ResultadoLitroView(props: PropsRelatorio) {
             mesCurto(p.comp), p.preco != null ? brl(p.preco) : "—", p.custo != null ? brl(p.custo) : "—",
             p.preco != null && p.custo != null ? brl(p.preco - p.custo) : "—",
           ]) }}>
-          <GraficoPrecoCusto pontos={pontos} descricao={descricaoGrafico} />
+          <GraficoPrecoCusto pontos={pontos} descricao={descricaoGrafico} cursor={itensAno[indiceCursor]?.chave ?? null} />
+          <ReproduzirAno itens={itensAno} indice={indiceCursor} onIndice={setMesCursor} oque="preço líquido, custo de custeio e sobra por litro" />
         </PainelGrafico>
         <div className="rl-dois">
           <section className="rl-painel" aria-labelledby="rl-litro-tab">
@@ -250,6 +265,9 @@ export default function ResultadoLitroView(props: PropsRelatorio) {
 
 /** Um litro vendido, repartido: comida, gente, outros custeios e a sobra (ou a falta). */
 function BarraDoLitro({ a }: { a: NonNullable<RespostaLitro["atual"]> }) {
+  const ref = useRef<HTMLDivElement>(null);
+  // Continuidade: ao trocar o contexto, cada pedaço do litro morfa do tamanho antigo ao novo.
+  useMorph(ref, a);
   const preco = a.preco_liquido_l ?? 0, sobra = a.margem_l ?? 0;
   const total = Math.max(preco, a.coe_l ?? 0) || 1;
   const partes = [
@@ -261,9 +279,9 @@ function BarraDoLitro({ a }: { a: NonNullable<RespostaLitro["atual"]> }) {
   const aria = `Um litro vendido a ${brl(preco)} líquido: ${partes.map((p) => `${p.k.toLowerCase()} ${brl(p.v)}`).join(", ")}${sobra < 0 ? `; falta ${brl(-sobra)}` : ""}.`;
   return (
     <figure style={{ margin: 0 }} role="img" aria-label={aria}>
-      <div style={{ display: "flex", height: 44, width: "100%", gap: 2, overflow: "hidden" }} className="rl-barra">
+      <div ref={ref} style={{ display: "flex", height: 44, width: "100%", gap: 2, overflow: "hidden" }} className="rl-barra">
         {partes.map((p) => (
-          <div key={p.k} title={`${p.k}: ${brl(p.v)} por litro`}
+          <div key={p.k} data-m={`litro:${p.k}`} title={`${p.k}: ${brl(p.v)} por litro`}
             style={{ flex: `${p.v / total} 0 0`, background: p.fundo, minWidth: 2, display: "flex", alignItems: "center", paddingLeft: 6, color: p.k === "Sobra" ? "var(--surface)" : "transparent", fontWeight: 700, fontSize: ".8rem", whiteSpace: "nowrap", overflow: "hidden" }}>
             {p.k === "Sobra" && p.v / total >= 0.14 ? `Sobra ${brl(p.v)}` : ""}
           </div>

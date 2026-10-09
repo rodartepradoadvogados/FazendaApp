@@ -4,11 +4,12 @@
 // "preço × custo por litro" de 12 meses (recharts), com a sobra preenchida
 // entre as duas linhas. Cores só por token; o "sai" é hachurado (não só cor).
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { Area, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { Degrau } from "@/lib/relatorioDre";
 import type { PontoLitro } from "@/lib/relatorioLitro";
 import { brl, mesCurto, num, MENOS } from "@/lib/relatorioContexto";
 import { useMovimentoReduzido } from "./RelatorioShell";
+import { useMorph } from "./movimento";
 
 export function useLargura<T extends HTMLElement>(padrao = 880) {
   const ref = useRef<T>(null);
@@ -51,6 +52,8 @@ function Padroes({ id }: { id: string }) {
 /** Cascata em degraus, horizontal. `onAbrir` abre o detalhe da linha (clique ou Enter). */
 export function CascataDegraus({ degraus, onAbrir, descricao }: { degraus: Degrau[]; onAbrir?: (chave: string) => void; descricao: string }) {
   const [ref, W] = useLargura<HTMLDivElement>();
+  // Continuidade (MOVIMENTO.md §2): ao trocar o contexto, cada degrau morfa do tamanho antigo ao novo.
+  useMorph(ref, degraus);
   const estreito = W < 600;
   const LW = estreito ? 118 : 230, VW = estreito ? 70 : 112, rh = estreito ? 30 : 32, T = 6;
   const H = T + degraus.length * rh + 6;
@@ -78,7 +81,7 @@ export function CascataDegraus({ degraus, onAbrir, descricao }: { degraus: Degra
             } : {})}>
               <rect x={0} y={y} width={W} height={rh} style={{ fill: "transparent" }} />
               <text x={LW - 10} y={y + rh / 2 + 4} textAnchor="end" className={d.subtotal ? "forte" : undefined}>{nome}</text>
-              <rect className={`rl-degrau${d.v < 0 && !d.subtotal ? " esq" : ""}`} style={{ ["--i" as string]: i, fill, stroke: d.resultado ? (d.v < 0 ? "var(--st-venc-fg)" : "var(--rl-a)") : "none" } as React.CSSProperties}
+              <rect data-m={`deg:${d.chave}`} className={`rl-degrau${d.v < 0 && !d.subtotal ? " esq" : ""}`} style={{ ["--i" as string]: i, fill, stroke: d.resultado ? (d.v < 0 ? "var(--st-venc-fg)" : "var(--rl-a)") : "none" } as React.CSSProperties}
                 x={x(a)} y={y + 6} width={w} height={rh - 12}>
                 <title>{`${d.nome}: ${brl(d.v)}`}</title>
               </rect>
@@ -110,7 +113,15 @@ const NOMES_LITRO: NomesDuasLinhas = {
 };
 
 /** Preço líquido × custo de custeio por litro, 12 meses; a área entre as linhas é a sobra (ou a falta, hachurada). */
-export function GraficoPrecoCusto({ pontos, descricao, nomes = NOMES_LITRO }: { pontos: PontoLitro[]; descricao: string; nomes?: NomesDuasLinhas }) {
+export function GraficoPrecoCusto({ pontos, descricao, nomes = NOMES_LITRO, cursor, altura = 280, duracao = 450 }: {
+  pontos: PontoLitro[]; descricao: string;
+  /** Rótulos das linhas e unidade (C2: o RMCA usa receita × comida por vaca/dia). */
+  nomes?: NomesDuasLinhas;
+  /** Mês sob o cursor do "Reproduzir o ano" (competência AAAA-MM). */
+  cursor?: string | null; altura?: number;
+  /** A apresentação narrada desenha mais devagar; o uso diário fica em 450 ms. */
+  duracao?: number;
+}) {
   const reduz = useMovimentoReduzido();
   const dados = pontos.map((p) => ({ ...p, rot: mesCurto(p.comp) }));
   const fmt = (v: number) => `R$ ${num(v, 2)}`;
@@ -118,7 +129,7 @@ export function GraficoPrecoCusto({ pontos, descricao, nomes = NOMES_LITRO }: { 
   const maior = Math.max(0, ...pontos.flatMap((p) => [Math.abs(p.preco ?? 0), Math.abs(p.custo ?? 0)]));
   const larguraEixo = maior >= 100 ? 86 : maior >= 10 ? 76 : 64;
   return (
-    <div role="img" aria-label={descricao} style={{ width: "100%", height: 280 }}>
+    <div role="img" aria-label={descricao} style={{ width: "100%", height: altura }}>
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={dados} margin={{ top: 10, right: 16, bottom: 4, left: 4 }}>
           <defs>
@@ -133,10 +144,11 @@ export function GraficoPrecoCusto({ pontos, descricao, nomes = NOMES_LITRO }: { 
           <Tooltip
             contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", color: "var(--text)", fontSize: "0.8rem" }}
             formatter={(v, nome) => (Array.isArray(v) ? [`${fmt(Number(v[1]) - Number(v[0]))}${nomes.sufixo}`, String(nome)] : [`${fmt(Number(v))}${nomes.sufixo}`, String(nome)])} />
-          <Area dataKey="faixaPos" name={nomes.sobra} stroke="none" fill="var(--rl-margem)" isAnimationActive={!reduz} animationDuration={450} connectNulls={false} />
-          <Area dataKey="faixaNeg" name={nomes.falta} stroke="none" fill="url(#rll-neg)" isAnimationActive={!reduz} animationDuration={450} connectNulls={false} />
-          <Line dataKey="custo" name={nomes.custo} stroke="var(--rl-n1)" strokeWidth={2.2} dot={{ r: 3, fill: "var(--rl-n1)" }} isAnimationActive={!reduz} animationDuration={450} connectNulls={false} />
-          <Line dataKey="preco" name={nomes.preco} stroke="var(--rl-a)" strokeWidth={2.6} dot={{ r: 3, fill: "var(--rl-a)" }} isAnimationActive={!reduz} animationDuration={450} connectNulls={false} />
+          <Area dataKey="faixaPos" name={nomes.sobra} stroke="none" fill="var(--rl-margem)" isAnimationActive={!reduz} animationDuration={duracao} connectNulls={false} />
+          <Area dataKey="faixaNeg" name={nomes.falta} stroke="none" fill="url(#rll-neg)" isAnimationActive={!reduz} animationDuration={duracao} connectNulls={false} />
+          <Line dataKey="custo" name={nomes.custo} stroke="var(--rl-n1)" strokeWidth={2.2} dot={{ r: 3, fill: "var(--rl-n1)" }} isAnimationActive={!reduz} animationDuration={duracao} connectNulls={false} />
+          {cursor && <ReferenceLine x={mesCurto(cursor)} stroke="var(--text)" strokeDasharray="3 3" strokeWidth={1.5} ifOverflow="extendDomain" />}
+          <Line dataKey="preco" name={nomes.preco} stroke="var(--rl-a)" strokeWidth={2.6} dot={{ r: 3, fill: "var(--rl-a)" }} isAnimationActive={!reduz} animationDuration={duracao} connectNulls={false} />
         </ComposedChart>
       </ResponsiveContainer>
     </div>

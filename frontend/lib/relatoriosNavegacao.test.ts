@@ -6,8 +6,9 @@ import { GRUPOS_RELATORIOS, IDS_RELATORIOS, REDIRECIONAMENTOS, RELATORIOS_NO_MOL
 const ANTIGOS = ["fluxo", "caixa_real", "dre", "rmca", "custos", "compra_venda_animais", "compra_semen", "orcamento", "planejamento_financeiro",
   "custo_litro_leite", "custo_vaca_lote", "custo_hectare", "custo_safra"];
 
-test("árvore por pergunta: Resultado, Caixa, Leite, Plano e Registros, nessa ordem", () => {
-  assert.deepEqual(GRUPOS_RELATORIOS.map((g) => g.label), ["Resultado", "Caixa", "Leite", "Plano", "Registros"]);
+test("árvore por pergunta: Painel (entrada), Resultado, Caixa, Leite, Plano e Registros, nessa ordem", () => {
+  assert.deepEqual(GRUPOS_RELATORIOS.map((g) => g.label), ["Painel", "Resultado", "Caixa", "Leite", "Plano", "Registros"]);
+  assert.equal(GRUPOS_RELATORIOS[0].itens[0].id, "painel_dono");
   for (const g of GRUPOS_RELATORIOS) assert.ok(g.pergunta.endsWith("?"), g.label);
 });
 
@@ -35,11 +36,16 @@ test("ids únicos na árvore (a aba ativa nunca fica ambígua) e telas novas no 
   const ids = GRUPOS_RELATORIOS.flatMap((g) => [g.id, ...g.itens.map((i) => i.id)]);
   assert.equal(new Set(ids).size, ids.length);
   assert.deepEqual([...RELATORIOS_NO_MOLDE], [
-    "rel_litro", "rel_dre", "rel_caixa", "rel_fluxo", "rel_livro", "custos", "rmca", "rel_orcamento", "rel_cenarios", "compra_venda_animais", "compra_semen",
+    "painel_dono", "rel_litro", "rel_dre", "rel_caixa", "rel_fluxo", "rel_livro", "custos", "rmca", "reguas_referencia",
+    "rel_orcamento", "rel_cenarios", "compra_venda_animais", "compra_semen",
   ]);
   for (const id of RELATORIOS_NO_MOLDE) assert.ok(IDS_RELATORIOS.has(id), id);
   // Fase C1: o grupo Caixa tem as três telas, e o Livro caixa da atividade rural é uma delas.
   assert.deepEqual(GRUPOS_RELATORIOS.find((g) => g.label === "Caixa")!.itens.map((i) => i.id), ["rel_caixa", "rel_fluxo", "rel_livro"]);
+  // Fase C4: Réguas moram em Leite (como no mockup); os nomes curtos redirecionam.
+  assert.equal(grupoDe("reguas_referencia")!.label, "Leite");
+  assert.equal(idDoRelatorio("reguas"), "reguas_referencia");
+  assert.equal(idDoRelatorio("painel"), "painel_dono");
   assert.equal(grupoDe("inexistente"), null);
 });
 
@@ -57,9 +63,10 @@ test("Fase C2: Leite e Registros no molde; as quatro telas de custo caem nas vis
 test("integração da Fase C: árvore coerente — toda tela nova no molde, telas anteriores marcadas, nenhum id em dois lugares", () => {
   const ordem = GRUPOS_RELATORIOS.map((g) => [g.label, g.itens.map((i) => i.id)]);
   assert.deepEqual(ordem, [
+    ["Painel", ["painel_dono"]],
     ["Resultado", ["rel_litro", "rel_dre", "dre_contas"]],
     ["Caixa", ["rel_caixa", "rel_fluxo", "rel_livro"]],
-    ["Leite", ["custos", "rmca"]],
+    ["Leite", ["custos", "rmca", "reguas_referencia"]],
     ["Plano", ["rel_orcamento", "rel_cenarios", "orcamento_itens", "planejamento_financeiro"]],
     ["Registros", ["compra_venda_animais", "compra_semen"]],
   ]);

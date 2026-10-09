@@ -10395,3 +10395,43 @@ export const tirarNotaDaFatura = (id: number, numero: string): Promise<FaturaDet
 export const excluirFatura = (id: number, soltarNotas = false): Promise<{ excluida: boolean; notas_soltas: number }> => _fj(`/${id}${soltarNotas ? "?soltar_notas=true" : ""}`, { method: "DELETE" }, "Erro ao excluir a fatura");
 export const previaInserirNotasNaFatura = (id: number, numeros: string[]) => _fj(`/${id}/notas/inserir/previa`, _fbody("POST", { numeros_lancamento: numeros }), "Erro ao conferir as notas");
 export const inserirNotasNaFatura = (id: number, numeros: string[]): Promise<FaturaDetalhe> => _fj(`/${id}/notas/inserir`, _fbody("POST", { numeros_lancamento: numeros }), "Erro ao inserir as notas na fatura");
+
+// ── Réguas de referência (parecer jurídico de 08/10/2026) e exportação com réguas ──
+// Contratos em docs/reguas-referencia-parecer.md; tipos em lib/reguasReferencia.ts.
+// Erro com o status (ErroApi): a exportação trata 403/400/409 de jeitos diferentes.
+async function _jsonOuErro<T>(res: Response, padrao: string): Promise<T> {
+  if (!res.ok) throw await erroDaResposta(res, `${padrao}: ${res.status}`);
+  return res.json() as Promise<T>;
+}
+export async function fetchReguasReferencia(): Promise<import("@/lib/reguasReferencia").RespostaReguas> {
+  return _jsonOuErro(await authFetch(`${API}/financeiro/reguas-referencia`, { cache: "no-store" }), "Réguas de referência");
+}
+export async function fetchIndicadoresReguas(params: {
+  data_inicio: string; data_fim: string; regime: "competencia" | "caixa"; centro_custo?: string | null; hoje?: string;
+}): Promise<import("@/lib/reguasReferencia").RespostaIndicadoresReguas> {
+  const q = new URLSearchParams({ data_inicio: params.data_inicio, data_fim: params.data_fim, regime: params.regime });
+  if (params.centro_custo) q.set("centro_custo", params.centro_custo);
+  if (params.hoje) q.set("hoje", params.hoje);
+  return _jsonOuErro(await authFetch(`${API}/financeiro/reguas-referencia/indicadores-fazenda?${q}`, { cache: "no-store" }), "Indicadores da fazenda");
+}
+/** "Entendi" do modal das réguas (append-only). 409 = o texto mudou: recarregar e mostrar de novo. */
+export async function aceitarAvisoReguas(versao: string, sha256: string): Promise<unknown> {
+  return _jsonOuErro(await authFetch(`${API}/financeiro/reguas-referencia/aceite`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ versao, sha256 }),
+  }), "Registrar o aceite");
+}
+export async function reportarErroRegua(reguaCodigo: string, texto: string): Promise<{ id: number; status: string; versao_reguas: string; criado_em_utc: string }> {
+  return _jsonOuErro(await authFetch(`${API}/financeiro/reguas-referencia/reportar-erro`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ regua_codigo: reguaCodigo, texto }),
+  }), "Reportar erro na faixa");
+}
+export type ExportacaoRelatorioIn = {
+  relatorio: string; formato: "pdf" | "xlsx" | "csv" | "link" | null; com_reguas: boolean;
+  destinatario?: string; destinatario_tipo?: "banco" | "contador" | "comprador" | "outro"; finalidade?: string; autorizacao_confirmada?: boolean;
+};
+/** Chamar ANTES de gerar o arquivo. 201 traz o rodapé (7.5) já preenchido quando há réguas. */
+export async function registrarExportacaoRelatorio(d: ExportacaoRelatorioIn): Promise<{ id: number; versao_reguas: string | null; rodape: { versao: string; texto: string; sha256: string } | null }> {
+  return _jsonOuErro(await authFetch(`${API}/relatorios/exportacoes`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(d),
+  }), "Registrar a exportação");
+}

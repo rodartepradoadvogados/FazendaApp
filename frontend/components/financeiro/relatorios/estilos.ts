@@ -45,6 +45,7 @@ export const CSS_RELATORIO = `
 .rl-mig [aria-current="page"]{color:var(--text);font-weight:700}
 
 /* Cabeçalho, frase-resumo */
+.rl-cab.com-acao{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:.6rem 1rem}
 .rl-cab h2{font-size:1.75rem;font-weight:700;letter-spacing:-.02em;color:var(--text);margin:0;line-height:1.15}
 .rl-cab h2:focus,.rl-cab h2:focus-visible{outline:none!important;box-shadow:none!important}
 .rl-cab p{margin:.25rem 0 0;font-size:.82rem;color:var(--text-muted)}

@@ -1,5 +1,5 @@
 // Árvore dos Relatórios do Financeiro organizada por PERGUNTA (Fase B — PLANO.md
-// §4): Resultado, Caixa, Leite, Plano, Registros. Cada grupo é uma aba; cada
+// §4): Painel (entrada, Fase C), Resultado, Caixa, Leite, Plano, Registros. Cada grupo é uma aba; cada
 // relatório, uma sub-aba. Nenhum relatório antigo some: os ids continuam os
 // mesmos (links salvos, ?sub= e ?ir= seguem valendo) e os que mudaram de lugar
 // são redirecionados. PURO — testes em relatoriosNavegacao.test.ts.
@@ -8,6 +8,10 @@ export type ItemRelatorio = { id: string; label: string };
 export type GrupoRelatorio = { id: string; label: string; pergunta: string; itens: ItemRelatorio[] };
 
 export const GRUPOS_RELATORIOS: GrupoRelatorio[] = [
+  // Fase C: a entrada dos Relatórios — as 4 perguntas do dono em uma olhada.
+  { id: "rg-painel", label: "Painel", pergunta: "Como está a fazenda?", itens: [
+    { id: "painel_dono", label: "Painel do dono" },
+  ] },
   { id: "rg-resultado", label: "Resultado", pergunta: "Estou ganhando?", itens: [
     { id: "rel_litro", label: "Resultado por litro" },
     { id: "rel_dre", label: "DRE da fazenda" },
@@ -21,6 +25,7 @@ export const GRUPOS_RELATORIOS: GrupoRelatorio[] = [
   { id: "rg-leite", label: "Leite", pergunta: "Quanto custa meu litro?", itens: [
     { id: "custos", label: "Custos do leite" },
     { id: "rmca", label: "Sobra da comida (RMCA)" },
+    { id: "reguas_referencia", label: "Réguas de referência" },
   ] },
   { id: "rg-plano", label: "Plano", pergunta: "Gastei o que planejei?", itens: [
     { id: "rel_orcamento", label: "Orçamento" },
@@ -37,9 +42,11 @@ export const GRUPOS_RELATORIOS: GrupoRelatorio[] = [
 
 /** Relatórios novos, feitos no molde único (os outros continuam na tela de antes até a Fase C). */
 export const RELATORIOS_NO_MOLDE = new Set([
+  "painel_dono", // Fase C4 (Painel)
   "rel_litro", "rel_dre", // Fase B (Resultado)
   "rel_caixa", "rel_fluxo", "rel_livro", // Fase C1 (Caixa)
   "custos", "rmca", // Fase C2 (Leite)
+  "reguas_referencia", // Fase C4 (Leite)
   "rel_orcamento", "rel_cenarios", // Fase C3 (Plano)
   "compra_venda_animais", "compra_semen", // Fase C2 (Registros)
 ]);
@@ -54,6 +61,9 @@ export const REDIRECIONAMENTOS: Record<string, string> = {
   custo_litro_leite: "custos", custo_vaca_lote: "custos", custo_hectare: "custos", custo_safra: "custos",
   // Fase C3: o orçamento no molde (a tela anterior continua em "orcamento_itens").
   orcamento: "rel_orcamento",
+  // Fase C4: nomes curtos do mockup (links escritos à mão) → os ids da árvore.
+  painel: "painel_dono",
+  reguas: "reguas_referencia",
 };
 
 /** Id antigo de custo → a visão de "Custos do leite" que ele abre (?visao=). */

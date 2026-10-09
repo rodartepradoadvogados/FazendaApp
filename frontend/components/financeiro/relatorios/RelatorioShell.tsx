@@ -35,7 +35,7 @@ export function useMovimentoReduzido(): boolean {
 
 /** Número que conta até o valor (entrada 300 ms; troca de contexto 420 ms, do alvo anterior ao novo).
  *  O texto final é sempre o valor exato; com movimento reduzido, aparece direto. */
-export function NumeroAnimado({ valor, formato }: { valor: number; formato: FormatoNumero }) {
+export function NumeroAnimado({ valor, formato, duracao }: { valor: number; formato: FormatoNumero; /** Só o "Apresentar o mês" usa uma contagem mais lenta. */ duracao?: number }) {
   const reduz = useMovimentoReduzido();
   const [mostrado, setMostrado] = useState(valor);
   const alvoAnterior = useRef<number | null>(null);
@@ -43,7 +43,7 @@ export function NumeroAnimado({ valor, formato }: { valor: number; formato: Form
     const de = alvoAnterior.current;
     alvoAnterior.current = valor;
     if (reduz || de === valor) { setMostrado(valor); return; }
-    const inicio = de ?? 0, dur = de == null ? 300 : 420, t0 = performance.now();
+    const inicio = de ?? 0, dur = duracao ?? (de == null ? 300 : 420), t0 = performance.now();
     let raf = 0;
     const passo = (t: number) => {
       const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
@@ -52,7 +52,7 @@ export function NumeroAnimado({ valor, formato }: { valor: number; formato: Form
     };
     raf = requestAnimationFrame(passo);
     return () => cancelAnimationFrame(raf);
-  }, [valor, reduz]);
+  }, [valor, reduz, duracao]);
   return <>{formatar(mostrado, formato)}</>;
 }
 
@@ -270,6 +270,10 @@ export function RelatorioShell(props: {
   rotuloCmp?: string | null;
   children?: ReactNode;
   exportar: () => RelatorioParaExportar | null;
+  /** Assume a exportação (ex.: relatório com réguas pede autorização antes — useExportacaoComReguas). */
+  aoExportar?: (tipo: AcaoExportar) => Promise<void> | void;
+  /** Ação ao lado do título (ex.: "Apresentar o mês" no Painel do dono). */
+  acaoCabecalho?: ReactNode;
 }) {
   const { ctx, estado } = props;
   const rotuloCmp = props.rotuloCmp !== undefined ? props.rotuloCmp : ctx.comparacao && ctx.comparacao.tipo === "periodo" ? ctx.comparacao.rotulo : null;
@@ -293,6 +297,7 @@ export function RelatorioShell(props: {
   }, [nivelAtual, estado]);
 
   const onExportar = async (tipo: AcaoExportar) => {
+    if (props.aoExportar) { await props.aoExportar(tipo); return; }
     if (tipo === "imprimir") { window.print(); return; }
     const r = props.exportar();
     if (!r) return;
@@ -327,9 +332,12 @@ export function RelatorioShell(props: {
         <b>{fazenda ? `${fazenda} · ` : ""}{props.nome}</b>
         {linhaDeContexto(contextoTexto)} · Emitido em {new Date().toLocaleDateString("pt-BR")}
       </div>
-      <header className="rl-cab">
-        <h2 ref={tituloRef} tabIndex={-1}>{props.pergunta}</h2>
-        <p>{[props.nome, ...niveis.map((n) => n.rotulo)].join(" › ")}{niveis[niveis.length - 1]?.rotulo === contextoTexto.periodo ? "" : ` · ${contextoTexto.periodo}`} · {REGIME_NOME[ctx.efetivo.reg]} · {contextoTexto.centro}</p>
+      <header className={`rl-cab${props.acaoCabecalho ? " com-acao" : ""}`}>
+        <div>
+          <h2 ref={tituloRef} tabIndex={-1}>{props.pergunta}</h2>
+          <p>{[props.nome, ...niveis.map((n) => n.rotulo)].join(" › ")}{niveis[niveis.length - 1]?.rotulo === contextoTexto.periodo ? "" : ` · ${contextoTexto.periodo}`} · {REGIME_NOME[ctx.efetivo.reg]} · {contextoTexto.centro}</p>
+        </div>
+        {props.acaoCabecalho && <div className="rl-cab-acao rl-noprint">{props.acaoCabecalho}</div>}
       </header>
       {props.avisos}
       {estado === "carregando" && (
