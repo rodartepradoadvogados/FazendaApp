@@ -37,6 +37,25 @@ def leite_em_litros(quantidade: float, unidade: str | None) -> float:
     return leite_para_kg(quantidade, unidade) / DENSIDADE_LEITE_KG_POR_L
 
 
+_SINONIMOS_LEITE_L = frozenset({"l", "lt", "lts", "litro", "litros"})
+_SINONIMOS_LEITE_KG = frozenset({"kg", "kgs", "quilo", "quilos", "quilograma", "quilogramas"})
+
+
+def unidade_leite_canonica(unidade: str | None) -> str | None:
+    """`"L"` ou `"kg"` quando o texto da unidade (`Estoque.unidade`, livre) é
+    inequivocamente litro ou quilo; `None` para vazio ou qualquer outra coisa
+    (saca, dose, ml…). DIFERENTE de `leite_para_kg`/`leite_em_litros`, que tratam
+    unidade ausente como kg (o padrão histórico da Venda mensal): aqui a unidade
+    da NOTA nunca é chutada — `None` quer dizer "não sei", e quem chama avisa em
+    vez de converter."""
+    u = (unidade or "").strip().lower().rstrip(".")
+    if u in _SINONIMOS_LEITE_L:
+        return "L"
+    if u in _SINONIMOS_LEITE_KG:
+        return "kg"
+    return None
+
+
 # Grupos de unidades intercompatíveis para fins de SELEÇÃO na aplicação.
 GRUPOS_UNIDADE: list[set[str]] = [
     {"ml", "unidade", "dose"},

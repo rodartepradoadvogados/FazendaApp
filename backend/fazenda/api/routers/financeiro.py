@@ -41,6 +41,8 @@ from fazenda.rules.casamento_cadastro import normalizar
 from fazenda.rules.sugestao_documento import resolver_apelido_fornecedor, sugestoes_cadastro
 from fazenda.rules.rmca import calcular_custo_fisico, calcular_rmca_gerencial
 from fazenda.rules.custo_leite import calcular_custo_por_litro, litros_leite_no_periodo
+from fazenda.rules.litros_leite import campos_fonte_para_api
+from fazenda.rules.litros_leite_nota import carregar_litros_do_leite
 from fazenda.rules.alimentacao import resolver_kg_por_unidade
 from fazenda.rules.unidades import leite_em_litros
 from fazenda.rules.patrimonio import (
@@ -2861,32 +2863,49 @@ def _ultima_compra_por_estoque_id(session: Session, fazenda_id: int | None, esto
     return {estoque_id: valor for estoque_id, (_data, valor) in mais_recente.items()}
 
 
-def _preco_medio_litro_leite(session: Session, fazenda_id: int | None, codigos_receita: set[str]) -> dict | None:
+def _preco_medio_litro_leite(
+    session: Session, fazenda_id: int | None, codigos_receita: set[str], *, regras_v2: bool = False,
+) -> dict | None:
     """Preço médio recebido por litro de leite na competência mais recente
     com entrega registrada — receita do leite (mesmas contas do RMCA
     gerencial) dividida pelos litros entregues naquele mês. Usado pelo
     Simulador de cenários (leite fornecido a bezerros) como alternativa ao
     valor padrão digitado pelo usuário. None quando falta entrega, receita
-    marcada para o RMCA, ou a conta não fecha (litros = 0)."""
+    marcada para o RMCA, ou a conta não fecha (litros = 0).
+
+    Regras v2 (T4): os litros do mês saem da NOTA do laticínio (item de leite da
+    receita) e a Venda mensal só entra como reserva, nos meses sem nota — a
+    competência mais recente é a do último mês com litros por qualquer das duas
+    fontes, e a resposta ganha `fonte_litros`. Desligada: a Venda mensal, como antes."""
     if not codigos_receita:
         return None
-    query_entregas = select(EntregaLeiteMensal)
-    if fazenda_id is not None:
-        query_entregas = query_entregas.where(EntregaLeiteMensal.fazenda_id == fazenda_id)
-    entregas = session.exec(query_entregas).all()
-    if not entregas:
-        return None
-    competencia = max(e.competencia for e in entregas)
-    # `quantidade_litros` está na unidade que o produtor escolheu (`unidade`,
-    # ver docstring de EntregaLeiteMensal) — normaliza pra kg e depois divide
-    # pela densidade pra ter sempre litros de verdade, igual ao resto do
-    # RMCA (mesmo padrão de Produção > Controle × Entregue).
-    litros = sum(
-        leite_em_litros(e.quantidade_litros, e.unidade)
-        for e in entregas if e.competencia == competencia
-    )
-    if not litros:
-        return None
+    fonte_litros = None
+    if regras_v2:
+        carga = carregar_litros_do_leite(session, fazenda_id, codigos_receita)
+        com_litros = [c for c, m in carga.meses.items() if m.litros > 0]
+        if not com_litros:
+            return None
+        competencia = max(com_litros)
+        litros = carga.meses[competencia].litros
+        fonte_litros = carga.meses[competencia].fonte
+    else:
+        query_entregas = select(EntregaLeiteMensal)
+        if fazenda_id is not None:
+            query_entregas = query_entregas.where(EntregaLeiteMensal.fazenda_id == fazenda_id)
+        entregas = session.exec(query_entregas).all()
+        if not entregas:
+            return None
+        competencia = max(e.competencia for e in entregas)
+        # `quantidade_litros` está na unidade que o produtor escolheu (`unidade`,
+        # ver docstring de EntregaLeiteMensal) — normaliza pra kg e depois divide
+        # pela densidade pra ter sempre litros de verdade, igual ao resto do
+        # RMCA (mesmo padrão de Produção > Controle × Entregue).
+        litros = sum(
+            leite_em_litros(e.quantidade_litros, e.unidade)
+            for e in entregas if e.competencia == competencia
+        )
+        if not litros:
+            return None
     ano, mes = (int(p) for p in competencia.split("-"))
     ini = date(ano, mes, 1)
     fim = date(ano, mes, calendar.monthrange(ano, mes)[1])
@@ -2899,10 +2918,13 @@ def _preco_medio_litro_leite(session: Session, fazenda_id: int | None, codigos_r
     )
     if not receita:
         return None
-    return {
+    resposta = {
         "competencia": competencia, "litros": round(litros, 1), "receita": round(receita, 2),
         "preco_por_litro": round(receita / litros, 4),
     }
+    if fonte_litros is not None:
+        resposta["fonte_litros"] = fonte_litros
+    return resposta
 
 
 def rmca_gerencial(
@@ -2996,7 +3018,7 @@ def rmca(
             "itens": fisico["itens"],
         },
         "meta_rmca": meta_rmca(),
-        "preco_medio_litro_leite": _preco_medio_litro_leite(session, fazenda_id, codigos_receita),
+        "preco_medio_litro_leite": _preco_medio_litro_leite(session, fazenda_id, codigos_receita, regras_v2=regras_v2),
     }
     if regras_v2:
         # Chaves novas SÓ com a flag ligada (com ela desligada, a resposta é a de antes).
@@ -3030,7 +3052,9 @@ def custo_litro_leite(
     litro), o custo vem dos registros da DRE (desconto da nota rateado) e o
     período é sempre MÊS FECHADO: um período parcial é estendido aos meses
     inteiros que ele toca, com aviso (custo por data da nota ÷ litros
-    proporcionais aos dias não fecha).
+    proporcionais aos dias não fecha). Os litros vêm da NOTA do laticínio
+    (item de leite da receita) e a Venda mensal só entra nos meses sem nota
+    (T4, rules/litros_leite.py): a resposta diz a `fonte_litros`.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     return calcular_custo_litro_leite(
@@ -3090,23 +3114,18 @@ def _custo_litro_leite_v2(
     registros = registros_competencia_v2(session, fazenda_id, inicio, fim)
     custo_total = leite_e_alimentacao_por_registros(registros, set(), codigos_custo)["custo_alimentacao"]
 
-    query_entregas = select(EntregaLeiteMensal)
-    if fazenda_id is not None:
-        query_entregas = query_entregas.where(EntregaLeiteMensal.fazenda_id == fazenda_id)
-    todas = session.exec(query_entregas).all()
-    entregas: dict[str, float] = {}
-    unidades: set[str] = set()
-    comp_ini, comp_fim = f"{inicio:%Y-%m}", f"{fim:%Y-%m}"
-    for e in todas:
-        entregas[e.competencia] = entregas.get(e.competencia, 0.0) + leite_em_litros(e.quantidade_litros, e.unidade)
-        if comp_ini <= e.competencia <= comp_fim:
-            unidades.add("L" if (e.unidade or "kg").strip().upper() == "L" else "kg")
-    litros = litros_leite_no_periodo(entregas, inicio, fim)
+    # T4: litros da NOTA do laticínio (item de leite da receita, em competência); a Venda
+    # mensal só nos meses sem nota. `tem_entrega` segue dizendo se há Venda mensal lançada.
+    codigos_receita = {c.codigo for c in plano if c.rmca_receita_leite}
+    carga = carregar_litros_do_leite(session, fazenda_id, codigos_receita, regime="competencia")
+    resumo = carga.resumo(inicio, fim)
+    litros = resumo["litros"]
+    unidades = carga.unidades_usadas(resumo)
 
     resposta = {
         "periodo": {"inicio": inicio.isoformat(), "fim": fim.isoformat()},
         "configurado": bool(codigos_custo),
-        "tem_entrega": bool(entregas),
+        "tem_entrega": bool(carga.venda_mensal),
         "contas_custo": sorted(c.nome for c in plano if c.codigo in codigos_custo),
         **calcular_custo_por_litro(custo_total, litros),
         "regras_v2": True,
@@ -3114,6 +3133,7 @@ def _custo_litro_leite_v2(
         "periodo_ajustado_para_mes_fechado": ajustado,
         "unidade_origem": "misto" if len(unidades) > 1 else (next(iter(unidades)) if unidades else None),
         "litros_convertidos_de_kg": "kg" in unidades,
+        **campos_fonte_para_api(resumo),
         "avisos": [],
     }
     if ajustado:
@@ -3123,6 +3143,8 @@ def _custo_litro_leite_v2(
         )
     if "kg" in unidades:
         resposta["avisos"].append("A entrega de leite lançada em kg foi convertida para litros (1 L = 1,029 kg).")
+    # Fonte dos litros (estimado pela Venda mensal, nota sem unidade…) em lista própria: `avisos` segue como antes.
+    resposta["avisos_fonte_litros"] = carga.avisos(resumo)
     return resposta
 
 

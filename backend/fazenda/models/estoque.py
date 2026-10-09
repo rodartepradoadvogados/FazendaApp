@@ -139,6 +139,15 @@ class Estoque(SQLModel, table=True):
     # EstoqueSemen.tipo/CompraSemen.tipo, mas cadastrável aqui direto (antes só
     # existia na compra de sêmen). None = não é sêmen ou ainda não informado.
     tipo_semen: Optional[str] = None
+    # Marcador "Produto de leite (venda ao laticínio)": o item de estoque que a
+    # NOTA do laticínio lança em Financeiro (receita). É o que reconhece, na nota,
+    # o leite de venda e dá a UNIDADE dele (kg ou L) para a conta de litros do
+    # Resultado por litro (rules/litros_leite_nota.py). Distinto do item "Leite"
+    # que é INGREDIENTE de dieta dos bezerros (alimentacao.py): esse fica False
+    # e nunca conta como venda. Optional[bool] = False, sem server_default (mesma
+    # política de Pessoa.vale_alimentacao_natureza_travada_salarial): a coluna
+    # nasce NULLABLE e NULL lê como False em todo lugar (`bool(...)`).
+    produto_leite: Optional[bool] = False
 
 
 class EstoquePrincipioAtivo(SQLModel, table=True):

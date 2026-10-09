@@ -9,14 +9,15 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from fazenda.auth import exigir_admin, exigir_sessao_suporte, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     Alimento, AlimentoNutricional, ApresentacaoEmbalagemEstoque, CategoriaMedicamento, ClassificacaoCowData,
-    CompraSemen, DietaSimulacaoItem, Estoque, EstoqueAliasMesclado, EstoqueCategoriaMedicamento,
-    EstoqueClassificacaoMedicamento, EstoquePrincipioAtivo, EstoqueSemen, Fazenda, Fornecedor, LoteEstoque,
+    CompraSemen, DietaItemProgramado, DietaSimulacaoItem, Estoque, EstoqueAliasMesclado, EstoqueCategoriaMedicamento,
+    EstoqueClassificacaoMedicamento, EstoquePrincipioAtivo, EstoqueSemen, Fazenda, Fornecedor, LancamentoItem, LoteEstoque,
     MedicamentoComercial, MovimentoEstoque, PrecoBaseSugerido, PrincipioAtivo, ProdutoPadrao, SeedFlag,
     TabelaNutricionalProduto, Usuario,
 )
@@ -395,6 +396,9 @@ class EstoqueIn(BaseModel):
     alimento_id: int | None = None
     estoque_semen_id: int | None = None
     tipo_semen: str | None = None
+    # "Produto de leite (venda ao laticínio)": o item que a nota do laticínio lança em Financeiro.
+    # None = não mexe (cliente antigo que não conhece o campo não apaga a marcação no PUT).
+    produto_leite: bool | None = None
 
 
 @router.post("/", status_code=201)
@@ -447,6 +451,7 @@ def criar_item_estoque(
         alimento_id=dados.alimento_id,
         estoque_semen_id=dados.estoque_semen_id or (t.id if (t := _casar_estoque_semen(dados.nome, session)) else None),
         tipo_semen=dados.tipo_semen,
+        produto_leite=bool(dados.produto_leite),
         fazenda_id=fazenda_id,
     )
     session.add(item)
@@ -526,6 +531,8 @@ def atualizar_item_estoque(
     if dados.estoque_semen_id is not None:
         item.estoque_semen_id = dados.estoque_semen_id
     item.tipo_semen = dados.tipo_semen
+    if dados.produto_leite is not None:
+        item.produto_leite = dados.produto_leite
     item.atualizado_em = datetime.utcnow()
     session.add(item)
     _sincronizar_tags_estoque(session, item, dados.categoria_medicamento_ids, dados.classificacao_medicamento_ids)
@@ -552,6 +559,136 @@ def atualizar_item_estoque(
     return item.model_dump()
 
 
+def bloqueios_de_exclusao(session: Session, item: Estoque) -> list[dict]:
+    """O que impede `DELETE /estoque/{id}`, na ordem em que a exclusão checa (o
+    DELETE devolve o 1º como 409; `GET /estoque/uso-por-produto` mostra todos).
+    Cada bloqueio: `codigo`, `quantidade` e a `mensagem` exata do 409."""
+    item_id = item.id
+    out: list[dict] = []
+    total_movimentos = len(session.exec(select(MovimentoEstoque).where(MovimentoEstoque.estoque_id == item_id)).all())
+    if total_movimentos:
+        out.append({
+            "codigo": "movimentos", "quantidade": total_movimentos,
+            "mensagem": (
+                f'Não é possível excluir "{item.nome}" — há {total_movimentos} movimento(s) de estoque '
+                'vinculado(s) a ele. Desative o item (campo "Ativo") em vez de excluir.'
+            ),
+        })
+    alimentos_vinculados = session.exec(select(Alimento).where(Alimento.estoque_preferido_id == item_id)).all()
+    if alimentos_vinculados:
+        nomes = ", ".join(a.nome for a in alimentos_vinculados[:5])
+        out.append({
+            "codigo": "estoque_preferido", "quantidade": len(alimentos_vinculados),
+            "mensagem": (
+                f'Não é possível excluir "{item.nome}" — é o estoque preferido de {len(alimentos_vinculados)} '
+                f'alimento(s) ({nomes}). Desative o item em vez de excluir.'
+            ),
+        })
+    mesclagens = session.exec(
+        select(EstoqueAliasMesclado).where(
+            (EstoqueAliasMesclado.estoque_perdedor_id == item_id)
+            | (EstoqueAliasMesclado.estoque_sobrevivente_id == item_id)
+        )
+    ).all()
+    if mesclagens:
+        out.append({
+            "codigo": "mesclagem", "quantidade": len(mesclagens),
+            "mensagem": (
+                f'Não é possível excluir "{item.nome}" — ele participou de uma mesclagem de itens e o registro '
+                "guarda a carência do nome antigo para o histórico. Mantenha-o inativo: ele não aparece "
+                "nas listas nem aceita novos lançamentos."
+            ),
+        })
+    return out
+
+
+def _uso_do_item(session: Session, item: Estoque, fazenda_id: int | None) -> dict:
+    """Tudo que usa um item de estoque, para o dono decidir se pode sair (só leitura)."""
+    nome_norm = (item.nome or "").strip().lower()
+    q_itens = select(LancamentoItem).where(func.lower(func.trim(LancamentoItem.produto)) == nome_norm)
+    if fazenda_id is not None:
+        q_itens = q_itens.where(LancamentoItem.fazenda_id == fazenda_id)
+    lanc = session.exec(q_itens).all()
+    por_tipo: dict[str, int] = {}
+    for it in lanc:
+        por_tipo[it.tipo or "sem_tipo"] = por_tipo.get(it.tipo or "sem_tipo", 0) + 1
+    datas = sorted(it.data_competencia for it in lanc if it.data_competencia)
+
+    movimentos = session.exec(select(MovimentoEstoque).where(MovimentoEstoque.estoque_id == item.id)).all()
+    q_nome = select(MovimentoEstoque).where(
+        MovimentoEstoque.estoque_id.is_(None),  # type: ignore[union-attr]
+        func.lower(func.trim(MovimentoEstoque.nome_item)) == nome_norm,
+    )
+    if fazenda_id is not None:
+        q_nome = q_nome.where(MovimentoEstoque.fazenda_id == fazenda_id)
+    movimentos_sem_vinculo = session.exec(q_nome).all()
+
+    preferido_de = session.exec(select(Alimento).where(Alimento.estoque_preferido_id == item.id)).all()
+    vinculado = session.get(Alimento, item.alimento_id) if item.alimento_id else None
+    if vinculado is not None and fazenda_id is not None and vinculado.fazenda_id != fazenda_id:
+        vinculado = None
+    q_dieta = select(DietaItemProgramado)
+    if fazenda_id is not None:
+        q_dieta = q_dieta.where(DietaItemProgramado.fazenda_id == fazenda_id)
+    filtros = [func.lower(func.trim(DietaItemProgramado.alimento)) == nome_norm]
+    if item.alimento_id:
+        filtros.append(DietaItemProgramado.alimento_id == item.alimento_id)
+    for a in preferido_de:
+        filtros.append(DietaItemProgramado.alimento_id == a.id)
+    itens_dieta = session.exec(q_dieta.where(or_(*filtros))).all()
+
+    bloqueios = bloqueios_de_exclusao(session, item)
+    uso_dieta = bool(itens_dieta or preferido_de or vinculado)
+    sem_uso = not (lanc or movimentos or movimentos_sem_vinculo or uso_dieta)
+    return {
+        "id": item.id, "nome": item.nome, "unidade": item.unidade, "ativo": item.ativo is not False,
+        "produto_leite": bool(item.produto_leite), "estocavel": item.estocavel is not False,
+        "lancamentos": {
+            "itens": len(lanc), "notas": len({it.numero_lancamento for it in lanc}), "por_tipo": por_tipo,
+            "primeira_competencia": datas[0].isoformat() if datas else None,
+            "ultima_competencia": datas[-1].isoformat() if datas else None,
+        },
+        "movimentos": {"vinculados": len(movimentos), "por_nome_sem_vinculo": len(movimentos_sem_vinculo)},
+        "dieta": {
+            "estoque_preferido_de": [{"id": a.id, "nome": a.nome} for a in preferido_de],
+            "alimento_vinculado": {"id": vinculado.id, "nome": vinculado.nome} if vinculado else None,
+            "itens_de_dieta": len(itens_dieta),
+            "dietas": len({i.dieta_lancamento_id for i in itens_dieta}),
+        },
+        "pode_excluir": not bloqueios,
+        "bloqueios_exclusao": bloqueios,
+        # Nada o usa: lançamentos, movimentos e dieta zerados (a exclusão só olha movimentos,
+        # estoque preferido e mesclagem — lançamento financeiro guarda o nome como texto).
+        "sem_uso": sem_uso,
+    }
+
+
+@router.get("/uso-por-produto")
+def uso_por_produto(
+    nome: str | None = None, estoque_id: int | None = None,
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    """Só LEITURA: o que usa o(s) item(ns) de estoque de nome `nome` (ou `estoque_id`) da
+    fazenda atual — lançamentos financeiros (`LancamentoItem.produto`), movimentos de
+    estoque, uso em dieta (estoque preferido de Alimento, Alimento vinculado, ingrediente
+    de dieta) e se pode ser excluído (mesma regra do DELETE). Para o dono decidir qual
+    entre "Leite" (ingrediente de dieta) e "Leite Cru Refrigerado" (venda ao laticínio)
+    está sem uso. Casa o nome sem diferenciar maiúsculas/espaços; devolve uma LISTA
+    (`itens`) porque dois cadastros podem diferir só na caixa. Não exclui nem altera nada."""
+    if not (nome and nome.strip()) and estoque_id is None:
+        raise HTTPException(status_code=422, detail="Informe o nome do item (nome=) ou o estoque_id.")
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Estoque)
+    if fazenda_id is not None:
+        query = query.where(Estoque.fazenda_id == fazenda_id)
+    if estoque_id is not None:
+        query = query.where(Estoque.id == estoque_id)
+    if nome and nome.strip():
+        query = query.where(func.lower(func.trim(Estoque.nome)) == nome.strip().lower())
+    itens = [_uso_do_item(session, e, fazenda_id) for e in session.exec(query.order_by(Estoque.id)).all()]
+    return {"nome": nome, "estoque_id": estoque_id, "encontrado": bool(itens), "itens": itens}
+
+
 @router.delete("/{item_id}")
 def excluir_item_estoque(
     item_id: int, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
@@ -566,40 +703,9 @@ def excluir_item_estoque(
     item = session.get(Estoque, item_id)
     if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
-    total_movimentos = len(session.exec(select(MovimentoEstoque).where(MovimentoEstoque.estoque_id == item_id)).all())
-    if total_movimentos:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f'Não é possível excluir "{item.nome}" — há {total_movimentos} movimento(s) de estoque '
-                'vinculado(s) a ele. Desative o item (campo "Ativo") em vez de excluir.'
-            ),
-        )
-    alimentos_vinculados = session.exec(select(Alimento).where(Alimento.estoque_preferido_id == item_id)).all()
-    if alimentos_vinculados:
-        nomes = ", ".join(a.nome for a in alimentos_vinculados[:5])
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f'Não é possível excluir "{item.nome}" — é o estoque preferido de {len(alimentos_vinculados)} '
-                f'alimento(s) ({nomes}). Desative o item em vez de excluir.'
-            ),
-        )
-    mesclagens = session.exec(
-        select(EstoqueAliasMesclado).where(
-            (EstoqueAliasMesclado.estoque_perdedor_id == item_id)
-            | (EstoqueAliasMesclado.estoque_sobrevivente_id == item_id)
-        )
-    ).all()
-    if mesclagens:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f'Não é possível excluir "{item.nome}" — ele participou de uma mesclagem de itens e o registro '
-                "guarda a carência do nome antigo para o histórico. Mantenha-o inativo: ele não aparece "
-                "nas listas nem aceita novos lançamentos."
-            ),
-        )
+    bloqueios = bloqueios_de_exclusao(session, item)
+    if bloqueios:
+        raise HTTPException(status_code=409, detail=bloqueios[0]["mensagem"])
     for vinculo in session.exec(select(EstoquePrincipioAtivo).where(EstoquePrincipioAtivo.estoque_id == item_id)).all():
         session.delete(vinculo)
     # Zera as referências opcionais antes de excluir — mesmo padrão já usado

@@ -550,3 +550,42 @@ e férias com provisão mensal (Q5); vale de ITEM como adiantamento próprio na
 nota do fornecedor; "Detalhamento por conta" da DRE com drill para Consultas
 filtrada por conta; data de corte do CSV antigo do Portal (07/12/2026) — depois
 dela, remover `_dict_para_csv` da DRE.
+
+## 14. Litros do leite pela NOTA do laticínio (T4)
+
+Decisão do dono: o Resultado por litro e o custo por litro têm por base a **entrada de
+leite = a nota do laticínio lançada em Financeiro (receita)**. A *Venda mensal do leite*
+(Lançamentos › Produção, `EntregaLeiteMensal`) passa a ser só **reserva gerencial** para os
+meses SEM nota — e a tela avisa "estimado, sem nota". Nada do histórico de Venda mensal se
+perde. **Só com a flag `financeiro_regras_v2` ligada**; desligada, os litros seguem saindo do
+campo cru da Venda mensal e a resposta não ganha nenhuma chave (golden).
+
+- **Cadastro**: `estoque.produto_leite` (migração aditiva `d4a8e1b7c935`, nullable, sem
+  backfill; nenhum item é marcado, desativado ou excluído) — checkbox "Produto de leite (venda
+  ao laticínio)" em Configurações › Estoque. O item "Leite" que é ingrediente de dieta dos
+  bezerros **não** é marcado: nunca reconhece nem empresta unidade à nota de venda.
+- **Item de leite da nota** (`rules/litros_leite_nota.py`): item de receita cuja conta tem
+  `rmca_receita_leite` **ou** cujo `produto` casa (nome, sem acento/caixa) com um `Estoque` da
+  fazenda marcado `produto_leite`. Litros = `quantidade` convertida pela **unidade do Estoque
+  marcado** (`unidade_leite_canonica`: kg/L; kg ÷ 1,029 por `leite_em_litros`). Sem unidade
+  resolvida ou sem quantidade: **não entra com chute** — aviso "Nota X sem unidade/sem
+  quantidade" e o mês fica `nota_incompleta` (cai na reserva, ou fica `sem_dado`).
+  Quantidade 0 lançada de propósito é neutra (item que só traz valor, ex.: bonificação).
+- **Mês**: regime de competência = `data_competencia` do item; regime de **caixa** = o mês em
+  que cada parcela foi paga (`saldo_conta.data_caixa`), na proporção do valor da parcela — o
+  litro anda junto com o dinheiro que a DRE de caixa conta (antes: litros por competência ×
+  receita por caixa). A Venda mensal (reserva) continua sendo por competência.
+- **Regra** (`rules/litros_leite.py::litros_do_leite`, pura): por mês, `nota` (litros válidos)
+  > `venda_mensal` (> 0) > `sem_dado`. Usada em Resultado por litro, custo por litro v2 e
+  `preco_medio_litro_leite` do RMCA.
+- **Resposta** (só com a flag): `fonte_litros` (`nota` | `venda_mensal` | `mista` | `sem_dado`),
+  `litros_por_fonte`, `pct_litros_estimados` e `meses_litros` (fonte de cada mês) no `atual`, em
+  cada mês da `serie`, no custo por litro e (`fonte_litros`) no preço médio do RMCA;
+  `avisos_fonte_litros` (estimado, nota sem unidade/quantidade, item de leite em conta não
+  marcada); `configuracao.tem_nota_leite`.
+- **Uso do item de estoque** (só leitura): `GET /estoque/uso-por-produto?nome=...` (ou
+  `estoque_id`) — lançamentos (`LancamentoItem.produto`), movimentos, uso em dieta e se pode
+  excluir (mesma regra do `DELETE /estoque/{id}`, em `bloqueios_de_exclusao`). Para o dono
+  decidir qual entre "Leite" e "Leite Cru Refrigerado" está sem uso; nada é excluído.
+- **Fora desta entrega**: Produção › Controle × Entregue (`relatorio_controle_entrega`) segue
+  na Venda mensal; o redesenho da tela Venda mensal é de outra tarefa.
