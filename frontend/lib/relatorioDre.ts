@@ -152,6 +152,8 @@ export function fraseDre(o: {
 
 export type FiltroConsultasDrill = {
   de: string; ate: string; periodoPor: "competencia" | "pagamento"; conta?: string; contaNome?: string; centro?: string; origem: string;
+  /** Um lançamento só (nº do documento ou do lançamento): Consultas abre o período inteiro para achá-lo. */
+  documento?: string;
 };
 
 /** Consultas já filtrada no mesmo período, regime, centro e conta da linha clicada. */

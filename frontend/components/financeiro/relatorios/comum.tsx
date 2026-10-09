@@ -28,10 +28,10 @@ export type PropsRelatorio = {
   /** Abre Consultas já filtrada (período, regime, centro e conta). */
   onConsultas: (f: FiltroConsultasDrill) => void;
   /** Vai para outro relatório (id da árvore), com o contexto preservado na URL. */
-  onIrRelatorio: (id: string, det?: string) => void;
+  onIrRelatorio: (id: string, det?: string, ref?: string) => void;
   /** Volta ao primeiro relatório do grupo (migalha). */
   onIrGrupo?: () => void;
 };
 
 export const PORQUE_CENTRO_REGRAS_ANTIGAS =
-  "Com as regras antigas dos relatórios, a DRE é sempre da fazenda inteira (como na tela anterior). O filtro por centro de custo entra quando as regras novas forem ligadas em Parâmetros financeiros.";
+  "Com as regras antigas dos relatórios, a DRE é sempre da fazenda inteira. O filtro por centro de custo entra quando as regras novas forem ligadas em Parâmetros financeiros.";

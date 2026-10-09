@@ -284,7 +284,7 @@ export default function DreFazendaView(props: PropsRelatorio & { onClassificar: 
       )}
       <NotasMetodo titulo="Regras desta DRE (o que entra em cada linha)"
         entra={[
-          ["De onde vem", "Da DRE do servidor — a mesma cascata da Capa, do e-mail do Portal e da DRE por conta. Esta tela não soma nada no navegador."],
+          ["De onde vem", "Da DRE do servidor — a mesma cascata da Capa e do e-mail do Portal. Esta tela não soma nada no navegador."],
           ["Regime", efetivo.reg === "caixa" ? "Pelo dia do pagamento: o que foi pago e recebido no período (juros e descontos da baixa vão para Resultado financeiro)." : "Pelo mês do gasto: o que aconteceu no período, pago ou não."],
           ["Centro de custo", regras.ativa ? "Com o filtro, só os lançamentos (e itens) do centro; a depreciação é a dos bens do centro mais o rateio dos bens sem centro." : "Regras antigas: sempre a fazenda inteira."],
           ["Desgaste dos bens", "A depreciação do período, calculada do cadastro de Patrimônio. Não é saída de caixa."],
@@ -295,7 +295,7 @@ export default function DreFazendaView(props: PropsRelatorio & { onClassificar: 
           "Orçado (Comparar com: Orçado): linha sem conta orçada fica sem comparação; o desgaste dos bens é o do Patrimônio dos dois lados. O detalhe conta a conta fica em Plano › Orçamento.",
         ]}>
         <p style={{ margin: ".7rem 0 0" }}>
-          Para classificar contas uma a uma, use a <button type="button" className="rl-linkbtn" style={{ color: "var(--text-accent)", fontWeight: 700 }} onClick={props.onClassificar}>DRE por conta (tela anterior)</button>.
+          Para classificar o que ficou de fora, lançamento a lançamento ou em lote, abra <button type="button" className="rl-linkbtn" style={{ color: "var(--text-accent)", fontWeight: 700 }} onClick={props.onClassificar}>Classificar</button>.
         </p>
       </NotasMetodo>
       <Conferencia fecha={conf.fecha} texto={conf.fecha

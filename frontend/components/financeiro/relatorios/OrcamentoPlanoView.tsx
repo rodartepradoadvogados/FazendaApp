@@ -157,7 +157,7 @@ export default function OrcamentoPlanoView(props: PropsRelatorio) {
     {v2 && dados?.orcado_sem_linha && dados.orcado_sem_linha.total > 0 && vista !== "grade" && (
       <div className="rl-aviso info" role="status"><Info size={18} aria-hidden /><div>
         <b>{brl(dados.orcado_sem_linha.total, 0)} orçados em conta sem linha da DRE</b>
-        <p>{dados.orcado_sem_linha.contas.map((c) => c.nome || c.codigo).join(", ")} — ficam fora do desvio por linha até a conta ganhar uma linha (DRE por conta, tela anterior).</p>
+        <p>{dados.orcado_sem_linha.contas.map((c) => c.nome || c.codigo).join(", ")} — ficam fora do desvio por linha até a conta ganhar uma linha (Resultado › Classificar).</p>
       </div></div>
     )}
   </>);

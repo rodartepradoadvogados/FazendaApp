@@ -110,6 +110,7 @@ def test_fila_fecha_com_a_dre_nos_quatro_motivos(cenario):  # noqa: F811
         ids["silagem"], "8.20", "AUD Silagem comprada", 700.0)
     assert silagem["conta_no_plano"] and silagem["item_id"] and silagem["conta_id"] and silagem["fornecedor"] == "AUD-Silo"
     assert silagem["tipo"] == "despesa" and silagem["data"] == "2031-03-12" and silagem["centro_custo"] == "Pecuária Leiteira"
+    assert silagem["pago"] is False                     # a prazo: o lugar dele é Contas a pagar, não Consultas
     assert silagem["acoes"] == {"conta": True, "linha_dre": True, "natureza": True}
 
     sem = _linhas(fila, "sem_codigo_conta")[0]
@@ -153,7 +154,7 @@ def test_fila_respeita_regime_e_centro(cenario):  # noqa: F811
     assert len(_linhas(_fila(cenario), "conta_sem_linha_dre")) == 1
     assert _linhas(_fila(cenario, regime="caixa"), "conta_sem_linha_dre") == []
     maio = _fila(cenario, regime="caixa", data_inicio="2031-05-01", data_fim="2031-05-31")
-    assert [l["data"] for l in _linhas(maio, "conta_sem_linha_dre")] == ["2031-05-02"]
+    assert [(l["data"], l["pago"]) for l in _linhas(maio, "conta_sem_linha_dre")] == [("2031-05-02", True)]
     assert _linhas(_fila(cenario, centro_custo="Agricultura"), "conta_sem_linha_dre") == []
     assert cenario.c.get(f"{P}/pendencias", params={**MAR, "regime": "semanal"}).status_code == 422
     assert cenario.c.get(f"{P}/pendencias", params={"data_inicio": "2031-03-01"}).status_code == 422

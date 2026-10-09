@@ -3,7 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Circle, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
   Paperclip, Pencil, ShoppingCart, Target, TrendingUp, Compass, Trash2, Wrench, AlertTriangle, Repeat, CreditCard, ArrowLeft, Award, Undo2,
-  Milk, ListChecks, LayoutGrid, Ruler, ArrowLeftRight, FileArchive, LockKeyhole, type LucideIcon,
+  Milk, ListChecks, LayoutGrid, Ruler, ArrowLeftRight, FileArchive, LockKeyhole, Tags, type LucideIcon,
 } from "lucide-react";
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
@@ -71,7 +71,7 @@ const COLUNAS_LIVRO = [
 import type { Lanc } from "@/lib/financeiroTipos";
 import { NATUREZAS_FIN, rotuloNatureza } from "@/lib/naturezaFin";
 
-type Rel = "fluxo" | "dre" | "dre_contas" | "painel_dono" | "reguas_referencia" | "pacote_contador" | "fechamento_mes" | "conciliacao" | "rel_litro" | "rel_dre" | "rel_caixa" | "rel_fluxo" | "rel_livro" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "rel_orcamento" | "rel_cenarios" | "orcamento_itens" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos" | "resumo";
+type Rel = "fluxo" | "dre" | "dre_contas" | "classificar" | "painel_dono" | "reguas_referencia" | "pacote_contador" | "fechamento_mes" | "conciliacao" | "rel_litro" | "rel_dre" | "rel_caixa" | "rel_fluxo" | "rel_livro" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "todas_contas" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "caixa_funcionarios" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "compra_semen" | "orcamento" | "planejamento_financeiro" | "rel_orcamento" | "rel_cenarios" | "orcamento_itens" | "documentos" | "recorrentes" | "cartao_credito" | "caixa_real" | "faturas" | "faturas_gestao" | "consultas" | "custos" | "resumo";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "caixa_real", label: "Caixa Real", icon: TrendingUp, desc: "Projeção de liquidez: quanto tem hoje e como o saldo evolui com os compromissos já lançados" },
@@ -118,12 +118,12 @@ const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
 // mostrar de fato).
 // "faturas" (Contas > Faturas de fornecedor) também dispensa lançamento prévio no banco.
 const ACOES_IDS = new Set<Rel>([...ACOES.map((a) => a.id), "faturas", "a_pagar", "a_receber", "consultas", "custos", "resumo", "painel_dono", "rel_litro", "rel_dre",
-  "rel_caixa", "rel_fluxo", "rel_livro", "rmca", "reguas_referencia", "compra_venda_animais", "compra_semen", "rel_orcamento", "rel_cenarios", "pacote_contador", "fechamento_mes", "conciliacao"]);
+  "rel_caixa", "rel_fluxo", "rel_livro", "rmca", "reguas_referencia", "compra_venda_animais", "compra_semen", "rel_orcamento", "rel_cenarios", "pacote_contador", "fechamento_mes", "conciliacao", "classificar"]);
 // Ícones da árvore de Relatórios por pergunta (lib/relatoriosNavegacao.ts).
 const ICONE_GRUPO: Record<string, LucideIcon> = { "rg-painel": LayoutGrid, "rg-resultado": TrendingUp, "rg-caixa": Wallet, "rg-leite": Milk, "rg-plano": Target, "rg-registros": ListChecks, "rg-contador": FileArchive };
 const ICONE_RELATORIO: Record<string, LucideIcon> = {
   painel_dono: LayoutGrid, reguas_referencia: Ruler,
-  rel_litro: Milk, rel_dre: FileText, dre_contas: FileText, rel_caixa: TrendingUp, rel_fluxo: Wallet, rel_livro: BookOpen, custos: BarChart3, rmca: BarChart3,
+  rel_litro: Milk, rel_dre: FileText, classificar: Tags, dre_contas: FileText, rel_caixa: TrendingUp, rel_fluxo: Wallet, rel_livro: BookOpen, custos: BarChart3, rmca: BarChart3,
   rel_orcamento: Target, rel_cenarios: Compass, orcamento_itens: Target, planejamento_financeiro: Compass, compra_venda_animais: ShoppingCart, compra_semen: ShoppingCart,
   pacote_contador: FileArchive, fechamento_mes: LockKeyhole, conciliacao: ArrowLeftRight,
 };
@@ -202,6 +202,7 @@ import { migrarFiltrosSalvosAntigos } from "@/lib/financeiroFiltrosMigracao";
 // Fase B dos Relatórios: molde único, árvore por pergunta e as duas primeiras telas novas.
 import { GRUPOS_RELATORIOS, IDS_RELATORIOS, RELATORIOS_NO_MOLDE, VISAO_DO_ID_ANTIGO, grupoDe, idDoRelatorio } from "@/lib/relatoriosNavegacao";
 import DreFazendaView from "@/components/financeiro/relatorios/DreFazendaView";
+import ClassificarView from "@/components/financeiro/relatorios/ClassificarView";
 import ResultadoLitroView from "@/components/financeiro/relatorios/ResultadoLitroView";
 // Fase C1 (Caixa): Caixa real, Fluxo de caixa e Livro caixa da atividade rural no molde.
 import RelCaixaRealView from "@/components/financeiro/relatorios/CaixaRealView";
@@ -807,7 +808,7 @@ export default function FinanceiroPage() {
       setNotaAlvoRef(null);
       setRel("consultas");
     },
-    onIrRelatorio: (id, det) => irPara(id as Rel, null, { det }),
+    onIrRelatorio: (id, det, ref) => irPara(id as Rel, ref ?? null, { det }),
     onIrGrupo: () => { const g = grupoDe(rel); if (g && g.itens[0].id !== rel) irPara(g.itens[0].id as Rel); },
   };
 
@@ -883,7 +884,8 @@ export default function FinanceiroPage() {
               fornecedores={opcoesRel.fornecedores} produtos={opcoesProdutoRel} filtroInicial={consultaInicial || undefined}
               onRecibo={(l) => setRecibo({ ...l, reparcelamento: reparcelamentoDoRecibo(l) })} onEstornado={recarregar} onEditar={(l) => setEditando(l)} />
           )
-          : rel === "rel_dre" ? <DreFazendaView {...propsRelatorio} onClassificar={() => irPara("dre_contas")} />
+          : rel === "rel_dre" ? <DreFazendaView {...propsRelatorio} onClassificar={() => irPara("classificar")} />
+          : rel === "classificar" ? <ClassificarView {...propsRelatorio} />
           : rel === "rel_litro" ? <ResultadoLitroView {...propsRelatorio} />
           : rel === "painel_dono" ? <PainelDonoView {...propsRelatorio} />
           : rel === "reguas_referencia" ? <ReguasReferenciaView {...propsRelatorio} />

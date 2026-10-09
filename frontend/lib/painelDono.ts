@@ -130,7 +130,7 @@ export function decisoesDoMes(o: {
     const p = [Math.abs(o.naoClassificado) >= 0.005 ? `${fmt.brl(Math.abs(o.naoClassificado))} em contas sem linha na DRE` : null,
       o.pendenciasNatureza > 0 ? `${o.pendenciasNatureza} ${o.pendenciasNatureza === 1 ? "lançamento" : "lançamentos"} sem natureza` : null].filter(Boolean).join(" e ");
     out.push({ chave: "contador", tipo: "contador", titulo: `Para o contador: ${p}.`,
-      texto: "Classificar antes de fechar o mês, para o número entrar na DRE.", relatorio: "dre_contas", rotulo: "Classificar" });
+      texto: "Classificar antes de fechar o mês, para o número entrar na DRE.", relatorio: "classificar", rotulo: "Classificar" });
   }
   return out;
 }

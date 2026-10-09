@@ -270,7 +270,7 @@ def montar_pendencias(
                 "chave": f"{chave[0]}|{item_id or 0}", "motivo": motivo,
                 "numero_lancamento": numero, "conta_id": r.get("conta_id"), "item_id": item_id,
                 "tipo": r.get("tipo") or (conta.tipo if conta else None) or "despesa",
-                "valor": 0.0, "parcelas": 0, "data": None,
+                "valor": 0.0, "parcelas": 0, "data": None, "pago": False,
                 "fornecedor": conta.fornecedor_cliente if conta else None,
                 "descricao": conta.descricao if conta else None,
                 "produto": item.produto if item else None,
@@ -289,12 +289,14 @@ def montar_pendencias(
             if d is not None and (linha["data"] is None or d.isoformat() < linha["data"]):
                 linha["data"] = d.isoformat()
 
-    # Mês fechado: a ação sobre o lançamento mexe em TODAS as parcelas da nota.
+    # Mês fechado: a ação sobre o lançamento mexe em TODAS as parcelas da nota. `pago`: a nota inteira já
+    # foi baixada (aparece em Consultas, que lista só o realizado); senão o lançamento está em Contas.
     for linha in linhas.values():
-        datas = [d for c in parcelas_por_numero.get(linha["numero_lancamento"], [])
-                 for d in fechamento_mes.datas_do_lancamento(c)] if linha["numero_lancamento"] else []
-        if not datas and linha["conta_id"] in contas_por_id:
-            datas = fechamento_mes.datas_do_lancamento(contas_por_id[linha["conta_id"]])
+        parcelas = parcelas_por_numero.get(linha["numero_lancamento"], []) if linha["numero_lancamento"] else []
+        if not parcelas and linha["conta_id"] in contas_por_id:
+            parcelas = [contas_por_id[linha["conta_id"]]]
+        datas = [d for c in parcelas for d in fechamento_mes.datas_do_lancamento(c)]
+        linha["pago"] = bool(parcelas) and all(c.data_pagamento for c in parcelas)
         atingidos = sorted({fechamento_mes.mes_de(d) for d in datas if d} & fechados)
         linha["mes_fechado"] = bool(atingidos)
         linha["meses_fechados"] = atingidos
