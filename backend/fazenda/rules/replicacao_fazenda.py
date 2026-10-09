@@ -108,6 +108,14 @@ _TABELAS_CONTROLE_ACESSO_EXCLUIDAS = frozenset({
     "sessao_acesso_suporte",     # cofre_acesso.py — idem
     "auditoria_acesso_suporte",  # cofre_acesso.py — idem
     "acao_auditoria_suporte",    # cofre_acesso.py — idem
+    # juridico.py — registros de PROVA (parecer jurídico de 08/10/2026): o aceite
+    # e o log de exportação de um usuário real não podem reaparecer na Fazenda
+    # Teste como se tivessem acontecido lá, e são append-only (gatilho no banco
+    # recusa o DELETE que a limpeza do destino faria). O reporte de erro é fila
+    # do operador CowData, não dado da fazenda.
+    "aceite_termos",
+    "exportacao_relatorio_log",
+    "regua_erro_reportado",
 })
 
 # ---------------------------------------------------------------------------

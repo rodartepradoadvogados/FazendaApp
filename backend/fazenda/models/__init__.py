@@ -262,6 +262,11 @@ from .cofre_acesso import (
 from .equipe_cowdata_acesso import (
     PermissaoEquipeCowData,
 )
+from .juridico import (
+    AceiteTermos,
+    ExportacaoRelatorioLog,
+    ReguaErroReportado,
+)
 from .documentos import (
     DocumentoArquivado,
     Chamado,
@@ -561,4 +566,7 @@ __all__ = [
     "ParametroManualFazenda",
     "SugestaoManualFazenda",
     "AssistenteEnsinamento",
+    "AceiteTermos",
+    "ExportacaoRelatorioLog",
+    "ReguaErroReportado",
 ]

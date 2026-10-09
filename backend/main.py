@@ -37,6 +37,7 @@ from fazenda.api.routers import (
     central_documentos,
     central_protocolos,
     chamados,
+    aceites,
     cobranca,
     cofre_acesso,
     compra_animal,
@@ -45,6 +46,7 @@ from fazenda.api.routers import (
     documentos,
     estoque,
     exclusoes,
+    exportacoes_relatorio,
     farmacia,
     fazendas,
     filtros_salvos,
@@ -67,6 +69,7 @@ from fazenda.api.routers import (
     painel_cowdata_cotacoes,
     painel_cowdata_farmacia,
     painel_cowdata_parametros,
+    painel_cowdata_reguas,
     rotina_lista_espera,
     painel_cowdata_sincronizacao,
     painel_cowdata_touros,
@@ -884,6 +887,9 @@ app.include_router(cofre_acesso.router)
 # mesmo padrão exigir_area_painel_cowdata("fazendas"). Ver
 # fazenda/rules/replicacao_fazenda.py para a rotina destrutiva de verdade.
 app.include_router(painel_cowdata_sincronizacao.router)
+# Réguas de referência do lado do operador (diagnóstico de publicação, fila de
+# "Reportar erro", comprovante de aceite) — área "produto"; escrita só do dono.
+app.include_router(painel_cowdata_reguas.router)
 
 # TRAVA DE TENANT (auditoria F-A-01/F-B-01/F-B-02/F-A-03): a requisição só
 # entra numa rota de fazenda se o token disser EM QUAL fazenda ela acontece.
@@ -947,6 +953,9 @@ app.include_router(cartao_credito.router, dependencies=[Depends(exigir_modulo("f
 app.include_router(relatorio_custo_hectare.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 app.include_router(relatorio_custo_producao.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 app.include_router(reguas_referencia.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
+# Aceite do modal "Entendi" e "Reportar erro na faixa": SEM a trava de escrita do
+# contador — registrar que leu o aviso e apontar um erro não é lançamento.
+app.include_router(reguas_referencia.router_registros, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro"))] + _fazenda_selecionada)
 app.include_router(relatorio_custo_safra.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 app.include_router(relatorio_resultado_litro.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
 # Planejamento (Orçamento/Planejamento financeiro) é uma sub-aba de Financeiro
@@ -987,6 +996,12 @@ app.include_router(alertas_indicador.router, dependencies=_protegido)
 # por módulo do usuário (ver fazenda/api/routers/nao_conformidades.py).
 app.include_router(nao_conformidades.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(parametros.router, dependencies=_protegido + _contrato_ativo)
+# Aceites (parecer jurídico 6.1): login + fazenda selecionada, sem trava de
+# contrato — o aceite dos Termos vem antes de qualquer uso.
+app.include_router(aceites.router, dependencies=_protegido)
+# Log de exportação/compartilhamento de relatórios (parecer 6.2) — qualquer
+# relatório; com réguas, exige o parâmetro da fazenda e autorização por envio.
+app.include_router(exportacoes_relatorio.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(manual_fazenda.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(alimentacao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("alimentacao"))])
 # Formulação de Dietas: eixo de acesso à parte (admin OU consultor desta

@@ -1,0 +1,79 @@
+{
+  "_leia_me": "Textos jurídicos versionados (parecer de 08/10/2026, item 7). Só humanos editam este arquivo, por PR revisado pelo dono. Mudou o 'modelo' de um texto: suba a 'versao', atualize 'vigente_desde' e 'sha256_modelo' (o teste mostra o hash novo) e mova a versão anterior para 'historico' com 'vigente_ate'. O aceite do usuário guarda versão + SHA-256 do texto exibido; por isso um texto novo pede aceite novo.",
+  "empresa": {
+    "razao_social": null,
+    "cnpj": null,
+    "nome_produto": "CowData",
+    "email_responsavel": null,
+    "responsavel_interno": null,
+    "observacao": "A empresa ainda não foi constituída (parecer, item 8). Enquanto razao_social, cnpj ou email_responsavel estiverem vazios, a publicação das réguas fica travada e os Termos de Uso não existem."
+  },
+  "textos": {
+    "reguas_alerta": {
+      "versao": "1",
+      "vigente_desde": "2026-10-08",
+      "origem": "Parecer jurídico de 08/10/2026, item 7.1 (caixa de alerta revisada)",
+      "aceite": null,
+      "modelo": "ESTIMATIVA DE MERCADO. NÃO É META NEM RECOMENDAÇÃO.\n\nAs faixas cinzas são referências aproximadas, compiladas por {{razao_social}} a partir de fontes públicas nacionais e estrangeiras (veja \"Como calculamos e quão confiável é\"). Elas vêm de outras regiões, escalas, sistemas de produção e anos, e podem não refletir a sua fazenda.\n\nO seu indicador é calculado com a sua DRE do período. Estar fora da faixa não é erro: indica apenas onde olhar primeiro.\n\nNão use esta tela, sozinha, para decidir sobre financiamento, investimento, venda ou contratação. Converse com seu contador, consultor ou zootecnista.\n\nAs fontes são citadas só como referência e não endossam o CowData. Cada faixa vale por 12 meses. Última revisão: {{ultima_revisao}}.",
+      "sha256_modelo": "59c2c3dc637246143e74f0a73c0e2ea1c26efa645c724de9c494e299de7b52c7"
+    },
+    "reguas_modal": {
+      "versao": "1",
+      "vigente_desde": "2026-10-08",
+      "origem": "Parecer jurídico de 08/10/2026, itens 7.2 (pop-up \"Como calculamos e quão confiável é\") e 6.1.3 (modal \"Entendi\" no primeiro acesso e a cada nova versão)",
+      "aceite": "reguas",
+      "botao": "Entendi",
+      "condicionais": {
+        "trecho_metodo": {
+          "texto": "Mostramos uma faixa quando pelo menos uma fonte brasileira e uma estrangeira, independentes, indicam uma ordem de grandeza parecida.",
+          "condicao": "Entra SOMENTE quando toda régua publicada tem dossiê comprovado (fonte brasileira e estrangeira independentes, dupla validação e termos verificados — parecer 3.5). Sem régua publicada, não entra."
+        }
+      },
+      "modelo": "COMO CALCULAMOS\nPesquisamos fontes públicas nacionais e estrangeiras sobre custos e resultados de fazendas leiteiras.{{trecho_metodo}} Não copiamos tabelas nem textos das fontes: usamos apenas valores numéricos, combinados em uma faixa. Não usamos dados de clientes do CowData para montar as faixas. Valores em reais não viram faixa, porque dependem de região, época e moeda.\n\nQUÃO CONFIÁVEL É\n• Alta: várias fontes recentes concordam e há fontes brasileiras.\n• Média: poucas fontes, ou fontes de outras regiões ou sistemas.\n• Baixa: pouca base ou dados antigos; use só como curiosidade.\nCada indicador mostra seu grau de confiabilidade e uma ressalva própria.\n\nO QUE ESTA FAIXA NÃO É\nNão é meta, recomendação, laudo ou parecer. Não considera sua região, escala, raça, sistema de produção, clima ou momento de mercado. Não use esta tela, sozinha, para decidir sobre crédito, investimento, venda ou contratação.\n\nFONTES E ATUALIZAÇÃO\nAs fontes, anos e links aparecem no quadro de fontes de cada indicador. Citá-las não significa que endossam o CowData. Cada faixa vale por 12 meses e sai da tela se vencer. Revisamos as fontes todo mês. Viu algo errado? Use \"Reportar erro\" ou escreva para {{email_responsavel}}.",
+      "sha256_modelo": "db83bf5ed99d48293f1d130c3275d7bf81a9650b8eaa4c26c7829aaa39459d6c"
+    },
+    "reguas_rodape_exportacao": {
+      "versao": "1",
+      "vigente_desde": "2026-10-08",
+      "origem": "Parecer jurídico de 08/10/2026, item 7.5 (rodapé automático e não removível, no mesmo bloco da régua)",
+      "aceite": null,
+      "modelo": "Este relatório contém faixas de referência de mercado, que são estimativas de terceiros compiladas pelo CowData, não certificadas e não constituem meta, recomendação, laudo ou parecer. Os indicadores da fazenda foram calculados com dados informados pelo usuário. Gerado em {{gerado_em}} por {{usuario}}, com autorização para {{destinatario}}. Versão das réguas: {{versao_reguas}}.",
+      "sha256_modelo": "e7deb2255ec5f060b0ee3b3052015dc436820d2fbeb6208037365b3f5b2b0203"
+    },
+    "exportacao_autorizacao": {
+      "versao": "1",
+      "vigente_desde": "2026-10-08",
+      "origem": "Parecer jurídico de 08/10/2026, item 6.2 (confirmação expressa a cada exportação ou link compartilhado)",
+      "aceite": null,
+      "modelo": "Autorizo o envio deste relatório a {{destinatario}}.",
+      "sha256_modelo": "b75e489582169bd0afac61ba9f3c35b8a36cd5b070a2377f5d18b09c7c8ecc19"
+    },
+    "compartilhamento_parametro": {
+      "versao": "1",
+      "vigente_desde": "2026-10-08",
+      "origem": "Parecer jurídico de 08/10/2026, item 7.7 (texto do botão de configuração de compartilhamento)",
+      "aceite": null,
+      "modelo": "Permitir exportar relatórios com réguas de referência\n(Desligado por padrão. A cada envio, você informa o destinatário e autoriza.)",
+      "sha256_modelo": "a7b1743c704364e0f98ba1d6e905a2ba4adb9c8a358534a380ec75d82d5a426a"
+    },
+    "termos_aceite": {
+      "versao": "1",
+      "vigente_desde": "2026-10-08",
+      "origem": "Parecer jurídico de 08/10/2026, item 7.6 (primeira caixa do clickwrap)",
+      "aceite": "geral",
+      "pendente": "Os Termos de Uso e a Política de Privacidade ainda não existem: dependem da empresa constituída (parecer, item 8). Sem eles, este aceite não pode ser registrado.",
+      "modelo": "Li e aceito os Termos de Uso (versão {{versao_termos}}, de {{data_termos}}) e a Política de Privacidade.",
+      "sha256_modelo": "a444b5734e594015aecbdd8e670f4c95cb4f864f605693390b50226bf4ea1dc4"
+    },
+    "termos_clausula_aceite": {
+      "versao": "1",
+      "vigente_desde": "2026-10-08",
+      "origem": "Parecer jurídico de 08/10/2026, item 7.6 (segunda caixa do clickwrap, cláusulas em destaque — CDC art. 54, §4º [CONFERIR])",
+      "aceite": "clausula",
+      "pendente": "A cláusula de réguas (parecer 7.3) só ganha número quando os Termos de Uso existirem (empresa constituída).",
+      "modelo": "Li e entendi a cláusula {{clausula}}.4 (limitação de responsabilidade) e a cláusula {{clausula}}.3 (decisões do cliente), em destaque acima.",
+      "sha256_modelo": "1470ecdb674f474608afb88bf140205a089a82085f56a7463e9a141f9fff529d"
+    }
+  },
+  "historico": []
+}

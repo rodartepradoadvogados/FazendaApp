@@ -4,27 +4,32 @@
   "conferida_em": "2026-10-08",
   "valido_ate": "2027-10-08",
   "proxima_conferencia": "2026-11-02",
-  "aviso": "ESTIMATIVA DE MERCADO, não é meta nem recomendação. Faixas compiladas a partir de fontes públicas nacionais e internacionais; as fontes cobrem outras regiões, escalas, sistemas e anos. Em vários indicadores a faixa mostra as fazendas eficientes, e a média brasileira fica fora dela.",
+  "publicacao": {
+    "liberada": false,
+    "liberada_por": null,
+    "liberada_em": null,
+    "observacao": "Interruptor geral. Só o dono liga, por PR revisado, depois do checklist de lançamento do parecer (item 10). A rotina mensal nunca toca neste bloco. Desligado: nenhuma faixa numérica sai da API."
+  },
   "fontes": [
-    {"id": "cna_campo_futuro_2024", "nome": "CNA/Senar/Cepea — Campo Futuro, boletim ativo pecuária de leite (mar/2024)", "url": "https://cnabrasil.org.br/storage/arquivos/pdf/Ativo-Pecuaria-de-Leite-marco2024.pdf", "origem": "nacional", "ano": 2024, "licenca": "reproducao_com_fonte"},
-    {"id": "cna_2025_paineis", "nome": "CNA — encerramento do circuito de painéis Campo Futuro 2025", "url": "https://cnabrasil.org.br/noticias/cna-encerra-circuito-de-resultados-do-campo-futuro-em-chapeco", "origem": "nacional", "ano": 2025, "licenca": "reproducao_com_fonte"},
-    {"id": "cna_go_2026", "nome": "CNA — painéis Campo Futuro em São Paulo, Goiás e Minas Gerais (abr/2026)", "url": "https://cnabrasil.org.br/noticias/campo-futuro-promove-paineis-em-sao-paulo-goias-e-minas-gerais", "origem": "nacional", "ano": 2026, "licenca": "reproducao_com_fonte"},
-    {"id": "campo_futuro_buritis_2024", "nome": "CNA/Senar/Cepea — relatório Campo Futuro Buritis-RO (2024)", "url": "https://sistemafaperon.org.br/wp-content/uploads/2024/12/dtec.relatorio-CF-Leite-Buritis-RO.VF_.pdf", "origem": "nacional", "ano": 2024, "licenca": "reproducao_com_fonte"},
-    {"id": "anuario_leite_2025", "nome": "Anuário Leite 2025 (Embrapa Gado de Leite / Labor Rural)", "url": "https://www.infoteca.cnptia.embrapa.br/infoteca/bitstream/doc/1176413/1/Anuario-Leite-2025.pdf", "origem": "nacional", "ano": 2025, "licenca": "citar_com_link"},
-    {"id": "pdpl_milkpoint_2025", "nome": "PDPL / MilkPoint — Uma bússola para os produtores de leite (2025)", "url": "https://www.milkpoint.com.br/colunas/pdpl/uma-bussola-para-os-produtores-de-leite-238393/", "origem": "nacional", "ano": 2025, "licenca": "citar_com_link"},
-    {"id": "milkpoint_laborrural_2026", "nome": "MilkPoint / Labor Rural — Capital empatado na pecuária leiteira (2026)", "url": "https://www.milkpoint.com.br/colunas/glauco-rodrigues-carvalho/capital-empatado-na-pecuaria-leiteira-o-que-diferencia-as-fazendas-mais-eficientes-241604/", "origem": "nacional", "ano": 2026, "licenca": "citar_com_link"},
-    {"id": "laborrural_concentrado_2020", "nome": "Labor Rural — Gasto com concentrado na fazenda (2020)", "url": "https://laborrural.com/gasto-com-concentrado-na-fazenda-impacto-economico-e-estrategias-de-reducao-visando-maior-rentabilidade/", "origem": "nacional", "ano": 2020, "licenca": "citar_com_link"},
-    {"id": "laborrural_mao_de_obra_2018", "nome": "Labor Rural — Custo com mão de obra x produtividade (2018)", "url": "https://laborrural.com/producao-de-leite-custo-com-mao-de-obra-x-produtividade/", "origem": "nacional", "ano": 2018, "licenca": "citar_com_link"},
-    {"id": "idr_pr_2015_2023", "nome": "IDR-Paraná / UFPR — assistência técnica em leite no Noroeste do PR (2015–2023)", "url": "https://static.even3.com/anais/1103332.pdf?v=638920302990110870", "origem": "nacional", "ano": 2023, "licenca": "citar_com_link"},
-    {"id": "sia_feedfood_2026", "nome": "Feed&Food / SIA — indicadores em períodos de margem apertada (ago/2026)", "url": "https://feedfood.com.br/indicadores-ajudam-propriedades-leiteiras-a-atravessar-periodos-de-margem-apertada/", "origem": "nacional", "ano": 2026, "licenca": "citar_com_link"},
-    {"id": "penn_state_iofc", "nome": "Penn State Extension — Managing Income Over Feed Costs", "url": "https://extension.psu.edu/managing-income-over-feed-costs", "origem": "internacional", "ano": 2023, "licenca": "nao_verificada"},
-    {"id": "minnesota_fbm_2024", "nome": "Minnesota Farm Business Management — Dairy Farm Sort 2024", "url": "https://centerofagriculture.org/?file=FBM-Program-Dairy-Sort-2024.pdf", "origem": "internacional", "ano": 2025, "licenca": "nao_verificada"},
-    {"id": "umn_extension_ratios", "nome": "University of Minnesota Extension — Ratios and measurements (faixas FFSC/FINPACK)", "url": "https://extension.umn.edu/agriculture/farm-operations-and-systems/agricultural-business-management/farm-finance/ratios-and-measurements", "origem": "internacional", "ano": 2024, "licenca": "nao_verificada"},
-    {"id": "uw_madison_repayment", "nome": "UW–Madison Extension — Repayment and replacement capacity", "url": "https://farms.extension.wisc.edu/articles/repayment-and-replacement-capacity", "origem": "internacional", "ano": 2024, "licenca": "nao_verificada"},
-    {"id": "nw_farm_credit_ratios", "nome": "Northwest Farm Credit Services — Understanding Key Ratios", "url": "https://farmcredit.com/wp-content/uploads/files/2023-01/BT_Understanding_Key_Ratios.pdf", "origem": "internacional", "ano": 2023, "licenca": "citar_com_link"},
-    {"id": "dairynz_economic_survey_2024_25", "nome": "DairyNZ — Economic Survey 2024-25", "url": "https://www.dairynz.co.nz/media/10wl5avc/economic-survey-24-25.pdf", "origem": "internacional", "ano": 2025, "licenca": "citar_com_link"},
-    {"id": "dfmp_wa_2023_24", "nome": "Dairy Farm Monitor Project, Western Australia — relatório 2023/24", "url": "https://westerndairy.com.au/wp-content/uploads/2025/03/DFMP-WA-Annual-Report-2023-24.pdf", "origem": "internacional", "ano": 2024, "licenca": "nao_verificada"},
-    {"id": "virginia_ext_via_milkpoint", "nome": "Virginia Cooperative Extension (G. Ferreira), lida em adaptação do MilkPoint/Grupo Apoiar (2019)", "url": "https://www.milkpoint.com.br/colunas/grupo-apoiar/receita-menos-custo-com-alimentacao-em-fazendas-leiteiras-214282/", "origem": "internacional", "ano": 2019, "licenca": "nao_verificada", "independencia_parcial": true}
+    {"id": "cna_campo_futuro_2024", "nome": "CNA/Senar — Campo Futuro, boletim ativo pecuária de leite (mar/2024)", "url": "https://cnabrasil.org.br/storage/arquivos/pdf/Ativo-Pecuaria-de-Leite-marco2024.pdf", "origem": "nacional", "ano": 2024, "licenca": "reproducao_com_fonte", "ativa": true, "caminho_parecer": "citar_apos_confirmacao_escrita", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "cna_2025_paineis", "nome": "CNA — encerramento do circuito de painéis Campo Futuro 2025", "url": "https://cnabrasil.org.br/noticias/cna-encerra-circuito-de-resultados-do-campo-futuro-em-chapeco", "origem": "nacional", "ano": 2025, "licenca": "reproducao_com_fonte", "ativa": true, "caminho_parecer": "citar_apos_confirmacao_escrita", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "cna_go_2026", "nome": "CNA — painéis Campo Futuro em São Paulo, Goiás e Minas Gerais (abr/2026)", "url": "https://cnabrasil.org.br/noticias/campo-futuro-promove-paineis-em-sao-paulo-goias-e-minas-gerais", "origem": "nacional", "ano": 2026, "licenca": "reproducao_com_fonte", "ativa": true, "caminho_parecer": "citar_apos_confirmacao_escrita", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "campo_futuro_buritis_2024", "nome": "CNA/Senar — relatório Campo Futuro Buritis-RO (2024)", "url": "https://sistemafaperon.org.br/wp-content/uploads/2024/12/dtec.relatorio-CF-Leite-Buritis-RO.VF_.pdf", "origem": "nacional", "ano": 2024, "licenca": "reproducao_com_fonte", "ativa": true, "caminho_parecer": "citar_apos_confirmacao_escrita", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "anuario_leite_2025", "nome": "Anuário Leite 2025 (Embrapa Gado de Leite / Labor Rural)", "url": "https://www.infoteca.cnptia.embrapa.br/infoteca/bitstream/doc/1176413/1/Anuario-Leite-2025.pdf", "origem": "nacional", "ano": 2025, "licenca": "citar_com_link", "ativa": true, "caminho_parecer": "pedir_autorizacao", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "pdpl_milkpoint_2025", "nome": "PDPL / MilkPoint — Uma bússola para os produtores de leite (2025)", "url": "https://www.milkpoint.com.br/colunas/pdpl/uma-bussola-para-os-produtores-de-leite-238393/", "origem": "nacional", "ano": 2025, "licenca": "citar_com_link", "ativa": true, "caminho_parecer": "verificar_antes", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "milkpoint_laborrural_2026", "nome": "MilkPoint / Labor Rural — Capital empatado na pecuária leiteira (2026)", "url": "https://www.milkpoint.com.br/colunas/glauco-rodrigues-carvalho/capital-empatado-na-pecuaria-leiteira-o-que-diferencia-as-fazendas-mais-eficientes-241604/", "origem": "nacional", "ano": 2026, "licenca": "citar_com_link", "ativa": true, "caminho_parecer": "corroboracao_apenas", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "laborrural_concentrado_2020", "nome": "Labor Rural — Gasto com concentrado na fazenda (2020)", "url": "https://laborrural.com/gasto-com-concentrado-na-fazenda-impacto-economico-e-estrategias-de-reducao-visando-maior-rentabilidade/", "origem": "nacional", "ano": 2020, "licenca": "citar_com_link", "ativa": true, "caminho_parecer": "corroboracao_apenas", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "laborrural_mao_de_obra_2018", "nome": "Labor Rural — Custo com mão de obra x produtividade (2018)", "url": "https://laborrural.com/producao-de-leite-custo-com-mao-de-obra-x-produtividade/", "origem": "nacional", "ano": 2018, "licenca": "citar_com_link", "ativa": true, "caminho_parecer": "corroboracao_apenas", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "idr_pr_2015_2023", "nome": "IDR-Paraná / UFPR — assistência técnica em leite no Noroeste do PR (2015–2023)", "url": "https://static.even3.com/anais/1103332.pdf?v=638920302990110870", "origem": "nacional", "ano": 2023, "licenca": "citar_com_link", "ativa": true, "caminho_parecer": "verificar_antes", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "sia_feedfood_2026", "nome": "Feed&Food / SIA — indicadores em períodos de margem apertada (ago/2026)", "url": "https://feedfood.com.br/indicadores-ajudam-propriedades-leiteiras-a-atravessar-periodos-de-margem-apertada/", "origem": "nacional", "ano": 2026, "licenca": "citar_com_link", "ativa": true, "caminho_parecer": "corroboracao_apenas", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "penn_state_iofc", "nome": "Penn State Extension — Managing Income Over Feed Costs", "url": "https://extension.psu.edu/managing-income-over-feed-costs", "origem": "internacional", "ano": 2023, "licenca": "nao_verificada", "ativa": true, "caminho_parecer": "verificar_antes", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "minnesota_fbm_2024", "nome": "Minnesota Farm Business Management — Dairy Farm Sort 2024", "url": "https://centerofagriculture.org/?file=FBM-Program-Dairy-Sort-2024.pdf", "origem": "internacional", "ano": 2025, "licenca": "nao_verificada", "ativa": true, "caminho_parecer": "verificar_antes", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "umn_extension_ratios", "nome": "University of Minnesota Extension — Ratios and measurements (faixas FFSC/FINPACK)", "url": "https://extension.umn.edu/agriculture/farm-operations-and-systems/agricultural-business-management/farm-finance/ratios-and-measurements", "origem": "internacional", "ano": 2024, "licenca": "nao_verificada", "ativa": true, "caminho_parecer": "verificar_antes", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "uw_madison_repayment", "nome": "UW–Madison Extension — Repayment and replacement capacity", "url": "https://farms.extension.wisc.edu/articles/repayment-and-replacement-capacity", "origem": "internacional", "ano": 2024, "licenca": "nao_verificada", "ativa": true, "caminho_parecer": "verificar_antes", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "nw_farm_credit_ratios", "nome": "Northwest Farm Credit Services — Understanding Key Ratios", "url": "https://farmcredit.com/wp-content/uploads/files/2023-01/BT_Understanding_Key_Ratios.pdf", "origem": "internacional", "ano": 2023, "licenca": "citar_com_link", "ativa": true, "caminho_parecer": "excluir_por_ora", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "dairynz_economic_survey_2024_25", "nome": "DairyNZ — Economic Survey 2024-25", "url": "https://www.dairynz.co.nz/media/10wl5avc/economic-survey-24-25.pdf", "origem": "internacional", "ano": 2025, "licenca": "citar_com_link", "ativa": true, "caminho_parecer": "citar_apos_ler_termos", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "dfmp_wa_2023_24", "nome": "Dairy Farm Monitor Project, Western Australia — relatório 2023/24", "url": "https://westerndairy.com.au/wp-content/uploads/2025/03/DFMP-WA-Annual-Report-2023-24.pdf", "origem": "internacional", "ano": 2024, "licenca": "nao_verificada", "ativa": true, "caminho_parecer": "verificar_antes", "termos_verificados_em": null, "uso_comercial_confirmado_em": null},
+    {"id": "virginia_ext_via_milkpoint", "nome": "Virginia Cooperative Extension (G. Ferreira), lida em adaptação do MilkPoint/Grupo Apoiar (2019)", "url": "https://www.milkpoint.com.br/colunas/grupo-apoiar/receita-menos-custo-com-alimentacao-em-fazendas-leiteiras-214282/", "origem": "internacional", "ano": 2019, "licenca": "nao_verificada", "ativa": true, "caminho_parecer": "verificar_antes", "termos_verificados_em": null, "uso_comercial_confirmado_em": null, "independencia_parcial": true}
   ],
   "reguas": [
     {
@@ -35,9 +40,25 @@
       "classe": "VALIDADA",
       "fidedignidade": "alta",
       "exibir_faixa": true,
+      "ativa": true,
       "definicao_cowdata": "Alimentação do rebanho inteiro ÷ receita do leite.",
       "ressalva": "A faixa descreve as fazendas eficientes. A CNA (15 painéis em 2025) mostra que a fazenda típica gasta de 50% a 75% da receita do leite com alimentação (Goiás, abr/2026: cerca de 60%). Penn State e IDR-PR medem só as vacas em lactação.",
-      "fontes": ["cna_2025_paineis", "cna_go_2026", "pdpl_milkpoint_2025", "milkpoint_laborrural_2026", "idr_pr_2015_2023", "penn_state_iofc", "minnesota_fbm_2024", "dfmp_wa_2023_24"]
+      "fontes": ["cna_2025_paineis", "cna_go_2026", "pdpl_milkpoint_2025", "milkpoint_laborrural_2026", "idr_pr_2015_2023", "penn_state_iofc", "minnesota_fbm_2024", "dfmp_wa_2023_24"],
+      "dossie": {
+        "indicador": "Comida (alimentação) ÷ receita do leite",
+        "faixa_publicada": "40–55% (eficiente até 45%; atenção acima de 60%)",
+        "fonte_br": {"fonte_id": "pdpl_milkpoint_2025", "valor_lido": "Alimentação ÷ receita bruta: 41,7% nas 25% melhores, 45,5% nas intermediárias e 55,2% nas 25% piores (30 fazendas, dados de 2024).", "pagina_ou_tabela": null},
+        "fonte_estrangeira": {"fonte_id": "penn_state_iofc", "valor_lido": "Alimento das vacas em lactação ÷ receita do leite: 40% ou menos = bom resultado; 60% ou mais = resultado ruim.", "pagina_ou_tabela": "Página \"Managing Income Over Feed Costs\" (atualizada em 14/09/2023), texto corrido sobre o IOFC."},
+        "independencia": {"sim_nao": "sim", "justificativa": "PDPL/MilkPoint é levantamento de fazendas brasileiras; Penn State é extensão universitária dos EUA. Nenhuma cita ou deriva a outra."},
+        "metodo_agregacao": "Ordem de grandeza comum: nacionais (PDPL 2024: 41,7–55,2%; Labor Rural MG 2023 via MilkPoint 2026: ≈43–49%, conta do pesquisador; IDR-PR: 46–52%) e internacionais (Penn State: bom ≤40%, ruim ≥60%; Minnesota FBM 2024: 47,5%; DFMP WA 2023/24: 49–55%). Limite inferior no 'bom' da Penn State; superior no pior quartil do PDPL; 'eficiente' no quartil intermediário do PDPL.",
+        "confiabilidade": {"grau": "alta", "criterio": "Duas ou mais fontes nacionais e duas ou mais internacionais na mesma ordem de grandeza, dados de até 3 anos (critério do pop-up)."},
+        "compilado_por": "Claude (pesquisa assistida por IA, rodada 2, a pedido do dono)",
+        "compilado_em": "2026-10-08",
+        "vence_em": "2027-10-08",
+        "validado_por": [],
+        "termos_verificados_em": null,
+        "pendente_de": ["dono", "Alexandre Scarpa"]
+      }
     },
     {
       "codigo": "coe_receita",
@@ -47,9 +68,25 @@
       "classe": "VALIDADA",
       "fidedignidade": "alta",
       "exibir_faixa": true,
+      "ativa": true,
       "definicao_cowdata": "Custo operacional efetivo (desembolsos de custeio) ÷ receita bruta.",
       "ressalva": "Nas fontes internacionais o numerador inclui outras contas (o DairyNZ inclui depreciação e mão de obra não paga). Atenção entre 80% e 85%.",
-      "fontes": ["sia_feedfood_2026", "campo_futuro_buritis_2024", "milkpoint_laborrural_2026", "umn_extension_ratios", "minnesota_fbm_2024", "dairynz_economic_survey_2024_25"]
+      "fontes": ["sia_feedfood_2026", "campo_futuro_buritis_2024", "milkpoint_laborrural_2026", "umn_extension_ratios", "minnesota_fbm_2024", "dairynz_economic_survey_2024_25"],
+      "dossie": {
+        "indicador": "Custeio (COE) ÷ receita bruta",
+        "faixa_publicada": "60–80% (eficiente até 70%; atenção acima de 80%)",
+        "fonte_br": {"fonte_id": "sia_feedfood_2026", "valor_lido": "COE ÷ receita bruta: fazendas mais eficientes até 70%; algumas passaram de 85% (margens de 2025 ao início de 2026).", "pagina_ou_tabela": "Matéria de 11/08/2026, texto corrido."},
+        "fonte_estrangeira": {"fonte_id": "umn_extension_ratios", "valor_lido": "Operating Expense Ratio (FFSC/FINPACK): abaixo de 60% forte; 60–80% cautela; acima de 80% vulnerável.", "pagina_ou_tabela": "Página \"Ratios and measurements\", quadro do Operating expense ratio."},
+        "independencia": {"sim_nao": "sim", "justificativa": "SIA é consultoria brasileira; FFSC/UMN é padrão financeiro dos EUA. Nenhuma deriva da outra."},
+        "metodo_agregacao": "COE brasileiro e Operating Expense Ratio da FFSC têm a mesma estrutura (desembolsos operacionais com mão de obra contratada, sem depreciação e sem juros, ÷ receita bruta). Faixa = 'cautela' da FFSC; 'eficiente' = teto das melhores fazendas do SIA; corroborada por Minnesota FBM 2024 (79,7%) e DairyNZ 2024-25 (≈63%, conta do pesquisador).",
+        "confiabilidade": {"grau": "alta", "criterio": "Duas ou mais fontes de cada lado, mesma definição, dados de até 3 anos."},
+        "compilado_por": "Claude (pesquisa assistida por IA, rodada 2, a pedido do dono)",
+        "compilado_em": "2026-10-08",
+        "vence_em": "2027-10-08",
+        "validado_por": [],
+        "termos_verificados_em": null,
+        "pendente_de": ["dono", "Alexandre Scarpa"]
+      }
     },
     {
       "codigo": "mao_obra_receita",
@@ -59,9 +96,25 @@
       "classe": "VALIDADA_COM_RESSALVA",
       "fidedignidade": "media",
       "exibir_faixa": true,
+      "ativa": true,
       "definicao_cowdata": "Mão de obra contratada ÷ receita. Não inclui a família.",
       "ressalva": "Faixa só para fazendas com equipe contratada. Contratada mais família: 12–17%. As fontes brasileiras incluem a família e as americanas não; para fazenda familiar, sem faixa.",
-      "fontes": ["pdpl_milkpoint_2025", "laborrural_mao_de_obra_2018", "minnesota_fbm_2024", "dfmp_wa_2023_24", "dairynz_economic_survey_2024_25"]
+      "fontes": ["pdpl_milkpoint_2025", "laborrural_mao_de_obra_2018", "minnesota_fbm_2024", "dfmp_wa_2023_24", "dairynz_economic_survey_2024_25"],
+      "dossie": {
+        "indicador": "Mão de obra contratada ÷ receita",
+        "faixa_publicada": "6–12% (só mão de obra contratada)",
+        "fonte_br": {"fonte_id": "pdpl_milkpoint_2025", "valor_lido": "Mão de obra ÷ receita bruta: 6,3% nas melhores, 7,7% nas intermediárias e 11,7% nas piores (30 fazendas, 2024).", "pagina_ou_tabela": null},
+        "fonte_estrangeira": {"fonte_id": "minnesota_fbm_2024", "valor_lido": "Mão de obra contratada US$ 2,07/cwt ÷ leite US$ 21,36/cwt ≈ 9,7% (conta do pesquisador); de 2% a 11,4% conforme o porte.", "pagina_ou_tabela": null},
+        "independencia": {"sim_nao": "sim", "justificativa": "PDPL (Brasil) e Minnesota FBM (EUA) são levantamentos distintos."},
+        "metodo_agregacao": "Intervalo das fontes com equipe contratada: PDPL 2024 (6,3–11,7%), Minnesota FBM 2024 (≈9,7%), DFMP WA 2023/24 (12,6% da empregada). Ajuste de definição: as brasileiras incluem a família; o CowData não.",
+        "confiabilidade": {"grau": "media", "criterio": "Uma ou mais fontes de cada lado, com ajuste de definição documentado (família)."},
+        "compilado_por": "Claude (pesquisa assistida por IA, rodada 2, a pedido do dono)",
+        "compilado_em": "2026-10-08",
+        "vence_em": "2027-10-08",
+        "validado_por": [],
+        "termos_verificados_em": null,
+        "pendente_de": ["dono", "Alexandre Scarpa"]
+      }
     },
     {
       "codigo": "lactacao_vacas",
@@ -71,9 +124,25 @@
       "classe": "VALIDADA_COM_RESSALVA",
       "fidedignidade": "media",
       "exibir_faixa": true,
+      "ativa": true,
       "definicao_cowdata": "Vacas em lactação ÷ total de vacas (lactação mais secas).",
       "ressalva": "Referência técnica. Pequenos produtores ficam em 73–76% mesmo entre os mais rentáveis; ler na média de 12 meses e por escala. A fonte internacional foi lida numa adaptação brasileira, então não é totalmente independente.",
-      "fontes": ["anuario_leite_2025", "cna_campo_futuro_2024", "idr_pr_2015_2023", "virginia_ext_via_milkpoint"]
+      "fontes": ["anuario_leite_2025", "cna_campo_futuro_2024", "idr_pr_2015_2023", "virginia_ext_via_milkpoint"],
+      "dossie": {
+        "indicador": "Vacas em lactação ÷ vacas",
+        "faixa_publicada": "80–85% (referência técnica)",
+        "fonte_br": {"fonte_id": "anuario_leite_2025", "valor_lido": "Labor Rural MG 2023: 73,5% e 76,4% (até 500 L/dia, menos e mais rentáveis); 83,2% e 85,9% (acima de 4.000 L/dia).", "pagina_ou_tabela": null},
+        "fonte_estrangeira": {"fonte_id": "virginia_ext_via_milkpoint", "valor_lido": "14% a 16% de vacas secas, ou seja, 84% a 86% em lactação.", "pagina_ou_tabela": "Coluna do Grupo Apoiar no MilkPoint (30/05/2019), adaptação de texto da Virginia Cooperative Extension."},
+        "independencia": {"sim_nao": "nao", "justificativa": "A fonte estrangeira foi lida numa adaptação brasileira (MilkPoint), não no original. Sem o original, não se prova a independência."},
+        "metodo_agregacao": "Referência técnica (Campo Futuro recomenda 85%; Virginia, 84–86%) e grandes produtores do Anuário (83,2–85,9%).",
+        "confiabilidade": {"grau": "media", "criterio": "Uma fonte de cada lado; a estrangeira não é totalmente independente."},
+        "compilado_por": "Claude (pesquisa assistida por IA, rodada 2, a pedido do dono)",
+        "compilado_em": "2026-10-08",
+        "vence_em": "2027-10-08",
+        "validado_por": [],
+        "termos_verificados_em": null,
+        "pendente_de": ["dono", "Alexandre Scarpa"]
+      }
     },
     {
       "codigo": "parcelas_receita",
@@ -83,9 +152,25 @@
       "classe": "NAO_VALIDADA",
       "fidedignidade": null,
       "exibir_faixa": false,
+      "ativa": true,
       "definicao_cowdata": "Parcelas pagas da dívida (principal e juros) ÷ receita bruta.",
       "ressalva": "Nenhuma fonte nacional. O único critério achado (Northwest Farm Credit, abaixo de 25%) divide pela renda ajustada, não pela receita bruta. Mostrar o número sem faixa.",
-      "fontes": ["nw_farm_credit_ratios", "dairynz_economic_survey_2024_25"]
+      "fontes": ["nw_farm_credit_ratios", "dairynz_economic_survey_2024_25"],
+      "dossie": {
+        "indicador": "Parcelas da dívida ÷ receita",
+        "faixa_publicada": null,
+        "fonte_br": null,
+        "fonte_estrangeira": {"fonte_id": "nw_farm_credit_ratios", "valor_lido": "Pagamentos ÷ renda ajustada (não receita bruta): abaixo de 25% verde, 25–50% amarelo, acima de 50% vermelho.", "pagina_ou_tabela": null},
+        "independencia": {"sim_nao": null, "justificativa": "Sem fonte nacional."},
+        "metodo_agregacao": null,
+        "confiabilidade": {"grau": null, "criterio": "Sem faixa: definição diferente e nenhuma fonte nacional."},
+        "compilado_por": "Claude (pesquisa assistida por IA, rodada 2, a pedido do dono)",
+        "compilado_em": "2026-10-08",
+        "vence_em": "2027-10-08",
+        "validado_por": [],
+        "termos_verificados_em": null,
+        "pendente_de": ["dono", "Alexandre Scarpa"]
+      }
     },
     {
       "codigo": "cobertura_divida",
@@ -95,10 +180,26 @@
       "classe": "PARCIAL",
       "fidedignidade": "media",
       "exibir_faixa": false,
+      "ativa": true,
       "condicao_para_exibir": "O cálculo da cobertura precisa descontar a retirada da família e os impostos. Hoje não desconta, e o resultado sai inflado.",
       "definicao_cowdata": "Geração de caixa ÷ serviço da dívida, sem descontar a retirada da família.",
       "ressalva": "Só fonte internacional. A fonte desconta a retirada da família e os impostos do numerador.",
-      "fontes": ["umn_extension_ratios", "uw_madison_repayment", "nw_farm_credit_ratios", "minnesota_fbm_2024"]
+      "fontes": ["umn_extension_ratios", "uw_madison_repayment", "nw_farm_credit_ratios", "minnesota_fbm_2024"],
+      "dossie": {
+        "indicador": "Cobertura da dívida",
+        "faixa_publicada": null,
+        "fonte_br": null,
+        "fonte_estrangeira": {"fonte_id": "umn_extension_ratios", "valor_lido": "Term debt coverage: acima de 1,75 forte; 1,25–1,75 cautela; abaixo de 1,25 vulnerável, depois da retirada da família e dos impostos.", "pagina_ou_tabela": "Página \"Ratios and measurements\", quadro de repayment capacity."},
+        "independencia": {"sim_nao": null, "justificativa": "Sem fonte nacional."},
+        "metodo_agregacao": null,
+        "confiabilidade": {"grau": "media", "criterio": "Só internacional; e o numerador do CowData diverge da fonte."},
+        "compilado_por": "Claude (pesquisa assistida por IA, rodada 2, a pedido do dono)",
+        "compilado_em": "2026-10-08",
+        "vence_em": "2027-10-08",
+        "validado_por": [],
+        "termos_verificados_em": null,
+        "pendente_de": ["dono", "Alexandre Scarpa"]
+      }
     },
     {
       "codigo": "reserva_caixa",
@@ -108,9 +209,25 @@
       "classe": "PARCIAL",
       "fidedignidade": "baixa",
       "exibir_faixa": true,
+      "ativa": true,
       "definicao_cowdata": "Saldo de caixa ÷ custeio mensal.",
       "ressalva": "A fonte mede capital de giro (caixa mais estoques mais a receber menos a pagar no curto prazo), não saldo de caixa. A conversão para meses é aproximada. Sem fonte nacional.",
-      "fontes": ["umn_extension_ratios", "nw_farm_credit_ratios", "minnesota_fbm_2024"]
+      "fontes": ["umn_extension_ratios", "nw_farm_credit_ratios", "minnesota_fbm_2024"],
+      "dossie": {
+        "indicador": "Reserva de caixa (meses de custeio)",
+        "faixa_publicada": null,
+        "fonte_br": null,
+        "fonte_estrangeira": {"fonte_id": "nw_farm_credit_ratios", "valor_lido": "Capital de giro de pelo menos 20% das despesas operacionais anuais (≈2,4 meses).", "pagina_ou_tabela": null},
+        "independencia": {"sim_nao": null, "justificativa": "Sem fonte nacional."},
+        "metodo_agregacao": "Conversão aproximada de capital de giro para meses de custeio.",
+        "confiabilidade": {"grau": "baixa", "criterio": "Um lado só e faixa obtida por conversão."},
+        "compilado_por": "Claude (pesquisa assistida por IA, rodada 2, a pedido do dono)",
+        "compilado_em": "2026-10-08",
+        "vence_em": "2027-10-08",
+        "validado_por": [],
+        "termos_verificados_em": null,
+        "pendente_de": ["dono", "Alexandre Scarpa"]
+      }
     },
     {
       "codigo": "concentrado_receita",
@@ -120,9 +237,25 @@
       "classe": "PARCIAL",
       "fidedignidade": "baixa",
       "exibir_faixa": true,
+      "ativa": true,
       "definicao_cowdata": "Gasto com concentrado ÷ receita do leite.",
       "ressalva": "Fontes nacionais abertas concordam; a internacional (AHDB) mede só alimento comprado e tem licença que não permite uso, então não entra. Sem fonte internacional aberta e utilizável.",
-      "fontes": ["laborrural_concentrado_2020", "pdpl_milkpoint_2025", "sia_feedfood_2026"]
+      "fontes": ["laborrural_concentrado_2020", "pdpl_milkpoint_2025", "sia_feedfood_2026"],
+      "dossie": {
+        "indicador": "Concentrado ÷ receita do leite",
+        "faixa_publicada": null,
+        "fonte_br": {"fonte_id": "pdpl_milkpoint_2025", "valor_lido": "Concentrado ÷ receita bruta: 30,5% nas melhores, 32,5% nas intermediárias e 38,0% nas piores (2024).", "pagina_ou_tabela": null},
+        "fonte_estrangeira": null,
+        "independencia": {"sim_nao": null, "justificativa": "Sem fonte estrangeira utilizável (AHDB excluída por licença)."},
+        "metodo_agregacao": null,
+        "confiabilidade": {"grau": "baixa", "criterio": "Um lado só."},
+        "compilado_por": "Claude (pesquisa assistida por IA, rodada 2, a pedido do dono)",
+        "compilado_em": "2026-10-08",
+        "vence_em": "2027-10-08",
+        "validado_por": [],
+        "termos_verificados_em": null,
+        "pendente_de": ["dono", "Alexandre Scarpa"]
+      }
     },
     {
       "codigo": "depreciacao_cot",
@@ -132,9 +265,25 @@
       "classe": "VALIDADA_COM_RESSALVA",
       "fidedignidade": "media",
       "exibir_faixa": false,
+      "ativa": true,
       "definicao_cowdata": "Depreciação ÷ COT.",
       "ressalva": "Mais alta em fazendas pequenas. Não está em nenhuma tela ainda.",
-      "fontes": ["milkpoint_laborrural_2026", "umn_extension_ratios", "dairynz_economic_survey_2024_25", "minnesota_fbm_2024"]
+      "fontes": ["milkpoint_laborrural_2026", "umn_extension_ratios", "dairynz_economic_survey_2024_25", "minnesota_fbm_2024"],
+      "dossie": {
+        "indicador": "Depreciação ÷ COT",
+        "faixa_publicada": null,
+        "fonte_br": {"fonte_id": "milkpoint_laborrural_2026", "valor_lido": "Labor Rural MG 2023: R$ 0,13/L sobre COT de R$ 2,09 = 6,2% (margem líquida positiva); R$ 0,29 sobre R$ 2,77 = 10,5% (negativa); conta do pesquisador.", "pagina_ou_tabela": null},
+        "fonte_estrangeira": {"fonte_id": "umn_extension_ratios", "valor_lido": "Depreciação ÷ receita: abaixo de 5% forte; 5–10% cautela (denominador diferente: receita, não COT).", "pagina_ou_tabela": null},
+        "independencia": {"sim_nao": "sim", "justificativa": "Labor Rural (Brasil) e FFSC/UMN (EUA) são independentes."},
+        "metodo_agregacao": null,
+        "confiabilidade": {"grau": "media", "criterio": "Uma fonte de cada lado, denominadores diferentes."},
+        "compilado_por": "Claude (pesquisa assistida por IA, rodada 2, a pedido do dono)",
+        "compilado_em": "2026-10-08",
+        "vence_em": "2027-10-08",
+        "validado_por": [],
+        "termos_verificados_em": null,
+        "pendente_de": ["dono", "Alexandre Scarpa"]
+      }
     },
     {
       "codigo": "lactacao_rebanho",
@@ -144,9 +293,25 @@
       "classe": "PARCIAL",
       "fidedignidade": "baixa",
       "exibir_faixa": false,
+      "ativa": true,
       "definicao_cowdata": "Vacas em lactação ÷ todos os animais do rebanho.",
       "ressalva": "Só fonte nacional. Vale para fazendas médias e grandes; pequenas ficam em cerca de 28–33%. Exibir só por escala.",
-      "fontes": ["anuario_leite_2025", "cna_campo_futuro_2024"]
+      "fontes": ["anuario_leite_2025", "cna_campo_futuro_2024"],
+      "dossie": {
+        "indicador": "Vacas em lactação ÷ rebanho total",
+        "faixa_publicada": null,
+        "fonte_br": {"fonte_id": "cna_campo_futuro_2024", "valor_lido": "Melhorias a partir de 40%; fazendas de melhor margem com 43%; recomendação de 45%.", "pagina_ou_tabela": null},
+        "fonte_estrangeira": null,
+        "independencia": {"sim_nao": null, "justificativa": "Sem fonte estrangeira."},
+        "metodo_agregacao": null,
+        "confiabilidade": {"grau": "baixa", "criterio": "Um lado só."},
+        "compilado_por": "Claude (pesquisa assistida por IA, rodada 2, a pedido do dono)",
+        "compilado_em": "2026-10-08",
+        "vence_em": "2027-10-08",
+        "validado_por": [],
+        "termos_verificados_em": null,
+        "pendente_de": ["dono", "Alexandre Scarpa"]
+      }
     },
     {
       "codigo": "litros_pessoa_dia",
@@ -156,9 +321,25 @@
       "classe": "PARCIAL",
       "fidedignidade": "baixa",
       "exibir_faixa": false,
+      "ativa": true,
       "definicao_cowdata": "Litros por dia ÷ pessoas ocupadas.",
       "ressalva": "Depende da escala: até 500 L/dia ≈150–200; médias e intensivas ≈270–590; acima de 4.000 L/dia ≈570–650. Os valores internacionais são três a quatro vezes maiores (outro sistema). Exibir só por escala.",
-      "fontes": ["anuario_leite_2025", "pdpl_milkpoint_2025", "minnesota_fbm_2024", "dfmp_wa_2023_24"]
+      "fontes": ["anuario_leite_2025", "pdpl_milkpoint_2025", "minnesota_fbm_2024", "dfmp_wa_2023_24"],
+      "dossie": {
+        "indicador": "Litros por pessoa por dia",
+        "faixa_publicada": null,
+        "fonte_br": {"fonte_id": "anuario_leite_2025", "valor_lido": "158–198 (até 500 L/dia) e 569–645 (acima de 4.000 L/dia).", "pagina_ou_tabela": null},
+        "fonte_estrangeira": {"fonte_id": "dfmp_wa_2023_24", "valor_lido": "≈1.730 L por FTE por dia (conta do pesquisador): outro sistema e outra escala.", "pagina_ou_tabela": null},
+        "independencia": {"sim_nao": "sim", "justificativa": "Fontes de países diferentes, sem derivação."},
+        "metodo_agregacao": null,
+        "confiabilidade": {"grau": "baixa", "criterio": "Os lados divergem (três a quatro vezes); só por escala."},
+        "compilado_por": "Claude (pesquisa assistida por IA, rodada 2, a pedido do dono)",
+        "compilado_em": "2026-10-08",
+        "vence_em": "2027-10-08",
+        "validado_por": [],
+        "termos_verificados_em": null,
+        "pendente_de": ["dono", "Alexandre Scarpa"]
+      }
     },
     {
       "codigo": "litros_ha_ano",
@@ -168,9 +349,25 @@
       "classe": "VALIDADA_COM_RESSALVA",
       "fidedignidade": "media",
       "exibir_faixa": false,
+      "ativa": true,
       "definicao_cowdata": "Litros no ano ÷ hectares da atividade leiteira.",
       "ressalva": "Por sistema: pasto extensivo abaixo de 3 mil; pasto bem manejado 3–8 mil; intensivo ou confinado 11–22 mil. Não está em nenhuma tela ainda.",
-      "fontes": ["cna_campo_futuro_2024", "anuario_leite_2025", "dfmp_wa_2023_24"]
+      "fontes": ["cna_campo_futuro_2024", "anuario_leite_2025", "dfmp_wa_2023_24"],
+      "dossie": {
+        "indicador": "Litros por hectare por ano",
+        "faixa_publicada": null,
+        "fonte_br": {"fonte_id": "cna_campo_futuro_2024", "valor_lido": "Pasto/semiconfinado de 1.105 a 8.106 L/ha conforme o grupo de margem; confinado de 14.066 a 22.060 (2021–23).", "pagina_ou_tabela": null},
+        "fonte_estrangeira": {"fonte_id": "dfmp_wa_2023_24", "valor_lido": "≈6.000 L/ha (conta do pesquisador).", "pagina_ou_tabela": null},
+        "independencia": {"sim_nao": "sim", "justificativa": "Fontes de países diferentes, sem derivação."},
+        "metodo_agregacao": null,
+        "confiabilidade": {"grau": "media", "criterio": "Faixa só por sistema de produção."},
+        "compilado_por": "Claude (pesquisa assistida por IA, rodada 2, a pedido do dono)",
+        "compilado_em": "2026-10-08",
+        "vence_em": "2027-10-08",
+        "validado_por": [],
+        "termos_verificados_em": null,
+        "pendente_de": ["dono", "Alexandre Scarpa"]
+      }
     },
     {
       "codigo": "coe_litro_reais",
@@ -180,9 +377,25 @@
       "classe": "PARCIAL",
       "fidedignidade": "baixa",
       "exibir_faixa": false,
+      "ativa": true,
       "definicao_cowdata": "COE ÷ litros entregues.",
       "ressalva": "Não usar como faixa. Os valores achados (R$ 2,24/L em 2023 e R$ 2,28/L em 2024, desembolso declarado) vêm de fazendas grandes e confinadas. Preferir COE ÷ receita.",
-      "fontes": ["milkpoint_laborrural_2026", "cna_campo_futuro_2024"]
+      "fontes": ["milkpoint_laborrural_2026", "cna_campo_futuro_2024"],
+      "dossie": {
+        "indicador": "COE por litro (R$/L)",
+        "faixa_publicada": null,
+        "fonte_br": {"fonte_id": "milkpoint_laborrural_2026", "valor_lido": "COT de R$ 1,94 a 2,60/L (Labor Rural MG 2023).", "pagina_ou_tabela": null},
+        "fonte_estrangeira": null,
+        "independencia": {"sim_nao": null, "justificativa": "Valores em reais não viram faixa."},
+        "metodo_agregacao": null,
+        "confiabilidade": {"grau": "baixa", "criterio": "Só nacional, fazendas grandes."},
+        "compilado_por": "Claude (pesquisa assistida por IA, rodada 2, a pedido do dono)",
+        "compilado_em": "2026-10-08",
+        "vence_em": "2027-10-08",
+        "validado_por": [],
+        "termos_verificados_em": null,
+        "pendente_de": ["dono", "Alexandre Scarpa"]
+      }
     }
   ]
 }
