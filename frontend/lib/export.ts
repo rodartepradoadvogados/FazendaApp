@@ -674,7 +674,17 @@ export async function exportarRelatorioExcel(r: RelatorioParaExportar, modo: Mod
   });
 }
 
-export async function exportarRelatorioPDF(r: RelatorioParaExportar, modo: ModoEntregaExport = "baixar") {
+// A fonte padrão do jsPDF (Helvetica, WinAnsi) não tem "−", "Δ", "›" e "…": troca pelos equivalentes que ela tem.
+const paraPdf = (t: string) => t.replace(/Δ%/g, "Var. %").replace(/Δ/g, "Var.").replace(/[−–]/g, "-").replace(/›/g, ">").replace(/…/g, "...");
+
+export async function exportarRelatorioPDF(r0: RelatorioParaExportar, modo: ModoEntregaExport = "baixar") {
+  const r: RelatorioParaExportar = {
+    ...r0, titulo: paraPdf(r0.titulo),
+    contexto: { ...r0.contexto, periodo: paraPdf(r0.contexto.periodo), comparacao: r0.contexto.comparacao ? paraPdf(r0.contexto.comparacao) : r0.contexto.comparacao },
+    colunas: r0.colunas.map((c) => ({ ...c, header: paraPdf(c.header) })),
+    linhas: r0.linhas.map((l) => ({ ...l, valores: l.valores.map((v) => (typeof v === "string" ? paraPdf(v) : v)) })),
+    notas: r0.notas?.map(paraPdf),
+  };
   return comAlertaDeErro(async () => {
     const { default: jsPDF } = await import("jspdf");
     const { default: autoTable } = await import("jspdf-autotable");
@@ -690,7 +700,7 @@ export async function exportarRelatorioPDF(r: RelatorioParaExportar, modo: ModoE
       ...ESTILO_TABELA,
       head: [r.colunas.map((c) => c.header.toUpperCase())],
       body: r.linhas.map((l) => r.colunas.map((c, i) => {
-        const t = textoCelula(l.valores[i], l.tipos?.[i] ?? c.tipo);
+        const t = paraPdf(textoCelula(l.valores[i], l.tipos?.[i] ?? c.tipo));
         return i === 0 && l.nivel ? `${"   ".repeat(l.nivel)}${t}` : t;
       })),
       columnStyles: Object.fromEntries(r.colunas.map((c, i) => [i, { halign: c.tipo === "texto" ? "left" : "right" }])),
