@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 BACKEND = Path(__file__).resolve().parent.parent
-REVISAO_ANTERIOR = "c6f2a9d4e817"
+REVISAO_ANTERIOR = "d8b3f6a1c294"
 REVISAO = "d4a8e1b7c935"
 
 

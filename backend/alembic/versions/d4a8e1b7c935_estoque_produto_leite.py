@@ -9,7 +9,7 @@ nenhum item existente é marcado, desativado ou excluído — quem decide qual i
 dono. NULL lê como False. O downgrade remove a coluna (a marcação feita nos itens se perde).
 
 Revision ID: d4a8e1b7c935
-Revises: c6f2a9d4e817
+Revises: d8b3f6a1c294
 Create Date: 2026-10-09 15:00:00.000000
 
 """
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 
 
 revision: str = 'd4a8e1b7c935'
-down_revision: Union[str, Sequence[str], None] = 'c6f2a9d4e817'
+down_revision: Union[str, Sequence[str], None] = 'd8b3f6a1c294'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
