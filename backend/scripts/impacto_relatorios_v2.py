@@ -95,6 +95,10 @@ def _linhas_dre(resposta: dict) -> dict[str, float]:
     valores["dre.nao_classificado"] = resposta["nao_classificado"]["total"]
     for natureza, total in (resposta["fora_da_dre"].get("por_natureza") or {}).items():
         valores[f"dre.fora_da_dre.{natureza}"] = total
+    # PR 8: os campos legados (o número do e-mail/CSV do Portal e de quem os
+    # lê) — antes a soma de todas as notas, depois a própria cascata.
+    for chave in ("receitas_total", "despesas_total", "resultado"):
+        valores[f"dre.legado.{chave}"] = resposta[chave]
     return valores
 
 

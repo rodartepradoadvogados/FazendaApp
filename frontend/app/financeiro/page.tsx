@@ -191,6 +191,7 @@ import OndeFoiParar from "@/components/financeiro/OndeFoiParar";
 import ResumoView from "@/components/financeiro/ResumoView";
 import { ehNotaSoDeClassificacao, hojeLocal, perguntaAgendamento, situacaoDe, valorCompetencia, valorRealizado } from "@/lib/financeiroSituacao";
 import { useRegrasV2 } from "@/lib/useRegrasV2";
+import { apresentacaoSituacao, kpisDre, regimeDaUrl, type RegimeDre } from "@/lib/dreUnica";
 import { migrarFiltrosSalvosAntigos } from "@/lib/financeiroFiltrosMigracao";
 
 export default function FinanceiroPage() {
@@ -326,6 +327,24 @@ export default function FinanceiroPage() {
   const [novoLancAberto, setNovoLancAberto] = useState<"despesa" | "receita" | null>(null);
   const [novoLancArquivo, setNovoLancArquivo] = useState<File | null>(null);
   const { nomes: nomesResponsaveisNovo } = usePessoasAtivas();
+  // Fase A, PR 8 (DRE única): UM controle de regime para a aba DRE inteira
+  // (indicadores, gráfico, cascata e detalhamento), guardado na URL
+  // (?regime=caixa) — antes a cascata tinha um seletor próprio e os
+  // indicadores ficavam sempre em competência.
+  // (Lido da URL já no primeiro render do cliente: o seletor só aparece na
+  // aba DRE, que nunca é a inicial, então não há diferença de hidratação.)
+  const [regimeDre, setRegimeDre] = useState<RegimeDre>(() => (typeof window === "undefined" ? "competencia" : regimeDaUrl(window.location.search)));
+  const regrasV2Pagina = useRegrasV2();
+  const [dreDados, setDreDados] = useState<DreResposta | null>(null);
+  const [dreErro, setDreErro] = useState<string | null>(null);
+  const dreRequisicao = useRef(0);
+  const mudarRegimeDre = (r: RegimeDre) => {
+    setRegimeDre(r);
+    const qs = new URLSearchParams(window.location.search);
+    if (r === "caixa") qs.set("regime", "caixa"); else qs.delete("regime");
+    const busca = qs.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${busca ? `?${busca}` : ""}${window.location.hash}`);
+  };
 
   // Vindo da Agenda (link "Ir para Financeiro" de uma conta a pagar/receber
   // vencendo) — abre a sub-aba de Pagamento/Recebimento certa e já pré-seleciona
@@ -498,6 +517,25 @@ export default function FinanceiroPage() {
   const receitas = filtrados.filter((r) => r.tipo === "receita").reduce((a, r) => a + valorDoRel(r), 0);
   const despesas = filtrados.filter((r) => r.tipo === "despesa").reduce((a, r) => a + valorDoRel(r), 0);
   const resultado = receitas - despesas;
+
+  // A DRE do servidor (cascata + resumo) — uma busca só para a aba inteira.
+  // O filtro de período vazio significa "mostra tudo", mas o endpoint exige
+  // as duas datas: uma janela bem larga reproduz isso. O centro de custo do
+  // filtro vale para a cascata só com as regras novas (antes, a cascata era
+  // sempre da fazenda inteira — comportamento mantido nas regras antigas).
+  const dreDe = inicio || "2000-01-01";
+  const dreAte = fim || `${new Date().getFullYear() + 1}-12-31`;
+  const centroDre = regrasV2Pagina ? (centro || null) : null;
+  const carregarDre = useCallback(() => {
+    if (rel !== "dre" || !regs) return;
+    const minha = ++dreRequisicao.current;
+    fetchDreCascata({ data_inicio: dreDe, data_fim: dreAte, regime: regimeDre, centro_custo: centroDre })
+      .then((d) => { if (minha === dreRequisicao.current) { setDreDados(d); setDreErro(null); } })
+      .catch((e) => { if (minha === dreRequisicao.current) setDreErro(e.message); });
+  }, [rel, regs, dreDe, dreAte, regimeDre, centroDre]);
+  useEffect(() => { carregarDre(); }, [carregarDre]);
+  // KPIs e gráfico da DRE: o resumo do servidor (regras novas) ou, sem ele, a soma de antes.
+  const kpis = kpisDre(dreDados, { receitas, despesas });
 
   // Fluxo de caixa mensal (com saldo acumulado)
   const fluxoMensal = useMemo(() => {
@@ -673,8 +711,15 @@ export default function FinanceiroPage() {
               codigo={relConta} nome={relContaNome}
               onChange={(c, n) => { setRelConta(c); setRelContaNome(n); }} /></div>
         </>}
+        {rel === "dre" && (
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Regime</label>
+            <select style={inputStyle} value={regimeDre} onChange={(e) => mudarRegimeDre(e.target.value as RegimeDre)}>
+              <option value="competencia">Competência (quando aconteceu)</option>
+              <option value="caixa">Caixa (quando foi pago)</option>
+            </select></div>
+        )}
         <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", paddingBottom: "0.4rem" }}>
-          {!CONTAS_IDS.has(rel) && <>Regime: <strong style={{ color: "var(--dourado-light)" }}>{rel === "dre" ? "competência" : "caixa"}</strong> · </>}
+          {!CONTAS_IDS.has(rel) && rel !== "dre" && <>Regime: <strong style={{ color: "var(--dourado-light)" }}>caixa</strong> · </>}
           {filtrados.length} lançamento{filtrados.length === 1 ? "" : "s"}
         </span>
       </div>
@@ -784,10 +829,10 @@ export default function FinanceiroPage() {
             <KPI v={fluxoMensal.length ? formatBRL(fluxoMensal[fluxoMensal.length - 1].acumulado) : "—"} l="Saldo acumulado" c="var(--dourado-light)" />
           </>}
           {rel === "dre" && <>
-            <KPI v={formatBRL(receitas)} l="Receita" c="var(--green-light)" />
-            <KPI v={formatBRL(despesas)} l="Despesa" c="var(--red)" />
-            <KPI v={formatBRL(resultado)} l="Resultado" c={resultado >= 0 ? "var(--green-light)" : "var(--amber)"} />
-            <KPI v={receitas > 0 ? `${Math.round((1000 * resultado) / receitas) / 10}%` : "—"} l="Margem" c={resultado >= 0 ? "var(--green-light)" : "var(--amber)"} />
+            <KPI v={formatBRL(kpis.receita)} l={kpis.fonte === "servidor" ? "Receita líquida" : "Receita"} c="var(--green-light)" />
+            <KPI v={formatBRL(kpis.despesa)} l="Despesa" c="var(--red)" />
+            <KPI v={formatBRL(kpis.resultado)} l={kpis.fonte === "servidor" ? "Resultado líquido" : "Resultado"} c={kpis.resultado >= 0 ? "var(--green-light)" : "var(--amber)"} />
+            <KPI v={kpis.margemPct != null ? `${kpis.margemPct.toLocaleString("pt-BR")}%` : "—"} l="Margem" c={kpis.resultado >= 0 ? "var(--green-light)" : "var(--amber)"} />
           </>}
           {rel === "livro" && <>
             <KPI v={formatBRL(receitas)} l="Entradas" c="var(--green-light)" />
@@ -800,7 +845,19 @@ export default function FinanceiroPage() {
         {/* Onda 3b — a cascata de 15 linhas é a leitura principal da DRE.
             Usa o MESMO período do filtro da página (início/fim), para a tela
             não ter dois controles de data dizendo coisas diferentes. */}
-        {rel === "dre" && <DreCascataView dataInicio={inicio} dataFim={fim} />}
+        {rel === "dre" && (
+          <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", margin: "-0.5rem 0 1rem" }}>
+            {kpis.fonte === "servidor" ? (<>
+              Indicadores da DRE do servidor ({regimeDre === "caixa" ? "caixa" : "competência"}): o mesmo resultado da cascata, do
+              e-mail do Portal e da Capa. Compra de bem, financiamento, aporte e adiantamento ficam fora; a depreciação entra.
+              {kpis.foraDaDre ? <> Fora do resultado no período: <strong>{formatBRL(kpis.foraDaDre)}</strong>.</> : null}
+              {kpis.naoClassificado ? <> Sem classificação: <strong style={{ color: "var(--amber)" }}>{formatBRL(kpis.naoClassificado)}</strong>.</> : null}
+            </>) : (<>
+              Indicadores somados dos lançamentos por competência (regras antigas){regimeDre === "caixa" ? "; o regime escolhido vale para a cascata abaixo" : ""}.
+            </>)}
+          </p>
+        )}
+        {rel === "dre" && <DreCascataView dataInicio={inicio} dataFim={fim} dados={dreDados} erro={dreErro} onRecarregar={carregarDre} />}
 
         {/* Diário/Mensal — só se aplica ao Fluxo de Caixa */}
         {rel === "fluxo" && (
@@ -852,11 +909,11 @@ export default function FinanceiroPage() {
           </>)}
           {rel === "dre" && (
             <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={[{ n: "Receita", v: receitas, f: "var(--green-light)" }, { n: "Despesa", v: despesas, f: "var(--red)" }, { n: "Resultado", v: Math.abs(resultado), f: resultado >= 0 ? "var(--dourado)" : "var(--amber)" }]}>
+              <BarChart data={[{ n: "Receita", v: kpis.receita, f: "var(--green-light)" }, { n: "Despesa", v: kpis.despesa, f: "var(--red)" }, { n: "Resultado", v: Math.abs(kpis.resultado), f: kpis.resultado >= 0 ? "var(--dourado)" : "var(--amber)" }]}>
                 <XAxis dataKey="n" tick={{ fill: "var(--text-muted)", fontSize: 11 }} />
                 <YAxis tickFormatter={brk} tick={{ fill: "var(--text-muted)", fontSize: 10 }} width={48} />
                 <Tooltip formatter={(v: any) => formatBRL(Number(v))} contentStyle={tip} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
-                <Bar dataKey="v" barSize={70}>{[0, 1, 2].map((i) => <Cell key={i} fill={["var(--green-light)", "var(--red)", resultado >= 0 ? "var(--dourado)" : "var(--amber)"][i]} />)}</Bar>
+                <Bar dataKey="v" barSize={70}>{[0, 1, 2].map((i) => <Cell key={i} fill={["var(--green-light)", "var(--red)", kpis.resultado >= 0 ? "var(--dourado)" : "var(--amber)"][i]} />)}</Bar>
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -883,7 +940,7 @@ export default function FinanceiroPage() {
           <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.4rem" }}>
             <span>
               {rel === "fluxo" ? `Fluxo ${visaoFluxo === "diario" ? "Diário" : "Mensal"}` : rel === "dre" ? "Detalhamento por Conta Gerencial" : "Lançamentos"}
-              {rel !== "livro" && <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}> (clique numa linha para ver os lançamentos)</span>}
+              {rel !== "livro" && !(rel === "dre" && kpis.fonte === "servidor") && <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}> (clique numa linha para ver os lançamentos)</span>}
             </span>
             {rel === "livro" && (
               <ExportarBotoes titulo="Livro Caixa" nomeArquivoBase="livro_caixa" colunas={COLUNAS_LIVRO}
@@ -949,7 +1006,30 @@ export default function FinanceiroPage() {
                 })}</tbody>
               </table>
             )}
-            {rel === "dre" && (<>
+            {rel === "dre" && kpis.fonte === "servidor" && dreDados && (<>
+              {/* Regras novas (PR 8): o detalhamento sai da MESMA cascata do
+                  servidor — antes era outra soma, no cliente, com o trator,
+                  o aporte e o principal dentro. */}
+              <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+                Cada conta gerencial na linha da DRE em que ela entrou ({regimeDre === "caixa" ? "caixa" : "competência"}). O que ficou
+                fora do resultado e o que falta classificar estão nos quadros da cascata, acima.
+              </p>
+              <table className="fazenda-table">
+                <thead><tr><th>Linha da DRE</th><th>Conta gerencial</th><th style={{ textAlign: "right" }}>Valor</th></tr></thead>
+                <tbody>{(dreDados.cascata ?? []).filter((l) => !l.eh_subtotal && (l.contas?.length ?? 0) > 0).flatMap((l) => (l.contas ?? []).map((c) => (
+                  <tr key={`${l.chave}-${c.codigo || c.nome}`}>
+                    <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.rotulo}</td>
+                    <td style={{ fontSize: "0.8rem" }}>
+                      {c.nome}{c.codigo && c.codigo !== c.nome ? <span style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginLeft: "0.4rem" }}>{c.codigo}</span> : null}
+                    </td>
+                    <td style={{ textAlign: "right", fontWeight: 600, color: l.operador === "-" ? "var(--red)" : c.valor < 0 ? "var(--amber)" : "var(--green-light)" }}>
+                      {l.operador === "-" && c.valor !== 0 ? "− " : ""}{formatBRL(Math.abs(c.valor))}
+                    </td>
+                  </tr>
+                )))}</tbody>
+              </table>
+            </>)}
+            {rel === "dre" && kpis.fonte === "cliente" && (<>
               <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
                 Resultado por <strong>conta gerencial</strong> do seu plano de contas (por competência), com a
                 hierarquia completa — uma conta de grupo soma o total das contas abaixo dela. Clique numa conta{" "}
@@ -4431,36 +4511,31 @@ const LINHAS_DRE_ATRIBUIVEIS: { valor: string; rotulo: string }[] = [
   { valor: "NAO_ENTRA_NA_DRE", rotulo: "— Não entra na DRE (principal de financiamento, transferência, aporte)" },
 ];
 
-function DreCascataView({ dataInicio, dataFim }: { dataInicio: string; dataFim: string }) {
-  const [regime, setRegime] = useState<"competencia" | "caixa">("competencia");
-  const [dados, setDados] = useState<DreResposta | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
+/** Fase A, PR 8: a cascata recebe a DRE já buscada pela página (uma busca, um
+ *  regime — o do filtro do topo), em vez de buscar a sua com um seletor de
+ *  regime próprio. */
+function DreCascataView({ dataInicio, dataFim, dados, erro: erroCarga, onRecarregar }: {
+  dataInicio: string; dataFim: string; dados: DreResposta | null; erro: string | null; onRecarregar: () => void;
+}) {
+  const [erroAcao, setErroAcao] = useState<string | null>(null);
   const [abertas, setAbertas] = useState<Set<string>>(new Set());
   const [salvando, setSalvando] = useState<string | null>(null);
+  const erro = erroAcao || erroCarga;
 
   // O filtro de período da página começa VAZIO, e vazio ali significa "sem
-  // filtro — mostra tudo". O endpoint da cascata, porém, exige as duas datas:
-  // sem esta tradução, abrir a DRE disparava
-  // GET /financeiro/dre?data_inicio=&data_fim= e o backend recusava com 422 no
-  // PRIMEIRO render — a tela nascia quebrada toda vez. Uma janela bem larga
-  // reproduz exatamente o "mostra tudo" que o filtro vazio promete.
+  // filtro — mostra tudo" (a página traduz para uma janela bem larga, porque
+  // o endpoint exige as duas datas).
   const semFiltroDePeriodo = !dataInicio || !dataFim;
   const de = dataInicio || "2000-01-01";
   const ate = dataFim || `${new Date().getFullYear() + 1}-12-31`;
 
-  const carregar = useCallback(() => {
-    setErro(null);
-    fetchDreCascata({ data_inicio: de, data_fim: ate, regime })
-      .then(setDados).catch((e) => setErro(e.message));
-  }, [de, ate, regime]);
-  useEffect(() => { carregar(); }, [carregar]);
-
   const classificar = async (codigo: string, linha: string) => {
     setSalvando(codigo);
+    setErroAcao(null);
     try {
       await classificarContaDre(codigo, linha || null);
-      carregar();
-    } catch (e) { setErro((e as Error).message); } finally { setSalvando(null); }
+      onRecarregar();
+    } catch (e) { setErroAcao((e as Error).message); } finally { setSalvando(null); }
   };
 
   const alternar = (chave: string) => setAbertas((atual) => {
@@ -4471,22 +4546,6 @@ function DreCascataView({ dataInicio, dataFim }: { dataInicio: string; dataFim: 
 
   return (
     <div>
-      <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Regime da cascata</div>
-        <div className="flex flex-wrap gap-3 items-end">
-          <div>
-            <label style={labelStyleLote}>Regime</label>
-            <select style={selStyleLote} value={regime} onChange={(e) => setRegime(e.target.value as "competencia" | "caixa")}>
-              <option value="competencia">Competência (quando aconteceu)</option>
-              <option value="caixa">Caixa (quando foi pago)</option>
-            </select>
-          </div>
-          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", margin: 0, alignSelf: "center" }}>
-            O período é o do filtro acima.
-          </p>
-        </div>
-      </div>
-
       {erro && <div className="alert-critico mb-3"><span>{erro}</span></div>}
       {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
@@ -4586,6 +4645,8 @@ function DreCascataView({ dataInicio, dataFim }: { dataInicio: string; dataFim: 
             DRE Gerencial — {semFiltroDePeriodo
               ? "todo o período (use o filtro acima para restringir)"
               : `${new Date(de + "T12:00:00").toLocaleDateString("pt-BR")} a ${new Date(ate + "T12:00:00").toLocaleDateString("pt-BR")}`}
+            {" · "}{dados.regime === "caixa" ? "regime de caixa" : "regime de competência"}
+            {dados.centro_custo ? ` · ${dados.centro_custo}` : ""}
           </div>
           <div className="overflow-x-auto">
             <table className="fazenda-table" style={{ margin: 0 }}>
@@ -5651,7 +5712,18 @@ function CustoSafraView() {
 // Planejamento > Orçamento
 // ─────────────────────────────────────────────────────────────────────────
 type OrcamentoItemRow = OrcamentoItemPayload & { id: number; nome_conta_gerencial: string };
-type ComparativoLinha = { codigo_conta_gerencial: string; nome_conta_gerencial: string; tipo: string; orcado: number; realizado: number; desvio: number; desvio_pct: number | null };
+type ComparativoLinha = {
+  codigo_conta_gerencial: string; nome_conta_gerencial: string; tipo: string; orcado: number; realizado: number;
+  desvio: number | null; desvio_pct: number | null;
+  // Fase A, PR 8 (regras novas): grupo do total, herança do orçamento do grupo e situação do desvio.
+  grupo?: "receita" | "deducao" | "despesa_operacional" | "fora_do_resultado";
+  coberta_por?: string | null; cobre?: string[]; situacao?: string;
+};
+type TotalOrcamento = { rotulo: string; orcado: number; realizado: number; desvio: number | null; desvio_pct: number | null; situacao: string };
+type Comparativo = {
+  linhas: ComparativoLinha[]; total_orcado: number; total_realizado: number;
+  totais?: Record<"receita" | "deducao" | "despesa_operacional" | "fora_do_resultado", TotalOrcamento>; regras_v2?: boolean;
+};
 
 const MESES_NOMES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
 
@@ -5660,7 +5732,7 @@ function OrcamentoView({ planoContas, fornecedores }: { planoContas: ContaPlano[
   const [ano, setAno] = useState(anoAtual);
   const [centros, setCentros] = useState<string[]>([]);
   const [itens, setItens] = useState<OrcamentoItemRow[] | null>(null);
-  const [comparativo, setComparativo] = useState<{ linhas: ComparativoLinha[]; total_orcado: number; total_realizado: number } | null>(null);
+  const [comparativo, setComparativo] = useState<Comparativo | null>(null);
   const [mesInicio, setMesInicio] = useState(1);
   const [mesFim, setMesFim] = useState(12);
   const [centroFiltro, setCentroFiltro] = useState("");
@@ -5687,7 +5759,7 @@ function OrcamentoView({ planoContas, fornecedores }: { planoContas: ContaPlano[
     tipo: (l) => l.tipo,
     orcado: (l) => l.orcado,
     realizado: (l) => l.realizado,
-    desvio: (l) => l.desvio,
+    desvio: (l) => l.desvio ?? 0,
     desvioPct: (l) => l.desvio_pct ?? 0,
   });
   const { ordenados: itensOrdenados, sortKey: sortKeyItensOrc, sortDir: sortDirItensOrc, ordenar: ordenarItensOrc } = useOrdenacao(itens ?? [], {
@@ -5732,11 +5804,38 @@ function OrcamentoView({ planoContas, fornecedores }: { planoContas: ContaPlano[
       {comparativo && (
         <div className="card mb-4">
           <div className="card-header mb-3">Orçado × Realizado</div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-            <KPI v={formatBRL(comparativo.total_orcado)} l="Total orçado" c="var(--dourado-light)" />
-            <KPI v={formatBRL(comparativo.total_realizado)} l="Total realizado" />
-            <KPI v={formatBRL(comparativo.total_realizado - comparativo.total_orcado)} l="Desvio" c={comparativo.total_realizado - comparativo.total_orcado <= 0 ? "var(--green-light)" : "var(--red)"} />
-          </div>
+          {comparativo.totais ? (
+            // Regras novas (Fase A, PR 8): um total por grupo — receita, deduções,
+            // despesa operacional e o que nem é resultado — nunca somados juntos.
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
+              {(["receita", "deducao", "despesa_operacional", "fora_do_resultado"] as const).map((g) => {
+                const t = comparativo.totais![g];
+                const ap = apresentacaoSituacao(t.situacao);
+                return (
+                  <div key={g} className="card" style={{ padding: "0.75rem" }}>
+                    <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.3rem" }}>{t.rotulo}</div>
+                    <div style={{ fontSize: "0.8rem" }}>Orçado <strong>{formatBRL(t.orcado)}</strong></div>
+                    <div style={{ fontSize: "0.8rem" }}>Realizado <strong>{formatBRL(t.realizado)}</strong></div>
+                    <div style={{ fontSize: "0.78rem", color: ap.cor, marginTop: "0.2rem" }}>
+                      {t.desvio != null ? `${t.desvio > 0 ? "+" : ""}${formatBRL(t.desvio)} · ${ap.rotulo.toLowerCase()}` : ap.rotulo}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+              <KPI v={formatBRL(comparativo.total_orcado)} l="Total orçado" c="var(--dourado-light)" />
+              <KPI v={formatBRL(comparativo.total_realizado)} l="Total realizado" />
+              <KPI v={formatBRL(comparativo.total_realizado - comparativo.total_orcado)} l="Desvio" c={comparativo.total_realizado - comparativo.total_orcado <= 0 ? "var(--green-light)" : "var(--red)"} />
+            </div>
+          )}
+          {comparativo.totais && (
+            <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+              Realizado pela mesma fonte da DRE (competência). O orçamento de uma conta de grupo cobre as contas abaixo dela
+              que não têm orçamento próprio (elas aparecem recuadas, sem desvio). Desvio só onde há orçado.
+            </p>
+          )}
           <div className="overflow-x-auto">
             <table className="fazenda-table">
               <thead><tr>
@@ -5748,16 +5847,27 @@ function OrcamentoView({ planoContas, fornecedores }: { planoContas: ContaPlano[
                 <ThOrd rotulo="Desvio %" chave="desvioPct" sortKey={sortKeyComparativo} sortDir={sortDirComparativo} onSort={ordenarComparativo} style={{ textAlign: "right" }} />
               </tr></thead>
               <tbody>
-                {comparativoOrdenado.map((l) => (
-                  <tr key={l.codigo_conta_gerencial}>
-                    <td style={{ fontSize: "0.82rem" }}>{l.nome_conta_gerencial}</td>
-                    <td style={{ fontSize: "0.78rem", color: l.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{l.tipo === "receita" ? "Receita" : "Despesa"}</td>
-                    <td style={{ textAlign: "right", fontSize: "0.82rem" }}>{formatBRL(l.orcado)}</td>
-                    <td style={{ textAlign: "right", fontSize: "0.82rem" }}>{formatBRL(l.realizado)}</td>
-                    <td style={{ textAlign: "right", fontSize: "0.82rem", color: (l.tipo === "despesa" ? l.desvio > 0 : l.desvio < 0) ? "var(--red)" : "var(--green-light)" }}>{formatBRL(l.desvio)}</td>
-                    <td style={{ textAlign: "right", fontSize: "0.78rem", color: "var(--text-muted)" }}>{l.desvio_pct != null ? `${l.desvio_pct}%` : "—"}</td>
-                  </tr>
-                ))}
+                {comparativoOrdenado.map((l) => {
+                  // Regras novas: a cor vem da situação (só com orçado); sem elas, a regra de antes.
+                  const ap = l.situacao ? apresentacaoSituacao(l.situacao) : null;
+                  const corDesvio = ap ? ap.cor : (l.tipo === "despesa" ? (l.desvio ?? 0) > 0 : (l.desvio ?? 0) < 0) ? "var(--red)" : "var(--green-light)";
+                  const rotuloTipo = l.grupo === "fora_do_resultado" ? "Fora do resultado" : l.grupo === "deducao" ? "Dedução" : l.tipo === "receita" ? "Receita" : "Despesa";
+                  return (
+                    <tr key={`${l.codigo_conta_gerencial}-${l.coberta_por ?? ""}`}>
+                      <td style={{ fontSize: "0.82rem", paddingLeft: l.coberta_por ? "1.6rem" : undefined, color: l.coberta_por ? "var(--text-muted)" : undefined }}>
+                        {l.nome_conta_gerencial}
+                        {l.coberta_por && <span style={{ fontSize: "0.7rem", marginLeft: "0.4rem" }}>(no orçamento do grupo {l.coberta_por})</span>}
+                      </td>
+                      <td style={{ fontSize: "0.78rem", color: l.grupo === "fora_do_resultado" ? "var(--text-muted)" : l.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{rotuloTipo}</td>
+                      <td style={{ textAlign: "right", fontSize: "0.82rem" }}>{!l.orcado && ap ? "—" : formatBRL(l.orcado)}</td>
+                      <td style={{ textAlign: "right", fontSize: "0.82rem" }}>{formatBRL(l.realizado)}</td>
+                      <td style={{ textAlign: "right", fontSize: "0.82rem", color: corDesvio }} title={ap?.rotulo}>
+                        {l.desvio != null ? formatBRL(l.desvio) : (ap?.rotulo ?? "—")}
+                      </td>
+                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: "var(--text-muted)" }}>{l.desvio_pct != null ? `${l.desvio_pct}%` : "—"}</td>
+                    </tr>
+                  );
+                })}
                 {!comparativoOrdenado.length && <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1rem" }}>Nenhum item de orçamento cadastrado neste período.</td></tr>}
               </tbody>
             </table>

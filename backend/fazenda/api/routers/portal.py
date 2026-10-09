@@ -23,10 +23,11 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id, multifazenda_provisionado
 from fazenda.database import engine, get_session
 from fazenda.models import (
-    AgendaManual, Animal, CompraAnimal, ContaGerencial, ControleLeiteiro, MovimentoEstoque, Estoque,
+    AgendaManual, Animal, CompraAnimal, ContaGerencial, ControleLeiteiro, MovimentoEstoque, Estoque, Fazenda,
     Parto, Pessoa, PortalMensagem, Sanidade, Servico, Usuario, UsuarioFazenda, VendaAnimal,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.rules.datas import hoje_local
 from fazenda.rules.email import enviar_email
 
 router = APIRouter(prefix="/portal", tags=["portal"])
@@ -310,6 +311,103 @@ def _dict_para_csv(dados: dict) -> str:
     return buffer.getvalue()
 
 
+# ---------------------------------------------------------------------------
+# Fase A, PR 8 (DRE única): CSV da DRE pela CASCATA do servidor.
+#
+# O CSV antigo (`_dict_para_csv` sobre a resposta inteira de GET
+# /financeiro/dre) é um despejo das chaves, com os campos legados no topo e a
+# cascata colada numa célula com "; ". Decisão do dono (Q16): há cliente que
+# importa esse CSV numa planilha, então ele CONTINUA saindo no MESMO formato
+# por 60 dias (até CSV_DRE_LEGADO_ATE), ao lado do CSV novo da DRE. Com a
+# flag financeiro_regras_v2 desligada nada muda: só o CSV antigo, como sempre.
+# Com ela ligada, os números do antigo já são os da cascata (campos legados
+# derivados dela em financeiro.calcular_dre) — um único resultado nos dois.
+# ---------------------------------------------------------------------------
+CSV_DRE_LEGADO_ATE = date(2026, 12, 7)  # 60 dias depois de 08/10/2026 (PR 8)
+
+def _num_csv(valor) -> str:
+    """Número com ponto decimal e duas casas (o CSV antigo também usa o
+    `repr` do float do Python: a planilha do cliente lê ponto)."""
+    if valor is None:
+        return ""
+    return f"{float(valor):.2f}"
+
+
+def _dre_para_csv(resultado: dict, nome_fazenda: str | None = None) -> str:
+    """O CSV novo da DRE: cabeçalho (fazenda, período, regime, centro), as 15
+    linhas da cascata (com o detalhe por conta de cada uma), o resumo (o mesmo
+    número das telas), e os blocos "fora da DRE" (por natureza) e "não
+    classificado" — que NUNCA entram no resultado."""
+    buffer = io.StringIO()
+    w = csv.writer(buffer)
+    periodo = resultado.get("periodo") or {}
+    w.writerow(["DRE Gerencial"])
+    w.writerow(["Fazenda", nome_fazenda or ""])
+    w.writerow(["Período", periodo.get("inicio", ""), periodo.get("fim", "")])
+    w.writerow(["Regime", resultado.get("regime", "")])
+    w.writerow(["Centro de custo", resultado.get("centro_custo") or "Todos"])
+    w.writerow([])
+    w.writerow(["Linha", "Chave", "Operador", "Subtotal", "Valor"])
+    for linha in resultado.get("cascata") or []:
+        w.writerow([linha["rotulo"], linha["chave"], linha["operador"], "sim" if linha["eh_subtotal"] else "não",
+                    _num_csv(linha["valor"])])
+    w.writerow([])
+    w.writerow(["Detalhe por conta", "Chave da linha", "Código", "Conta", "Valor"])
+    for linha in resultado.get("cascata") or []:
+        for conta in linha.get("contas") or []:
+            w.writerow([linha["rotulo"], linha["chave"], conta.get("codigo") or "", conta.get("nome") or "",
+                        _num_csv(conta.get("valor"))])
+    resumo = resultado.get("resumo") or {}
+    if resumo:
+        w.writerow([])
+        w.writerow(["Resumo", "Valor"])
+        for chave, rotulo in (
+            ("receita_liquida", "Receita líquida"), ("despesas", "Despesas (receita líquida − resultado)"),
+            ("ebitda", "EBITDA"), ("resultado_liquido", "Resultado líquido"),
+            ("margem_liquida_pct", "Margem líquida (%)"),
+        ):
+            w.writerow([rotulo, _num_csv(resumo.get(chave))])
+    fora = resultado.get("fora_da_dre") or {}
+    w.writerow([])
+    w.writerow(["Fora da DRE (não entra no resultado)", "Natureza", "Código", "Conta", "Valor"])
+    grupos = fora.get("grupos")
+    if grupos:
+        for g in grupos:
+            for conta in g.get("contas") or []:
+                w.writerow(["", g.get("rotulo") or g.get("natureza"), conta.get("codigo") or "", conta.get("nome") or "",
+                            _num_csv(conta.get("valor"))])
+    else:
+        for conta in fora.get("contas") or []:
+            w.writerow(["", "", conta.get("codigo") or "", conta.get("nome") or "", _num_csv(conta.get("valor"))])
+    w.writerow(["Total fora da DRE", "", "", "", _num_csv(fora.get("total"))])
+    nao = resultado.get("nao_classificado") or {}
+    w.writerow([])
+    w.writerow(["Não classificado (falta escolher a linha)", "Código", "Conta", "Receita", "Despesa"])
+    for conta in nao.get("contas") or []:
+        w.writerow(["", conta.get("codigo") or "", conta.get("nome") or "",
+                    _num_csv(conta.get("receita", 0.0)), _num_csv(conta.get("despesa", conta.get("valor")))])
+    w.writerow(["Total não classificado", "", "", _num_csv(nao.get("total_receita")), _num_csv(nao.get("total_despesa", nao.get("total")))])
+    return buffer.getvalue()
+
+
+def _anexos_dre(resultado: dict, base_nome: str, nome_fazenda: str | None, hoje: date | None = None) -> list[tuple[str, bytes]]:
+    """Os CSVs da DRE para o e-mail e o Exportar. Flag desligada: só o
+    antigo (byte a byte). Ligada: o antigo (com os números da cascata) até
+    CSV_DRE_LEGADO_ATE e o novo `<base>_cascata.csv`; depois, só o novo."""
+    legado = (f"{base_nome}.csv", _dict_para_csv(resultado).encode("utf-8-sig"))
+    if not resultado.get("regras_v2"):
+        return [legado]
+    novo = (f"{base_nome}_cascata.csv", _dre_para_csv(resultado, nome_fazenda).encode("utf-8-sig"))
+    if (hoje or hoje_local()) <= CSV_DRE_LEGADO_ATE:
+        return [legado, novo]
+    return [novo]
+
+
+def _nome_fazenda(session: Session, fazenda_id: int | None) -> str | None:
+    fazenda = session.get(Fazenda, fazenda_id) if fazenda_id is not None else None
+    return fazenda.nome if fazenda is not None else None
+
+
 class EmailIn(BaseModel):
     destinatarios_usuario_id: list[int]
     assunto: str
@@ -332,6 +430,7 @@ def enviar_email_portal(
     corpo_html = f"<p>{html.escape(dados.corpo)}</p>" if dados.corpo else "<p></p>"
     anexo_nome = None
     anexo_bytes = None
+    anexos_extras: list[tuple[str, bytes]] = []
 
     if dados.relatorio:
         if dados.relatorio not in RELATORIOS_DISPONIVEIS:
@@ -359,10 +458,20 @@ def enviar_email_portal(
         else:
             resultado = custo_litro_leite(data_inicio=dados.data_inicio, data_fim=dados.data_fim, session=session, fazenda_id=fazenda_id)
 
-        csv_texto = _dict_para_csv(resultado)
-        anexo_nome = f"{dados.relatorio}_{dados.data_inicio.isoformat()}_{dados.data_fim.isoformat()}.csv"
-        anexo_bytes = csv_texto.encode("utf-8-sig")
+        base_nome = f"{dados.relatorio}_{dados.data_inicio.isoformat()}_{dados.data_fim.isoformat()}"
+        if dados.relatorio == "dre":
+            anexos = _anexos_dre(resultado, base_nome, _nome_fazenda(session, fazenda_id))
+        else:
+            anexos = [(f"{base_nome}.csv", _dict_para_csv(resultado).encode("utf-8-sig"))]
+        (anexo_nome, anexo_bytes), anexos_extras = anexos[0], anexos[1:]
         corpo_html += f"<p>Relatório {RELATORIOS_DISPONIVEIS[dados.relatorio]} em anexo (período {dados.data_inicio.isoformat()} a {dados.data_fim.isoformat()}).</p>"
+        if anexos_extras:
+            corpo_html += (
+                "<p>A DRE segue em dois arquivos: <strong>" + html.escape(anexos_extras[0][0]) + "</strong> (novo, "
+                "linha a linha da cascata) e " + html.escape(anexo_nome) + " (formato antigo, mantido até "
+                + CSV_DRE_LEGADO_ATE.strftime("%d/%m/%Y") + " para quem importa em planilha). Os dois trazem o "
+                "mesmo resultado.</p>"
+            )
 
     # BUG DE SEGURANÇA CORRIGIDO: mesmo furo que `enviar_mensagem` e
     # `delegar_tarefa` já tinham fechado, e que esta rota — a única das três
@@ -381,7 +490,11 @@ def enviar_email_portal(
             raise HTTPException(404, f"Usuário {dest_id} não encontrado")
         if not destinatario.email:
             raise HTTPException(400, f"Usuário {destinatario.nome or destinatario.username} não tem e-mail cadastrado")
-        enviar_email(destinatario.email, dados.assunto.strip(), corpo_html, anexo_nome, anexo_bytes)
+        if anexos_extras:
+            enviar_email(destinatario.email, dados.assunto.strip(), corpo_html, anexo_nome, anexo_bytes,
+                         anexos_extras=anexos_extras)
+        else:
+            enviar_email(destinatario.email, dados.assunto.strip(), corpo_html, anexo_nome, anexo_bytes)
         enviados += 1
 
     return {"enviados": enviados}
@@ -530,6 +643,10 @@ def _executar_exportacao(itens: list[dict], destinatario_email: str, fazenda_id:
                     # chamadas diretas desligavam todo filtro por fazenda.
                     if chave == "dre":
                         resultado = dre(data_inicio=item["data_inicio"], data_fim=item["data_fim"], centro_custo=None, regime="competencia", session=session, fazenda_id=fazenda_id)
+                        # PR 8: com a flag, o CSV antigo + o novo da cascata (ver _anexos_dre).
+                        for nome_arquivo, conteudo in _anexos_dre(resultado, chave, _nome_fazenda(session, fazenda_id)):
+                            zf.writestr(nome_arquivo, conteudo)
+                        continue
                     elif chave == "rmca":
                         resultado = rmca(data_inicio=item["data_inicio"], data_fim=item["data_fim"], session=session, fazenda_id=fazenda_id)
                     else:

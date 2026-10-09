@@ -4,8 +4,9 @@ Correção dos números dos Relatórios do Financeiro em PRs pequenos, cada um l
 **fazenda a fazenda** por uma flag. Este arquivo cobre o PR 0 (rede de segurança),
 o PR 1 (natureza do lançamento), o PR 7 (juros e descontos da baixa), o PR 4
 (receita do leite), o PR 2 (contas automáticas), o PR 3 (folha pelo bruto), o PR 6
-(saldo de abertura e Caixa Real) e o PR 5 (cartão de crédito por item). A auditoria completa, com causa-raiz e a ordem
-dos PRs seguintes, ficou no relatório da Fase A (`SOLUCOES.md`, fora do repositório).
+(saldo de abertura e Caixa Real), o PR 5 (cartão de crédito por item) e o PR 8
+(DRE única). A auditoria completa, com causa-raiz e a ordem dos PRs, ficou no
+relatório da Fase A (`SOLUCOES.md`, fora do repositório).
 
 ## 1. A flag `financeiro_regras_v2`
 
@@ -174,8 +175,8 @@ pago − valor da conta) passa a ter destino na DRE. Regras em
   (`financeiro.registros_competencia_v2`), não mais `LancamentoItem.valor_total`
   cru: o desconto da nota de despesa sai rateado nos itens. Juros/descontos da
   baixa não entram em custo nenhum (são resultado financeiro).
-- Os campos legados da DRE (`receitas_total`/`despesas_total`/`resultado`) não
-  mudam, nem com abatimento: são o PR 8.
+- Os campos legados da DRE (`receitas_total`/`despesas_total`/`resultado`)
+  passaram a vir da cascata no PR 8 (§11) — com o abatimento dentro.
 
 ## 7. Receita do leite (PR 4)
 
@@ -368,20 +369,76 @@ antes (nota genérica "Fatura X"), com as mesmas chaves de resposta (golden).
   mudaram depois (conflito).
 - Migração `b9d3f5a1c864` (aditiva, idempotente, reversível).
 
-## 11. O que fica para os próximos PRs
+## 11. DRE única (PR 8)
 
-Com tudo o que já entrou ligado (PRs 1, 7, 4, 2, 3, 6 e 5: contas automáticas,
+Um número de resultado em todas as telas (R4). Com a flag desligada, nada
+muda (golden: DRE, campos legados, Capa e o CSV do Portal byte a byte).
+
+- **`resumo` da DRE** (`rules/dre.py::resumo_da_cascata`, só com a flag):
+  `receita_bruta`, `receita_liquida`, `despesas` (= receita líquida −
+  resultado), `ebitda`, `resultado_operacional`, `resultado_liquido`,
+  `margem_liquida_pct` (só com receita líquida > 0), `fora_da_dre_total` e
+  `nao_classificado` (com `_receita`/`_despesa`) — tudo tirado da cascata.
+- **Campos legados derivados da cascata** (flag ligada): `receitas_total` =
+  receita líquida, `resultado` = resultado líquido, `despesas_total` = a
+  diferença, `por_conta` = só o que entrou nas linhas, por nível 1 do código
+  (depreciação e baixa de bem como pseudocontas; Σ receitas − Σ despesas =
+  resultado). Antes era a soma de todas as notas (trator, aporte, principal,
+  vale e não classificado dentro; sem depreciação).
+- **Capa** (`GET /financeiro/resultado-mes-recente`, flag ligada): o
+  `resultado_liquido` da DRE de competência do mês mais recente com
+  lançamento (`fonte: "dre_competencia"`), não mais a soma crua de
+  `valor_total`.
+- **CSV do Portal** (e-mail e Exportar): decisão do dono (Q16) — há cliente
+  que importa o CSV numa planilha, então o arquivo antigo
+  (`dre_<de>_<até>.csv`, mesmo formato `_dict_para_csv`, agora com os números
+  da cascata) continua saindo **até 07/12/2026** (`portal.CSV_DRE_LEGADO_ATE`,
+  60 dias) ao lado do novo `dre_<de>_<até>_cascata.csv`
+  (`portal._dre_para_csv`: cabeçalho com fazenda, período, regime e centro;
+  as 15 linhas; o detalhe por conta; o resumo; fora da DRE por natureza; não
+  classificado com receita e despesa separadas). Depois da data, só o novo.
+  O e-mail leva os dois anexos (`rules/email.py::enviar_email(...,
+  anexos_extras=...)`) e explica no corpo; o ZIP do Exportar leva
+  `dre.csv` + `dre_cascata.csv`.
+- **Front (aba DRE)**: **um** seletor de regime no filtro do topo (também na
+  URL, `?regime=caixa`) vale para indicadores, gráfico, cascata e
+  detalhamento; a DRE é buscada uma vez pela página
+  (`DreCascataView` não tem mais seletor próprio). Com o `resumo`, os KPIs
+  (Receita líquida, Despesa, Resultado líquido, Margem) e o gráfico
+  "Receita × Despesa × Resultado" leem o servidor (`lib/dreUnica.ts::kpisDre`)
+  — natureza aplicada, depreciação dentro — e o "Detalhamento por conta
+  gerencial" sai das contas de cada linha da cascata. Sem o `resumo` (flag
+  desligada), a tela soma no cliente como antes. Com a flag, o centro de
+  custo do filtro também filtra a cascata.
+- **Orçado × realizado** (`rules/orcamento.py`, flag ligada): realizado pelos
+  registros da DRE de competência; totais SEPARADOS em `totais.receita`,
+  `totais.deducao`, `totais.despesa_operacional` e `totais.fora_do_resultado`
+  (nunca receita somada com despesa); herança por prefixo (Q8): o orçamento de
+  um grupo cobre as filhas **do mesmo tipo** sem orçamento próprio (`cobre`; a
+  filha aparece como linha informativa com `coberta_por`, sem desvio e fora
+  dos totais) e a filha com orçamento fica na dela; fora do resultado e
+  deduções nunca sobem para um orçamento. Desvio só com orçado (`situacao`:
+  `favoravel`/`desfavoravel`/`no_orcado`/`sem_orcamento`/
+  `coberta_pelo_grupo`/`fora_do_resultado`): receita acima do orçado é
+  favorável, despesa acima é desfavorável. `total_orcado`/`total_realizado`
+  ficam como os de despesa operacional (compatibilidade). A tela mostra um
+  quadro por grupo e pinta o desvio pela situação.
+- Script de impacto: a seção da DRE ganha `dre.legado.receitas_total`,
+  `dre.legado.despesas_total` e `dre.legado.resultado` (antes × depois).
+
+## 12. O que fica para os próximos PRs
+
+Com tudo o que já entrou ligado (PRs 1, 7, 4, 2, 3, 6, 5 e 8: contas automáticas,
 os backfills da folha e do cartão, a natureza do plano e a flag), o cenário da
 auditoria em março/2031 fecha como o relatório previa: receita líquida 9.850,
-CMV 8.300, pessoal 4.840, EBITDA −3.290, resultado −4.290, numerador de custos
-13.140 (COT 14.140) e custo por litro 0,8276
-(`test_pr2_pr3_pr5_pr6_cenario_com_tudo_ligado`). Os campos legados da DRE
-(e-mail do Portal) ainda mostram o número antigo: é o PR 8.
+CMV 8.300, pessoal 4.840, EBITDA −3.290, resultado −4.290 — o mesmo na
+cascata, no resumo (KPIs), nos campos legados e nos dois CSVs do Portal
+(`test_pr8_um_resultado_em_todas_as_telas_com_tudo_ligado`) —, numerador de
+custos 13.140 (COT 14.140) e custo por litro 0,8276.
 
 O teste do cenário marca cada número ainda errado com `xfail(strict=True)` e o
 nome do PR que o corrige; o PR que acertar o número é obrigado a tirar o xfail.
 
 | PR | O que resolve |
 |---|---|
-| 8 | DRE única (campos legados, Portal, Capa) e orçamento com totais separados |
 | 9 | COE/COT com rateio: "Todos" sem filtro, depreciação por centro |

@@ -51,7 +51,9 @@ from fazenda.rules.patrimonio import (
     vida_util_em_anos,
 )
 from fazenda.rules.depreciacao_periodo import calcular_depreciacao_periodo
-from fazenda.rules.dre import DEDUCAO_IMPOSTOS, LINHAS_DRE_VALIDAS, OUTRAS_REC_DESP, montar_cascata_dre
+from fazenda.rules.dre import (
+    DEDUCAO_IMPOSTOS, LINHAS_DRE_VALIDAS, OUTRAS_REC_DESP, montar_cascata_dre, resumo_da_cascata,
+)
 from fazenda.rules.datas import hoje_local
 from fazenda.rules.natureza import (
     CAPITAL, INVESTIMENTO, NATUREZAS, OPERACIONAL, ROTULOS as ROTULOS_NATUREZA, TRANSFERENCIA, ContextoNatureza,
@@ -1121,6 +1123,16 @@ def calcular_dre(
         registros, mapa_linha, depreciacao["total"],
         regras_v2=regras_v2, resultado_baixas=(baixas or {}).get("total", 0.0),
     )
+    if regras_v2:
+        # PR 8 (DRE única, R4): os campos legados — que o CSV/e-mail do Portal
+        # e quem ainda os lê consomem — saem DA CASCATA, não mais da soma de
+        # todas as notas (que incluía investimento, aporte, principal, vale e
+        # não classificado, e não tinha depreciação). Um único número.
+        resumo = resumo_da_cascata(cascata)
+        receitas = resumo["receita_liquida"]
+        resultado = resumo["resultado_liquido"]
+        despesas = round(receitas - resultado, 2)
+        por_conta = cascata["por_conta"]
 
     resposta = {
         "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
@@ -1140,6 +1152,7 @@ def calcular_dre(
         # Chaves novas SÓ com a flag ligada: com ela desligada a resposta é
         # byte a byte a de antes (o CSV do Portal imprime todas as chaves).
         resposta["regras_v2"] = True
+        resposta["resumo"] = resumo
         resposta["resultado_baixas_periodo"] = baixas
         resposta["pendencias_natureza"] = _pendencias_natureza(registros, filtradas)
         # PR 2: folha/contrato/diária... gerados sem conta automática configurada.
@@ -1177,7 +1190,12 @@ def dre(
     `regras_v2` diz se esta fazenda usa as regras novas da Fase A (flag
     `financeiro_regras_v2`, ver docs/financeiro-regras-v2.md). Ligada, a
     resposta ganha `fora_da_dre.por_natureza`/`grupos`,
-    `resultado_baixas_periodo` e `pendencias_natureza`.
+    `resultado_baixas_periodo` e `pendencias_natureza` — e (PR 8, DRE única)
+    `resumo` (receita líquida, despesas, EBITDA, resultado, margem, fora e
+    não classificado, tirados da cascata), com os campos legados DERIVADOS
+    da cascata: `receitas_total` = receita líquida, `resultado` = resultado
+    líquido, `despesas_total` = a diferença e `por_conta` só com o que entrou
+    nas linhas.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     resposta = calcular_dre(
@@ -1557,6 +1575,9 @@ def resultado_mes_recente(
     fazenda.rules.vale_item.valor_gerencial) que a Capa já fazia a partir do
     extrato — não é o resultado gerencial do DRE (GET /financeiro/dre), que
     deduz vale; comportamento inalterado de propósito.
+
+    Com as regras v2 da fazenda (PR 8): o resultado é o `resultado_liquido`
+    da DRE de competência do mesmo mês (fonte única).
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     query = select(ContaGerencial.data_competencia, ContaGerencial.tipo, ContaGerencial.valor_total).where(
@@ -1568,6 +1589,20 @@ def resultado_mes_recente(
     if not linhas:
         return {"mes": None, "resultado": None}
     mes_mais_recente = max(f"{d.year}-{d.month:02d}" for d, _tipo, _valor in linhas)
+    if regras_v2_ativas(session, fazenda_id):
+        # Regras v2, PR 8 (DRE única, R4): o card da Capa mostra o MESMO
+        # resultado líquido da DRE de competência daquele mês (cascata do
+        # servidor) — a soma crua de valor_total era a 4ª fonte de resultado.
+        ano, mes = (int(x) for x in mes_mais_recente.split("-"))
+        inicio = date(ano, mes, 1)
+        fim = date(ano, mes, calendar.monthrange(ano, mes)[1])
+        dre_mes = calcular_dre(session, fazenda_id, inicio, fim, None, "competencia", regras_v2=True)
+        resumo = dre_mes["resumo"]
+        return {
+            "mes": mes_mais_recente, "resultado": resumo["resultado_liquido"],
+            "regras_v2": True, "fonte": "dre_competencia",
+            "receita_liquida": resumo["receita_liquida"], "despesas": resumo["despesas"],
+        }
     do_mes = [(tipo, valor) for d, tipo, valor in linhas if f"{d.year}-{d.month:02d}" == mes_mais_recente]
     receitas = sum((valor or 0.0) for tipo, valor in do_mes if tipo == "receita")
     despesas = sum((valor or 0.0) for tipo, valor in do_mes if tipo == "despesa")

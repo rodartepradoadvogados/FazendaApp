@@ -221,41 +221,32 @@ def _comparativo_v2(
     session: Session, fazenda_id: int | None, ano: int, mes_inicio: int, mes_fim: int,
     data_ini: date, data_fim: date, centro_custo: Optional[str], linhas: dict[str, dict], nomes: dict[str, str],
 ) -> dict:
-    """Realizado com as regras v2 (Fase A, PR 7 — R4, fonte única): os
-    MESMOS registros da DRE de competência (financeiro.registros_competencia_v2),
-    em vez de `LancamentoItem.valor_total` cru. Muda: o desconto da nota de
-    despesa sai rateado nos itens (antes, o item bruto), a receita entra bruta
-    com o Funrural/Senar e descontos da nota numa linha de dedução própria, e o
-    filtro de centro de custo respeita o centro de cada item. A conta continua
-    pela correspondência exata do código (rollup de grupo e totais separados
-    por receita/despesa ficam para o PR 8)."""
-    from fazenda.api.routers.financeiro import registros_competencia_v2
+    """Realizado com as regras v2 (Fase A — R4, fonte única): os MESMOS
+    registros da DRE de competência (financeiro.registros_competencia_v2), em
+    vez de `LancamentoItem.valor_total` cru (PR 7: desconto da nota rateado,
+    receita bruta com o Funrural/Senar numa linha de dedução, centro de custo
+    por item).
 
-    for r in registros_competencia_v2(session, fazenda_id, data_ini, data_fim, centro_custo):
-        # Magnitude, como sempre foi (o realizado de cada linha é positivo; o
-        # tipo da linha diz se é receita ou despesa).
-        chave = r.get("codigo_conta") or "(sem conta)"
-        l = linhas.setdefault(chave, {
-            "codigo_conta_gerencial": chave, "nome_conta_gerencial": nomes.get(chave, r.get("descricao") or chave),
-            "tipo": (r.get("tipo_nota") if r.get("redutor") else r.get("tipo")) or r.get("tipo_nota"),
-            "orcado": 0.0, "realizado": 0.0,
-        })
-        # Item redutor da folha pelo bruto (PR 3: "(−) outros descontos",
-        # retidos, vale) abate a conta em vez de somar.
-        valor = r.get("valor") or 0.0
-        l["realizado"] = round(l["realizado"] + (-valor if r.get("redutor") else valor), 2)
+    PR 8 (orçamento — fazenda/rules/orcamento.py): totais SEPARADOS por grupo
+    (`totais.receita`, `deducao`, `despesa_operacional`, `fora_do_resultado`,
+    nunca receita somada com despesa), herança por prefixo (o orçamento do
+    grupo cobre as filhas sem orçamento próprio, Q8) e desvio só onde há
+    orçado (`situacao`: favoravel/desfavoravel/no_orcado/sem_orcamento).
+    `total_orcado`/`total_realizado` continuam na resposta como os totais de
+    DESPESA OPERACIONAL (compatibilidade com telas antigas: o total antigo
+    somava receita com despesa e com o que nem é resultado)."""
+    from fazenda.api.routers.financeiro import _mapa_linha_por_codigo, registros_competencia_v2
+    from fazenda.rules.orcamento import comparar_orcado_realizado
 
-    resultado = []
-    for l in linhas.values():
-        desvio = round(l["realizado"] - l["orcado"], 2)
-        desvio_pct = round((desvio / l["orcado"]) * 100, 1) if l["orcado"] else None
-        resultado.append({**l, "desvio": desvio, "desvio_pct": desvio_pct})
-    resultado.sort(key=lambda x: x["codigo_conta_gerencial"])
+    registros = registros_competencia_v2(session, fazenda_id, data_ini, data_fim, centro_custo)
+    comparativo = comparar_orcado_realizado(linhas, registros, _mapa_linha_por_codigo(session, fazenda_id), nomes)
+    despesa = comparativo["totais"]["despesa_operacional"]
     return {
         "periodo": {"ano": ano, "mes_inicio": mes_inicio, "mes_fim": mes_fim},
-        "linhas": resultado,
-        "total_orcado": round(sum(l["orcado"] for l in resultado), 2),
-        "total_realizado": round(sum(l["realizado"] for l in resultado), 2),
+        "linhas": comparativo["linhas"],
+        "totais": comparativo["totais"],
+        "total_orcado": despesa["orcado"],
+        "total_realizado": despesa["realizado"],
         "regras_v2": True,
     }
 
