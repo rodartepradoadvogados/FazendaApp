@@ -202,7 +202,7 @@ export function fraseClassificar(f: FilaClassificacao, periodo: string, brl: (v:
     { t: "Faltam classificar " }, { t: plural(n, "lançamento", "lançamentos"), b: true }, { t: ` em ${periodo}` },
     { t: valores ? ` — ${valores}${f.resumo.total_despesa && f.resumo.total_receita ? " (nunca somadas)" : ""}.` : "." },
     { t: ` Enquanto não forem classificados, ficam fora das linhas da DRE: ela prefere mostrar o buraco a fechar com um número errado.` },
-    ...(maior && maior.quantidade ? [{ t: ` O que mais pesa: ` }, { t: ROTULO_MOTIVO[maior.motivo].toLowerCase(), b: true }, { t: ` (${maior.quantidade}).` }] : []),
+    ...(maior && maior.quantidade ? [{ t: ` O que mais pesa: ` }, { t: ROTULO_MOTIVO[maior.motivo], b: true }, { t: ` (${maior.quantidade}).` }] : []),
   ];
 }
 

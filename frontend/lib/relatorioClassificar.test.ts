@@ -138,7 +138,7 @@ test("frase: vazia diz que não há nada; cheia conta os lançamentos, separa re
   const f = fraseClassificar(fila({}, { natureza_nao_informada: 2, sem_codigo_conta: 1 }), "março/2031", brl);
   const texto = f.map((t) => t.t).join("");
   assert.match(texto, /Faltam classificar 6 lançamentos em março\/2031 — R\$ 9440,00 de despesa e R\$ 20000,00 de receita \(nunca somadas\)\./);
-  assert.match(texto, /O que mais pesa: fora da dre sem motivo \(2\)\./i);
+  assert.match(texto, /O que mais pesa: Fora da DRE sem motivo \(2\)\./);
   assert.ok(f.some((t) => t.b && t.t === "6 lançamentos"));
   const um = fraseClassificar(fila({ total_pendencias: 1, total_receita: 0 }, { sem_codigo_conta: 1 }), "hoje", brl).map((t) => t.t).join("");
   assert.match(um, /1 lançamento em hoje — R\$ 9440,00 de despesa\. Enquanto/);

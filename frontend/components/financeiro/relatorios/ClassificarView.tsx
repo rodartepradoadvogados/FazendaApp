@@ -22,7 +22,6 @@ import {
 import { NATUREZAS_FIN } from "@/lib/naturezaFin";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import type { RelatorioParaExportar } from "@/lib/export";
-import { FiltroContaGerencial } from "@/components/financeiro/filtroContaGerencial";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { NotasMetodo, RelatorioShell, VazioQueEnsina } from "./RelatorioShell";
 import { CSS_CLASSIFICAR } from "./estilosClassificar";
@@ -189,6 +188,7 @@ export default function ClassificarView(props: PropsRelatorio) {
 
   // ── avisos acima de tudo (ficam mesmo quando a fila esvazia, para o Desfazer continuar à mão) ──
   const avisos = (<>
+    <style>{CSS_CLASSIFICAR}</style>
     <div aria-live="polite">
       {msg && (
         <div className={`cl-msg${msg.ok ? "" : " erro"}`} role={msg.ok ? "status" : "alert"}>
@@ -244,6 +244,16 @@ export default function ClassificarView(props: PropsRelatorio) {
 
   // ── peças da seção de resolver ──
   const idLinha = `${uid}-linha`, idNat = `${uid}-nat`, idConta = `${uid}-conta`;
+  const contasDaFila = useMemo(() => {
+    const m = new Map<string, { codigo: string; nome: string | null; n: number }>();
+    for (const l of doMotivo) {
+      if (!l.codigo_conta) continue;
+      const c = m.get(l.codigo_conta) ?? { codigo: l.codigo_conta, nome: l.nome_conta, n: 0 };
+      c.n++;
+      m.set(l.codigo_conta, c);
+    }
+    return [...m.values()].sort((a, b) => a.codigo.localeCompare(b.codigo, "pt-BR", { numeric: true }));
+  }, [doMotivo]);
   const tiposDaConta: ("despesa" | "receita")[] = useMemo(() => {
     const t = new Set(doMotivo.map((l) => l.tipo));
     return t.size === 1 ? [[...t][0]] : ["despesa", "receita"];
@@ -321,7 +331,7 @@ export default function ClassificarView(props: PropsRelatorio) {
         </td>
         <td className="c-sug">
           {l.sugestao && !MOTIVOS_POR_CONTA.has(motivoAtivo) ? (<>
-            <span className="t"><Lightbulb size={13} aria-hidden style={{ verticalAlign: "-2px" }} /> {l.sugestao.rotulo}</span>
+            <span className="t"><Lightbulb size={13} aria-hidden /> {l.sugestao.rotulo}</span>
             <span className="m">{l.sugestao.motivo}</span>
             {aplicavel && admin && (
               <button type="button" className="rl-btn" disabled={enviando} onClick={() => aplicar(acoesDasSugestoes([l]))}
@@ -339,7 +349,6 @@ export default function ClassificarView(props: PropsRelatorio) {
     <RelatorioShell ctx={ctx} hoje={hoje} centros={centros} grupo="Resultado" nome="Classificar" pergunta="O que falta classificar?"
       onIrGrupo={props.onIrGrupo} estado={estado} erro={erroAtual || regras.erro} onTentarDeNovo={() => { setErro(null); recarregar(); }}
       vazio={vazioUi} frase={frase} avisos={avisos} exportar={exportar} rotuloCmp={null}>
-      <style>{CSS_CLASSIFICAR}</style>
       {fila && (<>
         <section aria-labelledby={`${uid}-mot`}>
           <h3 className="rl-tit" id={`${uid}-mot`}>Por que ficaram de fora</h3>
@@ -373,11 +382,13 @@ export default function ClassificarView(props: PropsRelatorio) {
                 <label htmlFor={`${uid}-q`}>Buscar na fila</label>
                 <input id={`${uid}-q`} type="search" className="rl-in" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Fornecedor, descrição, nº ou conta" />
               </div>
-              {MOTIVOS_POR_CONTA.has(motivoAtivo) && (
-                <div className="rl-campo" role="group" aria-label="Filtrar por conta">
-                  <span className="rl-rot">Só a conta</span>
-                  <FiltroContaGerencial contas={plano} tipos={tiposDaConta} codigo={filtroConta.codigo} nome={filtroConta.nome}
-                    onChange={(codigo, nome) => setFiltroConta({ codigo, nome })} />
+              {MOTIVOS_POR_CONTA.has(motivoAtivo) && contasDaFila.length > 1 && (
+                <div className="rl-campo">
+                  <label htmlFor={`${uid}-conta-f`}>Só a conta</label>
+                  <select id={`${uid}-conta-f`} className="rl-in" value={filtroConta.codigo} onChange={(e) => setFiltroConta({ codigo: e.target.value, nome: "" })}>
+                    <option value="">Todas as contas da fila ({contasDaFila.length})</option>
+                    {contasDaFila.map((c) => <option key={c.codigo} value={c.codigo}>{c.codigo} {c.nome ?? ""} · {c.n}</option>)}
+                  </select>
                 </div>
               )}
               <span className="cl-barra-d" aria-live="polite">{filtradas.length === doMotivo.length ? `${filtradas.length} na fila` : `${filtradas.length} de ${doMotivo.length} na fila`}</span>
@@ -445,7 +456,7 @@ export default function ClassificarView(props: PropsRelatorio) {
                               </div>
                               {g.sugestao && (
                                 <div className="cl-grupo-sug">
-                                  <span><Lightbulb size={13} aria-hidden style={{ verticalAlign: "-2px" }} /> <b>{g.sugestao.rotulo}</b></span>
+                                  <span className="t"><Lightbulb size={13} aria-hidden /> <b>{g.sugestao.rotulo}</b></span>
                                   <span className="m">{g.sugestao.motivo}</span>
                                   {aplicavel && admin && (
                                     <button type="button" className="rl-btn" disabled={enviando} onClick={() => aplicar(acoesDasSugestoes(g.linhas))}

@@ -43,13 +43,16 @@ export const CSS_CLASSIFICAR = `
 .cl-tab .c-conta .nenhuma{color:var(--text-muted);font-style:italic}
 .cl-tab .c-valor{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;font-weight:700}
 .cl-tab .c-valor small{display:block;font-weight:500;font-size:.72rem;color:var(--text-muted)}
-.cl-tab .c-sug .t{display:block;font-weight:600;font-size:.82rem}
+.cl-tab .c-sug .t{display:flex;align-items:flex-start;gap:.35rem;font-weight:600;font-size:.82rem}
+.cl-tab .c-sug .t svg{flex-shrink:0;margin-top:2px}
 .cl-tab .c-sug .m{display:block;font-size:.74rem;color:var(--text-muted);margin:1px 0 .35rem;line-height:1.35}
 .cl-tab tr.cl-grupo th{background:var(--surface-2);text-align:left;font-family:inherit;text-transform:none;letter-spacing:0;color:var(--text);font-size:.84rem;font-weight:400;padding:.55rem .7rem;white-space:normal}
 .cl-grupo-in{display:flex;flex-wrap:wrap;gap:.35rem .9rem;align-items:center;justify-content:space-between}
 .cl-grupo-in label{display:inline-flex;gap:.55rem;align-items:center;cursor:pointer;min-width:0}
 .cl-grupo-in .qtd{color:var(--text-muted);font-size:.78rem}
 .cl-grupo-sug{display:flex;flex-wrap:wrap;gap:.3rem .6rem;align-items:center;font-size:.8rem}
+.cl-grupo-sug .t{display:inline-flex;align-items:center;gap:.35rem}
+.cl-grupo-sug .t svg{flex-shrink:0}
 .cl-grupo-sug .m{color:var(--text-muted);font-size:.74rem}
 .cl-chip{display:inline-flex;align-items:center;gap:.25rem;border:1px solid var(--st-neutro-line);background:var(--st-neutro-bg);color:var(--st-neutro-fg);border-radius:999px;padding:0 8px;font-size:.7rem;font-weight:600;line-height:1.5;margin-right:.3rem}
 .cl-chip.trava{border-color:var(--st-logo-line);background:var(--st-logo-bg);color:var(--st-logo-fg)}
