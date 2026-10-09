@@ -118,11 +118,11 @@ def test_conta_preexistente_nao_e_sobrescrita_mesmo_com_outro_nome(banco):
 
 
 def test_idempotente_rodar_de_novo_nao_duplica_nem_altera(banco):
-    _alembic(banco, "upgrade", "head")
+    _alembic(banco, "upgrade", REVISAO)
     total_antes = _sql(banco, "SELECT COUNT(*) FROM plano_conta_gerencial")[0][0]
     # Reaplica a migração (desce e sobe): o resultado é o mesmo, sem duplicar.
     _alembic(banco, "downgrade", REVISAO_ANTERIOR)
-    _alembic(banco, "upgrade", "head")
+    _alembic(banco, "upgrade", REVISAO)
     depois = _sql(banco, "SELECT fazenda_id, codigo, nome, linha_dre, natureza_fin FROM plano_conta_gerencial ORDER BY fazenda_id, codigo")
     assert [d for d in depois if d[1] in NOVAS and d[0] == 1] == [
         (1, "3.03.01.16", "Retenções", "NAO_ENTRA_NA_DRE", "OBRIGACAO"),
@@ -131,14 +131,16 @@ def test_idempotente_rodar_de_novo_nao_duplica_nem_altera(banco):
     assert len(depois) == len({(d[0], d[1]) for d in depois})
     assert len(depois) == total_antes  # fazenda 1: 2 novas; fazenda 3: 1 nova (a 16 dela não é da migração)
     # Um upgrade a mais com o banco já no head não muda nada.
-    assert "d8b3f6a1c294" in _alembic(banco, "current")
-    _alembic(banco, "upgrade", "head")
+    assert REVISAO in _alembic(banco, "current")
+    _alembic(banco, "upgrade", REVISAO)
     assert _sql(banco, "SELECT COUNT(*) FROM plano_conta_gerencial") == [(len(depois),)]
 
 
 def test_cabeca_unica_e_esta_revisao(banco):
     _alembic(banco, "upgrade", "head")
-    assert REVISAO in _alembic(banco, "heads")
+    # Outras migrações podem vir depois desta: o que importa é a cabeça ser única e esta revisão estar na cadeia.
+    assert len([l for l in _alembic(banco, "heads").splitlines() if "(head)" in l]) == 1
+    assert REVISAO in _alembic(banco, "history")
 
 
 def test_sem_a_tabela_do_plano_o_upgrade_nao_aborta(tmp_path):
