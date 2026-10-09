@@ -33,7 +33,7 @@ from pathlib import Path
 import pytest
 
 BACKEND = Path(__file__).resolve().parent.parent
-REVISAO_ANTERIOR = "c6f2a9d4e817"
+REVISAO_ANTERIOR = "d4e8b1c7a2f5"
 REVISAO = "d8b3f6a1c294"
 
 

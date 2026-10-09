@@ -31,7 +31,7 @@ Depois desta migração a reimportação do CSV do plano preserva as contas:
 `rules/plano_padrao.py::garantir_contas_do_sistema` ao final.
 
 Revision ID: d8b3f6a1c294
-Revises: c6f2a9d4e817
+Revises: d4e8b1c7a2f5
 Create Date: 2026-10-09 15:00:00.000000
 
 """
@@ -45,7 +45,7 @@ import sqlalchemy as sa
 
 
 revision: str = 'd8b3f6a1c294'
-down_revision: Union[str, Sequence[str], None] = 'c6f2a9d4e817'
+down_revision: Union[str, Sequence[str], None] = 'd4e8b1c7a2f5'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
