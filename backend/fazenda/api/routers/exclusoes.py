@@ -22,6 +22,7 @@ from fazenda.rules import estoque_baixa
 from fazenda.rules import lactacao as regras_lactacao
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules import exclusao_risco
+from fazenda.rules.parametros import exclusao_v2_ativa
 from fazenda.rules.exclusao_impacto import Bloqueio, ExclusaoBloqueada, Impacto, Linha
 from fazenda.rules.exclusao_tipos import REGISTRO
 from fazenda.rules.exclusao_tipos._base import _br, _contem, _dentro_periodo
@@ -127,6 +128,15 @@ def tipos() -> list[dict]:
     legados = [{**t, "sem_filtro_data": t["id"] in _TIPOS_SEM_DATA_LEGADO} for t in TIPOS]
     novos = [{"id": t.id, "label": t.label, "sem_filtro_data": t.sem_filtro_data} for t in REGISTRO.values()]
     return sorted(legados + novos, key=lambda t: t["label"])
+
+
+@router.get("/v2-flag")
+def flag_v2(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """A fazenda atual usa a tela nova de Excluir lançamentos (Fase 2)? Lida da
+    flag `exclusao_v2` (ParametroFazenda), desligada até o dono validar."""
+    return {"ativa": exclusao_v2_ativa(session, fazenda_id_seguro(fazenda_id)), "chave": "exclusao_v2"}
 
 
 def _buscar_um(

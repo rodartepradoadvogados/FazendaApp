@@ -8809,11 +8809,17 @@ export async function impactoExclusao(tipo: string, id: string) {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao calcular impacto"); }
   return res.json();
 }
-export async function confirmarExclusao(tipo: string, id: string) {
+export async function confirmarExclusao(tipo: string, id: string, motivo?: string, confirmacao?: string) {
   const res = await authFetch(`${API}/exclusoes/confirmar`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tipo, id }),
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tipo, id, motivo: motivo || null, confirmacao: confirmacao || null }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir"); }
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    if (res.status === 409) throw new Error(mensagemBloqueio(d.detail) || "Não dá para excluir: há um bloqueio.");
+    if (res.status === 422) throw new Error(mensagemValidacao(d.detail) || "Falta motivo ou confirmação.");
+    throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir");
+  }
   return res.json();
 }
 export async function fetchPendentesExclusao() {
@@ -8821,9 +8827,18 @@ export async function fetchPendentesExclusao() {
   if (!res.ok) throw new Error(`Pendências de exclusão error: ${res.status}`);
   return res.json();
 }
-export async function aprovarExclusao(id: number) {
-  const res = await authFetch(`${API}/exclusoes/pendentes/${id}/aprovar`, { method: "POST" });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao aprovar"); }
+export async function aprovarExclusao(id: number, confirmacao?: string) {
+  const res = await authFetch(`${API}/exclusoes/pendentes/${id}/aprovar`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmacao: confirmacao || null }),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    if (res.status === 409) throw new Error(mensagemBloqueio(d.detail) || "Não dá para aprovar: há um bloqueio.");
+    if (res.status === 410) throw new Error("O alvo já não existe (foi apagado ou mudou). Arquivar este pedido.");
+    if (res.status === 422) throw new Error(mensagemValidacao(d.detail) || "Falta a confirmação.");
+    throw new Error(mensagemErroApi(d.detail) || "Erro ao aprovar");
+  }
   return res.json();
 }
 export async function rejeitarExclusao(id: number, motivo?: string) {
@@ -8832,6 +8847,56 @@ export async function rejeitarExclusao(id: number, motivo?: string) {
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao rejeitar"); }
   return res.json();
+}
+export async function cancelarPedidoExclusao(id: number) {
+  const res = await authFetch(`${API}/exclusoes/pendentes/${id}/cancelar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao cancelar"); }
+  return res.json();
+}
+export async function arquivarPedidoExclusao(id: number) {
+  const res = await authFetch(`${API}/exclusoes/pendentes/${id}/arquivar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao arquivar"); }
+  return res.json();
+}
+export async function fetchMeusPedidosExclusao() {
+  const res = await authFetch(`${API}/exclusoes/meus`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Meus pedidos error: ${res.status}`);
+  return res.json();
+}
+export async function fetchTrilhaExclusao(params: { acao?: string; tipo?: string; q?: string; limite?: number; deslocamento?: number } = {}) {
+  const qs = new URLSearchParams();
+  if (params.acao) qs.set("acao", params.acao);
+  if (params.tipo) qs.set("tipo", params.tipo);
+  if (params.q) qs.set("q", params.q);
+  if (params.limite != null) qs.set("limite", String(params.limite));
+  if (params.deslocamento != null) qs.set("deslocamento", String(params.deslocamento));
+  const res = await authFetch(`${API}/exclusoes/trilha?${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Trilha error: ${res.status}`);
+  return res.json();
+}
+export async function fetchComprovanteExclusao(codigo: string) {
+  const res = await authFetch(`${API}/exclusoes/comprovante/${encodeURIComponent(codigo)}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Comprovante error: ${res.status}`);
+  return res.json();
+}
+export async function fetchExclusaoV2(): Promise<{ ativa: boolean; chave: string }> {
+  const res = await authFetch(`${API}/exclusoes/v2-flag`, { cache: "no-store" });
+  if (!res.ok) return { ativa: false, chave: "exclusao_v2" };
+  return res.json();
+}
+
+// Mensagens amigáveis para os erros estruturados do servidor (nada de e.message cru).
+function mensagemBloqueio(detail: any): string | null {
+  const b = Array.isArray(detail?.bloqueia) ? detail.bloqueia[0] : null;
+  if (!b) return null;
+  return `${b.titulo || "Bloqueado"}: ${b.motivo || ""} ${b.fazer || ""}`.trim();
+}
+function mensagemValidacao(detail: any): string | null {
+  if (!detail || typeof detail !== "object") return null;
+  if (detail.codigo === "motivo_obrigatorio") return "Diga o motivo da exclusão.";
+  if (detail.codigo === "confirmacao_invalida") return `Para confirmar, digite ${detail.esperado || "a confirmação"}.`;
+  if (detail.codigo === "motivo_rejeicao_obrigatorio") return "Diga o motivo da rejeição.";
+  return null;
 }
 
 // ── Notificações (sininho) ──
