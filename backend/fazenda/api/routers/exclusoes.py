@@ -9,6 +9,7 @@ fato) ou rejeitar.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -28,6 +29,8 @@ from fazenda.rules.exclusao_tipos import REGISTRO
 from fazenda.rules.exclusao_tipos._base import _br, _contem, _dentro_periodo
 from fazenda.rules.farmacia_multi_principio import checar_e_desvincular_exclusao_principio
 from fazenda.rules.vale_item import eh_item_de_vale
+from fazenda.rules.supabase_storage import excluir_arquivo
+from fazenda.config import settings
 from fazenda.models import (
     AgendaManual,
     Animal,
@@ -51,7 +54,8 @@ from fazenda.models import (
     Fornecedor,
     FotoCampo,
     Lactacao,
-    LancamentoItem,
+        LancamentoAnexo,
+        LancamentoItem,
     Lote,
     MotivoMovimentacao,
     MovimentoEstoque,
@@ -75,6 +79,8 @@ from fazenda.models import (
     ValeFuncionario,
     VendaAnimal,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/exclusoes", tags=["exclusoes"])
 
@@ -556,6 +562,46 @@ def _bloquear_conta_referenciada(session: Session, contas: list) -> None:
         ))
 
 
+def _excluir_anexos_do_lancamento(session: Session, numero_lancamento: str | None, fazenda_id: int | None) -> int:
+    """Apaga os anexos do lançamento (linhas + arquivo no Storage), com a regra
+    'só remove o arquivo na última referência' — a mesma de `excluir_anexo`
+    (financeiro.py). Devolve quantos anexos foram apagados."""
+    if not numero_lancamento:
+        return 0
+    anexos = session.exec(
+        select(LancamentoAnexo).where(
+            LancamentoAnexo.numero_lancamento == numero_lancamento,
+            LancamentoAnexo.fazenda_id == fazenda_id,
+        )
+    ).all()
+    for anexo in anexos:
+        if anexo.caminho_storage:
+            outras = session.exec(
+                select(LancamentoAnexo).where(
+                    LancamentoAnexo.fazenda_id == fazenda_id,
+                    LancamentoAnexo.caminho_storage == anexo.caminho_storage,
+                    LancamentoAnexo.id != anexo.id,
+                )
+            ).first()
+            if not outras:
+                try:
+                    excluir_arquivo(anexo.caminho_storage, bucket=settings.supabase_bucket_financeiro)
+                except RuntimeError as exc:
+                    logger.warning(
+                        "Anexo %s do lançamento %s: linha excluída mesmo com falha no Storage (%s)",
+                        anexo.id, numero_lancamento, exc,
+                    )
+        session.delete(anexo)
+    return len(anexos)
+
+
+def _excluir_anexos_dos_alvos(session: Session, alvos: list, fazenda_id: int | None) -> int:
+    """Anexos dos lançamentos financeiros em `alvos` (cascata B9). Extrai o
+    `numero_lancamento` das contas e delega ao helper acima."""
+    numero = next((getattr(o, "numero_lancamento", None) for o in alvos if isinstance(o, ContaGerencial)), None)
+    return _excluir_anexos_do_lancamento(session, numero, fazenda_id)
+
+
 def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None) -> tuple[list[str], list]:
     """Retorna (descrições do impacto, objetos que serão apagados).
 
@@ -854,6 +900,12 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             if c.numero_lancamento else []
         )
         n_itens_vale = sum(1 for it in itens if eh_item_de_vale(it))
+        n_anexos = len(session.exec(
+            select(LancamentoAnexo).where(
+                LancamentoAnexo.numero_lancamento == c.numero_lancamento,
+                LancamentoAnexo.fazenda_id == fazenda_id,
+            )
+        ).all()) if c.numero_lancamento else 0
         # Fase C5: excluir lançamento com competência/pagamento em mês fechado exige
         # reabrir com motivo (só com a flag financeiro_regras_v2; ver rules/fechamento_mes.py).
         from fazenda.rules import fechamento_mes
@@ -877,6 +929,8 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
                 impacto.append(f"{len(itens)} produto(s)/serviço(s) lançados nesta nota")
             if n_itens_vale:
                 impacto.append(f"{n_itens_vale} item(ns) desta nota geraram vale — o(s) vale(s) também será(ão) excluído(s)")
+            if n_anexos:
+                impacto.append(f"{n_anexos} anexo(s) serão excluído(s)")
             return impacto, [*irmaos, *itens]
         _bloquear_conta_referenciada(session, [c])
         impacto = [f"Lançamento {c.numero_lancamento or ''} — {c.descricao or '—'} (R$ {c.valor_total or 0:,.2f})"]
@@ -884,6 +938,8 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             impacto.append(f"{len(itens)} produto(s)/serviço(s) lançados nesta nota")
         if n_itens_vale:
             impacto.append(f"{n_itens_vale} item(ns) desta nota geraram vale — o(s) vale(s) também será(ão) excluído(s)")
+        if n_anexos:
+            impacto.append(f"{n_anexos} anexo(s) serão excluído(s)")
         return impacto, [c, *itens]
 
     if tipo == "compra_animal":
@@ -1714,6 +1770,7 @@ def confirmar(
     if eh_admin:
         snapshot = [_snapshot_objeto(o) for o in alvos]
         _desvincular_vales_dos_alvos(session, alvos, fazenda_id)
+        _excluir_anexos_dos_alvos(session, alvos, fazenda_id)
         _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
         _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
         _remover_lactacao_dos_partos_excluidos(session, alvos, fazenda_id)
@@ -1853,6 +1910,7 @@ def aprovar_pendente(
 
     snapshot = [_snapshot_objeto(o) for o in alvos]
     _desvincular_vales_dos_alvos(session, alvos, fazenda_id)
+    _excluir_anexos_dos_alvos(session, alvos, fazenda_id)
     _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
     _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
     _remover_lactacao_dos_partos_excluidos(session, alvos, fazenda_id)
