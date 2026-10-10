@@ -112,6 +112,35 @@ TIPOS = [
     {"id": "todos_lancamentos", "label": "Todos os lançamentos (mais recentes primeiro)"},
 ]
 
+# Metadados dos tipos (B10): domínio (agrupamento na tela), plural, dica e se é
+# cadastro. Fonte da verdade do rótulo curto e do agrupamento — o `label` do TIPOS
+# continua sendo o texto exibido na linha.
+META_TIPOS: dict[str, dict] = {
+    "animal": {"dominio": "reb", "plural": "animais", "dica": "Apaga a ficha e todo o histórico."},
+    "servico": {"dominio": "reb", "plural": "serviços", "dica": "A inseminação anterior volta a valer."},
+    "parto": {"dominio": "reb", "plural": "partos", "dica": "Remove a lactação e a cria gerada."},
+    "controle": {"dominio": "reb", "plural": "controles leiteiros", "dica": "Some o registro de produção."},
+    "sanidade": {"dominio": "san", "plural": "sanidades", "dica": "O remédio volta ao estoque."},
+    "protocolo_sanitario_lancamento": {"dominio": "san", "plural": "aplicações de protocolo", "dica": "A aplicação sai; o protocolo continua."},
+    "protocolo_iatf_lancamento": {"dominio": "san", "plural": "aplicações de IATF", "dica": "A aplicação sai; o protocolo continua."},
+    "calendario_sanitario": {"dominio": "san", "plural": "eventos do calendário", "dica": "Some o evento do calendário."},
+    "evento_sanitario": {"dominio": "san", "plural": "eventos sanitários", "dica": "Cadastro auxiliar.", "cadastro": True},
+    "protocolo_sanitario": {"dominio": "san", "plural": "protocolos sanitários", "dica": "Cadastro auxiliar.", "cadastro": True},
+    "doenca": {"dominio": "cad", "plural": "doenças", "dica": "Protocolos perdem a ligação.", "cadastro": True},
+    "financeiro": {"dominio": "fin", "plural": "lançamentos financeiros", "dica": "Apaga a nota e suas parcelas."},
+    "compra_animal": {"dominio": "fin", "plural": "compras de animal", "dica": "Apaga a compra e o lançamento financeiro."},
+    "compra_semen": {"dominio": "fin", "plural": "compras de sêmen", "dica": "Apaga a compra; o estoque volta."},
+    "venda_animal": {"dominio": "fin", "plural": "vendas de animal", "dica": "Apaga a venda e o lançamento financeiro."},
+    "estoque": {"dominio": "est", "plural": "movimentos de estoque", "dica": "O estoque volta ao valor anterior."},
+    "evento_manual": {"dominio": "cad", "plural": "eventos da agenda", "dica": "Some o evento da agenda."},
+    "lote": {"dominio": "cad", "plural": "lotes", "dica": "Os animais do lote ficam sem lote.", "cadastro": True},
+    "fornecedor": {"dominio": "cad", "plural": "fornecedores", "dica": "As notas continuam, mas perdem a ligação.", "cadastro": True},
+    "motivo_movimentacao": {"dominio": "cad", "plural": "motivos de movimentação", "dica": "Cadastro auxiliar.", "cadastro": True},
+    "pessoa": {"dominio": "pes", "plural": "pessoas", "dica": "Só sai se não tiver folha nem vale.", "cadastro": True},
+    "principio_ativo": {"dominio": "cad", "plural": "princípios ativos", "dica": "Cadastro auxiliar.", "cadastro": True},
+    "todos_lancamentos": {"dominio": "todos", "plural": "lançamentos", "dica": "Busca em todos os lançamentos."},
+}
+
 # Tipos "de lançamento" (têm data) reunidos na busca combinada "todos_lancamentos" —
 # serve para achar algo que não constou em nenhuma das opções específicas acima.
 SUBTIPOS_TODOS = [
@@ -135,7 +164,11 @@ _TIPOS_SEM_DATA_LEGADO = {
 def tipos() -> list[dict]:
     legados = [{**t, "sem_filtro_data": t["id"] in _TIPOS_SEM_DATA_LEGADO} for t in TIPOS]
     novos = [{"id": t.id, "label": t.label, "sem_filtro_data": t.sem_filtro_data} for t in REGISTRO.values()]
-    return sorted(legados + novos, key=lambda t: t["label"])
+    todos = sorted(legados + novos, key=lambda t: t["label"])
+    for t in todos:
+        meta = META_TIPOS.get(t["id"], {})
+        t.update(meta)
+    return todos
 
 
 @router.get("/v2-flag")
