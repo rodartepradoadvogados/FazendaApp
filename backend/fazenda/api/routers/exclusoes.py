@@ -1649,9 +1649,15 @@ def _excluir_alvos_em_ordem(session: Session, alvos: list) -> None:
         session.flush()
 
 
-class ExclusaoIn(BaseModel):
+class ItemExclusao(BaseModel):
     tipo: str
     id: str
+
+
+class ExclusaoIn(BaseModel):
+    tipo: str = ""
+    id: str = ""
+    itens: list[ItemExclusao] = []
     motivo: str | None = None
     confirmacao: str | None = None
 
@@ -1680,6 +1686,39 @@ def _montar_impacto(tipo: str, id_: str, session: Session, fazenda_id: int | Non
     _forcar_risco_do_tipo(impacto, tipo)
     impacto.risco = exclusao_risco.calcular(impacto)
     impacto.porque = exclusao_risco.porque(impacto)
+    return impacto
+
+
+def _montar_impacto_lote(itens: list, session: Session, fazenda_id: int | None) -> Impacto:
+    """Impacto agregado de um LOTE (B10). Bloqueados vão para o bloco
+    `bloqueia` (pulados e reportados); os demais somam nos blocos normais."""
+    apagar: list[Linha] = []
+    reverter: list[Linha] = []
+    bloqueia: list = []
+    avisos: list[Linha] = []
+    porques: list[str] = []
+    riscos: list[str] = []
+    for it in itens:
+        imp = _montar_impacto(it.tipo, it.id, session, fazenda_id)
+        if imp.bloqueia:
+            bloqueia.extend(imp.bloqueia)
+        else:
+            apagar.extend(imp.apagar)
+            reverter.extend(imp.reverter)
+            avisos.extend(imp.avisos)
+            porques.extend(imp.porque or [])
+            riscos.append(imp.risco or "baixo")
+    impacto = Impacto(
+        item={"tipo": "lote", "id": "", "titulo": f"{len(itens)} item(ns) selecionados"},
+        apagar=apagar, reverter=reverter, bloqueia=bloqueia, avisos=avisos,
+    )
+    ordem = {"baixo": 0, "medio": 1, "alto": 2}
+    impacto.risco = max(riscos, key=lambda r: ordem.get(r, 0), default="baixo") if riscos else "baixo"
+    if len(itens) >= 10:
+        impacto.risco = "alto"
+    impacto.porque = sorted(set(porques))
+    if len(itens) >= 2 and impacto.risco == "baixo":
+        impacto.risco = "medio"
     return impacto
 
 
@@ -1786,10 +1825,74 @@ def impacto(
 ) -> dict:
     """Impacto PUR0: computa e descarta a sessão no fim — as mutações que
     `_alvos`/`tipo.alvos` fazem (ex.: saldo de estoque) só valem na confirmação."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     try:
-        return _serializar(_montar_impacto(dados.tipo, dados.id, session, fazenda_id_seguro(fazenda_id)))
+        if dados.itens:
+            if len(dados.itens) > 50:
+                raise HTTPException(status_code=422, detail={"codigo": "lote_grande", "limite": 50})
+            return _serializar(_montar_impacto_lote(dados.itens, session, fazenda_id))
+        return _serializar(_montar_impacto(dados.tipo, dados.id, session, fazenda_id))
     finally:
         session.rollback()
+
+
+def _confirmar_lote(dados: ExclusaoIn, user, session: Session, fazenda_id: int | None) -> dict:
+    """Confirmar em LOTE (B10, admin-only): bloqueados são pulados e reportados;
+    os demais rodam numa transação (erro em qualquer um desfaz tudo)."""
+    bloqueados = []
+    alvos_lote = []
+    itens_lote = []
+    for it in dados.itens:
+        try:
+            itens, alvos = _alvos(it.tipo, it.id, session, fazenda_id=fazenda_id)
+        except ExclusaoBloqueada as e:
+            bloqueados.append({"titulo": e.bloqueio.titulo, "motivo": e.bloqueio.motivo})
+            continue
+        itens_lote.extend(itens)
+        alvos_lote.extend(alvos)
+
+    if not alvos_lote:
+        raise HTTPException(status_code=409, detail={"bloqueia": bloqueados})
+
+    titulo_lote = f"Lote de {len(dados.itens)} item(ns)"
+    impacto = Impacto(
+        item={"tipo": "lote", "id": "", "titulo": titulo_lote},
+        apagar=[Linha(titulo=t, consequencia="") for t in itens_lote],
+    )
+    reverter_d, avisos_d = _descrever_reversoes(session, alvos_lote, fazenda_id)
+    impacto.reverter = reverter_d
+    impacto.avisos = avisos_d
+    impacto.risco = exclusao_risco.calcular(impacto)
+    if len(dados.itens) >= 10:
+        impacto.risco = "alto"
+    impacto.porque = exclusao_risco.porque(impacto)
+    risco = impacto.risco or "baixo"
+
+    _exigir_motivo_e_confirmacao(dados, risco, True, exigir_confirmacao=True)
+
+    snapshot = [_snapshot_objeto(o) for o in alvos_lote]
+    _desvincular_vales_dos_alvos(session, alvos_lote, fazenda_id)
+    _excluir_anexos_dos_alvos(session, alvos_lote, fazenda_id)
+    _desvincular_documentos_dos_alvos(session, alvos_lote, fazenda_id)
+    _excluir_comissao_dos_alvos(session, alvos_lote, fazenda_id)
+    _restaurar_ult_ocorrencia_dos_alvos(session, alvos_lote, fazenda_id)
+    _reverter_perda_prenhez_causada_pelos_alvos(session, alvos_lote, fazenda_id)
+    _remover_lactacao_dos_partos_excluidos(session, alvos_lote, fazenda_id)
+    _reabrir_lactacao_das_secagens_excluidas(session, alvos_lote, fazenda_id)
+    _reajustar_del_dias_apos_excluir_parto(session, alvos_lote, fazenda_id)
+    avisos = _estornar_estoque_dos_alvos(session, alvos_lote, fazenda_id, "lote")
+    _excluir_alvos_em_ordem(session, alvos_lote)
+    codigo = _gravar_trilha(
+        session, fazenda_id, user, "apagou", "lote", "", titulo_lote,
+        motivo=dados.motivo,
+        resumo={"apagado": itens_lote, "bloqueados": len(bloqueados), "avisos": avisos},
+        snapshot=snapshot,
+    )
+    session.commit()
+    return {
+        "status": "excluido", "comprovante": codigo,
+        "itens": itens_lote, "bloqueados": bloqueados, "avisos": avisos,
+    }
 
 
 @router.post("/confirmar")
@@ -1803,6 +1906,13 @@ def confirmar(
     Operador registra um pedido pendente, deduplicado."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     eh_admin = user.papel == "admin"
+
+    if dados.itens:
+        if not eh_admin:
+            raise HTTPException(status_code=403, detail="Exclusão em lote é exclusiva do administrador.")
+        if len(dados.itens) > 50:
+            raise HTTPException(status_code=422, detail={"codigo": "lote_grande", "limite": 50})
+        return _confirmar_lote(dados, user, session, fazenda_id)
 
     try:
         itens, alvos = _alvos(dados.tipo, dados.id, session, fazenda_id=fazenda_id)
