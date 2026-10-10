@@ -630,6 +630,21 @@ def _desvincular_documentos_dos_alvos(session: Session, alvos: list, fazenda_id:
     return len(docs)
 
 
+def _excluir_comissao_dos_alvos(session: Session, alvos: list, fazenda_id: int | None) -> int:
+    """Comissão de corretagem cuja despesa (`numero_lancamento_comissao`) é este
+    lançamento: apaga o registro da comissão junto."""
+    numeros = {getattr(o, "numero_lancamento", None) for o in alvos if isinstance(o, ContaGerencial)}
+    numeros.discard(None)
+    if not numeros:
+        return 0
+    coms = session.exec(
+        select(ComissaoCorretagem).where(ComissaoCorretagem.numero_lancamento_comissao.in_(numeros))
+    ).all()
+    for com in coms:
+        session.delete(com)
+    return len(coms)
+
+
 def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None) -> tuple[list[str], list]:
     """Retorna (descrições do impacto, objetos que serão apagados).
 
@@ -1601,6 +1616,12 @@ def _descrever_reversoes(session: Session, alvos: list, fazenda_id: int | None) 
     if any(isinstance(o, LancamentoItem) and eh_item_de_vale(o) for o in alvos):
         reverter.append(Linha(titulo="Vale desfeito", consequencia="O desconto do vale some e o abatimento volta à empreita/parcela."))
 
+    # 5. Lançamento ligado a pedido/patrimônio → aviso (não bloqueia, só informa).
+    contas = [o for o in alvos if isinstance(o, ContaGerencial)]
+    if any(getattr(c, "pedido_id", None) for c in contas):
+        avisos.append(Linha(titulo="Pedido ligado", consequencia="O pedido continua existindo; só o vínculo deste lançamento some."))
+    if any(getattr(c, "patrimonio_id", None) for c in contas):
+        avisos.append(Linha(titulo="Patrimônio ligado", consequencia="O item de patrimônio continua existindo; só o vínculo deste lançamento some."))
     return reverter, avisos
 
 
@@ -1810,6 +1831,7 @@ def confirmar(
         _desvincular_vales_dos_alvos(session, alvos, fazenda_id)
         _excluir_anexos_dos_alvos(session, alvos, fazenda_id)
         _desvincular_documentos_dos_alvos(session, alvos, fazenda_id)
+        _excluir_comissao_dos_alvos(session, alvos, fazenda_id)
         _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
         _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
         _remover_lactacao_dos_partos_excluidos(session, alvos, fazenda_id)
@@ -1951,6 +1973,7 @@ def aprovar_pendente(
     _desvincular_vales_dos_alvos(session, alvos, fazenda_id)
     _excluir_anexos_dos_alvos(session, alvos, fazenda_id)
     _desvincular_documentos_dos_alvos(session, alvos, fazenda_id)
+    _excluir_comissao_dos_alvos(session, alvos, fazenda_id)
     _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
     _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
     _remover_lactacao_dos_partos_excluidos(session, alvos, fazenda_id)
