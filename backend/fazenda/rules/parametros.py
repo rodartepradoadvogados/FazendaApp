@@ -33,6 +33,7 @@ GRUPO_TITULOS: dict[str, str] = {
     "folha_rh": "Folha de pagamento / RH",
     "estrutura_fazenda": "Estrutura da fazenda",
     "financeiro": "Financeiro",
+        "exclusao": "Exclusão de lançamentos",
     "alimentacao": "Alimentação",
     "lista_espera": "Rotina da lista de espera",
 }
@@ -293,8 +294,16 @@ DEFINICOES: list[dict] = [
     # destinatário, finalidade e autorização expressa (POST
     # /relatorios/exportacoes). Rótulo = texto 7.7 do parecer.
     {"chave": "permitir_exportar_com_reguas", "grupo": "financeiro",
-     "label": "Permitir exportar relatórios com réguas de referência (Desligado por padrão. A cada envio, você informa o destinatário e autoriza.)",
-     "valor": "false", "tipo": "bool"},
+         "label": "Permitir exportar relatórios com réguas de referência (Desligado por padrão. A cada envio, você informa o destinatário e autoriza.)",
+         "valor": "false", "tipo": "bool"},
+        # ---- Exclusão de lançamentos ------------------------------------------
+        # Tela nova (Fase 2) atrás de flag até o dono validar. Mesmo desenho de
+        # `financeiro_regras_v2`: a linha global (fazenda_id NULL) é só o modelo da
+        # tela; quem liga é o administrador da fazenda, e só a linha DA FAZENDA vale
+        # (ver `exclusao_v2_ativa`).
+        {"chave": "exclusao_v2", "grupo": "exclusao",
+         "label": "Excluir lançamentos — usar a tela nova (impacto em blocos, decisão por risco, trilha)",
+         "valor": "false", "tipo": "bool"},
     # ---- Alimentação: sobra de cocho ---------------------------------------
     # A sobra é o termômetro do trato. Sobra de menos significa cocho vazio
     # antes da hora — vaca que comeu menos do que a dieta previa, e produção
