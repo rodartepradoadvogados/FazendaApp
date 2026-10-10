@@ -59,3 +59,7 @@ def test_tipos_devolve_metadados(client):
     assert por_id["animal"]["dominio"] == "reb"
     assert por_id["pessoa"]["cadastro"] is True
     assert por_id["sanidade"]["dica"]
+    # contagem presente para os tipos mapeados; null para os demais
+    assert por_id["financeiro"]["contagem"] == 0
+    assert por_id["animal"]["contagem"] == 0
+    assert por_id["servico"]["contagem"] is None

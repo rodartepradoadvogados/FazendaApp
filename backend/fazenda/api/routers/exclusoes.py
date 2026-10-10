@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import and_, delete, or_
+from sqlalchemy import and_, delete, func, or_
 from sqlmodel import Session, select
 
 from fazenda.auth import exigir_admin, exigir_fazenda_da_operacao, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
@@ -141,6 +141,21 @@ META_TIPOS: dict[str, dict] = {
     "todos_lancamentos": {"dominio": "todos", "plural": "lançamentos", "dica": "Busca em todos os lançamentos."},
 }
 
+# Modelo por tipo para a CONTAGEM (B10). None = sem contagem (devolve null).
+# Só os tipos com tabela única e escopo claro entram aqui; os demais ficam null.
+META_CONTAR = {
+    "financeiro": ContaGerencial,
+    "animal": Animal,
+    "estoque": MovimentoEstoque,
+    "compra_animal": CompraAnimal,
+    "compra_semen": CompraSemen,
+    "venda_animal": VendaAnimal,
+    "pessoa": Pessoa,
+    "lote": Lote,
+    "fornecedor": Fornecedor,
+    "doenca": Doenca,
+}
+
 # Tipos "de lançamento" (têm data) reunidos na busca combinada "todos_lancamentos" —
 # serve para achar algo que não constou em nenhuma das opções específicas acima.
 SUBTIPOS_TODOS = [
@@ -161,13 +176,24 @@ _TIPOS_SEM_DATA_LEGADO = {
 
 
 @router.get("/tipos")
-def tipos() -> list[dict]:
+def tipos(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     legados = [{**t, "sem_filtro_data": t["id"] in _TIPOS_SEM_DATA_LEGADO} for t in TIPOS]
     novos = [{"id": t.id, "label": t.label, "sem_filtro_data": t.sem_filtro_data} for t in REGISTRO.values()]
     todos = sorted(legados + novos, key=lambda t: t["label"])
+    fid = fazenda_id_seguro(fazenda_id)
     for t in todos:
         meta = META_TIPOS.get(t["id"], {})
         t.update(meta)
+        modelo = META_CONTAR.get(t["id"])
+        if modelo is not None:
+            q = select(func.count()).select_from(modelo)
+            if fid is not None:
+                q = q.where(modelo.fazenda_id == fid)
+            t["contagem"] = session.exec(q).one()
+        else:
+            t["contagem"] = None
     return todos
 
 
