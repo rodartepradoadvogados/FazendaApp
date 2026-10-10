@@ -8879,6 +8879,11 @@ export async function fetchComprovanteExclusao(codigo: string) {
   if (!res.ok) throw new Error(`Comprovante error: ${res.status}`);
   return res.json();
 }
+export async function fetchExclusaoV2(): Promise<{ ativa: boolean; chave: string }> {
+  const res = await authFetch(`${API}/exclusoes/v2-flag`, { cache: "no-store" });
+  if (!res.ok) return { ativa: false, chave: "exclusao_v2" };
+  return res.json();
+}
 
 // Mensagens amigáveis para os erros estruturados do servidor (nada de e.message cru).
 function mensagemBloqueio(detail: any): string | null {

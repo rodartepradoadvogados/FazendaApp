@@ -439,6 +439,32 @@ def regras_v2_ativas(session: Session, fazenda_id: int | None) -> bool:
 
 CHAVE_EXPORTAR_COM_REGUAS = "permitir_exportar_com_reguas"
 
+CHAVE_EXCLUSAO_V2 = "exclusao_v2"
+
+
+def exclusao_v2_ativa(session: Session, fazenda_id: int | None) -> bool:
+    """A fazenda liga a tela nova de Excluir lançamentos (Fase 2)? Mesma
+    semântica de `regras_v2_ativas`: flag por fazenda (`exclusao_v2`), desligada
+    por padrão até o dono validar. Sem fazenda (token legado), sempre desligada."""
+    if not isinstance(fazenda_id, int):
+        return False
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+
+    from fazenda.models import ParametroFazenda
+
+    try:
+        linha = session.exec(
+            select(ParametroFazenda).where(
+                ParametroFazenda.chave == CHAVE_EXCLUSAO_V2,
+                ParametroFazenda.fazenda_id == fazenda_id,
+            )
+        ).first()
+    except (OperationalError, ProgrammingError):  # pragma: no cover - tabela ausente
+        return False
+    if linha is None:
+        return False
+    return (linha.valor or "").strip().lower() in ("1", "true", "sim", "yes")
+
 # Parâmetros que são decisão de CADA fazenda (consentimento do cliente) e que o
 # Painel CowData não pode aplicar em massa (ver painel_cowdata_parametros.py).
 CHAVES_SO_DA_FAZENDA = frozenset({CHAVE_EXPORTAR_COM_REGUAS})
