@@ -295,7 +295,7 @@ class TestDescontoDoseSemen:
 
         # Excluir o Serviço de só UM dos dois animais devolve exatamente
         # 1 dose — não 0 (o bug original) nem 2 (devolveria a do outro animal junto).
-        r = c.post("/exclusoes/confirmar", json={"tipo": "servico", "id": str(servico_700.id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "servico", "id": str(servico_700.id), "motivo": "teste"})
         assert r.status_code == 200, r.text
         with Session(engine) as s:
             coors = s.exec(select(EstoqueSemen).where(EstoqueSemen.touro_nome == "Coors")).first()

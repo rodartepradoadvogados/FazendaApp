@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import and_, delete, or_
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_admin, exigir_fazenda_da_operacao, get_current_user, get_fazenda_atual_id
+from fazenda.auth import exigir_admin, exigir_fazenda_da_operacao, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.rules import estoque_baixa
 from fazenda.rules import lactacao as regras_lactacao
@@ -1933,7 +1933,7 @@ def confirmar(
     dados: ExclusaoIn,
     user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int | None = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Admin exclui na hora (risco/motivo/confirmação no servidor + trilha).
     Operador registra um pedido pendente, deduplicado."""
@@ -2178,14 +2178,15 @@ def arquivar_pendente(
     sol_id: int,
     user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int | None = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Alvo sumiu → o admin arquiva o pedido (não há mais o que apagar)."""
-    sol = session.get(SolicitacaoExclusao, sol_id)
-    if not sol or sol.status != "pendente":
-        raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if fazenda_id is not None and sol.fazenda_id not in (None, fazenda_id):
+    query = select(SolicitacaoExclusao).where(SolicitacaoExclusao.id == sol_id)
+    if fazenda_id is not None:
+        query = query.where(SolicitacaoExclusao.fazenda_id == fazenda_id)
+    sol = session.exec(query).first()
+    if not sol or sol.status != "pendente":
         raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
     sol.status = "arquivada"
     sol.decidido_por = user.username
@@ -2204,14 +2205,15 @@ def cancelar_pendente(
     sol_id: int,
     user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int | None = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """O solicitante desiste do próprio pedido ainda pendente."""
-    sol = session.get(SolicitacaoExclusao, sol_id)
-    if not sol or sol.status != "pendente":
-        raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if fazenda_id is not None and sol.fazenda_id not in (None, fazenda_id):
+    query = select(SolicitacaoExclusao).where(SolicitacaoExclusao.id == sol_id)
+    if fazenda_id is not None:
+        query = query.where(SolicitacaoExclusao.fazenda_id == fazenda_id)
+    sol = session.exec(query).first()
+    if not sol or sol.status != "pendente":
         raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
     if sol.solicitado_por != user.username:
         raise HTTPException(status_code=403, detail="Só quem pediu pode cancelar")

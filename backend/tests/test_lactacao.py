@@ -657,7 +657,7 @@ def test_excluir_secagem_reabre_a_lactacao_que_ela_fechou(client, engine):
         secagem_id = s.exec(select(Secagem)).one().id
         assert s.exec(select(Lactacao)).one().data_fim == HOJE
 
-    r2 = client.post("/exclusoes/confirmar", json={"tipo": "secagem", "id": str(secagem_id)})
+    r2 = client.post("/exclusoes/confirmar", json={"tipo": "secagem", "id": str(secagem_id), "motivo": "teste"})
     assert r2.status_code == 200, r2.text
 
     with Session(engine) as s:
