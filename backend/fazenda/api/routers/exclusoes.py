@@ -43,12 +43,14 @@ from fazenda.models import (
     CompraSemen,
     ContaGerencial,
     ControleLeiteiro,
+    DocumentoArquivado,
     Doenca,
     Estoque,
     EstoqueSemen,
     EventoSanitario,
     ExclusaoRegistro,
     ExtratoLinha,
+    FaturaFornecedor,
     FolhaPagamento,
     FolhaRubrica,
     Fornecedor,
@@ -609,6 +611,25 @@ def _excluir_anexos_dos_alvos(session: Session, alvos: list, fazenda_id: int | N
     return _excluir_anexos_do_lancamento(session, numero, fazenda_id)
 
 
+def _desvincular_documentos_dos_alvos(session: Session, alvos: list, fazenda_id: int | None) -> int:
+    """DocumentoArquivado ligado ao lançamento (numero_lancamento) é DESVINCULADO
+    (não apagado): o documento fiscal-contábil continua no arquivo, só perde o vínculo."""
+    numeros = {getattr(o, "numero_lancamento", None) for o in alvos if isinstance(o, ContaGerencial)}
+    numeros.discard(None)
+    if not numeros:
+        return 0
+    docs = session.exec(
+        select(DocumentoArquivado).where(
+            DocumentoArquivado.numero_lancamento.in_(numeros),
+            DocumentoArquivado.fazenda_id == fazenda_id,
+        )
+    ).all()
+    for d in docs:
+        d.numero_lancamento = None
+        session.add(d)
+    return len(docs)
+
+
 def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None) -> tuple[list[str], list]:
     """Retorna (descrições do impacto, objetos que serão apagados).
 
@@ -887,6 +908,14 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         c = session.get(ContaGerencial, int(id_))
         if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+        if c.fatura_id:
+            fatura = session.get(FaturaFornecedor, c.fatura_id)
+            if fatura and fatura.status in ("fechada", "paga"):
+                raise ExclusaoBloqueada(Bloqueio(
+                    titulo="Nota de fatura fechada ou paga",
+                    motivo=f"A nota pertence à fatura \"{fatura.rotulo}\" ({fatura.status}).",
+                    fazer="Reabra a fatura antes de excluir a nota.",
+                ))
         # RECORTE DE FAZENDA DENTRO DA CONSULTA, incondicional — daqui até o
         # fim de `_alvos` toda busca por `numero_lancamento` leva o filtro.
         # O número do lançamento é sequencial POR ANO (ver
@@ -1780,6 +1809,7 @@ def confirmar(
         snapshot = [_snapshot_objeto(o) for o in alvos]
         _desvincular_vales_dos_alvos(session, alvos, fazenda_id)
         _excluir_anexos_dos_alvos(session, alvos, fazenda_id)
+        _desvincular_documentos_dos_alvos(session, alvos, fazenda_id)
         _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
         _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
         _remover_lactacao_dos_partos_excluidos(session, alvos, fazenda_id)
@@ -1920,6 +1950,7 @@ def aprovar_pendente(
     snapshot = [_snapshot_objeto(o) for o in alvos]
     _desvincular_vales_dos_alvos(session, alvos, fazenda_id)
     _excluir_anexos_dos_alvos(session, alvos, fazenda_id)
+    _desvincular_documentos_dos_alvos(session, alvos, fazenda_id)
     _restaurar_ult_ocorrencia_dos_alvos(session, alvos, fazenda_id)
     _reverter_perda_prenhez_causada_pelos_alvos(session, alvos, fazenda_id)
     _remover_lactacao_dos_partos_excluidos(session, alvos, fazenda_id)
