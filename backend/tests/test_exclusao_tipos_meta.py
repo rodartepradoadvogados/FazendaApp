@@ -1,6 +1,7 @@
 """B10: GET /exclusoes/tipos devolve dominio/plural/dica/cadastro (META_TIPOS)."""
 import tempfile
 
+import pytest
 from sqlmodel import Session, SQLModel, create_engine
 from fastapi.testclient import TestClient
 
@@ -8,16 +9,19 @@ from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Fazenda
 from fazenda.models.planos import MODULOS_COMERCIAIS
 
 
-def test_tipos_devolve_metadados():
+@pytest.fixture
+def client(monkeypatch):
     engine = create_engine(f"sqlite:///{tempfile.mktemp(suffix='.db')}", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(engine)
 
-    import fazenda.database as database
     import main
+
     from fazenda.auth import get_current_user, get_fazenda_atual_id
 
-    database.engine = engine
-    main.engine = engine
+    import fazenda.database as database
+
+    monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(main, "engine", engine)
 
     with Session(engine) as s:
         s.add(Fazenda(id=1, nome="Fazenda"))
@@ -41,10 +45,17 @@ def test_tipos_devolve_metadados():
     main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 1
 
     with TestClient(main.app) as c:
-        r = c.get("/exclusoes/tipos")
-        assert r.status_code == 200
-        por_id = {t["id"]: t for t in r.json()}
-        assert por_id["financeiro"]["dominio"] == "fin"
-        assert por_id["animal"]["dominio"] == "reb"
-        assert por_id["pessoa"]["cadastro"] is True
-        assert por_id["sanidade"]["dica"]
+        yield c
+
+    main.app.dependency_overrides.clear()
+
+
+def test_tipos_devolve_metadados(client):
+    c = client
+    r = c.get("/exclusoes/tipos")
+    assert r.status_code == 200
+    por_id = {t["id"]: t for t in r.json()}
+    assert por_id["financeiro"]["dominio"] == "fin"
+    assert por_id["animal"]["dominio"] == "reb"
+    assert por_id["pessoa"]["cadastro"] is True
+    assert por_id["sanidade"]["dica"]
