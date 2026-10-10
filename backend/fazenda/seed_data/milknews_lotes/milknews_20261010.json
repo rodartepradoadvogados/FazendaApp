@@ -1,0 +1,24 @@
+[
+  {
+    "manchete": "Índice da Ornua sobe em setembro e eleva retorno indicativo do leite irlandês em 2 centavos por litro",
+    "resumo": "O Purchase Price Index (PPI) da cooperativa irlandesa Ornua subiu de 130,4 em agosto para 135,8 em setembro, elevando o retorno indicativo pago ao produtor em 2 centavos de euro por litro. A própria Ornua atribuiu o resultado a retornos mais firmes nas vendas internacionais de lácteos.",
+    "materia": "A Ornua, cooperativa irlandesa responsável pela comercialização externa de lácteos do país, informou que seu Purchase Price Index (PPI) avançou 5,4 pontos em setembro, passando de 130,4 em agosto para 135,8. O índice mede o retorno bruto de mercado obtido com a venda internacional de manteiga, cheddar, leite em pó integral e produtos proteicos especializados, e a própria cooperativa descreveu o resultado como reflexo de retornos mais firmes nas vendas externas ao longo do mês.\n\nCom a alta do índice, o retorno indicativo ao produtor para leite com 3,6% de gordura e 3,3% de proteína subiu a 38,2 centavos de euro por litro (já com o IVA de 4,5% incluído), ante 36,2 centavos em agosto — avanço de 2 centavos, descontado o custo estimado de processamento da cooperativa. A Ornua ressalvou que o PPI não equivale diretamente à produção física de leite nem aos pagamentos mensais de cada cooperativa associada, já que a captação do leite e a venda dos produtos no exterior seguem calendários distintos.\n\nO resultado veio em um momento de recuo sazonal da oferta: a captação de leite nas plantas de processamento da Irlanda caiu 79 milhões de litros na comparação anual em agosto, para 865,3 milhões de litros, à medida que a safra deixa para trás o pico do verão europeu. Processadoras como Tirlán, Dairygold e Carbery vêm ajustando a programação das fábricas à menor entrega diária, num período em que o leite tardio da estação costuma concentrar mais gordura e proteína.",
+    "link": "/news#milknews-2026-10-10-01",
+    "data_publicacao": "2026-10-10",
+    "fontes": [
+      "https://dairynews.today/news/ornua_raises_indicative_irish_milk_price_by_two_cents_5941813.html",
+      "https://www.agriland.ie/farming-news/ornua-ppi-indicative-milk-price-up-2c-l/"
+    ]
+  },
+  {
+    "manchete": "USDA confirma gripe aviária em dois rebanhos leiteiros do estado de Washington, nos EUA",
+    "resumo": "O USDA confirmou, em 8 de outubro, a primeira detecção de influenza aviária de alta patogenicidade (H5N1) em rebanhos bovinos leiteiros do estado norte-americano de Washington, em duas propriedades no condado de Yakima. As fazendas estão sob quarentena e o órgão classifica o risco ao abastecimento de leite e à saúde humana como baixo.",
+    "materia": "O Serviço de Inspeção de Saúde Animal e Vegetal (APHIS) do Departamento de Agricultura dos Estados Unidos (USDA) confirmou, em 8 de outubro, a presença do vírus da influenza aviária de alta patogenicidade (HPAI), subtipo H5 clado 2.3.4.4b, em dois rebanhos bovinos leiteiros do condado de Yakima, no estado de Washington. São os primeiros casos da doença já registrados em gado leiteiro no estado — até então, o surto, iniciado em março de 2024, já havia atingido rebanhos de outros 19 estados americanos.\n\nSegundo o USDA e o Departamento de Agricultura do estado de Washington, os animais foram testados depois de apresentar sinais clínicos compatíveis com a doença, como leite mais espesso e de coloração amarelada a amarronzada, queda na produção leiteira, redução no consumo de ração, febre e sintomas respiratórios — mesmo tendo apresentado resultado negativo nas rodadas anteriores de vigilância de rotina. As duas propriedades foram colocadas sob quarentena, e veterinários acompanham o tratamento dos animais doentes, que costumam se recuperar em cerca de seis semanas com os cuidados adequados.\n\nO USDA reforça que o abastecimento de leite permanece seguro e que o risco à saúde humana segue considerado baixo, e informou que trabalha com as autoridades estaduais em investigações adicionais nas propriedades, testes diagnósticos e levantamento epidemiológico para entender a origem da detecção e tentar conter a disseminação do vírus.",
+    "link": "/news#milknews-2026-10-10-02",
+    "data_publicacao": "2026-10-10",
+    "fontes": [
+      "https://www.aphis.usda.gov/news/agency-announcements/usda-confirms-highly-pathogenic-avian-influenza-two-dairy-herds",
+      "https://capitalpress.com/2026/10/08/bird-flu-detected-in-two-dairy-cow-herds-in-washington/"
+    ]
+  }
+]
