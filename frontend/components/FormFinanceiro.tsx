@@ -8,6 +8,7 @@ import {
   fetchContextoFornecedor, type ContextoFornecedor as ContextoFornecedorTipo,
   fetchCandidatosVinculoSanitarioReprodutivo, vincularEventoSanitarioReprodutivo, type CandidatoVinculoSanitarioReprodutivo,
   type PatrimonioPayload, fetchUltimoPrecoProduto, type UltimoPrecoProduto, today,
+  fetchFaturasParaSelecao, type FaturaSelectorItem,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
@@ -488,6 +489,12 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const [erroXml, setErroXml] = useState<string | null>(null);
   const [avisoDocumento, setAvisoDocumento] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Fatura selector (para "Inserir em fatura")
+  const [faturaSelectorAberto, setFaturaSelectorAberto] = useState(false);
+  const [faturasDisponiveis, setFaturasDisponiveis] = useState<FaturaSelectorItem[]>([]);
+  const [faturaSelecionada, setFaturaSelecionada] = useState<FaturaSelectorItem | null>(null);
+  const [carregandoFaturas, setCarregandoFaturas] = useState(false);
 
   const [confirmando, setConfirmando] = useState(false);
   const [salvando, setSalvando] = useState(false);
