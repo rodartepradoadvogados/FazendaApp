@@ -297,14 +297,13 @@ class TestExclusaoLoteNaoSomaOutraFazenda:
 
 
 class TestFinanceiroFKBloqueio:
-    """B2 (Fase 0): uma `ContaGerencial` referenciada por
-    `caixa_movimento.lancamento_id` (o mesmo vale para `caixa_time_movimento`,
-    `folha_rubrica.conta_gerencial_id` e `extrato_linha.lancamento_id`) não pode
-    ser excluída: no Postgres de produção a FK violaria e o navegador veria um
-    "Failed to fetch". Enquanto a Fase 3 não cobre a cascata, bloqueamos com
-    mensagem clara em `_bloquear_conta_referenciada`."""
+    """B2 (Fase 0) → cascata (Fase 3): conta referenciada por
+    `caixa_movimento.lancamento_id` (idem `caixa_time_movimento` e
+    `folha_rubrica.conta_gerencial_id`) agora é APAGADA em cascata (o dependente
+    sai antes da conta, na ordem certa). Só `extrato_linha.lancamento_id`
+    (extrato bancário) continua bloqueando."""
 
-    def test_impacto_e_confirmar_bloqueiam_conta_ligada_ao_caixa(self, client):
+    def test_cascata_apaga_conta_ligada_ao_caixa(self, client):
         c, engine = client
         with Session(engine) as s:
             pessoa = Pessoa(nome="Funcionário Teste", tipo="Funcionário", fazenda_id=1)
@@ -328,16 +327,17 @@ class TestFinanceiroFKBloqueio:
         _como_fazenda(1)
         r_impacto = c.post("/exclusoes/impacto", json={"tipo": "financeiro", "id": str(conta_id)})
         assert r_impacto.status_code == 200, r_impacto.text
-        assert r_impacto.json().get("bloqueia"), "impacto de conta ligada ao caixa deveria vir bloqueado"
+        assert not r_impacto.json().get("bloqueia"), "caixa agora cascateia, não bloqueia"
 
-        r_confirmar = c.post("/exclusoes/confirmar", json={"tipo": "financeiro", "id": str(conta_id)})
-        assert r_confirmar.status_code == 409, r_confirmar.text
-        assert "caixa do funcionário" in str(r_confirmar.json().get("detail", ""))
+        r_confirmar = c.post("/exclusoes/confirmar", json={"tipo": "financeiro", "id": str(conta_id), "motivo": "teste"})
+        assert r_confirmar.status_code == 200, r_confirmar.text
 
         with Session(engine) as s:
             from sqlmodel import select
-            assert s.exec(select(ContaGerencial).where(ContaGerencial.id == conta_id)).first() is not None, \
-                "a conta bloqueada não pode ter sido excluída"
+            assert s.exec(select(ContaGerencial).where(ContaGerencial.id == conta_id)).first() is None, \
+                "a conta deve ser excluída (cascata)"
+            assert s.exec(select(CaixaMovimento).where(CaixaMovimento.lancamento_id == conta_id)).first() is None, \
+                "o caixa deve ser excluído junto (cascata)"
 
 
 def test_deletar_conta_referenciada_viola_fk_equivale_ao_postgres():
