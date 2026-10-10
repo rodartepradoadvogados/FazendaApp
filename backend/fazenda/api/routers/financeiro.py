@@ -24,6 +24,7 @@ from fazenda.models import (
     FornecedorClienteApelido,
     LancamentoAnexo, LancamentoItem, LancamentoRecorrente, LoteEstoque, ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, Sanidade,
     SeedFlag, Servico, TipoDocumento, TransferenciaContas, Usuario, ValeAvulso, ValeFuncionario,
+    FaturaFornecedor, CartaoCredito, FaturaCartao,
 )
 from fazenda.rules import caixa_funcionario, estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
@@ -510,6 +511,10 @@ class LancamentoIn(BaseModel):
     # conta). Com `criar_patrimonio` numa despesa, nasce INVESTIMENTO quando não
     # vier outra explícita. Só muda relatório com a flag financeiro_regras_v2.
     natureza_fin: Optional[str] = None
+    # Fatura de fornecedor ou de cartão de crédito a que este lançamento pertence
+    # (opcional; quando preenchido, as parcelas/linhas nascem já vinculadas).
+    fatura_id: Optional[int] = None
+    fatura_tipo: Optional[str] = None  # "fornecedor" | "cartao_credito"
 
 
 FORMAS_PAGAMENTO = ["pix", "transferencia", "boleto", "credito", "debito"]
@@ -4241,6 +4246,8 @@ def criar_lancamento(
         acrescimo_nota=dados.acrescimo or None,
         pedido_id=dados.pedido_id,
         natureza_fin=natureza_nota,
+        fatura_id=dados.fatura_id,
+        fatura_tipo=dados.fatura_tipo,
         # Alguns fluxos (importação de CSV, lançamento via Telegram) chamam esta
         # função diretamente, fora do ciclo de requisição do FastAPI — nesses
         # casos `user` não é resolvido pela injeção de dependência e chega aqui
@@ -5494,6 +5501,98 @@ def criar_fornecedor_apelido(
     session.commit()
     session.refresh(registro)
     return {"id": registro.id, "nome_bruto": registro.nome_bruto, "nome_canonico": registro.nome_canonico}
+
+
+# ───────────────────────── Faturas para selector "inserir em fatura" ─────────────────────────
+class FaturaSelectorItem(BaseModel):
+    """Item unificado para o seletor de fatura no lançamento genérico."""
+    id: int
+    tipo: str  # "fornecedor" | "cartao_credito"
+    label: str  # ex.: "COMIGO — aberta (12/09 a 11/10)" ou "Cartão Bradesco — fatura 09/2026 (12/09 a 11/10)"
+    status: str  # "aberta" | "fechada" | "paga"
+    data_inicio: str
+    data_fim: str
+    fornecedor: str | None = None
+    cartao_id: int | None = None
+    cartao_apelido: str | None = None
+
+
+@router.get("/faturas-para-selecao")
+def fetch_faturas_para_selecao(
+    apenas_abertas: bool = True,
+    session: Session = Depends(get_session),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> list[FaturaSelectorItem]:
+    """Lista faturas de fornecedor + faturas de cartão de crédito para o seletor
+    \"inserir em fatura\" do lançamento genérico.
+
+    - Se `apenas_abertas=True` (padrão): só faturas com status "aberta" (período vigente).
+    - Se `apenas_abertas=False`: inclui também faturas "fechada" e "paga" (histórico).
+    """
+    from datetime import date
+    hoje = hoje_local()
+
+    itens: list[FaturaSelectorItem] = []
+
+    # 1) Faturas de fornecedor
+    query = select(FaturaFornecedor).where(FaturaFornecedor.fazenda_id == fazenda_id)
+    if apenas_abertas:
+        query = query.where(FaturaFornecedor.status == "aberta")
+    for f in session.exec(query.order_by(FaturaFornecedor.data_abertura.desc())).all():  # type: ignore[attr-defined]
+        ini = f.data_abertura
+        fim = f.data_fechamento_prevista or (f.data_vencimento or hoje)
+        itens.append(FaturaSelectorItem(
+            id=f.id or 0,  # pk populada após query
+            tipo="fornecedor",
+            label=f"{f.fornecedor} — {f.rotulo or 'aberta'} ({br(ini)} a {br(fim)})",
+            status=f.status,
+            data_inicio=ini.isoformat(),
+            data_fim=fim.isoformat() if fim else hoje.isoformat(),
+            fornecedor=f.fornecedor,
+        ))
+
+    # 2) Faturas de cartão de crédito
+    from fazenda.models import CartaoCredito, FaturaCartao
+    cartoes = session.exec(select(CartaoCredito).where(CartaoCredito.fazenda_id == fazenda_id, CartaoCredito.ativo == True)).all()
+    for cartao in cartoes:
+        query2 = select(FaturaCartao).where(FaturaCartao.cartao_id == cartao.id)
+        if apenas_abertas:
+            query2 = query2.where(FaturaCartao.status == "aberta")
+        for fc in session.exec(query2.order_by(FaturaCartao.competencia.desc())).all():  # type: ignore[attr-defined]
+            # competencia vem como "YYYY-MM"
+            try:
+                ano, mes = map(int, fc.competencia.split("-"))
+                from calendar import monthrange
+                ini = date(ano, mes, 1)
+                fim = date(ano, mes, monthrange(ano, mes)[1])
+            except Exception:
+                ini = hoje
+                fim = hoje
+            itens.append(FaturaSelectorItem(
+                id=fc.id or 0,  # pk populada após query
+                tipo="cartao_credito",
+                label=f"Cartão {cartao.apelido} — fatura {fc.competencia} ({br(ini)} a {br(fim)})",
+                status=fc.status,
+                data_inicio=ini.isoformat(),
+                data_fim=fim.isoformat(),
+                cartao_id=cartao.id,
+                cartao_apelido=cartao.apelido,
+            ))
+
+    # Ordena: abertas primeiro (por data fim desc), depois fechadas/pagas
+    itens.sort(key=lambda x: (x.status != "aberta", x.data_fim), reverse=True)
+    return itens
+
+
+def br(d: date | str | None) -> str:
+    if d is None:
+        return "—"
+    if isinstance(d, str):
+        try:
+            return date.fromisoformat(d).strftime("%d/%m/%Y")
+        except Exception:
+            return d
+    return d.strftime("%d/%m/%Y")
 
 
 # Tamanho máximo por anexo (boleto, contrato etc.) — sobe pro Supabase Storage,
