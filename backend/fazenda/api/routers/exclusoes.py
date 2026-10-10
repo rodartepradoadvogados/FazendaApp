@@ -545,12 +545,6 @@ def _bloquear_conta_referenciada(session: Session, contas: list) -> None:
     if not ids:
         return
     referencias: list[str] = []
-    if session.exec(select(CaixaMovimento).where(CaixaMovimento.lancamento_id.in_(ids))).first() is not None:
-        referencias.append("lançamento no caixa do funcionário")
-    if session.exec(select(CaixaTimeMovimento).where(CaixaTimeMovimento.lancamento_id.in_(ids))).first() is not None:
-        referencias.append("lançamento no caixa do time")
-    if session.exec(select(FolhaRubrica).where(FolhaRubrica.conta_gerencial_id.in_(ids))).first() is not None:
-        referencias.append("linha de rubrica na folha de pagamento")
     if session.exec(select(ExtratoLinha).where(ExtratoLinha.lancamento_id.in_(ids))).first() is not None:
         referencias.append("linha pareada no extrato bancário")
     if referencias:
@@ -560,6 +554,19 @@ def _bloquear_conta_referenciada(session: Session, contas: list) -> None:
             fazer="Desfaça esse vínculo antes, ou peça a um administrador que o faça "
                   "(a exclusão em cascata desses vínculos chega numa próxima etapa).",
         ))
+
+
+def _dependentes_financeiros(session: Session, ids: list) -> list:
+    """Caixa do funcionário/times e rubrica da folha que referenciam as contas
+    (cascata B9). Entram em `alvos` para serem apagados ANTES da conta (FK).
+    ExtratoLinha fica de fora: extrato bancário continua bloqueio."""
+    if not ids:
+        return []
+    dep = []
+    dep += session.exec(select(CaixaMovimento).where(CaixaMovimento.lancamento_id.in_(ids))).all()
+    dep += session.exec(select(CaixaTimeMovimento).where(CaixaTimeMovimento.lancamento_id.in_(ids))).all()
+    dep += session.exec(select(FolhaRubrica).where(FolhaRubrica.conta_gerencial_id.in_(ids))).all()
+    return dep
 
 
 def _excluir_anexos_do_lancamento(session: Session, numero_lancamento: str | None, fazenda_id: int | None) -> int:
@@ -931,7 +938,8 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
                 impacto.append(f"{n_itens_vale} item(ns) desta nota geraram vale — o(s) vale(s) também será(ão) excluído(s)")
             if n_anexos:
                 impacto.append(f"{n_anexos} anexo(s) serão excluído(s)")
-            return impacto, [*irmaos, *itens]
+            dependentes = _dependentes_financeiros(session, [i.id for i in irmaos])
+            return impacto, [*irmaos, *itens, *dependentes]
         _bloquear_conta_referenciada(session, [c])
         impacto = [f"Lançamento {c.numero_lancamento or ''} — {c.descricao or '—'} (R$ {c.valor_total or 0:,.2f})"]
         if itens:
@@ -940,7 +948,8 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             impacto.append(f"{n_itens_vale} item(ns) desta nota geraram vale — o(s) vale(s) também será(ão) excluído(s)")
         if n_anexos:
             impacto.append(f"{n_anexos} anexo(s) serão excluído(s)")
-        return impacto, [c, *itens]
+        dependentes = _dependentes_financeiros(session, [c.id])
+        return impacto, [c, *itens, *dependentes]
 
     if tipo == "compra_animal":
         c = session.get(CompraAnimal, int(id_))
