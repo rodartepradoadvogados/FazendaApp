@@ -1,14 +1,15 @@
 "use client";
 import { cloneElement, isValidElement, useEffect, useId, useMemo, useState } from "react";
-import { AlertTriangle, Check, Plus, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Plus, Trash2, X, FileText } from "lucide-react";
 import {
   fetchOpcoesFinanceiro, fetchEstoqueAtivos, fetchFornecedores, fetchPlanoContas, fetchContasCorrentes, fetchCentrosCusto,
-  criarLancamentoFinanceiro, fetchPossiveisDuplicados, formatBRL, type LancamentoParecido, type ContaCorrenteCadastro,
+  criarLancamentoFinanceiro, fetchPossiveisDuplicados, formatBRL, importarXmlFinanceiro, type LancamentoParecido, type ContaCorrenteCadastro,
 } from "@/lib/api";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
 import type { ContaPlano } from "@/lib/contaGerencial";
+import { Modal } from "@/components/Modal";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -48,7 +49,7 @@ const hoje = () => new Date().toISOString().slice(0, 10);
  * data (vira emissão + vencimento + pagamento) e a conta bancária — sem
  * desconto/acréscimo, parcelamento, anexo, vínculo com Pedido/Patrimônio/vale.
  * O centro de custo não é um campo aqui: usa o centro de custo marcado como
- * padrão em Configurações > Parâmetros financeiros > Centro de custo (ver
+ * padrão em Configurações &gt; Parâmetros financeiros &gt; Centro de custo (ver
  * `ParametrosFinanceiros.tsx::CentrosCusto`) — sem nenhum marcado, bloqueia o
  * salvamento em vez de adivinhar. Mesmo endpoint de sempre (POST
  * /financeiro/lancamentos) e mesma checagem de duplicados do formulário
@@ -106,6 +107,12 @@ export function FormFinanceiroSimplificado({ tipo, onSujo, onSalvo }: {
   const [data, setData] = useState(hoje());
   const [contaBancaria, setContaBancaria] = useState("");
   const [itens, setItens] = useState<ItemSimples[]>([itemVazio()]);
+
+  // XML (modal para colar código XML)
+  const [xmlAberto, setXmlAberto] = useState(false);
+  const [xmlTexto, setXmlTexto] = useState("");
+  const [xmlImportando, setXmlImportando] = useState(false);
+  const [xmlErro, setXmlErro] = useState<string | null>(null);
 
   function atualizarItem(idx: number, patch: Partial<ItemSimples>) {
     setItens((arr) => arr.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
@@ -181,6 +188,31 @@ export function FormFinanceiroSimplificado({ tipo, onSujo, onSalvo }: {
     };
   }
 
+  // Importar XML
+  async function importarXml() {
+    if (!xmlTexto.trim()) { setXmlErro("Cole o XML da nota fiscal."); return; }
+    setXmlImportando(true); setXmlErro(null);
+    try {
+      const dados = await importarXmlFinanceiro(xmlTexto);
+      setFornecedor(dados.fornecedor_cliente || "");
+      setData(dados.data_emissao || hoje());
+      setItens((dados.itens || []).map((it: any) => ({
+        tipoItem: it.tipo_item === "servico" ? "servico" : "produto",
+        produto: it.produto || it.descricao || "",
+        codigoContaGerencial: it.codigo_conta_gerencial || "",
+        nomeContaGerencial: it.nome_conta_gerencial || "",
+        quantidade: String(it.quantidade || 1),
+        valorTotal: String(it.valor_total || 0),
+      })));
+      setXmlAberto(false); setXmlTexto(""); setXmlErro(null);
+      onSujo?.(true);
+    } catch (e: any) {
+      setXmlErro(e.message || "Erro ao ler o XML");
+    } finally {
+      setXmlImportando(false);
+    }
+  }
+
   async function salvar() {
     setErro(null); setSucesso(null);
     if (!centroCustoPadrao) {
@@ -251,6 +283,13 @@ export function FormFinanceiroSimplificado({ tipo, onSujo, onSalvo }: {
             </select>
           </Campo>
         </div>
+      </div>
+
+      <div className="flex items-center justify-between mt-2">
+        <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Cabeçalho do lançamento</span>
+        <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => { setXmlAberto(true); setXmlTexto(""); setXmlErro(null); }}>
+          <FileText size={12} /> Colar XML
+        </button>
       </div>
 
       <div className="card mt-3">
@@ -355,6 +394,21 @@ export function FormFinanceiroSimplificado({ tipo, onSujo, onSalvo }: {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal para colar XML */}
+      {xmlAberto && (
+        <Modal title="Colar XML da nota fiscal" onClose={() => { setXmlAberto(false); setXmlTexto(""); setXmlErro(null); }} width="700px">
+          <div style={{ display: "grid", gap: "0.6rem" }}>
+            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Cole o conteúdo do XML da nota fiscal (NF-e ou NFS-e). O sistema extrairá: fornecedor/cliente, data de emissão, itens (produto/serviço, quantidade, valor unitário).</p>
+            <textarea value={xmlTexto} onChange={(e) => setXmlTexto(e.target.value)} placeholder="Cole aqui o código XML da nota fiscal…" style={{ minHeight: "200px", width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem", fontSize: "0.8rem", fontFamily: "monospace", resize: "vertical" }} />
+            {xmlErro && <div className="alert-critico" role="alert"><AlertTriangle size={14} aria-hidden /><span>{xmlErro}</span></div>}
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn-ghost" onClick={() => { setXmlAberto(false); setXmlTexto(""); setXmlErro(null); }}>Cancelar</button>
+              <button type="button" className="btn-primary" disabled={xmlImportando || !xmlTexto.trim()} onClick={importarXml}>{xmlImportando ? "Importando…" : "Importar XML"}</button>
+            </div>
+          </div>
+        </Modal>
       )}
     </>
   );

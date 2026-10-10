@@ -3,10 +3,10 @@
 // combustível pagas na virada do mês). Cada nota é um lançamento completo; o lote as agrupa numa fatura
 // já fechada (ou paga). Grava TUDO OU NADA. Rascunho automático no navegador.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Check, Copy, FileSpreadsheet, Plus, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Copy, FileSpreadsheet, Plus, Trash2, X, FileText } from "lucide-react";
 import {
   abrirFatura, anexarArquivoLancamentoPorId, anexarComprovanteEmLote, criarLoteFatura, fetchCentrosCusto, lancarNotasAvulsas, lancarNotasNaFatura, fetchContasCorrentes,
-  fetchEstoqueAtivos, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, formatBRL, getUsuario,
+  fetchEstoqueAtivos, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, formatBRL, getUsuario, importarXmlFinanceiro,
   type ContaCorrenteCadastro, type FaturaDetalhe, type LoteIn, type LoteResultado,
 } from "@/lib/api";
 import { CampoMoeda } from "@/components/CampoMoeda";
@@ -16,6 +16,7 @@ import type { ResultadoImportacao } from "@/lib/planilhaLote";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
 import type { ContaPlano } from "@/lib/contaGerencial";
+import { Modal } from "@/components/Modal";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
@@ -91,6 +92,11 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
   const [pagComp, setPagComp] = useState("");
   const [comprovante, setComprovante] = useState<File | null>(null);
   const [totalForn, setTotalForn] = useState(0);
+  // XML por nota (modal para colar código XML)
+  const [xmlNotaUid, setXmlNotaUid] = useState<number | null>(null);
+  const [xmlTexto, setXmlTexto] = useState("");
+  const [xmlImportando, setXmlImportando] = useState(false);
+  const [xmlErro, setXmlErro] = useState<string | null>(null);
 
   const usuario = getUsuario();
   const responsavel = usuario?.nome || usuario?.username || "Você";
@@ -206,6 +212,46 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
     setSucesso(`${novas.length} nota(s) carregada(s) da planilha. Revise, anexe os cupons e lance.${r.avisos.length ? ` ${r.avisos.length} item(ns) pedem ajuste (conta ou produto).` : ""}`);
     onSujo?.(true);
   }
+
+  // Importar XML para uma nota específica
+  async function importarXmlParaNota(uid: number) {
+    if (!xmlTexto.trim()) { setXmlErro("Cole o XML da nota fiscal."); return; }
+    setXmlImportando(true); setXmlErro(null);
+    try {
+      const dados = await importarXmlFinanceiro(xmlTexto);
+      // Aplica os dados do XML na nota correspondente
+      setNotas((a) => a.map((n) => {
+        if (n.uid !== uid) return n;
+        const itens: typeof n.itens = (dados.itens || []).map((it: any, i: number) => ({
+          uid: novoUid(),
+          tipoItem: it.tipo_item === "servico" ? "servico" : "produto",
+          produto: it.produto || it.descricao || `Item ${i + 1}`,
+          codigo: it.codigo_conta_gerencial || "",
+          nome: it.nome_conta_gerencial || "",
+          qtd: String(it.quantidade || 1),
+          unit: Number(it.valor_unitario || 0),
+        }));
+        return {
+          ...n,
+          tipoDoc: dados.tipo_documento || n.tipoDoc,
+          numero: dados.numero_documento || "",
+          semNumero: !dados.numero_documento,
+          data: dados.data_emissao || n.data,
+          desconto: Number(dados.desconto || 0),
+          acrescimo: Number(dados.acrescimo || 0),
+          itens: itens.length ? itens : n.itens,
+        };
+      }));
+      setXmlNotaUid(null); setXmlTexto("");
+      setSucesso("XML importado na nota. Revise os itens e anexe o cupom se houver.");
+      onSujo?.(true);
+    } catch (e: any) {
+      setXmlErro(e.message || "Erro ao ler o XML");
+    } finally {
+      setXmlImportando(false);
+    }
+  }
+
   function excluirNota(uid: number) { setNotas((a) => (a.length > 1 ? a.filter((n) => n.uid !== uid) : a)); }
 
   // ── Envio ──
@@ -428,6 +474,7 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
                   <label style={{ fontSize: "0.76rem", display: "flex", gap: "0.3rem", alignItems: "center", margin: 0 }}>
                     <input type="checkbox" checked={n.semNumero} onChange={(e) => setNota(n.uid, { semNumero: e.target.checked })} /> sem número
                   </label>
+                  <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem" }} onClick={() => { setXmlNotaUid(n.uid); setXmlTexto(""); setXmlErro(null); }}><FileText size={12} /> Colar XML</button>
                   <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem" }} onClick={() => duplicar(n)}><Copy size={12} /> Duplicar nota</button>
                   {notas.length > 1 && <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem", color: "var(--red)" }} onClick={() => excluirNota(n.uid)}><Trash2 size={12} /> Excluir nota</button>}
                 </div>
@@ -633,6 +680,21 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal para colar XML */}
+      {xmlNotaUid && (
+        <Modal title={`Colar XML — Nota ${notas.findIndex((n) => n.uid === xmlNotaUid) + 1}`} onClose={() => { setXmlNotaUid(null); setXmlTexto(""); setXmlErro(null); }} width="700px">
+          <div style={{ display: "grid", gap: "0.6rem" }}>
+            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Cole o conteúdo do XML da nota fiscal (NF-e ou NFS-e). O sistema extrairá: tipo de documento, número, data de emissão, itens (produto/serviço, quantidade, valor unitário), desconto e acréscimo.</p>
+            <textarea value={xmlTexto} onChange={(e) => setXmlTexto(e.target.value)} placeholder="Cole aqui o código XML da nota fiscal…" style={{ minHeight: "200px", width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem", fontSize: "0.8rem", fontFamily: "monospace", resize: "vertical" }} />
+            {xmlErro && <div className="alert-critico" role="alert"><AlertTriangle size={14} aria-hidden /><span>{xmlErro}</span></div>}
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn-ghost" onClick={() => { setXmlNotaUid(null); setXmlTexto(""); setXmlErro(null); }}>Cancelar</button>
+              <button type="button" className="btn-primary" disabled={xmlImportando || !xmlTexto.trim()} onClick={() => importarXmlParaNota(xmlNotaUid!)}>{xmlImportando ? "Importando…" : "Importar XML"}</button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

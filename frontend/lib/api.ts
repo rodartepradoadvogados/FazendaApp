@@ -10417,6 +10417,18 @@ export type FaturaCadastroIn = {
   data_vencimento?: string | null; conta_bancaria?: string | null; centro_custo?: string | null;
   parcelamento?: { n: number; primeiro_vencimento: string; intervalo: "mensal" | "30dias" } | null;
 };
+// Selector unificado para "inserir em fatura" no lançamento genérico
+export type FaturaSelectorItem = {
+  id: number;
+  tipo: "fornecedor" | "cartao_credito";
+  label: string;
+  status: "aberta" | "fechada" | "paga";
+  data_inicio: string;
+  data_fim: string;
+  fornecedor?: string | null;
+  cartao_id?: number | null;
+  cartao_apelido?: string | null;
+};
 async function faturaJson(res: Response, padrao: string) {
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
@@ -10429,6 +10441,9 @@ async function faturaJson(res: Response, padrao: string) {
 const _fj = (url: string, init: RequestInit | undefined, padrao: string) => authFetch(`${API}/financeiro/faturas${url}`, init).then((r) => faturaJson(r, padrao));
 const _fbody = (method: string, body?: unknown): RequestInit => ({ method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
 export const fetchFaturas = (status?: string): Promise<FaturaResumo[]> => _fj(status ? `?status=${status}` : "", { cache: "no-store" }, "Erro ao carregar as faturas");
+export const fetchFaturasParaSelecao = (apenasAbertas: boolean = true): Promise<FaturaSelectorItem[]> =>
+  authFetch(`${API}/financeiro/faturas-para-selecao?apenas_abertas=${apenasAbertas}`, { cache: "no-store" })
+    .then((r) => { if (!r.ok) throw new Error("Erro ao carregar faturas para seleção"); return r.json(); });
 export const fetchFatura = (id: number): Promise<FaturaDetalhe> => _fj(`/${id}`, { cache: "no-store" }, "Erro ao carregar a fatura");
 export const abrirFatura = (d: FaturaCadastroIn): Promise<FaturaDetalhe> => _fj("", _fbody("POST", d), "Erro ao abrir a fatura");
 export const editarFatura = (id: number, d: FaturaCadastroIn): Promise<FaturaDetalhe> => _fj(`/${id}`, _fbody("PUT", d), "Erro ao salvar a fatura");
