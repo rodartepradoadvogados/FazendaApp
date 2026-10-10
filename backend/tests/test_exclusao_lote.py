@@ -1,6 +1,7 @@
 """Lote (B10): impacto e confirmar aceitam {itens:[...]} (até 50)."""
 import tempfile
 
+import pytest
 from sqlmodel import Session, SQLModel, create_engine
 from fastapi.testclient import TestClient
 
@@ -8,16 +9,19 @@ from fazenda.models import ContaGerencial, ContratoFazenda, ContratoFazendaModul
 from fazenda.models.planos import MODULOS_COMERCIAIS
 
 
-def _client():
+@pytest.fixture
+def client(monkeypatch):
     engine = create_engine(f"sqlite:///{tempfile.mktemp(suffix='.db')}", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(engine)
 
-    import fazenda.database as database
     import main
+
     from fazenda.auth import get_current_user, get_fazenda_atual_id
 
-    database.engine = engine
-    main.engine = engine
+    import fazenda.database as database
+
+    monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(main, "engine", engine)
 
     with Session(engine) as s:
         s.add(Fazenda(id=1, nome="Fazenda"))
@@ -40,11 +44,14 @@ def _client():
     main.app.dependency_overrides[get_current_user] = lambda: _User()
     main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 1
 
-    return TestClient(main.app), engine
+    with TestClient(main.app) as c:
+        yield c, engine
+
+    main.app.dependency_overrides.clear()
 
 
-def test_lote_impacto_e_confirmar():
-    c, engine = _client()
+def test_lote_impacto_e_confirmar(client):
+    c, engine = client
     with Session(engine) as s:
         s.add(ContaGerencial(id=1, numero_lancamento="LC-2026-A", fazenda_id=1, descricao="A", valor_total=10.0))
         s.add(ContaGerencial(id=2, numero_lancamento="LC-2026-B", fazenda_id=1, descricao="B", valor_total=20.0))
@@ -69,9 +76,10 @@ def test_lote_impacto_e_confirmar():
         assert s.get(ContaGerencial, 2) is None
 
 
-def test_lote_operador_forbidden():
-    c, engine = _client()
+def test_lote_operador_forbidden(client):
+    c, engine = client
     import main
+
     from fazenda.auth import get_current_user
 
     class _Operador:

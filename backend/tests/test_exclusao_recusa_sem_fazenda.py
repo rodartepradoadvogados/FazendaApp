@@ -361,6 +361,7 @@ class TestNumerosPagosNaoContamina:
         citando um lançamento de OUTRA fazenda, que o usuário não consegue
         nem abrir para estornar."""
         from fazenda.rules.exclusao_tipos.pessoal import _alvos_empreitada
+        from fazenda.rules.exclusao_impacto import ExclusaoBloqueada
 
         session.add(_conta(2, valor_pago=1000.0, data_pagamento=date(2026, 3, 11)))
         session.add(_conta(1))
@@ -379,7 +380,6 @@ class TestNumerosPagosNaoContamina:
         conta_a.data_pagamento = date(2026, 3, 12)
         session.add(conta_a)
         session.commit()
-        with pytest.raises(HTTPException) as erro:
+        with pytest.raises(ExclusaoBloqueada) as erro:
             _alvos_empreitada("1", session, fazenda_id=1)
-        assert erro.value.status_code == 400
-        assert "já foi(ram) paga(s)" in erro.value.detail
+        assert "já foi(ram) paga(s)" in erro.value.bloqueio.motivo

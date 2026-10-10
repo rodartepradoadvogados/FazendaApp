@@ -171,7 +171,7 @@ class TestRegistrarAplicacao:
 
         # Exclui só a aplicação do animal do MEIO do lote (não a última) pelo
         # fluxo central e auditado de exclusão — é ali que o bug se manifestava.
-        r = client.post("/exclusoes/confirmar", json={"tipo": "sanidade", "id": str(sanidade_ids[1])})
+        r = client.post("/exclusoes/confirmar", json={"tipo": "sanidade", "id": str(sanidade_ids[1]), "motivo": "teste"})
         assert r.status_code == 200
         assert r.json()["avisos"] == []  # achou e reverteu sem aviso de "não encontrado"
 

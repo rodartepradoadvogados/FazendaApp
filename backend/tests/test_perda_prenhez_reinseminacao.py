@@ -410,7 +410,7 @@ class TestExcluirServicoCausadorRevertePerdaPrenhez:
             assert anterior.perda_causada_por_servico_id == causador_id
             anterior_id = anterior.id
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "servico", "id": str(causador_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "servico", "id": str(causador_id), "motivo": "teste"})
         assert r.status_code == 200, r.text
 
         with Session(engine) as s:
@@ -443,7 +443,7 @@ class TestExcluirServicoCausadorRevertePerdaPrenhez:
 
         c.put(f"/reproducao/servicos/{anterior_id}", json={"motivo_perda_prenhez": "aborto"})
 
-        r = c.post("/exclusoes/confirmar", json={"tipo": "servico", "id": str(causador_id)})
+        r = c.post("/exclusoes/confirmar", json={"tipo": "servico", "id": str(causador_id), "motivo": "teste"})
         assert r.status_code == 200, r.text
 
         with Session(engine) as s:

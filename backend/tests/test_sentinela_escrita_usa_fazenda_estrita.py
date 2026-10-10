@@ -145,7 +145,6 @@ _DIVIDA_CONHECIDA: set[tuple[str, str]] = {
     ("estoque.py", "mesclar_itens_estoque"),
     ("estoque.py", "restaurar_padrao_cowdata"),
     ("exclusoes.py", "aprovar_pendente"),
-    ("exclusoes.py", "confirmar"),
     ("exclusoes.py", "impacto"),
     ("exclusoes.py", "rejeitar_pendente"),
     ("fazendas.py", "desvincular_usuario"),
