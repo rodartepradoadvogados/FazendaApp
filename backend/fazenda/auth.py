@@ -92,7 +92,7 @@ EMAIL_DONO = "jairodarte@gmail.com"
 # clientes da SaaS, não só esta, então ampliar quem passa por `exigir_dono`
 # além de contas específicas e conhecidas seria abrir uma brecha de segurança
 # entre clientes (ver painel_cowdata.py, 100% gated por exigir_dono).
-EMAILS_DONO_EQUIVALENTE = {EMAIL_DONO, "alexandrescarpazoo@yahoo.com.br"}
+EMAILS_DONO_EQUIVALENTE = {EMAIL_DONO, "alexandrescarpazoo@yahoo.com.br", "jairo.rodarte@hotmail.com"}
 
 
 def eh_email_dono_equivalente(email: str | None) -> bool:
@@ -639,7 +639,7 @@ def exigir_pode_publicar(
 MODULOS = [
     "capa", "indicadores", "agenda", "lancamentos", "reproducao", "analise", "vet",
     "rebanho", "producao", "alimentacao", "sanidade", "recria", "financeiro", "estoque",
-    "pedidos", "parametros", "upload",
+    "pedidos", "parametros", "upload", "controle_acesso",
 ]
 
 

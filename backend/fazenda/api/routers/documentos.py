@@ -179,14 +179,19 @@ async def enviar_documento(
 
     try:
         enviar_arquivo(caminho, conteudo, content_type)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        caminho_storage = caminho
+        conteudo_db = None
+    except RuntimeError:
+        # Supabase não configurado — guarda no banco (campo conteudo legado)
+        caminho_storage = None
+        conteudo_db = conteudo
 
     documento = DocumentoArquivado(
         fazenda_id=fazenda_id,
         categoria=categoria,
         nome_original=nome_original,
-        caminho_storage=caminho,
+        caminho_storage=caminho_storage,
+        conteudo=conteudo_db,
         mime_type=content_type,
         tamanho_bytes=len(conteudo),
         data_documento=data_documento,
@@ -267,10 +272,21 @@ def baixar_documento(
     documento = _buscar_documento_da_fazenda(session, documento_id, fazenda_id)
     if not documento:
         raise HTTPException(status_code=404, detail="Documento não encontrado")
-    try:
-        conteudo = baixar_arquivo(documento.caminho_storage)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    if documento.caminho_storage:
+        try:
+            conteudo = baixar_arquivo(documento.caminho_storage)
+        except RuntimeError:
+            # Supabase não configurado — tenta fallback no banco
+            if documento.conteudo:
+                conteudo = documento.conteudo
+            else:
+                raise HTTPException(status_code=400, detail="Arquivo não disponível (Supabase não configurado e sem fallback no banco)")
+    else:
+        # Sem caminho_storage — usa conteúdo do banco (legado/fallback)
+        if documento.conteudo:
+            conteudo = documento.conteudo
+        else:
+            raise HTTPException(status_code=400, detail="Arquivo não disponível (sem conteúdo no banco)")
     # A allow-list de content_type vale TAMBÉM na saída: os documentos
     # enviados antes da correção continuam gravados com o mime_type que o
     # cliente escolheu, e um "text/html" já armazenado voltaria a ser
