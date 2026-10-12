@@ -5668,10 +5668,14 @@ async def anexar_arquivo_lancamento(
         raise HTTPException(status_code=400, detail="Arquivo maior que 15 MB — não é possível anexar")
     nome_arquivo = file.filename or "arquivo"
     caminho = _caminho_anexo_lancamento(session, fazenda_id, numero_lancamento, nome_arquivo)
+    caminho_storage = None
+    conteudo_db = None
     try:
         enviar_arquivo(caminho, conteudo, file.content_type or "application/octet-stream", bucket=settings.supabase_bucket_financeiro)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        caminho_storage = caminho
+    except RuntimeError:
+        # Supabase não configurado — guarda no banco (campo conteudo legado)
+        conteudo_db = conteudo
     anexo = LancamentoAnexo(
         numero_lancamento=numero_lancamento,
         nome_arquivo=nome_arquivo,
@@ -5680,7 +5684,8 @@ async def anexar_arquivo_lancamento(
         categoria=categoria or conta.tipo_documento,
         numero_documento=numero_documento,
         data_documento=data_documento,
-        caminho_storage=caminho,
+        caminho_storage=caminho_storage,
+        conteudo=conteudo_db,
         usuario_id=user.id if isinstance(user, Usuario) else None,
         fazenda_id=fazenda_id,
     )
@@ -5798,10 +5803,14 @@ async def anexar_comprovante_em_lote(
         # cálculo de sequência (0001_, 0002_...) já enxergue os anexos deste
         # arquivo, mesmo sem ter commitado ainda.
         caminho = _caminho_anexo_lancamento(session, fazenda_id, contas[0].numero_lancamento, nome_arquivo)
+        caminho_storage = None
+        conteudo_db = None
         try:
             enviar_arquivo(caminho, conteudo, mime, bucket=settings.supabase_bucket_financeiro)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+            caminho_storage = caminho
+        except RuntimeError:
+            # Supabase não configurado — guarda no banco (campo conteudo legado)
+            conteudo_db = conteudo
 
         nomes_arquivos.append(nome_arquivo)
         for conta in contas:
@@ -5811,7 +5820,8 @@ async def anexar_comprovante_em_lote(
                 mime_type=mime,
                 tamanho_bytes=len(conteudo),
                 categoria=categoria or conta.tipo_documento,
-                caminho_storage=caminho,
+                caminho_storage=caminho_storage,
+                conteudo=conteudo_db,
                 usuario_id=user.id if isinstance(user, Usuario) else None,
                 fazenda_id=fazenda_id,
             )

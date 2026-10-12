@@ -28,7 +28,8 @@ class DocumentoArquivado(SQLModel, table=True):
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     categoria: str = Field(index=True)  # nome de um TipoDocumento cadastrado
     nome_original: str
-    caminho_storage: str
+    caminho_storage: Optional[str] = None
+    conteudo: Optional[bytes] = None  # fallback para quando Supabase não configurado
     mime_type: str
     tamanho_bytes: int
     data_documento: Optional[date] = None
