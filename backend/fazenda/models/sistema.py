@@ -279,13 +279,37 @@ class Usuario(SQLModel, table=True):
 class LoginAcesso(SQLModel, table=True):
     """Um login bem-sucedido — histórico completo (Usuario.ultimo_login guarda
     só o mais recente). Alimenta o relatório de últimos acessos, restrito ao
-    proprietário (ver fazenda.auth.exigir_dono)."""
+    proprietário (ver fazenda.auth.exigir_dono).
 
+    `tipo`: "senha" (login com usuário/senha), "heartbeat" (app aberto/ativo),
+    "push" (notificação recebida no celular)."""
     __tablename__ = "login_acesso"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    tipo: str = Field(default="senha", index=True)  # "senha" | "heartbeat" | "push"
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Para tipo "push": metadados da notificação (titulo, corpo, data_envio_fcm, etc.)
+    detalhes: Optional[str] = None
+
+
+class PushNotificacaoRecebida(SQLModel, table=True):
+    """Auditoria de notificação push recebida no dispositivo móvel.
+    Permite diagnosticar por que algum usuário não recebe notificações.
+    Registrado pelo app móvel (Capacitor/FCM) ao receber a mensagem."""
+    __tablename__ = "push_notificacao_recebida"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    push_token_id: Optional[int] = Field(default=None, foreign_key="push_token_fcm.id", index=True)
+    titulo: Optional[str] = None
+    corpo: Optional[str] = None
+    dados: Optional[str] = None  # JSON com payload completo do FCM
+    recebido_em: datetime = Field(default_factory=datetime.utcnow)
+    # App em foreground/background/closed quando recebeu
+    estado_app: Optional[str] = None  # "foreground" | "background" | "closed"
+    # Token FCM usado (útil se usuário tem múltiplos dispositivos)
+    token_fcm: Optional[str] = None
 
 
 class BackupAutomatico(SQLModel, table=True):

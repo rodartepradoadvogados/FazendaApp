@@ -25,7 +25,7 @@ from fazenda.auth import (
 from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 from fazenda.config import settings
 from fazenda.database import get_session, sessao_sem_recorte_de_fazenda
-from fazenda.models import ContratoFazendaModulo, Fazenda, LoginAcesso, Pessoa, Usuario, UsuarioFazenda
+from fazenda.models import ContratoFazendaModulo, Fazenda, LoginAcesso, Pessoa, Usuario, UsuarioFazenda, PushNotificacaoRecebida, PushTokenFcm
 from fazenda.rules.email import enviar_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -861,3 +861,125 @@ def salvar_preferencias(dados: PreferenciasIn, user: Usuario = Depends(get_curre
     session.commit()
     session.refresh(user)
     return _publico(user)
+
+
+# ─── Heartbeat / Atividade do App ────────────────────────────────────────
+# Registra que o usuário abriu/ativou o app (mesmo sem digitar senha).
+# Frontend chama ao abrir, visibilitychange=visible, focus.
+# Usa o mesmo token do usuário logado (Bearer).
+class HeartbeatIn(BaseModel):
+    # "foreground" | "background" | "opened" — estado do app ao registrar
+    estado_app: str = "foreground"
+
+
+@router.post("/heartbeat")
+def registrar_heartbeat(
+    dados: HeartbeatIn,
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Registra atividade do usuário no app (heartbeat).
+    
+    Cria um registro em LoginAcesso com tipo='heartbeat'.
+    Não exige nova autenticação — usa o token Bearer já válido.
+    Útil para saber quando o usuário REALMENTE abriu/usou o app,
+    mesmo com 'manter conectado' ativo (token de longa duração)."""
+    acesso = LoginAcesso(
+        usuario_id=user.id,
+        tipo="heartbeat",
+        detalhes=json.dumps({"estado_app": dados.estado_app}),
+    )
+    session.add(acesso)
+    session.commit()
+    return {"ok": True, "id": acesso.id, "criado_em": acesso.criado_em.isoformat() + "Z"}
+
+
+# ─── Auditoria de Push Notifications ─────────────────────────────────────
+# Registra recebimento de notificação push no dispositivo móvel.
+# App móvel (Capacitor/FCM) chama ao receber a mensagem.
+class PushRecebidoIn(BaseModel):
+    titulo: str | None = None
+    corpo: str | None = None
+    dados: str | None = None  # JSON string do payload FCM completo
+    estado_app: str  # "foreground" | "background" | "closed"
+    token_fcm: str | None = None
+
+
+@router.post("/push-recebido")
+def registrar_push_recebido(
+    dados: PushRecebidoIn,
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Registra que o dispositivo recebeu uma notificação push.
+    
+    Cria registro em PushNotificacaoRecebida para auditoria.
+    Permite diagnosticar por que usuários não recebem notificações.
+    App móvel chama ao receber mensagem FCM (onMessageReceived)."""
+    # Tenta achar o PushTokenFcm correspondente ao token_fcm
+    push_token_id = None
+    if dados.token_fcm:
+        from fazenda.models.sistema import PushTokenFcm
+        token_obj = session.exec(
+            select(PushTokenFcm).where(PushTokenFcm.token == dados.token_fcm)
+        ).first()
+        if token_obj:
+            push_token_id = token_obj.id
+    
+    recebida = PushNotificacaoRecebida(
+        usuario_id=user.id,
+        push_token_id=push_token_id,
+        titulo=dados.titulo,
+        corpo=dados.corpo,
+        dados=dados.dados,
+        estado_app=dados.estado_app,
+        token_fcm=dados.token_fcm,
+    )
+    session.add(recebida)
+    session.commit()
+    return {"ok": True, "id": recebida.id, "recebido_em": recebida.recebido_em.isoformat() + "Z"}
+
+
+@router.get("/push-auditoria")
+def listar_push_auditoria(
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    limite: int = 100,
+) -> list[dict]:
+    """Lista notificações push recebidas (auditoria).
+    
+    Admin/dono veem todas da fazenda; usuário comum vê só as suas.
+    Filtra por fazenda se multi-fazenda provisionado."""
+    # Permissão: admin/dono OU o próprio usuário
+    eh_admin_ou_dono = user.papel == "admin" or eh_email_dono_equivalente(user.email)
+    
+    if fazenda_id is None and multifazenda_provisionado(session):
+        raise HTTPException(status_code=400, detail="Nenhuma fazenda selecionada")
+    
+    query = select(PushNotificacaoRecebida)
+    if not eh_admin_ou_dono:
+        # Usuário comum só vê as suas
+        query = query.where(PushNotificacaoRecebida.usuario_id == user.id)
+    elif fazenda_id is not None:
+        # Admin/dono: filtra por fazenda (via usuario.fazenda_id)
+        query = query.join(Usuario, PushNotificacaoRecebida.usuario_id == Usuario.id)
+        query = query.join(Pessoa, Pessoa.id == Usuario.pessoa_id).where(Pessoa.fazenda_id == fazenda_id)
+    
+    query = query.order_by(PushNotificacaoRecebida.recebido_em.desc()).limit(limite)
+    resultados = session.exec(query).all()
+    
+    return [
+        {
+            "id": r.id,
+            "usuario_id": r.usuario_id,
+            "push_token_id": r.push_token_id,
+            "titulo": r.titulo,
+            "corpo": r.corpo,
+            "dados": r.dados,
+            "recebido_em": r.recebido_em.isoformat() + "Z" if r.recebido_em else None,
+            "estado_app": r.estado_app,
+            "token_fcm": r.token_fcm,
+        }
+        for r in resultados
+    ]

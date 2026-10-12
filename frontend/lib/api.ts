@@ -354,6 +354,58 @@ export async function fetchAuditoriaAcessos(): Promise<UsuarioAcesso[]> {
   return res.json();
 }
 
+// ─── Heartbeat / Atividade do App ────────────────────────────────────────
+// Registra que o usuário abriu/ativou o app (mesmo sem digitar senha).
+// Frontend chama ao abrir, visibilitychange=visible, focus.
+export async function registrarHeartbeat(estado_app: "foreground" | "background" | "opened" = "foreground"): Promise<{ ok: boolean; id: number; criado_em: string }> {
+  const res = await authFetch(`${API}/auth/heartbeat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ estado_app }),
+  });
+  if (!res.ok) throw new Error(`Heartbeat error: ${res.status}`);
+  return res.json();
+}
+
+// ─── Auditoria de Push Notifications ─────────────────────────────────────
+// Registra recebimento de notificação push no dispositivo móvel.
+// App móvel (Capacitor/FCM) chama ao receber a mensagem.
+export type PushRecebidoIn = {
+  titulo?: string;
+  corpo?: string;
+  dados?: string; // JSON string do payload FCM completo
+  estado_app: "foreground" | "background" | "closed";
+  token_fcm?: string;
+};
+
+export type PushNotificacaoRecebida = {
+  id: number;
+  usuario_id: number;
+  push_token_id: number | null;
+  titulo: string | null;
+  corpo: string | null;
+  dados: string | null;
+  recebido_em: string;
+  estado_app: string | null;
+  token_fcm: string | null;
+};
+
+export async function registrarPushRecebido(dados: PushRecebidoIn): Promise<{ ok: boolean; id: number; recebido_em: string }> {
+  const res = await authFetch(`${API}/auth/push-recebido`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) throw new Error(`Push recebido error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchPushAuditoria(limite: number = 100): Promise<PushNotificacaoRecebida[]> {
+  const res = await authFetch(`${API}/auth/push-auditoria?limite=${limite}`);
+  if (!res.ok) throw new Error(`Push auditoria error: ${res.status}`);
+  return res.json();
+}
+
 // ── Auditoria de atividade (lançamentos por usuário) — só o proprietário, ver ehDono() ──
 export type AuditoriaTipo = { chave: string; label: string };
 export type AuditoriaUsuario = { id: number; username: string; nome: string | null; ativo: boolean };

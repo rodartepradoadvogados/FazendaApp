@@ -96,7 +96,10 @@ function rotaDoApp(url: string): string {
  *
  *  `aoTocarNotificacao` recebe a rota (já traduzida pra dentro do /app,
  *  ver rotaDoApp) quando o usuário toca numa notificação com o app aberto
- *  em segundo plano — quem chama decide como navegar (ex.: router.push). */
+ *  em segundo plano — quem chama decide como navegar (ex.: router.push).
+ *
+ *  Auditoria: registra recebimento de push no backend (/auth/push-recebido)
+ *  para diagnosticar por que usuários não recebem notificações. */
 export async function registrarPushNativo(aoTocarNotificacao?: (rota: string) => void): Promise<() => void> {
   if (!(await ehApp())) return () => {};
   try {
@@ -128,17 +131,45 @@ export async function registrarPushNativo(aoTocarNotificacao?: (rota: string) =>
       console.warn("Falha ao registrar para push nativo:", e.error);
     });
     const hToque = await PushNotifications.addListener("pushNotificationActionPerformed", (acao) => {
-      const url = (acao.notification?.data?.url as string) || "/app";
-      aoTocarNotificacao?.(rotaDoApp(url));
-    });
+          const url = (acao.notification?.data?.url as string) || "/app";
+          aoTocarNotificacao?.(rotaDoApp(url));
+        });
+    
+        // Auditoria: registra recebimento de push (app em foreground/background)
+        const hRecebido = await PushNotifications.addListener("pushNotificationReceived", async (notificacao) => {
+          try {
+            const { registrarPushRecebido } = await import("@/lib/api");
+            await registrarPushRecebido({
+              titulo: notificacao.title,
+              corpo: notificacao.body,
+              dados: JSON.stringify(notificacao.data),
+              estado_app: document.visibilityState === "visible" ? "foreground" : "background",
+              token_fcm: undefined, // token obtido via listener 'registration'
+            });
+          } catch (e) {
+            console.warn("Falha ao auditar push recebido:", e);
+          }
+        });
+    
+        // Configura canal de notificação (Android 8+) — ícone customizado precisa estar em
+        // android/app/src/main/res/drawable/ic_notification_cowdata.png (ou .xml)
+        // Se não existir, o Android usa o ícone padrão do app.
+        try {
+          const { PushNotifications } = await import("@capacitor/push-notifications");
+          // createChannel não é método padrão do plugin Capacitor v5+.
+          // O canal é criado automaticamente na primeira notificação se não existir.
+          // Para customizar ícone/som/cor, defina no payload FCM do backend (push.py).
+        } catch (e) {
+          console.warn("Falha ao configurar canal de notificação:", e);
+        }
 
-    await PushNotifications.register();
-    return () => { hRegistro.remove(); hErro.remove(); hToque.remove(); };
-  } catch (e) {
-    console.warn("Push nativo indisponível neste aparelho:", e);
-    return () => {};
-  }
-}
+        await PushNotifications.register();
+        return () => { hRegistro.remove(); hErro.remove(); hToque.remove(); hRecebido.remove(); };
+      } catch (e) {
+        console.warn("Push nativo indisponível neste aparelho:", e);
+        return () => {};
+      }
+    }
 
 function baixarViaAncora(blob: Blob, nomeArquivo: string): void {
   const url = URL.createObjectURL(blob);
