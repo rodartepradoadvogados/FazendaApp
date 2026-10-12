@@ -1,16 +1,16 @@
 """add_conteudo_to_documento_arquivado
 
-Revision ID: c3d4e5f6a7b8
+Revision ID: f6a7b8c9d0e1
 Revises: 78dbbd8c8c0f
-Create Date: 2026-10-11 12:00:00.000000
+Create Date: 2026-10-12 00:00:00.000000
 
 """
 from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = 'c3d4e5f6a7b8'
-down_revision = '78dbbd8c8c0f'
+revision = 'f6a7b8c9d0e1'
+down_revision = 'g7h8i9j0k1l2'
 branch_labels = None
 depends_on = None
 

@@ -348,6 +348,11 @@ export async function fetchAcessos(): Promise<UsuarioAcesso[]> {
   if (!res.ok) throw new Error(`Acessos error: ${res.status}`);
   return res.json();
 }
+export async function fetchAuditoriaAcessos(): Promise<UsuarioAcesso[]> {
+  const res = await authFetch(`${API}/auth/usuarios/auditoria`);
+  if (!res.ok) throw new Error(`Auditoria acessos error: ${res.status}`);
+  return res.json();
+}
 
 // ── Auditoria de atividade (lançamentos por usuário) — só o proprietário, ver ehDono() ──
 export type AuditoriaTipo = { chave: string; label: string };
@@ -376,6 +381,8 @@ export async function criarUsuario(dados: {
   // em qualquer instalação com fazenda cadastrada; a equipe da própria CowData
   // tem tela própria (Painel CowData > Equipe), não passa por aqui.
   pessoa_id?: number; nome?: string;
+  // Usuários que este operador pode auditar (quando tem permissão controle_acesso)
+  usuarios_auditados?: number[];
 }) {
   const res = await fetch(`${API}/auth/usuarios`, {
     method: "POST", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },

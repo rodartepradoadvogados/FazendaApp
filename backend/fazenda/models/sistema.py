@@ -270,6 +270,10 @@ class Usuario(SQLModel, table=True):
     # em andamento; limpo assim que a senha é redefinida ou o token expira.
     reset_senha_token: Optional[str] = Field(default=None, index=True)
     reset_senha_expira: Optional[datetime] = None
+    # Usuários que este usuário pode auditar (ver últimos 3 acessos) —
+    # JSON array de IDs (ex.: "[1,5,12]"). Só vale se o usuário tiver
+    # a permissão "controle_acesso". Admin/dono ignoram (veem todos).
+    usuarios_auditados: Optional[str] = None
 
 
 class LoginAcesso(SQLModel, table=True):

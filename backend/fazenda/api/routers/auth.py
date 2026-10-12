@@ -6,6 +6,7 @@ Endpoints: POST /auth/login · GET /auth/me · GET/POST /auth/usuarios
 from __future__ import annotations
 
 import html
+import json
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,7 +20,7 @@ from fazenda.auth import (
     criar_token_desbloqueio, eh_consultor_cowdata,
     eh_email_dono_equivalente, eh_membro_equipe_cowdata, exigir_admin_ou_dono, exigir_dono, get_current_user,
     get_fazenda_atual_id, get_fazenda_id_escrita, get_suporte_do_token, hash_senha, multifazenda_provisionado,
-    token_manter_conectado, verificar_senha,
+    tem_modulo, token_manter_conectado, verificar_senha,
 )
 from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 from fazenda.config import settings
@@ -646,6 +647,72 @@ def listar_acessos(
             "ultimo_login": (u.ultimo_login.isoformat() + "Z") if u.ultimo_login else None,
             "ultimos_acessos": [a.criado_em.isoformat() + "Z" for a in ultimos],
         })
+    return resultado
+
+
+@router.get("/usuarios/auditoria")
+def listar_auditoria_acessos(
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    """Relatório de últimos acessos para usuários com permissão 'controle_acesso'.
+    
+    Retorna os últimos 3 acessos dos usuários que o usuário logado tem permissão
+    para auditar (definidos em usuarios_auditados). Admin/dono veem todos da fazenda.
+    
+    Escopado à fazenda ATUAL — mesmo padrão de /usuarios/acessos.
+    """
+    # Verifica permissão: admin/dono OU tem módulo controle_acesso
+    eh_admin_ou_dono = user.papel == "admin" or eh_email_dono_equivalente(user.email)
+    tem_permissao = tem_modulo(user, "controle_acesso")
+    
+    if not (eh_admin_ou_dono or tem_permissao):
+        raise HTTPException(status_code=403, detail="Sem permissão para ver relatório de acessos")
+    
+    # FURO CORRIGIDO: exige fazenda selecionada se multi-fazenda provisionado
+    if fazenda_id is None and multifazenda_provisionado(session):
+        raise HTTPException(status_code=400, detail="Nenhuma fazenda selecionada")
+    
+    # Busca usuários da fazenda atual
+    query = select(Usuario)
+    if fazenda_id is not None:
+        query = query.join(Pessoa, Pessoa.id == Usuario.pessoa_id).where(Pessoa.fazenda_id == fazenda_id)
+    usuarios_fazenda = session.exec(query).all()
+    usuarios_fazenda_ids = {u.id for u in usuarios_fazenda}
+    
+    # Determina quais usuários podem ser auditados
+    if eh_admin_ou_dono:
+        # Admin/dono vê todos da fazenda
+        ids_auditar = usuarios_fazenda_ids
+    else:
+        # Operador com controle_acesso: só os definidos em usuarios_auditados
+        try:
+            auditados = json.loads(user.usuarios_auditados or "[]")
+        except json.JSONDecodeError:
+            auditados = []
+        # Filtra só os que existem na fazenda atual
+        ids_auditar = {uid for uid in auditados if uid in usuarios_fazenda_ids}
+    
+    if not ids_auditar:
+        return []
+    
+    # Busca últimos acessos para cada usuário auditado
+    resultado = []
+    for u in usuarios_fazenda:
+        if u.id not in ids_auditar:
+            continue
+        ultimos = session.exec(
+            select(LoginAcesso).where(LoginAcesso.usuario_id == u.id).order_by(LoginAcesso.criado_em.desc()).limit(3)
+        ).all()
+        resultado.append({
+            "id": u.id, "username": u.username, "nome": u.nome, "papel": u.papel, "ativo": u.ativo,
+            "ultimo_login": (u.ultimo_login.isoformat() + "Z") if u.ultimo_login else None,
+            "ultimos_acessos": [a.criado_em.isoformat() + "Z" for a in ultimos],
+        })
+    
+    # Ordena: mais recente primeiro
+    resultado.sort(key=lambda x: (x["ultimo_login"] is None, x["ultimo_login"] or ""), reverse=True)
     return resultado
 
 

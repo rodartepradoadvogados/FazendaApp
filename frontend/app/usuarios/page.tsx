@@ -4,6 +4,7 @@ import { Users, AlertTriangle, UserPlus, Check, Pencil, X, Newspaper, UserSquare
 import Link from "next/link";
 import { fetchUsuarios, criarUsuario, atualizarUsuario, getUsuario, ehDono, ehAdmin, fetchPessoas } from "@/lib/api";
 import { RelatorioAcessos, AuditoriaAtividade } from "@/components/AuditoriaAcessoView";
+import { RelatorioAuditoriaAcessos } from "@/components/RelatorioAuditoriaAcessos";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { TelaSkeleton } from "@/components/ui";
 
@@ -14,7 +15,7 @@ const MODULOS = [
   { key: "rebanho", label: "Rebanho" }, { key: "producao", label: "Produção" }, { key: "alimentacao", label: "Alimentação" },
   { key: "sanidade", label: "Sanidade" }, { key: "recria", label: "Recria" }, { key: "financeiro", label: "Financeiro" }, { key: "estoque", label: "Sanidade/Estoque" },
   { key: "pedidos", label: "Pedidos" },
-  { key: "parametros", label: "Parâmetros" }, { key: "upload", label: "Upload" },
+  { key: "parametros", label: "Parâmetros" }, { key: "upload", label: "Upload" }, { key: "controle_acesso", label: "Controle de Acesso" },
 ];
 const TODOS = MODULOS.map((m) => m.key);
 
@@ -79,6 +80,8 @@ export default function UsuariosPage() {
   const [salvando, setSalvando] = useState(false);
   const [editando, setEditando] = useState<any | null>(null);
   const [mostrarInativos, setMostrarInativos] = useState(false);
+  // Usuários que este usuário pode auditar (quando tem permissão controle_acesso)
+  const [usuariosAuditados, setUsuariosAuditados] = useState<Set<number>>(new Set());
 
   const carregar = () => fetchUsuarios().then(setUsuarios).catch((e) => setError(e.message));
   const carregarPessoas = () => fetchPessoas().then(setPessoas).catch(() => {});
@@ -99,9 +102,10 @@ export default function UsuariosPage() {
       await criarUsuario({
         username: username.trim(), senha, pessoa_id: Number(pessoaId), email: email.trim() || undefined, papel,
         permissoes: papel === "admin" ? TODOS : Array.from(perms), pode_publicar_materias_blog: podePublicarBlog,
+        usuarios_auditados: papel === "operador" && perms.has("controle_acesso") ? Array.from(usuariosAuditados) : undefined,
       });
       setMsg(`Usuário "${username}" criado.`);
-      setUsername(""); setPessoaId(""); setEmail(""); setSenha(""); setPapel("operador"); setPerms(new Set(["capa"])); setPodePublicarBlog(false);
+      setUsername(""); setPessoaId(""); setEmail(""); setSenha(""); setPapel("operador"); setPerms(new Set(["capa"])); setUsuariosAuditados(new Set()); setPodePublicarBlog(false);
       carregar(); carregarPessoas();
     } catch (e: any) { setError(e.message); }
     finally { setSalvando(false); }
@@ -189,6 +193,34 @@ export default function UsuariosPage() {
               </div>
             )}
 
+            {/* Seleção de usuários auditados — só aparece se tem permissão controle_acesso */}
+            {perms.has("controle_acesso") && (
+              <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.7rem", marginTop: "0.5rem" }}>
+                <label style={{ ...lbl, marginBottom: "0.4rem", fontWeight: 700 }}>Usuários que pode auditar (ver últimos 3 acessos)</label>
+                <p style={{ fontSize: "0.66rem", color: "var(--text-muted)", marginBottom: "0.4rem" }}>
+                  Marque quais usuários este operador poderá ver nos relatórios de acesso (últimos 3 logins).
+                  <br />Só aparece para operadores com a permissão "Controle de Acesso". Admin/dono sempre veem todos.
+                </p>
+                <div className="grid grid-cols-2 gap-1" style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem", maxHeight: "12rem", overflowY: "auto" }}>
+                  {usuarios?.filter((u) => u.ativo && u.id !== getUsuario()?.id).map((u) => (
+                    <label key={u.id} className="flex items-center gap-2" style={{ fontSize: "0.8rem" }}>
+                      <input type="checkbox" checked={usuariosAuditados.has(u.id)} onChange={() => {
+                        const next = new Set(usuariosAuditados);
+                        next.has(u.id) ? next.delete(u.id) : next.add(u.id);
+                        setUsuariosAuditados(next);
+                      }} />
+                      {u.username} {u.nome && `(${u.nome})`}
+                    </label>
+                  ))}
+                </div>
+                {usuariosAuditados.size === 0 && usuarios && usuarios.length > 1 && (
+                  <p style={{ fontSize: "0.66rem", color: "var(--amber)", marginTop: "0.3rem" }}>
+                    ⚠ Nenhum usuário selecionado para auditoria — o relatório ficará vazio.
+                  </p>
+                )}
+              </div>
+            )}
+
             <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.7rem" }}>
               <label className="flex items-center gap-2" style={{ fontSize: "0.82rem" }}>
                 <input type="checkbox" checked={podePublicarBlog} onChange={(e) => setPodePublicarBlog(e.target.checked)} />
@@ -252,6 +284,12 @@ export default function UsuariosPage() {
       {(ehDono() || ehAdmin()) && <div className="mt-4"><RelatorioAcessos defaultAberta={false} /></div>}
       {(ehDono() || ehAdmin()) && <div className="mt-4"><AuditoriaAtividade defaultAberta={false} /></div>}
 
+      {/* Relatório de auditoria de acessos para usuários com permissão "controle_acesso"
+          (mas não admin/dono, que já veem o relatório completo acima) */}
+      {getUsuario()?.permissoes?.includes("controle_acesso") && !(ehDono() || ehAdmin()) && (
+        <div className="mt-4"><RelatorioAuditoriaAcessos defaultAberta={false} /></div>
+      )}
+
       {editando && (
         <EditarUsuarioModal
           usuario={editando}
@@ -279,6 +317,10 @@ function EditarUsuarioModal({ usuario, souEu, pessoas, usuarios, onClose, onSalv
   const [novaSenha, setNovaSenha] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  // Usuários que este usuário pode auditar (quando tem permissão controle_acesso)
+  const [usuariosAuditados, setUsuariosAuditados] = useState<Set<number>>(new Set(
+    Array.isArray(usuario.usuarios_auditados) ? usuario.usuarios_auditados : []
+  ));
 
   const toggle = (k: string) => setPerms((p) => { const s = new Set(p); s.has(k) ? s.delete(k) : s.add(k); return s; });
 
@@ -289,6 +331,7 @@ function EditarUsuarioModal({ usuario, souEu, pessoas, usuarios, onClose, onSalv
         username: username.trim(), pessoa_id: pessoaId ? Number(pessoaId) : undefined, email: email.trim() || undefined, papel,
         permissoes: papel === "admin" ? TODOS : Array.from(perms),
         ativo, pode_publicar_materias_blog: podePublicarBlog, ...(novaSenha ? { senha: novaSenha } : {}),
+        usuarios_auditados: papel === "operador" && perms.has("controle_acesso") ? Array.from(usuariosAuditados) : undefined,
       });
       onSalvo();
     } catch (e: any) { setErro(e.message); }
@@ -344,6 +387,34 @@ function EditarUsuarioModal({ usuario, souEu, pessoas, usuarios, onClose, onSalv
                   </label>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Seleção de usuários auditados — só aparece se tem permissão controle_acesso */}
+          {papel === "operador" && perms.has("controle_acesso") && (
+            <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.7rem", marginTop: "0.5rem" }}>
+              <label style={{ ...lbl, marginBottom: "0.4rem", fontWeight: 700 }}>Usuários que pode auditar (ver últimos 3 acessos)</label>
+              <p style={{ fontSize: "0.66rem", color: "var(--text-muted)", marginBottom: "0.4rem" }}>
+                Marque quais usuários este operador poderá ver nos relatórios de acesso (últimos 3 logins).
+                <br />Só aparece para operadores com a permissão "Controle de Acesso". Admin/dono sempre veem todos.
+              </p>
+              <div className="grid grid-cols-2 gap-1" style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.5rem", maxHeight: "12rem", overflowY: "auto" }}>
+                {usuarios?.filter((u) => u.ativo && u.id !== usuario.id).map((u) => (
+                  <label key={u.id} className="flex items-center gap-2" style={{ fontSize: "0.8rem" }}>
+                    <input type="checkbox" checked={usuariosAuditados.has(u.id)} onChange={() => {
+                      const next = new Set(usuariosAuditados);
+                      next.has(u.id) ? next.delete(u.id) : next.add(u.id);
+                      setUsuariosAuditados(next);
+                    }} />
+                    {u.username} {u.nome && `(${u.nome})`}
+                  </label>
+                ))}
+              </div>
+              {usuariosAuditados.size === 0 && usuarios && usuarios.length > 1 && (
+                <p style={{ fontSize: "0.66rem", color: "var(--amber)", marginTop: "0.3rem" }}>
+                  ⚠ Nenhum usuário selecionado para auditoria — o relatório ficará vazio.
+                </p>
+              )}
             </div>
           )}
 

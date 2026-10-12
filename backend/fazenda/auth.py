@@ -639,7 +639,7 @@ def exigir_pode_publicar(
 MODULOS = [
     "capa", "indicadores", "agenda", "lancamentos", "reproducao", "analise", "vet",
     "rebanho", "producao", "alimentacao", "sanidade", "recria", "financeiro", "estoque",
-    "pedidos", "parametros", "upload",
+    "pedidos", "parametros", "upload", "controle_acesso",
 ]
 
 
