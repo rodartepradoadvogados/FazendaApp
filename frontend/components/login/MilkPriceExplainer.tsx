@@ -51,6 +51,15 @@ import { formatBRL } from "@/lib/api";
 // corroborando. Nenhuma norma posterior revogando a IN 76 foi encontrada. A
 // página da Embrapa Ageitec sobre CCS ainda cita a IN 51/2002 (limite de
 // 1.000.000), norma antiga já superada — não serve como segunda fonte.
+// Checagem de 12/10/2026: MAPA IN 76/2018 (espelho SISLEGIS, PDF baixado e lido
+// por inteiro com pdftotext: Art. 5º gordura mín. 3,0 g/100g e proteína mín.
+// 2,9 g/100g; Art. 7º CPP/CBT 300.000 UFC/mL e CCS 500.000 CS/mL, médias
+// geométricas trimestrais; Art. 8º CPP máx. 900.000 UFC/mL) e MilkPoint
+// (resumão das INs 76 e 77, lido por inteiro: CCS 500 mil, CBT 300 mil,
+// gordura 3%, proteína 2,9%) seguem se corroborando. Nenhuma norma posterior
+// revogando ou alterando esses limites foi encontrada; a IN 55/2020 continua
+// alterando só pontos de temperatura. Leitura comum bastou; o Firecrawl não
+// foi usado.
 const FONTES_BONIFICACAO = [
   {
     nome: "MAPA — Instrução Normativa nº 76/2018 (SISLEGIS)",
@@ -61,7 +70,7 @@ const FONTES_BONIFICACAO = [
     url: "https://www.milkpoint.com.br/colunas/rafael-fagnani/resumao-das-ins-76-e-77-elas-estao-chegando-212785/",
   },
 ] as const;
-const FONTES_ATUALIZADO_EM = "05/10/2026";
+const FONTES_ATUALIZADO_EM = "12/10/2026";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Simulador ILUSTRATIVO de preço do leite — para a página pública de login.
