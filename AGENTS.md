@@ -51,6 +51,20 @@ Projetos-Obsidian/
 
 1. Grave nota datada no caminho da tabela acima; se surgiu regra generalizável, registre-a junto.
 2. Para falar com o Hermes: `02_RodartePrado/90_Comunicacao/claude_para_hermes/AAAA-MM-DD_HHMM_assunto.md`.
-3. **Sessão na nuvem não alcança o cofre** (ele fica no computador do Jairo e na VPS). Nesse caso, entregue o texto da nota ao Jairo na resposta final para ele gravar; não declare a nota como gravada.
+3. **Sessão na nuvem e o cofre.** O cofre fica no Drive. Se a sessão tiver o conector do Google Drive, ele alcança o cofre,
+   mas **só cria arquivo novo** (não edita o existente): grave a nota nova em `Sessoes/` e peça correções de arquivo
+   alheio pela "ponte de correção" do `00_AGENTES.md` (antes/depois). Sem o conector, entregue o texto da nota ao Jairo
+   na resposta final para ele gravar. Em ambos os casos, só diga "gravada" se o conector confirmou o arquivo criado.
+
+## Disciplina de verificação (vale para todo agente que mexe neste repositório)
+
+- **Relato de entrega é hipótese.** Antes de dizer "mesclado", "em produção" ou "aplicado": cite o **SHA**, confira
+  `git diff --stat` do PR e o deploy `SUCCESS` do Railway (backend) / Vercel (front). Título de PR não prova conteúdo.
+- **Cada PR mesclado gera nota datada** em `04_CowData/Milk/Sessoes/` (o que mudou, o que ficou de fora, armadilhas).
+  Mudou arquitetura, rota, tabela ou fluxo? Atualize também `README.md` / `CONTEXTO_PROJETO_FAZENDA.md` no mesmo PR.
+- **Campo novo = teste de ida-e-volta** (front envia → back grava → back devolve). O Pydantic descarta campo
+  desconhecido sem erro.
+- **Algo que se repete vira skill** em `.claude/skills/`. Diagnóstico de "não aparece na tela": skill `cowdata-diagnostico`.
+- **Sem acesso a algo (banco, deploy, cofre)? Diga.** Escreva a consulta/o passo e marque "não verificado nesta sessão".
 
 Mapa completo e territórios de todos os agentes: `00_AGENTES.md` na raiz do cofre.
