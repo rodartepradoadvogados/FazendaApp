@@ -7,7 +7,7 @@ autor: Claude Code (execução autônoma agendada)
 ---
 # Plano Financeiro — fazenda só com Controle Financeiro + Cotações + Pedidos + Agenda
 
-## O que mudou (branch `claude/farm-app-access-bikeej`, PR aberto para `main`)
+## O que mudou (branch `claude/farm-app-access-bikeej`, PR #906 aberto para `main`)
 - Contrato: Rebanho deixou de ser obrigatório; todo contrato exige um módulo base (rebanho ou financeiro) e respeita dependências
   (estoque ⇒ rebanho+financeiro; pedidos/planejamento ⇒ financeiro; reprodutivo/produtivo/sanitário/alimentação ⇒ rebanho). Contratos antigos não são revalidados.
 - Plano "Financeiro" (financeiro + pedidos) no catálogo a R$ 200/mês; preço editável no Painel CowData (tabela `preco_plano`); preço do contrato fecha na aprovação
