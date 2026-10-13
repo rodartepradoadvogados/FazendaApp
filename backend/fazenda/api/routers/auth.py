@@ -71,6 +71,9 @@ class NovoUsuario(BaseModel):
     permissoes: list[str] = []
     email: str | None = None
     pode_publicar_materias_blog: bool = False
+    # Usuários que este operador pode auditar (quando tem permissão controle_acesso)
+    # Lista de IDs de usuários da mesma fazenda. Operador NÃO pode auditar a si mesmo.
+    usuarios_auditados: list[int] = []
 
 
 class EditarUsuario(BaseModel):
@@ -82,6 +85,7 @@ class EditarUsuario(BaseModel):
     senha: str | None = None
     email: str | None = None
     pode_publicar_materias_blog: bool | None = None
+    usuarios_auditados: list[int] | None = None
 
 
 class PreferenciasIn(BaseModel):
@@ -748,9 +752,22 @@ def criar_usuario(
     pessoa_id, nome = _validar_pessoa_ou_nome(session, dados.pessoa_id, dados.nome)
     fazenda_do_vinculo = _fazenda_do_novo_usuario(session, pessoa_id, fazenda_id_escrita)
     perms = "" if dados.papel == "admin" else ",".join(m for m in dados.permissoes if m in MODULOS)
+    # Valida usuarios_auditados: só para operador com controle_acesso, IDs da mesma fazenda, não pode ser ele mesmo
+    auditados = []
+    if dados.papel == "operador" and dados.permissoes and "controle_acesso" in dados.permissoes:
+        # Busca usuários da fazenda para validar
+        query_fazenda = select(Usuario)
+        if fazenda_do_vinculo is not None:
+            query_fazenda = query_fazenda.join(Pessoa, Pessoa.id == Usuario.pessoa_id).where(Pessoa.fazenda_id == fazenda_do_vinculo)
+        usuarios_fazenda = session.exec(query_fazenda).all()
+        ids_fazenda = {u.id for u in usuarios_fazenda}
+        for uid in dados.usuarios_auditados or []:
+            if uid in ids_fazenda:
+                auditados.append(uid)
     novo = Usuario(username=dados.username, nome=nome, pessoa_id=pessoa_id, senha_hash=hash_senha(dados.senha),
                    papel=dados.papel, permissoes=perms, email=(dados.email or "").strip() or None,
-                   pode_publicar_materias_blog=dados.pode_publicar_materias_blog)
+                   pode_publicar_materias_blog=dados.pode_publicar_materias_blog,
+                   usuarios_auditados=json.dumps(auditados) if auditados else None)
     session.add(novo)
     session.flush()  # resolve novo.id sem encerrar a transação — o vínculo vai no mesmo commit
     if fazenda_do_vinculo is not None:
@@ -809,6 +826,20 @@ def editar_usuario(
         u.email = dados.email.strip() or None
     if dados.pode_publicar_materias_blog is not None:
         u.pode_publicar_materias_blog = dados.pode_publicar_materias_blog
+    # Atualiza usuarios_auditados (só para operador com controle_acesso)
+    if dados.usuarios_auditados is not None:
+        if u.papel == "operador" and u.permissoes and "controle_acesso" in (u.permissoes or "").split(","):
+            # Busca usuários da mesma fazenda para validar
+            query_fazenda = select(Usuario).join(Pessoa, Pessoa.id == Usuario.pessoa_id).where(Pessoa.fazenda_id == fazenda_do_vinculo)
+            usuarios_fazenda = session.exec(query_fazenda).all()
+            ids_fazenda = {u2.id for u2 in usuarios_fazenda}
+            auditados = []
+            for uid in dados.usuarios_auditados:
+                if uid in ids_fazenda:
+                    auditados.append(uid)
+            u.usuarios_auditados = json.dumps(auditados) if auditados else None
+        else:
+            u.usuarios_auditados = None
     session.add(u)
     session.commit()
     session.refresh(u)
