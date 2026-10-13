@@ -11,7 +11,7 @@ import {
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
-import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
+import { type EstoqueItemPicker } from "@/components/EstoquePicker";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
 import { ProdutoPedidoCampo } from "@/components/ProdutoPedidoCampo";
 import { moduloContratado } from "@/lib/modulos";
