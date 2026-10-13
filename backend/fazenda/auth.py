@@ -827,7 +827,8 @@ def exigir_contrato_ativo():
     """Dependência: só exige que a fazenda tenha um contrato ATIVO (qualquer
     módulo) — para áreas transversais que não pertencem a um módulo comercial
     específico (Agenda, Indicadores, Parâmetros, Upload/Importar). Como
-    Rebanho está em todo plano, contrato ativo já garante pelo menos isso."""
+    um contrato ativo sempre tem ao menos um módulo base (rebanho ou financeiro — ver
+    fazenda/models/planos.py::MODULOS_BASE), o que já garante pelo menos isso."""
     def _dep(fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session)) -> None:
         if fazenda_id is None:
             return
