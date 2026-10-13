@@ -396,7 +396,7 @@ class TestEnviarPushMultiCanal:
         chamadas_fcm = []
         monkeypatch.setattr(push_module, "webpush", lambda **kwargs: chamadas_webpush.append(kwargs))
         monkeypatch.setattr(push_module.fcm, "habilitado", lambda: True)
-        monkeypatch.setattr(push_module.fcm, "enviar", lambda *a, **k: chamadas_fcm.append((a, k)))
+        monkeypatch.setattr(push_module.fcm, "enviar", lambda **k: chamadas_fcm.append(k))
 
         with Session(engine) as session:
             session.add(PushSubscription(usuario_id=1, endpoint="https://push.exemplo/1", p256dh="p1", auth="a1"))
@@ -406,13 +406,16 @@ class TestEnviarPushMultiCanal:
 
         assert len(chamadas_webpush) == 1
         assert len(chamadas_fcm) == 1
-        assert chamadas_fcm[0][0] == ("tok-nativo", "Título", "Corpo", "/agenda")
-        assert chamadas_fcm[0][1] == {"count": 3}
+        assert chamadas_fcm[0]["token"] == "tok-nativo"
+        assert chamadas_fcm[0]["titulo"] == "Título"
+        assert chamadas_fcm[0]["corpo"] == "Corpo"
+        assert chamadas_fcm[0]["url"] == "/agenda"
+        assert chamadas_fcm[0]["count"] == 3
 
     def test_fcm_desabilitado_nao_chama_enviar(self, engine, monkeypatch):
         chamadas_fcm = []
         monkeypatch.setattr(push_module.fcm, "habilitado", lambda: False)
-        monkeypatch.setattr(push_module.fcm, "enviar", lambda *a, **k: chamadas_fcm.append((a, k)))
+        monkeypatch.setattr(push_module.fcm, "enviar", lambda **k: chamadas_fcm.append(k))
 
         with Session(engine) as session:
             session.add(PushTokenFcm(usuario_id=1, token="tok-nativo"))
@@ -424,7 +427,7 @@ class TestEnviarPushMultiCanal:
     def test_token_fcm_invalido_e_removido_sem_propagar_erro(self, engine, monkeypatch):
         monkeypatch.setattr(push_module.fcm, "habilitado", lambda: True)
 
-        def _falha(*a, **k):
+        def _falha(**k):
             raise push_module.fcm.FcmTokenInvalido("morto")
         monkeypatch.setattr(push_module.fcm, "enviar", _falha)
 
@@ -438,7 +441,7 @@ class TestEnviarPushMultiCanal:
 
     def test_erro_inesperado_do_fcm_nao_propaga_e_nao_remove_token(self, engine, monkeypatch):
         monkeypatch.setattr(push_module.fcm, "habilitado", lambda: True)
-        monkeypatch.setattr(push_module.fcm, "enviar", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("rede caiu")))
+        monkeypatch.setattr(push_module.fcm, "enviar", lambda **k: (_ for _ in ()).throw(RuntimeError("rede caiu")))
 
         with Session(engine) as session:
             session.add(PushTokenFcm(usuario_id=1, token="tok-1"))

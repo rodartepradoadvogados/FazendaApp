@@ -7,6 +7,8 @@ import {
 } from "@/lib/api";
 import { contextoAtual, contratoBloqueia, rotaInicial, temCapaUtil, visivel, ROTA_MODULOS, ROTA_CONTRATO_INATIVO } from "@/lib/modulos";
 import { iniciarMonitorInatividade, marcarPresenca, msDesdeUltimaPresenca, LIMITE_INATIVIDADE_MS } from "@/lib/idle";
+import { registrarHeartbeat } from "@/lib/api";
+import { atualizarPushForeground } from "@/lib/nativo";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
@@ -308,8 +310,32 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     // ir para segundo plano, para que o cálculo do tempo fora seja o tempo
     // fora de verdade, e não o tempo desde a última vez que o monitor rodou.
     marcarPresenca();
-    const carimbar = () => { if (typeof document === "undefined" || document.visibilityState === "visible") marcarPresenca(); };
-    const carimbarAoSair = () => { if (typeof document !== "undefined" && document.visibilityState === "hidden") marcarPresenca(); };
+    // Heartbeat: registra que o usuário abriu/ativou o app
+    if (getToken()) {
+      registrarHeartbeat("opened").catch(() => {}); // falha silenciosa
+    }
+    const carimbar = () => {
+      if (typeof document === "undefined" || document.visibilityState === "visible") {
+        marcarPresenca();
+        if (getToken()) {
+          registrarHeartbeat("foreground").catch(() => {}); // falha silenciosa
+        }
+        atualizarPushForeground(true).catch(() => {}); // falha silenciosa
+      }
+    };
+    const carimbarAoSair = () => { 
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        marcarPresenca();
+        atualizarPushForeground(false).catch(() => {}); // falha silenciosa
+      }
+    };
+    const carimbarAoFocar = () => {
+      if (getToken()) {
+        registrarHeartbeat("foreground").catch(() => {});
+        atualizarPushForeground(true).catch(() => {}); // falha silenciosa
+      }
+    };
+    window.addEventListener("focus", carimbarAoFocar);
     const intervalo = window.setInterval(carimbar, 60 * 1000);
     document.addEventListener("visibilitychange", carimbarAoSair);
 
@@ -322,6 +348,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
       cancelado = true;
       window.clearInterval(intervalo);
       document.removeEventListener("visibilitychange", carimbarAoSair);
+      window.removeEventListener("focus", carimbarAoFocar);
       limpezaPromise.then((limpar) => limpar()).catch(() => {});
     };
   }, [hidratado, dentroDoApp, router]);

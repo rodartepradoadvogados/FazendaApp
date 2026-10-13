@@ -1,7 +1,7 @@
 """preco_plano + contrato_fazenda.preco_mensal_fechado
 
 Revision ID: b8c9d0e1f2a3
-Revises: f6a7b8c9d0e1
+Revises: j1k2l3m4n5o6
 Create Date: 2026-10-13 00:00:00.000000
 
 Preço do plano como FATO do contrato (Plano Financeiro, fase 1.3):
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = 'b8c9d0e1f2a3'
-down_revision = 'f6a7b8c9d0e1'
+down_revision = 'j1k2l3m4n5o6'
 branch_labels = None
 depends_on = None
 

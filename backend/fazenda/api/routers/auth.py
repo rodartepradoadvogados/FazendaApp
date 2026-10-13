@@ -25,7 +25,10 @@ from fazenda.auth import (
 from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 from fazenda.config import settings
 from fazenda.database import get_session, sessao_sem_recorte_de_fazenda
-from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Fazenda, LoginAcesso, Pessoa, Usuario, UsuarioFazenda
+from fazenda.models import (
+    AtividadeApp, ContratoFazenda, ContratoFazendaModulo, Fazenda, LoginAcesso, Pessoa, PushNotificacaoRecebida,
+    PushTokenFcm, Usuario, UsuarioFazenda,
+)
 from fazenda.rules.email import enviar_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -71,6 +74,9 @@ class NovoUsuario(BaseModel):
     permissoes: list[str] = []
     email: str | None = None
     pode_publicar_materias_blog: bool = False
+    # Usuários que este operador pode auditar (quando tem permissão controle_acesso)
+    # Lista de IDs de usuários da mesma fazenda. Operador NÃO pode auditar a si mesmo.
+    usuarios_auditados: list[int] = []
 
 
 class EditarUsuario(BaseModel):
@@ -82,6 +88,7 @@ class EditarUsuario(BaseModel):
     senha: str | None = None
     email: str | None = None
     pode_publicar_materias_blog: bool | None = None
+    usuarios_auditados: list[int] | None = None
 
 
 class PreferenciasIn(BaseModel):
@@ -758,9 +765,22 @@ def criar_usuario(
     pessoa_id, nome = _validar_pessoa_ou_nome(session, dados.pessoa_id, dados.nome)
     fazenda_do_vinculo = _fazenda_do_novo_usuario(session, pessoa_id, fazenda_id_escrita)
     perms = "" if dados.papel == "admin" else ",".join(m for m in dados.permissoes if m in MODULOS)
+    # Valida usuarios_auditados: só para operador com controle_acesso, IDs da mesma fazenda, não pode ser ele mesmo
+    auditados = []
+    if dados.papel == "operador" and dados.permissoes and "controle_acesso" in dados.permissoes:
+        # Busca usuários da fazenda para validar
+        query_fazenda = select(Usuario)
+        if fazenda_do_vinculo is not None:
+            query_fazenda = query_fazenda.join(Pessoa, Pessoa.id == Usuario.pessoa_id).where(Pessoa.fazenda_id == fazenda_do_vinculo)
+        usuarios_fazenda = session.exec(query_fazenda).all()
+        ids_fazenda = {u.id for u in usuarios_fazenda}
+        for uid in dados.usuarios_auditados or []:
+            if uid in ids_fazenda:
+                auditados.append(uid)
     novo = Usuario(username=dados.username, nome=nome, pessoa_id=pessoa_id, senha_hash=hash_senha(dados.senha),
                    papel=dados.papel, permissoes=perms, email=(dados.email or "").strip() or None,
-                   pode_publicar_materias_blog=dados.pode_publicar_materias_blog)
+                   pode_publicar_materias_blog=dados.pode_publicar_materias_blog,
+                   usuarios_auditados=json.dumps(auditados) if auditados else None)
     session.add(novo)
     session.flush()  # resolve novo.id sem encerrar a transação — o vínculo vai no mesmo commit
     if fazenda_do_vinculo is not None:
@@ -819,6 +839,20 @@ def editar_usuario(
         u.email = dados.email.strip() or None
     if dados.pode_publicar_materias_blog is not None:
         u.pode_publicar_materias_blog = dados.pode_publicar_materias_blog
+    # Atualiza usuarios_auditados (só para operador com controle_acesso)
+    if dados.usuarios_auditados is not None:
+        if u.papel == "operador" and u.permissoes and "controle_acesso" in (u.permissoes or "").split(","):
+            # Busca usuários da mesma fazenda para validar
+            query_fazenda = select(Usuario).join(Pessoa, Pessoa.id == Usuario.pessoa_id).where(Pessoa.fazenda_id == fazenda_do_vinculo)
+            usuarios_fazenda = session.exec(query_fazenda).all()
+            ids_fazenda = {u2.id for u2 in usuarios_fazenda}
+            auditados = []
+            for uid in dados.usuarios_auditados:
+                if uid in ids_fazenda:
+                    auditados.append(uid)
+            u.usuarios_auditados = json.dumps(auditados) if auditados else None
+        else:
+            u.usuarios_auditados = None
     session.add(u)
     session.commit()
     session.refresh(u)
@@ -871,3 +905,215 @@ def salvar_preferencias(dados: PreferenciasIn, user: Usuario = Depends(get_curre
     session.commit()
     session.refresh(user)
     return _publico(user)
+
+
+# ─── Heartbeat / Atividade do App ────────────────────────────────────────
+# Registra que o usuário abriu/ativou o app (mesmo sem digitar senha).
+# Frontend chama ao abrir, visibilitychange=visible, focus.
+# Usa o mesmo token do usuário logado (Bearer).
+class HeartbeatIn(BaseModel):
+    # "foreground" | "background" | "opened" — estado do app ao registrar
+    estado_app: str = "foreground"
+
+
+@router.post("/heartbeat")
+def registrar_heartbeat(
+    dados: HeartbeatIn,
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Registra atividade do usuário no app (heartbeat).
+    
+    Cria um registro em LoginAcesso com tipo='heartbeat'.
+    Não exige nova autenticação — usa o token Bearer já válido.
+    Útil para saber quando o usuário REALMENTE abriu/usou o app,
+    mesmo com 'manter conectado' ativo (token de longa duração)."""
+    acesso = LoginAcesso(
+        usuario_id=user.id,
+        tipo="heartbeat",
+        detalhes=json.dumps({"estado_app": dados.estado_app}),
+    )
+    session.add(acesso)
+    session.commit()
+    return {"ok": True, "id": acesso.id, "criado_em": acesso.criado_em.isoformat() + "Z"}
+
+
+# ─── Auditoria de Push Notifications ─────────────────────────────────────
+# Registra recebimento de notificação push no dispositivo móvel.
+# App móvel (Capacitor/FCM) chama ao receber a mensagem.
+class PushRecebidoIn(BaseModel):
+    titulo: str | None = None
+    corpo: str | None = None
+    dados: str | None = None  # JSON string do payload FCM completo
+    estado_app: str  # "foreground" | "background" | "closed"
+    token_fcm: str | None = None
+
+
+@router.post("/push-recebido")
+def registrar_push_recebido(
+    dados: PushRecebidoIn,
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Registra que o dispositivo recebeu uma notificação push.
+    
+    Cria registro em PushNotificacaoRecebida para auditoria.
+    Permite diagnosticar por que usuários não recebem notificações.
+    App móvel chama ao receber mensagem FCM (onMessageReceived)."""
+    # Tenta achar o PushTokenFcm correspondente ao token_fcm
+    push_token_id = None
+    if dados.token_fcm:
+        from fazenda.models.sistema import PushTokenFcm
+        token_obj = session.exec(
+            select(PushTokenFcm).where(PushTokenFcm.token == dados.token_fcm)
+        ).first()
+        if token_obj:
+            push_token_id = token_obj.id
+    
+    recebida = PushNotificacaoRecebida(
+        usuario_id=user.id,
+        push_token_id=push_token_id,
+        titulo=dados.titulo,
+        corpo=dados.corpo,
+        dados=dados.dados,
+        estado_app=dados.estado_app,
+        token_fcm=dados.token_fcm,
+    )
+    session.add(recebida)
+    session.commit()
+    return {"ok": True, "id": recebida.id, "recebido_em": recebida.recebido_em.isoformat() + "Z"}
+
+
+@router.get("/push-auditoria")
+def listar_push_auditoria(
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    limite: int = 100,
+) -> list[dict]:
+    """Lista notificações push recebidas (auditoria).
+    
+    Admin/dono veem todas da fazenda; usuário comum vê só as suas.
+    Filtra por fazenda se multi-fazenda provisionado."""
+    # Permissão: admin/dono OU o próprio usuário
+    eh_admin_ou_dono = user.papel == "admin" or eh_email_dono_equivalente(user.email)
+    
+    if fazenda_id is None and multifazenda_provisionado(session):
+        raise HTTPException(status_code=400, detail="Nenhuma fazenda selecionada")
+    
+    query = select(PushNotificacaoRecebida)
+    if not eh_admin_ou_dono:
+        # Usuário comum só vê as suas
+        query = query.where(PushNotificacaoRecebida.usuario_id == user.id)
+    elif fazenda_id is not None:
+        # Admin/dono: filtra por fazenda (via usuario.fazenda_id)
+        query = query.join(Usuario, PushNotificacaoRecebida.usuario_id == Usuario.id)
+        query = query.join(Pessoa, Pessoa.id == Usuario.pessoa_id).where(Pessoa.fazenda_id == fazenda_id)
+    
+    query = query.order_by(PushNotificacaoRecebida.recebido_em.desc()).limit(limite)
+    resultados = session.exec(query).all()
+    
+    return [
+        {
+            "id": r.id,
+            "usuario_id": r.usuario_id,
+            "push_token_id": r.push_token_id,
+            "titulo": r.titulo,
+            "corpo": r.corpo,
+            "dados": r.dados,
+            "recebido_em": r.recebido_em.isoformat() + "Z" if r.recebido_em else None,
+            "estado_app": r.estado_app,
+            "token_fcm": r.token_fcm,
+        }
+        for r in resultados
+    ]
+
+
+# ─── Atividade do App (Heartbeat) ─────────────────────────────────────────
+# Registra abertura/ativação real do app pelo usuário.
+# Frontend chama: ao abrir (aberto), visibilitychange=visible/focus (primeiro_plano),
+# visibilitychange=hidden (segundo_plano), e intervalo ~5 min (batimento).
+class AtividadeIn(BaseModel):
+    canal: str  # "app" | "pwa" | "web"
+    evento: str  # "aberto" | "primeiro_plano" | "segundo_plano" | "batimento"
+    app_versao: str | None = None
+    device_id: str | None = None
+    ocorrido_em: str  # ISO 8601 do cliente
+
+
+@router.post("/atividade")
+def registrar_atividade(
+    dados: AtividadeIn,
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Registra atividade do usuário no app (heartbeat).
+    
+    Cria registro em AtividadeApp. Deduplica: mesmo usuário + canal + evento
+    em < 60s vira no-op (não grava duplicado). Atualiza usuario.ultimo_acesso.
+    
+    Eventos válidos:
+    - "aberto": app aberto do zero (cold start)
+    - "primeiro_plano": app veio para foreground (visibilitychange=visible, focus)
+    - "segundo_plano": app foi para background (visibilitychange=hidden)
+    - "batimento": heartbeat periódico (~5 min enquanto em foreground)
+    
+    Canais válidos: "app" (Capacitor nativo), "pwa" (standalone), "web" (navegador)."""
+    # Validação
+    eventos_validos = {"aberto", "primeiro_plano", "segundo_plano", "batimento"}
+    canais_validos = {"app", "pwa", "web"}
+    if dados.evento not in eventos_validos:
+        raise HTTPException(status_code=422, detail=f"Evento inválido. Válidos: {eventos_validos}")
+    if dados.canal not in canais_validos:
+        raise HTTPException(status_code=422, detail=f"Canal inválido. Válidos: {canais_validos}")
+    
+    # Parse timestamp do cliente
+    try:
+        ocorrido_em = datetime.fromisoformat(dados.ocorrido_em.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="ocorrido_em deve ser ISO 8601 (ex.: 2026-10-12T10:30:00.000Z)")
+    
+    # Dedupe: mesmo usuário + canal + evento em < 60s
+    from datetime import timedelta
+    limite_dedupe = datetime.utcnow() - timedelta(seconds=60)
+    existente = session.exec(
+        select(AtividadeApp).where(
+            AtividadeApp.usuario_id == user.id,
+            AtividadeApp.canal == dados.canal,
+            AtividadeApp.evento == dados.evento,
+            AtividadeApp.recebido_em >= limite_dedupe,
+        )
+    ).first()
+    if existente:
+        return {"ok": True, "deduplicado": True, "id": existente.id}
+    
+    # Resolve fazenda_id (usa a do token se disponível, senão a passada)
+    fid = None
+    if fazenda_id is not None:
+        fid = fazenda_id
+    elif user.pessoa_id:
+        from fazenda.models import Pessoa
+        pessoa = session.get(Pessoa, user.pessoa_id)
+        if pessoa:
+            fid = pessoa.fazenda_id
+    
+    atividade = AtividadeApp(
+        usuario_id=user.id,
+        fazenda_id=fid,
+        canal=dados.canal,
+        evento=dados.evento,
+        app_versao=dados.app_versao,
+        device_id=dados.device_id,
+        ocorrido_em=ocorrido_em,
+    )
+    session.add(atividade)
+    
+    # Atualiza ultimo_acesso do usuário
+    user.ultimo_acesso = datetime.utcnow()
+    session.add(user)
+    
+    session.commit()
+    session.refresh(atividade)
+    
+    return {"ok": True, "id": atividade.id, "recebido_em": atividade.recebido_em.isoformat() + "Z"}
