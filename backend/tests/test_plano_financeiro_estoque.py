@@ -198,29 +198,31 @@ class TestPontoUnicoDireto:
             item = s.exec(select(Estoque).where(Estoque.fazenda_id == FAZ_FIN)).first()
             avisos = estoque_baixa.movimentar(
                 s, item=item, quantidade=4, unidade="saca", data=date.today(), fazenda_id=FAZ_FIN,
-                movimento="Aplicação", observacao="teste", sinal=-1,
+                movimento="Aplicação", observacao="teste", sinal=-1, exigir_modulo_estoque=True,
             )
             assert avisos == []
             # Item None também fica em silêncio (antes: aviso 'não está no estoque').
             assert estoque_baixa.movimentar(
                 s, item=None, quantidade=1, unidade=None, data=date.today(), fazenda_id=FAZ_FIN,
-                movimento="Aplicação", observacao="teste", produto="X",
+                movimento="Aplicação", observacao="teste", produto="X", exigir_modulo_estoque=True,
             ) == []
             s.commit()
         assert _movimentos(engine, FAZ_FIN) == []
         assert _saldo(engine, FAZ_FIN) == 10
 
-    def test_baixar_e_devolver_herdam_o_gate(self, client):
+    def test_outros_modulos_nao_sao_afetados_pelo_gate(self, client):
+        """Sanidade/Alimentação/IATF/BST/Agenda chamam baixar/devolver/movimentar SEM a flag:
+        planos como Standard/Silver (sem `estoque`) seguem gravando como sempre."""
         _, engine = client
         with Session(engine) as s:
             item = s.exec(select(Estoque).where(Estoque.fazenda_id == FAZ_FIN)).first()
-            assert estoque_baixa.baixar(s, item=item, quantidade=2, unidade="saca", data=date.today(),
-                                        fazenda_id=FAZ_FIN, observacao="t") == []
-            assert estoque_baixa.devolver(s, item=item, quantidade=2, unidade="saca", data=date.today(),
-                                          fazenda_id=FAZ_FIN, observacao="t") == []
+            estoque_baixa.baixar(s, item=item, quantidade=2, unidade="saca", data=date.today(),
+                                 fazenda_id=FAZ_FIN, observacao="t")
+            estoque_baixa.devolver(s, item=item, quantidade=1, unidade="saca", data=date.today(),
+                                   fazenda_id=FAZ_FIN, observacao="t")
             s.commit()
-        assert _movimentos(engine, FAZ_FIN) == []
-        assert _saldo(engine, FAZ_FIN) == 10
+        assert len(_movimentos(engine, FAZ_FIN)) == 2
+        assert _saldo(engine, FAZ_FIN) == 9
 
     def test_abrir_lote_sem_modulo_nao_cria_lote(self, client):
         _, engine = client
@@ -228,6 +230,7 @@ class TestPontoUnicoDireto:
             item = s.exec(select(Estoque).where(Estoque.fazenda_id == FAZ_FIN)).first()
             lote, avisos = estoque_baixa.abrir_lote(
                 s, item=item, quantidade=5, data_compra=date.today(), fazenda_id=FAZ_FIN,
+                exigir_modulo_estoque=True,
             )
             assert lote is None and avisos == []
             s.commit()

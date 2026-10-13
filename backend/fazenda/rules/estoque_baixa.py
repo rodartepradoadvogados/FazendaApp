@@ -34,13 +34,15 @@ from fazenda.rules.unidades import pode_dar_baixa_direta
 
 def estoque_contratado(session: Session, fazenda_id: int | None) -> bool:
     """Plano Financeiro §1.7 — PONTO ÚNICO de decisão: a fazenda tem o módulo
-    comercial `estoque` contratado? Sem ele, NENHUM efeito colateral de outro
-    módulo (nota de despesa com item produto no Financeiro, marcar entrega em
-    Pedido, baixas de Sanidade/Agenda...) pode gravar `MovimentoEstoque` nem
-    mexer em saldo: o estoque-fantasma de uma fazenda que não o contratou
-    apareceria como saldo "verdadeiro" num upgrade futuro, e cada compra
-    devolveria o aviso "não está no estoque" (ruído que ensina a ignorar
-    avisos). `fazenda_id` None (sessão legada, sem recorte) segue o
+    comercial `estoque` contratado? Sem ele, os efeitos colaterais de
+    Financeiro (nota de despesa com item produto) e de Pedidos (marcar
+    entrega) NÃO gravam `MovimentoEstoque` nem mexem em saldo: o
+    estoque-fantasma de uma fazenda que não o contratou apareceria como saldo
+    "verdadeiro" num upgrade futuro, e cada compra devolveria o aviso "não
+    está no estoque" (ruído que ensina a ignorar avisos). Esses chamadores
+    passam `exigir_modulo_estoque=True`; os demais (Sanidade, Alimentação,
+    IATF/Indução, BST, Agenda) NÃO são afetados — planos como Standard/Silver
+    já gravam estoque por esses caminhos e isso não muda. `fazenda_id` None (sessão legada, sem recorte) segue o
     comportamento de sempre — mesmo "sem retroatividade" de
     `fazenda_tem_modulo_contratado`. Import tardio: `fazenda.auth` importa
     modelos e não deve virar dependência de carga deste módulo de regras."""
@@ -297,6 +299,7 @@ def abrir_lote(
     valor_unitario: float | None = None, numero_lote: str | None = None, observacao: str | None = None,
     usuario_id: int | None = None, apresentacao_id: int | None = None,
     origem_tipo: str | None = None, origem_id: int | None = None, validade: date | None = None,
+    exigir_modulo_estoque: bool = False,
 ) -> tuple[LoteEstoque | None, list[str]]:
     """Compra/entrada que abre um lote NOVO (pedido do usuário, 01/09/2026:
     "registrar/comprar um medicamento escolhendo um tamanho de frasco/
@@ -310,9 +313,9 @@ def abrir_lote(
     `quantidade` pra unidade de estoque do item (ver
     routers/estoque.py::abrir_lote_estoque), esta função só grava o vínculo.
 
-    Fazenda SEM o módulo `estoque` contratado: não grava nada e devolve
-    `(None, [])` — ver `estoque_contratado`."""
-    if not estoque_contratado(session, fazenda_id):
+    Com `exigir_modulo_estoque=True` e fazenda SEM o módulo `estoque`
+    contratado: não grava nada e devolve `(None, [])` — ver `estoque_contratado`."""
+    if exigir_modulo_estoque and not estoque_contratado(session, fazenda_id):
         return None, []
     # `quantidade_restante` nasce em 0 — é o próprio `movimentar(sinal=+1,
     # lote_id=...)` logo abaixo quem soma `quantidade` nele (via
@@ -417,6 +420,7 @@ def movimentar(
     origem_tipo: str | None = None, origem_id: int | None = None, sinal: int = -1,
     produto: str | None = None,
     pedido_id: int | None = None, pedido_item_id: int | None = None, lote_id: int | None = None,
+    exigir_modulo_estoque: bool = False,
 ) -> list[str]:
     """Aplica `sinal * quantidade` a `item`, grava o MovimentoEstoque
     correspondente (com `fazenda_id`, `estoque_id` e origem) e devolve a lista
@@ -432,10 +436,11 @@ def movimentar(
     antigo — ver `_aplicar_em_lotes`. Item sem nenhum lote aberto continua
     100% no comportamento de sempre (só o agregado `Estoque.quantidade`).
 
-    Fazenda SEM o módulo `estoque` contratado: retorna `[]` ANTES de qualquer
-    outra checagem — não grava movimento, não mexe em saldo e não avisa nada
-    (nem "não está no estoque"). Ver `estoque_contratado`."""
-    if not estoque_contratado(session, fazenda_id):
+    Com `exigir_modulo_estoque=True` (Financeiro e Pedidos) e fazenda SEM o
+    módulo `estoque` contratado: retorna `[]` ANTES de qualquer outra
+    checagem — não grava movimento, não mexe em saldo e não avisa nada (nem
+    "não está no estoque"). Ver `estoque_contratado`."""
+    if exigir_modulo_estoque and not estoque_contratado(session, fazenda_id):
         return []
     if item is None:
         return [f'"{produto or "?"}" não está no estoque desta fazenda — lançamento registrado sem baixa.']

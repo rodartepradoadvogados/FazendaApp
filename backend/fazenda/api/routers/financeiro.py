@@ -4463,6 +4463,7 @@ def criar_lancamento(
                     # deste item depois (ver "quantidade" in enviados abaixo)
                     # não encontraria este movimento pra corrigir o estoque.
                     origem_tipo="compra_financeiro", origem_id=item_estoque_id,
+                    exigir_modulo_estoque=True,
                 )
                 avisos_estoque += avisos_lote
                 continue
@@ -4472,7 +4473,7 @@ def criar_lancamento(
                 data=data_movimento, fazenda_id=fazenda_id, movimento="Entrada de compra",
                 observacao=f"Entrada por compra — lançamento {numero_lancamento}",
                 usuario_id=usuario_id, origem_tipo="compra_financeiro", origem_id=item_estoque_id, sinal=+1,
-                produto=item_in.produto,
+                produto=item_in.produto, exigir_modulo_estoque=True,
             )
         session.commit()
 
@@ -5156,12 +5157,14 @@ def editar_lancamento(
                             data=hoje_local(), fazenda_id=fazenda_id, movimento="Saída de ajuste",
                             observacao=f"Estorno por edição de quantidade — lançamento {registro.numero_lancamento}",
                             origem_tipo="compra_financeiro", origem_id=item.id, sinal=-1, produto=item.produto,
+                            exigir_modulo_estoque=True,
                         )
                         estoque_baixa.movimentar(
                             session, item=estoque_item, quantidade=registro.quantidade or 0, unidade=unidade_item,
                             data=hoje_local(), fazenda_id=fazenda_id, movimento="Entrada de ajuste",
                             observacao=f"Ajuste de quantidade editada — lançamento {registro.numero_lancamento}",
                             origem_tipo="compra_financeiro", origem_id=item.id, sinal=+1, produto=item.produto,
+                            exigir_modulo_estoque=True,
                         )
             if "valor_unitario" in enviados:
                 item.valor_unitario = registro.valor_unitario
@@ -5263,6 +5266,7 @@ def vincular_produto_item(
                     movimento="Entrada de compra", observacao=f"Entrada por compra — lançamento {item.numero_lancamento}",
                     usuario_id=user.id if isinstance(user, Usuario) else None,
                     origem_tipo="compra_financeiro", origem_id=item.id, sinal=+1, produto=nome,
+                    exigir_modulo_estoque=True,
                 )
 
     session.commit()
