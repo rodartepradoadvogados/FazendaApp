@@ -88,9 +88,11 @@ def test_fazenda_com_rebanho_recebe_o_checklist_de_sempre(client, fid):
     ]
 
 
-def test_sem_fazenda_selecionada_segue_o_legado(client):
-    _como_fazenda(None)
-    assert [p["chave"] for p in client.get("/onboarding").json()["passos"]] == [p["chave"] for p in PASSOS_ONBOARDING]
+def test_sem_fazenda_no_recorte_segue_o_legado(client):
+    """Direto na função (pela API, sem fazenda selecionada a requisição nem chega aqui: 409)."""
+    from fazenda.api.routers.onboarding import passos_da_fazenda
+    with Session(database.engine) as s:
+        assert passos_da_fazenda(s, None) is PASSOS_ONBOARDING
 
 
 def test_concluir_passos_do_financeiro_fecha_o_checklist(client):
