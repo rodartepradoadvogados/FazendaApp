@@ -23,12 +23,16 @@ from __future__ import annotations
 
 import base64
 import json
+from datetime import datetime
+from typing import Optional
 
 import httpx
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2 import service_account
+from sqlmodel import Session
 
 from fazenda.config import settings
+from fazenda.models import PushEnvio
 
 _ESCOPO = "https://www.googleapis.com/auth/firebase.messaging"
 _TIMEOUT = 15  # segundos
@@ -56,11 +60,11 @@ def _carregar_json_conta_servico() -> dict:
                 "serviço > Gerar nova chave privada), colado inteiro ou em base64."
             ) from exc
     # Alguns painéis (ex.: colar numa env var de linha única) escapam as
-    # quebras de linha da private_key literalmente como "\n" — desescapa se
+    # quebras de linha da private_key literalmente como "\\n" — desescapa se
     # ainda estiver assim, senão google-auth falha ao desserializar a chave.
     chave = dados.get("private_key", "")
-    if "\\n" in chave and "\n" not in chave:
-        dados["private_key"] = chave.replace("\\n", "\n")
+    if "\\\\n" in chave and "\\n" not in chave:
+        dados["private_key"] = chave.replace("\\\\n", "\\n")
     return dados
 
 
@@ -107,12 +111,59 @@ class FcmTokenInvalido(Exception):
 _ERROS_TOKEN_MORTO = {"UNREGISTERED", "SENDER_ID_MISMATCH"}
 
 
-def enviar(token: str, titulo: str, corpo: str, url: str, count: int | None = None) -> None:
-    """Manda uma notificação para UM token de registro FCM. Levanta
-    FcmTokenInvalido se o Firebase disser que o token está morto; qualquer
-    outra falha (rede, config, 5xx, 429) levanta a exceção original — quem
-    chama (enviar_push) decide o que logar, sem propagar para o fluxo que
-    decidiu o alerta."""
+def _gravar_envio(
+    session: Session,
+    *,
+    usuario_id: int,
+    push_token_id: Optional[int],
+    categoria: Optional[str],
+    titulo: Optional[str],
+    corpo: Optional[str],
+    dados_json: str,
+    resultado: str,
+    fcm_message_id: Optional[str] = None,
+    erro_curto: Optional[str] = None,
+) -> PushEnvio:
+    """Registra a tentativa de envio no push_envio (auditoria)."""
+    envio = PushEnvio(
+        usuario_id=usuario_id,
+        push_token_id=push_token_id,
+        canal="fcm",
+        categoria=categoria,
+        titulo=titulo,
+        corpo=corpo,
+        dados=dados_json,
+        enviado_em=datetime.utcnow(),
+        resultado=resultado,
+        fcm_message_id=fcm_message_id,
+        erro_curto=erro_curto,
+    )
+    session.add(envio)
+    session.flush()
+    return envio
+
+
+def enviar(
+    token: str,
+    titulo: str,
+    corpo: str,
+    url: str,
+    count: int | None = None,
+    session: Optional[Session] = None,
+    *,
+    usuario_id: Optional[int] = None,
+    push_token_id: Optional[int] = None,
+    categoria: Optional[str] = None,
+    icon: str = "ic_notification_cowdata",
+    channel_id: str = "cowdata_notificacoes",
+) -> Optional[str]:
+    """Manda uma notificação para UM token de registro FCM. Retorna o
+    fcm_message_id se ok, None se erro não-fatal, levanta FcmTokenInvalido
+    se token morto.
+    
+    icon: nome do drawable (sem extensão) em res/drawable/ (ex.: ic_notification_cowdata)
+    channel_id: ID do NotificationChannel criado no Android (ex.: cowdata_notificacoes)
+    """
     if not habilitado():
         raise RuntimeError(
             "Push nativo (FCM) não configurado — defina FCM_SERVICE_ACCOUNT_JSON "
@@ -123,18 +174,19 @@ def enviar(token: str, titulo: str, corpo: str, url: str, count: int | None = No
     if count is not None:
         dados["count"] = str(count)  # payload "data" do FCM só aceita string
 
+    dados_json = json.dumps(dados)
+
     corpo_requisicao = {
         "message": {
             "token": token,
-            # "notification" (não só "data"): é o que faz o Android desenhar
-            # a notificação na bandeja com o app fechado/morto, sem código
-            # nativo nosso para tratar a mensagem manualmente.
             "notification": {"title": titulo, "body": corpo},
             "data": dados,
             "android": {
                 "priority": "HIGH",
                 "notification": {
                     "color": "#3A0F1A",  # mesmo vinho do splash/StatusBar (capacitor.config.ts)
+                    "icon": icon,
+                    "channel_id": channel_id,
                     **({"notification_count": count} if count is not None else {}),
                 },
             },
@@ -152,6 +204,28 @@ def enviar(token: str, titulo: str, corpo: str, url: str, count: int | None = No
             status_erro = resp.json().get("error", {}).get("status", "")
         except Exception:
             pass
+        if session is not None and usuario_id is not None:
+            _gravar_envio(
+                session, usuario_id=usuario_id, push_token_id=push_token_id,
+                categoria=categoria, titulo=titulo, corpo=corpo, dados_json=dados_json,
+                resultado="token_invalido" if (status_erro in _ERROS_TOKEN_MORTO or resp.status_code == 404) else "erro",
+                erro_curto=f"{status_erro or resp.status_code}: {resp.text[:200]}",
+            )
         if status_erro in _ERROS_TOKEN_MORTO or (resp.status_code == 404):
             raise FcmTokenInvalido(f"Token FCM inválido ({status_erro or resp.status_code})")
         raise RuntimeError(f"Falha ao enviar push via FCM: {resp.status_code} {resp.text}")
+    
+    # Sucesso
+    fcm_message_id = None
+    try:
+        fcm_message_id = resp.json().get("name", "").split("/")[-1]
+    except Exception:
+        pass
+    
+    if session is not None and usuario_id is not None:
+        _gravar_envio(
+            session, usuario_id=usuario_id, push_token_id=push_token_id,
+            categoria=categoria, titulo=titulo, corpo=corpo, dados_json=dados_json,
+            resultado="ok", fcm_message_id=fcm_message_id,
+        )
+    return fcm_message_id

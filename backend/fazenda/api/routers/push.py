@@ -36,7 +36,7 @@ from sqlmodel import Session, select
 
 from fazenda.auth import EMAIL_DONO, get_current_user
 from fazenda.database import engine, get_session
-from fazenda.models import Pessoa, PushNotificacaoEnviada, PushSubscription, PushTokenFcm, Usuario
+from fazenda.models import Pessoa, PushEnvio, PushNotificacaoEnviada, PushSubscription, PushTokenFcm, Usuario
 from fazenda.rules import fcm
 
 logger = logging.getLogger(__name__)
@@ -320,13 +320,25 @@ def _enviar_web_push(usuario_id: int, titulo: str, corpo: str, url: str, session
             logger.exception("Erro inesperado ao enviar push (usuário %s)", usuario_id)
 
 
-def _enviar_fcm(usuario_id: int, titulo: str, corpo: str, url: str, session: Session, count: int | None) -> None:
+def _enviar_fcm(usuario_id: int, titulo: str, corpo: str, url: str, session: Session, count: int | None, categoria: str | None = None) -> None:
     if not fcm.habilitado():
         return
     tokens = session.exec(select(PushTokenFcm).where(PushTokenFcm.usuario_id == usuario_id)).all()
     for t in tokens:
         try:
-            fcm.enviar(t.token, titulo, corpo, url, count=count)
+            fcm.enviar(
+                token=t.token,
+                titulo=titulo,
+                corpo=corpo,
+                url=url,
+                count=count,
+                session=session,
+                usuario_id=usuario_id,
+                push_token_id=t.id,
+                categoria=categoria or "pendencia",
+                icon="ic_notification_cowdata",
+                channel_id="cowdata_notificacoes",
+            )
         except fcm.FcmTokenInvalido:
             session.delete(t)
             session.commit()
@@ -336,6 +348,7 @@ def _enviar_fcm(usuario_id: int, titulo: str, corpo: str, url: str, session: Ses
 
 def enviar_push(
     usuario_id: int, titulo: str, corpo: str, url: str, session: Session | None = None, count: int | None = None,
+    categoria: str | None = None,
 ) -> None:
     """Manda uma notificação push real para TODOS os canais ativos do
     usuário (Web Push do navegador/PWA + FCM do app Android nativo). Nunca
@@ -346,13 +359,15 @@ def enviar_push(
     `count`, quando informado, viaja no payload e é usado pelo service worker
     (sw.js)/pelo ícone do app nativo para atualizar o "badge" mesmo com o app
     fechado — hoje só a Agenda do dia informa esse número (ver
-    despachar_agenda_do_dia abaixo)."""
+    despachar_agenda_do_dia abaixo).
+    
+    `categoria`: categoria do push ("pendencia" | "comunicado") para auditoria no push_envio."""
     _session_propria = session is None
     if _session_propria:
         session = Session(engine)
     try:
         _enviar_web_push(usuario_id, titulo, corpo, url, session, count)
-        _enviar_fcm(usuario_id, titulo, corpo, url, session, count)
+        _enviar_fcm(usuario_id, titulo, corpo, url, session, count, categoria)
     finally:
         if _session_propria:
             session.close()
@@ -462,12 +477,14 @@ def notificar_push_para_itens(usuario_id: int, itens: list[dict], session: Sessi
         ).first()
         if ja_enviado:
             continue
+        cat = _categoria_push(item)
         enviar_push(
             usuario_id=usuario_id,
-            titulo=TITULOS_PUSH[_categoria_push(item)],
+            titulo=TITULOS_PUSH[cat],
             corpo=item.get("descricao") or "",
             url=url_destino(item),
             session=session,
+            categoria=cat,
         )
         session.add(PushNotificacaoEnviada(usuario_id=usuario_id, chave=chave, data_referencia=hoje))
         session.commit()
@@ -537,6 +554,7 @@ def despachar_agenda_do_dia(session: Session) -> None:
             url="/agenda",
             session=session,
             count=total,
+            categoria="comunicado",
         )
         session.add(PushNotificacaoEnviada(usuario_id=usuario_id, chave=_CHAVE_AGENDA_DO_DIA, data_referencia=hoje))
         session.commit()
@@ -562,3 +580,70 @@ def despachar_push_pendentes(session: Session) -> None:
             notificar_push_para_itens(usuario_id, itens, session)
         except Exception:
             logger.exception("Falha ao despachar push periódico para usuário %s", usuario_id)
+
+
+# ---------------------------------------------------------------------------
+# /push/ack — confirmação de recebimento (app Android nativo)
+# O app (Java/Kotlin FirebaseMessagingService) chama isto ao receber a
+# notificação FCM, para registrar o ack no push_ack. Permite auditoria:
+# "o backend mandou (push_envio) E o celular recebeu (push_ack)?"
+# ---------------------------------------------------------------------------
+class PushAckIn(BaseModel):
+    fcm_message_id: str | None = None  # opcional: id da mensagem FCM (name=projects/.../messages/{id})
+    push_envio_id: int | None = None   # opcional: id do push_envio se o app souber
+    token_fcm: str | None = None       # token que recebeu (para diagnóstico)
+    estado_app: str                    # "primeiro_plano" | "segundo_plano" | "tocada"
+
+
+@router.post("/ack")
+def registrar_ack(
+    dados: PushAckIn,
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Registra o ack de recebimento de push FCM no push_ack.
+    Se push_envio_id não vier, tenta achar pelo fcm_message_id mais recente do usuário."""
+    push_envio_id = dados.push_envio_id
+    if push_envio_id is None and dados.fcm_message_id:
+        envio = session.exec(
+            select(PushEnvio).where(
+                PushEnvio.usuario_id == user.id,
+                PushEnvio.fcm_message_id == dados.fcm_message_id,
+            )
+        ).first()
+        if envio:
+            push_envio_id = envio.id
+    if push_envio_id is None:
+        # Fallback: o mais recente do usuário que ainda não tem ack
+        envio = session.exec(
+            select(PushEnvio).where(
+                PushEnvio.usuario_id == user.id,
+                PushEnvio.resultado == "ok",
+            ).order_by(PushEnvio.enviado_em.desc())
+        ).first()
+        if envio:
+            push_envio_id = envio.id
+    if push_envio_id is None:
+        raise HTTPException(status_code=404, detail="Nenhum envio correspondente encontrado para este usuário")
+    
+    # Verifica se já existe ack para este envio (idempotente)
+    ack_existente = session.exec(
+        select(PushAck).where(
+            PushAck.push_envio_id == push_envio_id,
+            PushAck.usuario_id == user.id,
+        )
+    ).first()
+    if ack_existente:
+        return {"ok": True, "ack_id": ack_existente.id, "ja_existia": True}
+    
+    ack = PushAck(
+        push_envio_id=push_envio_id,
+        usuario_id=user.id,
+        token_fcm=dados.token_fcm,
+        estado_app=dados.estado_app,
+        recebido_em=datetime.utcnow(),
+    )
+    session.add(ack)
+    session.commit()
+    session.refresh(ack)
+    return {"ok": True, "ack_id": ack.id, "ja_existia": False}

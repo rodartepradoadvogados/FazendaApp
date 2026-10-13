@@ -7,6 +7,12 @@
 // padrão já usado no repo para telas pesadas (ver LancarTela.tsx).
 let capacitorCore: typeof import("@capacitor/core") | null = null;
 
+// Constantes para SharedPreferences do serviço nativo PushMessagingService
+const PREF_NAME = "cowdata_push";
+const PREF_USER_ID = "user_id";
+const PREF_FCM_TOKEN = "fcm_token";
+const PREF_BASE_URL = "base_url";
+
 async function core() {
   if (typeof window === "undefined") return null;
   if (!capacitorCore) capacitorCore = await import("@capacitor/core");
@@ -96,7 +102,10 @@ function rotaDoApp(url: string): string {
  *
  *  `aoTocarNotificacao` recebe a rota (já traduzida pra dentro do /app,
  *  ver rotaDoApp) quando o usuário toca numa notificação com o app aberto
- *  em segundo plano — quem chama decide como navegar (ex.: router.push). */
+ *  em segundo plano — quem chama decide como navegar (ex.: router.push).
+ *
+ *  Auditoria: registra recebimento de push no backend (/auth/push-recebido)
+ *  para diagnosticar por que usuários não recebem notificações. */
 export async function registrarPushNativo(aoTocarNotificacao?: (rota: string) => void): Promise<() => void> {
   if (!(await ehApp())) return () => {};
   try {
@@ -120,6 +129,8 @@ export async function registrarPushNativo(aoTocarNotificacao?: (rota: string) =>
           modelo: `${info.manufacturer || ""} ${info.model || ""}`.trim() || undefined,
           device_id: id.identifier,
         });
+        // Configura o serviço nativo com dados do usuário logado
+        await configurarPushNativo(token.value);
       } catch (e) {
         console.warn("Falha ao registrar token de push nativo:", e);
       }
@@ -128,17 +139,45 @@ export async function registrarPushNativo(aoTocarNotificacao?: (rota: string) =>
       console.warn("Falha ao registrar para push nativo:", e.error);
     });
     const hToque = await PushNotifications.addListener("pushNotificationActionPerformed", (acao) => {
-      const url = (acao.notification?.data?.url as string) || "/app";
-      aoTocarNotificacao?.(rotaDoApp(url));
-    });
+          const url = (acao.notification?.data?.url as string) || "/app";
+          aoTocarNotificacao?.(rotaDoApp(url));
+        });
+    
+        // Auditoria: registra recebimento de push (app em foreground/background)
+        const hRecebido = await PushNotifications.addListener("pushNotificationReceived", async (notificacao) => {
+          try {
+            const { registrarPushRecebido } = await import("@/lib/api");
+            await registrarPushRecebido({
+              titulo: notificacao.title,
+              corpo: notificacao.body,
+              dados: JSON.stringify(notificacao.data),
+              estado_app: document.visibilityState === "visible" ? "foreground" : "background",
+              token_fcm: undefined, // token obtido via listener 'registration'
+            });
+          } catch (e) {
+            console.warn("Falha ao auditar push recebido:", e);
+          }
+        });
+    
+        // Configura canal de notificação (Android 8+) — ícone customizado precisa estar em
+        // android/app/src/main/res/drawable/ic_notification_cowdata.png (ou .xml)
+        // Se não existir, o Android usa o ícone padrão do app.
+        try {
+          const { PushNotifications } = await import("@capacitor/push-notifications");
+          // createChannel não é método padrão do plugin Capacitor v5+.
+          // O canal é criado automaticamente na primeira notificação se não existir.
+          // Para customizar ícone/som/cor, defina no payload FCM do backend (push.py).
+        } catch (e) {
+          console.warn("Falha ao configurar canal de notificação:", e);
+        }
 
-    await PushNotifications.register();
-    return () => { hRegistro.remove(); hErro.remove(); hToque.remove(); };
-  } catch (e) {
-    console.warn("Push nativo indisponível neste aparelho:", e);
-    return () => {};
-  }
-}
+        await PushNotifications.register();
+        return () => { hRegistro.remove(); hErro.remove(); hToque.remove(); hRecebido.remove(); };
+      } catch (e) {
+        console.warn("Push nativo indisponível neste aparelho:", e);
+        return () => {};
+      }
+    }
 
 function baixarViaAncora(blob: Blob, nomeArquivo: string): void {
   const url = URL.createObjectURL(blob);
@@ -345,4 +384,53 @@ export async function registrarAoAbrirApp(callback: () => void): Promise<() => v
     return () => document.removeEventListener("visibilitychange", ouvinte);
   }
   return () => {};
+}
+
+/** Configura o serviço nativo PushMessagingService com dados do usuário logado.
+ * Chamado após registrar o token FCM no backend. */
+export async function configurarPushNativo(fcmToken: string): Promise<void> {
+  if (!(await ehApp())) return;
+  try {
+    const { Preferences } = await import("@capacitor/preferences");
+    const { value: token } = await Preferences.get({ key: CHAVE_SESSAO_TOKEN });
+    const { value: usuario } = await Preferences.get({ key: CHAVE_SESSAO_USUARIO });
+    const { value: fazenda } = await Preferences.get({ key: CHAVE_SESSAO_FAZENDA });
+    
+    if (!token || !usuario) return;
+    
+    const usuarioObj = JSON.parse(usuario);
+    const userId = usuarioObj?.id;
+    const baseUrl = (await getBaseUrl());
+    
+    if (!userId || !baseUrl) return;
+    
+    // Grava nas SharedPreferences que o serviço nativo lê
+    await Preferences.set({ key: PREF_USER_ID, value: String(userId) });
+    await Preferences.set({ key: "auth_token", value: token });
+    await Preferences.set({ key: PREF_BASE_URL, value: baseUrl });
+    await Preferences.set({ key: PREF_FCM_TOKEN, value: fcmToken });
+    await Preferences.set({ key: "app_em_primeiro_plano", value: "true" });
+    
+  } catch (e) {
+    console.warn("Falha ao configurar PushMessagingService nativo:", e);
+  }
+}
+
+/** Atualiza o estado de foreground do app no serviço nativo.
+ * Chamado quando o app entra/sai de primeiro plano. */
+export async function atualizarPushForeground(foreground: boolean): Promise<void> {
+  if (!(await ehApp())) return;
+  try {
+    const { Preferences } = await import("@capacitor/preferences");
+    await Preferences.set({ key: "app_em_primeiro_plano", value: foreground ? "true" : "false" });
+  } catch (e) {
+    console.warn("Falha ao atualizar foreground do PushMessagingService:", e);
+  }
+}
+
+/** Obtém a base URL do backend (do localStorage ou variável de ambiente). */
+async function getBaseUrl(): Promise<string> {
+  if (typeof window === "undefined") return "";
+  const url = localStorage.getItem("api_base_url") || process.env.NEXT_PUBLIC_API_URL || "";
+  return url.replace(/\/$/, ""); // remove trailing slash
 }

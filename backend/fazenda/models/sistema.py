@@ -279,13 +279,89 @@ class Usuario(SQLModel, table=True):
 class LoginAcesso(SQLModel, table=True):
     """Um login bem-sucedido — histórico completo (Usuario.ultimo_login guarda
     só o mais recente). Alimenta o relatório de últimos acessos, restrito ao
-    proprietário (ver fazenda.auth.exigir_dono)."""
+    proprietário (ver fazenda.auth.exigir_dono).
 
+    `tipo`: "senha" (login com usuário/senha), "heartbeat" (app aberto/ativo),
+    "push" (notificação recebida no celular)."""
     __tablename__ = "login_acesso"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    tipo: str = Field(default="senha", index=True)  # "senha" | "heartbeat" | "push"
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Para tipo "push": metadados da notificação (titulo, corpo, data_envio_fcm, etc.)
+    detalhes: Optional[str] = None
+
+
+class PushNotificacaoRecebida(SQLModel, table=True):
+    """Auditoria de notificação push recebida no dispositivo móvel.
+    Permite diagnosticar por que algum usuário não recebe notificações.
+    Registrado pelo app móvel (Capacitor/FCM) ao receber a mensagem."""
+    __tablename__ = "push_notificacao_recebida"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    push_token_id: Optional[int] = Field(default=None, foreign_key="push_token_fcm.id", index=True)
+    titulo: Optional[str] = None
+    corpo: Optional[str] = None
+    dados: Optional[str] = None  # JSON com payload completo do FCM
+    recebido_em: datetime = Field(default_factory=datetime.utcnow)
+    # App em foreground/background/closed quando recebeu
+    estado_app: Optional[str] = None  # "foreground" | "background" | "closed"
+    # Token FCM usado (útil se usuário tem múltiplos dispositivos)
+    token_fcm: Optional[str] = None
+
+
+class AtividadeApp(SQLModel, table=True):
+    """Registro de atividade do usuário no app (abertura, primeiro/segundo plano, batimento).
+    Diferente de LoginAcesso (que só registra login com senha), isto registra quando o
+    usuário REALMENTE abre/usa o app, mesmo com 'manter conectado' ativo.
+    Permite relatórios de 'último acesso' (abertura real) vs 'último login' (senha)."""
+    __tablename__ = "atividade_app"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    canal: str = Field(index=True)  # "app" | "pwa" | "web"
+    evento: str = Field(index=True)  # "aberto" | "primeiro_plano" | "segundo_plano" | "batimento"
+    app_versao: Optional[str] = None
+    device_id: Optional[str] = None
+    ocorrido_em: datetime  # timestamp do cliente (quando o evento aconteceu no aparelho)
+    recebido_em: datetime = Field(default_factory=datetime.utcnow)  # timestamp do servidor
+
+
+class PushEnvio(SQLModel, table=True):
+    """Auditoria de envio de push notification (FCM ou Web Push).
+    Registra cada tentativa de envio: destinatário, payload, resultado (ok/token_invalido/erro).
+    Permite responder: 'o backend mandou? o Google aceitou?'."""
+    __tablename__ = "push_envio"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    push_token_id: Optional[int] = Field(default=None, foreign_key="push_token_fcm.id", index=True)
+    canal: str = Field(index=True)  # "fcm" | "webpush"
+    categoria: Optional[str] = None
+    titulo: Optional[str] = None
+    corpo: Optional[str] = None
+    dados: Optional[str] = None  # JSON payload completo
+    enviado_em: datetime = Field(default_factory=datetime.utcnow, index=True)
+    resultado: str = Field(index=True)  # "ok" | "token_invalido" | "erro"
+    fcm_message_id: Optional[str] = None
+    erro_curto: Optional[str] = None
+
+
+class PushAck(SQLModel, table=True):
+    """Confirmação de recebimento de push no dispositivo do usuário.
+    App móvel (Capacitor/FCM) chama POST /push/ack ao receber a notificação.
+    Permite saber: enviado vs. confirmado (primeiro plano / segundo plano / tocada)."""
+    __tablename__ = "push_ack"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    push_envio_id: int = Field(foreign_key="push_envio.id", index=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    token_fcm: Optional[str] = None
+    estado_app: str  # "primeiro_plano" | "segundo_plano" | "tocada"
+    recebido_em: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
 class BackupAutomatico(SQLModel, table=True):
