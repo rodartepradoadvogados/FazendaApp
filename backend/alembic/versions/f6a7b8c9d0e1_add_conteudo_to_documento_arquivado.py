@@ -25,8 +25,9 @@ def upgrade() -> None:
         
         # Make caminho_storage nullable
         if 'caminho_storage' in [c['name'] for c in insp.get_columns('documento_arquivado')]:
-            op.alter_column('documento_arquivado', 'caminho_storage',
-                           existing_type=sa.String(), nullable=True)
+            # batch_alter_table: SQLite não suporta ALTER COLUMN direto.
+            with op.batch_alter_table('documento_arquivado') as batch:
+                batch.alter_column('caminho_storage', existing_type=sa.String(), nullable=True)
 
 
 def downgrade() -> None:
@@ -38,5 +39,5 @@ def downgrade() -> None:
         
         # Make caminho_storage non-nullable again
         if 'caminho_storage' in [c['name'] for c in insp.get_columns('documento_arquivado')]:
-            op.alter_column('documento_arquivado', 'caminho_storage',
-                           existing_type=sa.String(), nullable=False)
+            with op.batch_alter_table('documento_arquivado') as batch:
+                batch.alter_column('caminho_storage', existing_type=sa.String(), nullable=False)
