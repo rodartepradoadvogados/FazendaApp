@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 
-from fazenda.auth import fazenda_tem_modulo_contratado, get_current_user, get_fazenda_atual_id
+from fazenda.auth import fazenda_tem_modulo_contratado, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import OnboardingUsuario, Usuario
 
@@ -87,7 +87,7 @@ def obter_onboarding(
 @router.post("/passos/{chave}/concluir")
 def concluir_passo(
     chave: str, user: Usuario = Depends(get_current_user), session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     if chave not in CHAVES_VALIDAS:
         raise HTTPException(400, f"Passo inválido: {chave}")
@@ -104,7 +104,7 @@ def concluir_passo(
 @router.post("/dispensar")
 def dispensar_onboarding(
     user: Usuario = Depends(get_current_user), session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     linha = _linha(session, user.id)
     linha.dispensado = True
