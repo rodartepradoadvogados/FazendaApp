@@ -7,6 +7,7 @@ import {
 } from "@/lib/api";
 import { iniciarMonitorInatividade, marcarPresenca, msDesdeUltimaPresenca, LIMITE_INATIVIDADE_MS } from "@/lib/idle";
 import { registrarHeartbeat } from "@/lib/api";
+import { atualizarPushForeground } from "@/lib/nativo";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
@@ -270,12 +271,19 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
         if (getToken()) {
           registrarHeartbeat("foreground").catch(() => {}); // falha silenciosa
         }
+        atualizarPushForeground(true).catch(() => {}); // falha silenciosa
       }
     };
-    const carimbarAoSair = () => { if (typeof document !== "undefined" && document.visibilityState === "hidden") marcarPresenca(); };
+    const carimbarAoSair = () => { 
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        marcarPresenca();
+        atualizarPushForeground(false).catch(() => {}); // falha silenciosa
+      }
+    };
     const carimbarAoFocar = () => {
       if (getToken()) {
         registrarHeartbeat("foreground").catch(() => {});
+        atualizarPushForeground(true).catch(() => {}); // falha silenciosa
       }
     };
     window.addEventListener("focus", carimbarAoFocar);

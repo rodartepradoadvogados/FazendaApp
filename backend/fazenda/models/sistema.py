@@ -330,6 +330,40 @@ class AtividadeApp(SQLModel, table=True):
     recebido_em: datetime = Field(default_factory=datetime.utcnow)  # timestamp do servidor
 
 
+class PushEnvio(SQLModel, table=True):
+    """Auditoria de envio de push notification (FCM ou Web Push).
+    Registra cada tentativa de envio: destinatário, payload, resultado (ok/token_invalido/erro).
+    Permite responder: 'o backend mandou? o Google aceitou?'."""
+    __tablename__ = "push_envio"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    push_token_id: Optional[int] = Field(default=None, foreign_key="push_token_fcm.id", index=True)
+    canal: str = Field(index=True)  # "fcm" | "webpush"
+    categoria: Optional[str] = None
+    titulo: Optional[str] = None
+    corpo: Optional[str] = None
+    dados: Optional[str] = None  # JSON payload completo
+    enviado_em: datetime = Field(default_factory=datetime.utcnow, index=True)
+    resultado: str = Field(index=True)  # "ok" | "token_invalido" | "erro"
+    fcm_message_id: Optional[str] = None
+    erro_curto: Optional[str] = None
+
+
+class PushAck(SQLModel, table=True):
+    """Confirmação de recebimento de push no dispositivo do usuário.
+    App móvel (Capacitor/FCM) chama POST /push/ack ao receber a notificação.
+    Permite saber: enviado vs. confirmado (primeiro plano / segundo plano / tocada)."""
+    __tablename__ = "push_ack"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    push_envio_id: int = Field(foreign_key="push_envio.id", index=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    token_fcm: Optional[str] = None
+    estado_app: str  # "primeiro_plano" | "segundo_plano" | "tocada"
+    recebido_em: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
 class BackupAutomatico(SQLModel, table=True):
     """Registro de cada rodada do backup automático semanal (ver
     fazenda.rules.backup) — guarda quando rodou e se deu certo, para decidir
