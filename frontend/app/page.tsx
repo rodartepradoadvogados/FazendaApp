@@ -20,6 +20,7 @@ import { InstalarSite } from "@/components/InstalarSite";
 import { CowIcon } from "@/components/CowIcon";
 import { LandingPublica } from "@/components/landing/LandingPublica";
 import { ehAppDeCampo } from "@/lib/nativo";
+import { contextoAtual, rotaInicial, temCapaUtil } from "@/lib/modulos";
 
 const SIT_CORES: Record<string, string> = {
   Prenhes: "var(--green-light)", Inseminadas: "var(--dourado-light)",
@@ -613,10 +614,28 @@ export default function Home() {
   // mundo. Site aberto no navegador do celular NÃO entra aqui: continua
   // sendo o site, como sempre foi (ver lib/nativo.ts::ehAppDeCampo).
   const router = useRouter();
+  // Capa é a vitrine do REBANHO (rebanho/reprodutivo/produtivo). Fazenda sem
+  // nenhum deles (ex.: plano Financeiro) logada em "/" é mandada à página
+  // inicial do contrato (Agenda/Financeiro/…), nunca a uma Capa vazia cheia
+  // de chamadas que dariam 403. Anônimo continua vendo a landing. Anti-laço:
+  // rotaInicial() só devolve "/" quando há Capa útil, e nunca redireciona para
+  // a rota onde já estamos.
+  // Lido no render (como o getToken() de sempre) para a Capa nem montar — e
+  // disparar as chamadas de rebanho — numa fazenda que não tem rebanho.
+  const semCapa = !!getToken() && !temCapaUtil(contextoAtual());
   useEffect(() => {
     if (!getToken()) return;
+    const ctx = contextoAtual();
+    if (!temCapaUtil(ctx)) {
+      const destino = rotaInicial(ctx);
+      if (destino !== "/") router.replace(destino);
+      return;
+    }
     ehAppDeCampo().then((campo) => { if (campo) router.replace("/app"); });
   }, [router]);
 
+  if (semCapa) {
+    return <div style={{ display: "flex", height: "60vh", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>Carregando…</div>;
+  }
   return getToken() ? <Capa /> : <LandingPublica />;
 }

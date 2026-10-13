@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { LogIn, Loader2, Eye, EyeOff, X } from "lucide-react";
 import { login, verificarLoginParaResetSenha, enviarResetSenha, ehContador } from "@/lib/api";
 import { ehAppDeCampo, ehAppOuPwa } from "@/lib/nativo";
+import { rotaInicial } from "@/lib/modulos";
 import { LoginWatermark } from "@/components/LoginWatermark";
 import { PublicPage } from "@/components/institucional/PublicShell";
 import { CowDataMark } from "@/components/brand/CowDataMark";
@@ -131,7 +132,11 @@ function Hero() {
     // (casca mobile) — nunca o site desktop completo (ver capacitor.config.ts
     // e app/manifest.ts). Só o botão proposital "Site completo" do Menu do
     // app deve levar ao "/" de verdade.
-    router.replace((await ehAppDeCampo()) ? "/app" : "/");
+    // Página inicial do CONTRATO (lib/modulos.ts::rotaInicial): Capa só se há
+    // rebanho; fazenda só-financeiro cai na Agenda. Aparelho de campo vai ao
+    // /app apenas quando a raiz é a Capa (fazenda sem rebanho não vai a /app).
+    const inicial = rotaInicial();
+    router.replace(inicial === "/" && (await ehAppDeCampo()) ? "/app" : inicial);
   };
 
   const entrar = async (e: React.FormEvent) => {

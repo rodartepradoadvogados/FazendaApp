@@ -240,6 +240,7 @@ from .catalogo_cowdata import (
 )
 from .planos import (
     PrecoModulo,
+    PrecoPlano,
     ContratoFazenda,
     ContratoFazendaModulo,
     ContratoAnexo,
@@ -361,6 +362,7 @@ __all__ = [
     "PrecoBaseSugerido",
     "PrecoBaseSugeridoParticipanteMedia",
     "PrecoModulo",
+    "PrecoPlano",
     "ContratoFazenda",
     "ContratoFazendaModulo",
     "ContratoAnexo",

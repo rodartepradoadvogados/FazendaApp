@@ -827,7 +827,8 @@ def exigir_contrato_ativo():
     """Dependência: só exige que a fazenda tenha um contrato ATIVO (qualquer
     módulo) — para áreas transversais que não pertencem a um módulo comercial
     específico (Agenda, Indicadores, Parâmetros, Upload/Importar). Como
-    Rebanho está em todo plano, contrato ativo já garante pelo menos isso."""
+    um contrato ativo sempre tem ao menos um módulo base (rebanho ou financeiro — ver
+    fazenda/models/planos.py::MODULOS_BASE), o que já garante pelo menos isso."""
     def _dep(fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session)) -> None:
         if fazenda_id is None:
             return
@@ -1100,6 +1101,34 @@ def exigir_modulo_contratado(modulo: str):
             raise HTTPException(status_code=403, detail="Fazenda sem contrato ativo — aguardando aprovação")
         if not fazenda_tem_modulo_contratado(session, fazenda_id, modulo):
             raise HTTPException(status_code=403, detail=f"Módulo '{modulo}' não contratado por esta fazenda")
+    return _dep
+
+
+def exigir_algum_modulo_contratado(*modulos: str):
+    """Dependência: exige que A FAZENDA tenha contrato ativo e ao menos UM dos
+    módulos comerciais listados contratado e ativo (Plano Financeiro §1.5).
+    Para áreas transversais que só fazem sentido se existe alguma fonte de
+    dado de rebanho — ex.: /indicadores = algum de {rebanho, reprodutivo,
+    produtivo}; uma fazenda só-Financeiro não tem o que mostrar ali.
+
+    Mesmo bypass de `exigir_modulo_contratado`: sem fazenda selecionada
+    (legado) e sessão de suporte CowData passam direto. Contratos existentes
+    (Standard/Silver/Gold/Diamond e a fazenda #1 grandfathered) sempre têm
+    rebanho, então nada muda para eles — ver tests/test_matriz_modulos.py."""
+    def _dep(
+        fazenda_id: int | None = Depends(get_fazenda_atual_id),
+        suporte: dict = Depends(get_suporte_do_token),
+        session: Session = Depends(get_session),
+    ) -> None:
+        if fazenda_id is None or suporte.get("ativo"):
+            return
+        if not _contrato_ativo(session, fazenda_id):
+            raise HTTPException(status_code=403, detail="Fazenda sem contrato ativo — aguardando aprovação")
+        if not any(fazenda_tem_modulo_contratado(session, fazenda_id, m) for m in modulos):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Módulo não contratado por esta fazenda (requer um de: {', '.join(modulos)})",
+            )
     return _dep
 
 

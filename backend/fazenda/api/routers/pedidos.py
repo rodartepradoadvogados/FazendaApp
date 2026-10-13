@@ -498,6 +498,7 @@ def marcar_entrega_item_pedido(
             observacao=f"Entrega de {pedido.numero_pedido} — {item.produto_servico}",
             usuario_id=user.id if isinstance(user, Usuario) else None, sinal=+1,
             produto=item.produto_servico, pedido_id=pedido_id, pedido_item_id=item.id,
+            exigir_modulo_estoque=True,  # sem o módulo `estoque`, a entrega não gera movimento (Plano Financeiro §1.7)
         )
 
     itens_pedido = session.exec(select(PedidoItem).where(PedidoItem.pedido_id == pedido_id)).all()

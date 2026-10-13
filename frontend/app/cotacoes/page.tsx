@@ -9,7 +9,9 @@ import {
   type CotacaoResumo, type CotacaoDetalhe, type CotacaoItemPayload, type CotacaoFornecedorPayload,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
-import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
+import { type EstoqueItemPicker } from "@/components/EstoquePicker";
+import { ProdutoPedidoCampo } from "@/components/ProdutoPedidoCampo";
+import { moduloContratado } from "@/lib/modulos";
 import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 
 // Mesma lista de fazenda.rules.categorias.CATEGORIAS_FORNECEDOR no backend
@@ -123,6 +125,7 @@ function FormNovaCotacao({ onSalvo, onCancelar }: { onSalvo: (id: number) => voi
   const [observacao, setObservacao] = useState("");
   const [itens, setItens] = useState<CotacaoItemPayload[]>([{ produto: "", quantidade: 1, unidade: "" }]);
   const [produtosEstoque, setProdutosEstoque] = useState<EstoqueItemPicker[]>([]);
+  const [temEstoque] = useState(() => moduloContratado("estoque"));
   const [fornecedoresCadastro, setFornecedoresCadastro] = useState<any[]>([]);
   const [sugeridosIds, setSugeridosIds] = useState<Set<number>>(new Set());
   // Pedido do dono (set/2026): pode haver cotação pontual com um fornecedor
@@ -136,7 +139,8 @@ function FormNovaCotacao({ onSalvo, onCancelar }: { onSalvo: (id: number) => voi
   const [erro, setErro] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchEstoqueAtivos().then((d: any) => setProdutosEstoque((d.itens || []).map((i: any) => ({
+    // Sem o módulo Estoque o produto é texto livre (sem GET /estoque/ fadado a 403).
+    if (moduloContratado("estoque")) fetchEstoqueAtivos().then((d: any) => setProdutosEstoque((d.itens || []).map((i: any) => ({
       nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
       estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
     })))).catch(() => {});
@@ -228,7 +232,7 @@ function FormNovaCotacao({ onSalvo, onCancelar }: { onSalvo: (id: number) => voi
             <div key={idx} className="flex flex-wrap gap-2 items-end">
               <div style={{ flex: 1, minWidth: "12rem" }}>
                 <label style={labelStyle}>Produto</label>
-                <EstoquePicker itens={produtosEstoque} value={item.produto} todasFinalidades incluirNaoEstocaveis
+                <ProdutoPedidoCampo temEstoque={temEstoque} itensEstoque={produtosEstoque} value={item.produto} estilo={inputStyle}
                   placeholder="Selecionar produto do Estoque, ou digitar um novo…"
                   onChange={(nome) => atualizarItem(idx, { produto: nome })} />
               </div>

@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ExternalLink, Info } from "lucide-react";
 import { fetchDreCascata, type DreResposta } from "@/lib/api";
 import { fetchOrcamentoRelatorio } from "@/lib/apiPlano";
+import { moduloContratado } from "@/lib/modulos";
 import { aplicarSemOrcamento, periodoDeMesesInteiros, type RespostaOrcamento } from "@/lib/relatorioOrcamento";
 import {
   ESTADO_INICIAL, REGIME_API, REGIME_NOME, brl, delta, deslocar,
@@ -62,7 +63,7 @@ export default function DreFazendaView(props: PropsRelatorio & { onClassificar: 
 
   // Orçado: a cascata montada com os valores orçados (servidor); só pelo mês do gasto e em meses inteiros.
   const cmpOrc = comparacao?.tipo === "orcado";
-  const orcPossivel = cmpOrc && regras.ativa === true && efetivo.reg === "comp" && periodoDeMesesInteiros(periodo);
+  const orcPossivel = cmpOrc && moduloContratado("planejamento") && regras.ativa === true && efetivo.reg === "comp" && periodoDeMesesInteiros(periodo);
   const chaveOrc = `${periodo.ini}|${periodo.fim}|${centroApi ?? ""}|${tentativa}`;
   useEffect(() => {
     if (!orcPossivel) return;

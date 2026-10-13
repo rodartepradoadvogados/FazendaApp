@@ -17,24 +17,20 @@ import {
   baixarModeloContrato, assinarContratoZapSign, fetchStatusAssinaturaZapSign,
   criarAssinaturaAsaas, criarPixSemestralAsaas, criarBoletoAsaas, fetchCobrancasAsaas,
   fetchConsultoresCowData,
-  type Fazenda, type ContratoFazenda, type PlanoCatalogo, type PlanoNome, type ModuloComercial,
+  type Fazenda, type ContratoFazenda, type CatalogoPlanos, type ModuloComercial,
   type AnexoContrato, type UsuarioVinculado, type AssinaturaZapSign, type ConsultorCowData,
   type CobrancaAsaas, type CobrancaAsaasIn,
 } from "@/lib/api";
 import { casaBusca } from "@/lib/busca";
 import { maskCpf, maskCnpj, maskCep, maskCpfCnpj } from "@/lib/masks";
 import { usePainelCowDataEstilos } from "@/lib/painelCowDataTema";
+import { NOME_MODULO, brl, ordenarPlanos, precoDiverge, rotuloPrecoContrato } from "@/lib/planosContrato";
+import { useContratoRascunho } from "@/components/useContratoRascunho";
+import { DialogoRemocaoModulos, PrecosPlanos, PrepararFinanceiro, type CoresPlano } from "@/components/PlanosContratoPartes";
 import {
   CabecalhoMobilePainelCowData, CorpoMobilePainelCowData, CampoBuscaMobile, LinhaListaMobile,
   SecaoAcordeaoMobile, useAcordeaoUnico, CampoMobile, BotaoMobile, inputEstilo,
 } from "@/components/painel-cowdata/mobile/ComumMobile";
-
-const NOME_MODULO: Record<ModuloComercial, string> = {
-  rebanho: "Rebanho", reprodutivo: "Reprodutivo", produtivo: "Produtivo", sanitario: "Sanitário",
-  financeiro: "Financeiro (básico)", planejamento: "Planejamento", pedidos: "Pedidos", estoque: "Estoque",
-  alimentacao: "Alimentação", agricultura: "Agricultura/Plantio", consultor: "Consultor (Diamond)",
-  formulacao_dietas: "Formulação de Dietas",
-};
 
 function formatarBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -71,14 +67,18 @@ export default function FazendasMobile() {
   const [fazendas, setFazendas] = useState<Fazenda[] | null>(null);
   const [busca, setBusca] = useState("");
   const [selecionada, setSelecionada] = useState<number | null>(null);
-  const [catalogo, setCatalogo] = useState<Record<PlanoNome, PlanoCatalogo> | null>(null);
+  const [catalogo, setCatalogo] = useState<CatalogoPlanos | null>(null);
   const [contrato, setContrato] = useState<ContratoFazenda | null>(null);
   const [anexos, setAnexos] = useState<AnexoContrato[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  const [planoEscolhido, setPlanoEscolhido] = useState<PlanoNome | "custom">("standard");
-  const [modulosCustom, setModulosCustom] = useState<Record<ModuloComercial, number | null>>({} as any);
+  // Plano/módulos em edição + dependências (ver useContratoRascunho).
+  const {
+    planoEscolhido, escolherPlano, modulosCustom, mudarPrecoModulo, alternarModulo, selecionarSobMedida, carregarDoContrato,
+    aviso: avisoDependencia, regrasIndisponiveis, modulosDoRascunho, erroValidacao, removidosAoSalvar, payload: payloadContrato,
+    consultorNoRascunho, pendenteRemocao, setPendenteRemocao,
+  } = useContratoRascunho(catalogo, contrato);
   const [salvando, setSalvando] = useState(false);
   const [aprovando, setAprovando] = useState(false);
   const [confirmarSuspender, setConfirmarSuspender] = useState(false);
@@ -131,14 +131,7 @@ export default function FazendasMobile() {
   function carregarContrato(fazendaId: number) {
     fetchContratoFazenda(fazendaId).then((ct) => {
       setContrato(ct);
-      if (ct.plano) setPlanoEscolhido(ct.plano);
-      else {
-        setPlanoEscolhido("custom");
-        const mapa: Record<string, number> = {};
-        ct.modulos.filter((m) => m.ativo).forEach((m) => { mapa[m.modulo] = m.preco; });
-        if (mapa.rebanho == null) mapa.rebanho = 0;
-        setModulosCustom(mapa as any);
-      }
+      carregarDoContrato(ct);
     }).catch((e) => setErro(e.message));
     fetchAnexosContrato(fazendaId).then(setAnexos).catch((e) => setErro(e.message));
     fetchUsuariosVinculados(fazendaId).then(setUsuarios).catch((e) => setErro(e.message));
@@ -177,17 +170,6 @@ export default function FazendasMobile() {
   }
 
   const temModuloConsultor = contrato?.modulos.some((m) => m.modulo === "consultor" && m.ativo) ?? false;
-  const consultorNoRascunho = planoEscolhido === "diamond"
-    || (planoEscolhido === "custom" && modulosCustom["consultor" as ModuloComercial] != null);
-
-  function selecionarSobMedida() {
-    const semente: Record<string, number> = {};
-    (contrato?.modulos || []).filter((m) => m.ativo).forEach((m) => { semente[m.modulo] = m.preco; });
-    if (semente.rebanho == null) semente.rebanho = 0;
-    setModulosCustom(semente as any);
-    setPlanoEscolhido("custom");
-  }
-
   async function vincular() {
     if (selecionada == null || !novoUsername.trim()) { setErro("Informe o usuário (username)."); return; }
     setVinculando(true); setErro(null); setMsg(null);
@@ -273,14 +255,17 @@ export default function FazendasMobile() {
     } catch (e: any) { setErro(e.message); } finally { setCriando(false); }
   }
 
-  async function salvarContrato() {
+  // Tirar módulo de contrato ATIVO pede confirmação (diálogo "o que deixa de
+  // aparecer"); `confirmado` é true quando vem do botão do diálogo.
+  async function salvarContrato(confirmado = false) {
     if (selecionada == null) return;
+    if (erroValidacao) { setErro(erroValidacao); return; }
+    const removidos = removidosAoSalvar();
+    if (removidos.length && !confirmado) { setPendenteRemocao(removidos); return; }
+    setPendenteRemocao(null);
     setSalvando(true); setErro(null); setMsg(null);
     try {
-      const dados = planoEscolhido === "custom"
-        ? { plano: null, modulos: Object.entries(modulosCustom).filter(([, v]) => v != null).map(([modulo, preco]) => ({ modulo: modulo as ModuloComercial, preco: preco || 0 })), ciclo_pagamento: "mensal" as const }
-        : { plano: planoEscolhido, modulos: [], ciclo_pagamento: "mensal" as const };
-      const ct = await definirContratoFazenda(selecionada, dados);
+      const ct = await definirContratoFazenda(selecionada, payloadContrato());
       setContrato(ct);
       setMsg("Contrato atualizado. Lembre de aprovar/fechar para liberar os módulos.");
     } catch (e: any) { setErro(e.message); } finally { setSalvando(false); }
@@ -359,7 +344,10 @@ export default function FazendasMobile() {
     } catch (e: any) { setErro(e.message); } finally { setGerandoCobranca(null); }
   }
 
-  const modulosDoPlano = planoEscolhido !== "custom" && catalogo ? catalogo[planoEscolhido]?.modulos || [] : [];
+  const modulosDoPlano = planoEscolhido !== "custom" ? modulosDoRascunho : [];
+  const temFinanceiro = contrato?.modulos.some((m) => m.modulo === "financeiro" && m.ativo) ?? false;
+  const rotuloPreco = contrato ? rotuloPrecoContrato(contrato.preco_mensal_fechado, contrato.preco_catalogo_hoje) : null;
+  const coresPlano: CoresPlano = { texto: cor.texto, mudo: cor.mudo, borda: cor.borda, dourado: cor.dourado, verde: cor.verde, vermelho: cor.vermelho };
   const fazendaAtual = fazendas?.find((f) => f.id === selecionada) || null;
   const fazendasFiltradas = (fazendas || []).filter((f) => casaBusca([f.nome, f.cidade, f.uf].filter(Boolean).join(" "), busca));
 
@@ -380,7 +368,7 @@ export default function FazendasMobile() {
       <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
         <CabecalhoMobilePainelCowData
           titulo="Fazendas (clientes)"
-          subtitulo="Cada fazenda contrata um plano — nada libera até você aprovar e fechar o contrato."
+          subtitulo="Cada fazenda contrata um plano — nada é liberado até você aprovar e fechar o contrato."
           cor={cor}
           acao={
             <button onClick={() => setAbrirNova((v) => !v)} title="Cadastrar fazenda nova"
@@ -416,6 +404,10 @@ export default function FazendasMobile() {
                 titulo={f.nome} subtitulo={[f.cidade, f.uf].filter(Boolean).join(" / ") || undefined} />
             ))
           )}
+          <SecaoAcordeaoMobile titulo="Preços dos planos" cor={cor} aberta={aberta === "precos"} onToggle={() => alternar("precos")}>
+            <PrecosPlanos catalogo={catalogo} cores={coresPlano} inputStyle={inputEstilo(estilos)} toque
+              onAtualizado={(plano, novo) => setCatalogo((c) => (c ? { ...c, [plano]: { ...c[plano], ...novo } } : c))} />
+          </SecaoAcordeaoMobile>
         </CorpoMobilePainelCowData>
       </div>
     );
@@ -496,11 +488,11 @@ export default function FazendasMobile() {
           <SecaoAcordeaoMobile titulo="Plano & módulos" cor={cor} aberta={aberta === "plano"} onToggle={() => alternar("plano")}>
             <CampoMobile label="Plano" estilos={estilos}>
               <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-                {(["standard", "silver", "gold", "diamond"] as const).map((p) => (
+                {ordenarPlanos(Object.keys(catalogo || {})).map((p) => (
                   <label key={p} style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.82rem", fontWeight: planoEscolhido === p ? 700 : 400, cursor: "pointer",
                     border: `1px solid ${planoEscolhido === p ? cor.dourado : cor.borda}`, borderRadius: "var(--r-sm)", padding: "0.5rem 0.7rem" }}>
-                    <input type="radio" name="plano" checked={planoEscolhido === p} onChange={() => setPlanoEscolhido(p)} />
-                    {catalogo?.[p]?.nome || p} — R$ {catalogo?.[p]?.preco.toFixed(2) ?? "—"}/mês
+                    <input type="radio" name="plano" checked={planoEscolhido === p} onChange={() => escolherPlano(p)} />
+                    {catalogo?.[p]?.nome || p} — {brl(catalogo?.[p]?.preco)}/mês
                   </label>
                 ))}
                 <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.82rem", fontWeight: planoEscolhido === "custom" ? 700 : 400, cursor: "pointer",
@@ -513,12 +505,18 @@ export default function FazendasMobile() {
 
             {planoEscolhido !== "custom" && (
               <p style={{ fontSize: "0.78rem", color: cor.mudo, marginBottom: "0.6rem" }}>
-                Módulos inclusos: {modulosDoPlano.map((m) => NOME_MODULO[m]).join(", ")}.
+                Módulos inclusos: {modulosDoPlano.map((m) => NOME_MODULO[m] || m).join(", ")}.
               </p>
             )}
             {contrato.preco_mensal != null && (
               <p style={{ fontSize: "0.78rem", color: cor.mudo, marginBottom: "0.6rem" }}>
                 Ciclo de pagamento: Mensal — R$ {contrato.preco_mensal.toFixed(2)}/mês.
+              </p>
+            )}
+            {rotuloPreco && (
+              <p style={{ fontSize: "0.78rem", marginBottom: "0.6rem", fontWeight: 600,
+                color: precoDiverge(contrato.preco_mensal_fechado, contrato.preco_catalogo_hoje) ? cor.dourado : cor.mudo }}>
+                {rotuloPreco}
               </p>
             )}
 
@@ -527,15 +525,25 @@ export default function FazendasMobile() {
                 {(Object.keys(NOME_MODULO) as ModuloComercial[]).map((m) => (
                   <div key={m} style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                     <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", flex: 1 }}>
-                      <input type="checkbox" checked={modulosCustom[m] != null} disabled={m === "rebanho"}
-                        onChange={(e) => setModulosCustom((s) => ({ ...s, [m]: e.target.checked ? (s[m] ?? 0) : null }))} />
+                      <input type="checkbox" checked={modulosCustom[m] != null}
+                        onChange={(e) => alternarModulo(m, e.target.checked)} />
                       {NOME_MODULO[m]}
                     </label>
                     <input type="number" min={0} step="0.01" placeholder="R$" style={{ ...inputEstilo(estilos), width: "5.5rem" }}
                       disabled={modulosCustom[m] == null} value={modulosCustom[m] ?? ""}
-                      onChange={(e) => setModulosCustom((s) => ({ ...s, [m]: e.target.value === "" ? 0 : Number(e.target.value) }))} />
+                      onChange={(e) => mudarPrecoModulo(m, e.target.value === "" ? 0 : Number(e.target.value))} />
                   </div>
                 ))}
+                {/* Explica o que o sistema marcou/desmarcou sozinho por causa das dependências. */}
+                <div role="status" aria-live="polite">
+                  {avisoDependencia && <p style={{ fontSize: "0.78rem", color: cor.dourado, fontWeight: 600 }}>{avisoDependencia}</p>}
+                </div>
+                {erroValidacao && <p style={{ fontSize: "0.75rem", color: cor.vermelho }}>{erroValidacao}</p>}
+                {regrasIndisponiveis && (
+                  <p style={{ fontSize: "0.72rem", color: cor.mudo }}>
+                    Não foi possível carregar as regras de dependência entre módulos — o servidor confere ao salvar.
+                  </p>
+                )}
               </div>
             )}
 
@@ -567,7 +575,7 @@ export default function FazendasMobile() {
             )}
 
             <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-              <BotaoMobile estilos={estilos} disabled={salvando} onClick={salvarContrato}>{salvando ? "Salvando…" : "Salvar módulos/plano"}</BotaoMobile>
+              <BotaoMobile estilos={estilos} disabled={salvando} onClick={() => salvarContrato()}>{salvando ? "Salvando…" : "Salvar módulos/plano"}</BotaoMobile>
               {contrato.status !== "ativo" ? (
                 <BotaoMobile variante="ghost" estilos={estilos} disabled={aprovando} onClick={aprovar}
                   style={{ borderColor: cor.verde, color: cor.verde }}>
@@ -583,6 +591,9 @@ export default function FazendasMobile() {
                 <button onClick={() => setConfirmarSuspender(false)} style={{ background: "none", border: "none", color: cor.mudo, fontSize: "0.75rem", cursor: "pointer" }}>Cancelar</button>
               )}
             </div>
+            {temFinanceiro && selecionada != null && (
+              <div style={{ marginTop: "0.9rem" }}><PrepararFinanceiro fazendaId={selecionada} cores={coresPlano} toque /></div>
+            )}
           </SecaoAcordeaoMobile>
         )}
 
@@ -724,6 +735,10 @@ export default function FazendasMobile() {
           </SecaoAcordeaoMobile>
         )}
       </CorpoMobilePainelCowData>
+      {pendenteRemocao && (
+        <DialogoRemocaoModulos removidos={pendenteRemocao} salvando={salvando}
+          onCancelar={() => setPendenteRemocao(null)} onConfirmar={() => salvarContrato(true)} />
+      )}
     </div>
   );
 }

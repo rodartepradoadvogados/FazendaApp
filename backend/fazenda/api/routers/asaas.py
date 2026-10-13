@@ -24,8 +24,8 @@ from sqlmodel import Session, select
 from fazenda.auth import exigir_dono
 from fazenda.config import settings
 from fazenda.database import get_session
-from fazenda.models import CobrancaAsaas, ContratoFazenda, ContratoFazendaModulo, Fazenda, Usuario
-from fazenda.models.planos import DESCONTO_CICLO_PAGAMENTO, MESES_POR_CICLO, PLANOS_CATALOGO
+from fazenda.models import CobrancaAsaas, ContratoFazenda, Fazenda, Usuario
+from fazenda.models.planos import DESCONTO_CICLO_PAGAMENTO, MESES_POR_CICLO, preco_mensal_do_contrato
 from fazenda.rules import asaas
 
 router = APIRouter(prefix="/asaas", tags=["asaas"])
@@ -35,12 +35,7 @@ def _valor_mensal(session: Session, fazenda_id: int) -> float:
     contrato = session.exec(select(ContratoFazenda).where(ContratoFazenda.fazenda_id == fazenda_id)).first()
     if not contrato:
         raise HTTPException(status_code=400, detail="Fazenda ainda não tem contrato definido")
-    if contrato.plano and contrato.plano in PLANOS_CATALOGO:
-        return PLANOS_CATALOGO[contrato.plano]["preco"]
-    modulos = session.exec(
-        select(ContratoFazendaModulo).where(ContratoFazendaModulo.fazenda_id == fazenda_id, ContratoFazendaModulo.ativo == True)  # noqa: E712
-    ).all()
-    return sum(m.preco for m in modulos)
+    return preco_mensal_do_contrato(session, contrato)
 
 
 def _obter_ou_criar_customer_id(session: Session, fazenda_id: int, nome: str, documento: str, email: str | None) -> str:

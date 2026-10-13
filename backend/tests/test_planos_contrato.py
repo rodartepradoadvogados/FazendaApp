@@ -148,11 +148,110 @@ class TestTravaDeContrato:
         assert r.status_code == 200
         assert c.get("/financeiro/opcoes").status_code == 403
 
-    def test_contrato_sob_medida_exige_rebanho(self, client):
+    def test_contrato_sob_medida_exige_base_e_dependencias(self, client):
+        """Rebanho deixou de ser obrigatório: basta UM módulo base (rebanho ou
+        financeiro) e as dependências (DEPENDENCIAS_MODULOS) fechadas."""
         c, engine = client
         _como_dono()
-        r = c.put("/fazendas/2/contrato", json={"plano": None, "modulos": [{"modulo": "financeiro", "preco": 50.0}]})
+
+        def put(modulos):
+            return c.put(
+                "/fazendas/2/contrato",
+                json={"plano": None, "modulos": [{"modulo": m, "preco": 50.0} for m in modulos]},
+            )
+
+        # financeiro sozinho (sem rebanho): vale, preço = soma dos módulos.
+        r = put(["financeiro"])
+        assert r.status_code == 200, r.text
+        assert r.json()["preco_mensal"] == 50.0
+        # rebanho sozinho continua valendo.
+        assert put(["rebanho"]).status_code == 200
+        # sem nada / só módulo não-base: 400 em português.
+        r = put([])
         assert r.status_code == 400
+        assert "módulo base" in r.json()["detail"]
+        assert put(["consultor"]).status_code == 400
+        # estoque exige rebanho e financeiro (mensagem do contrato de API).
+        r = put(["financeiro", "estoque"])
+        assert r.status_code == 400
+        assert r.json()["detail"] == "Estoque exige Rebanho e Financeiro"
+        assert put(["rebanho", "estoque"]).status_code == 400
+        assert put(["rebanho", "financeiro", "estoque"]).status_code == 200
+        # pedidos / planejamento exigem financeiro.
+        r = put(["rebanho", "pedidos"])
+        assert r.status_code == 400
+        assert r.json()["detail"] == "Pedidos exige Financeiro"
+        assert put(["rebanho", "planejamento"]).status_code == 400
+        # reprodutivo/produtivo/sanitario/alimentacao exigem rebanho.
+        r = put(["financeiro", "reprodutivo"])
+        assert r.status_code == 400
+        assert r.json()["detail"] == "Reprodutivo exige Rebanho"
+        assert put(["financeiro", "alimentacao"]).status_code == 400
+        # módulo desconhecido continua recusado.
+        assert put(["rebanho", "inexistente"]).status_code == 400
+
+    def test_plano_financeiro_nao_tem_rebanho_e_custa_200(self, client):
+        c, engine = client
+        _como_dono()
+        r = c.put("/fazendas/2/contrato", json={"plano": "financeiro", "modulos": []})
+        assert r.status_code == 200, r.text
+        corpo = r.json()
+        assert {m["modulo"] for m in corpo["modulos"] if m["ativo"]} == {"financeiro", "pedidos"}
+        assert corpo["preco_mensal"] == 200.0
+        # Preço do pacote na 1ª linha: financeiro (rebanho não está no pacote).
+        precos = {m["modulo"]: m["preco"] for m in corpo["modulos"]}
+        assert precos == {"financeiro": 200.0, "pedidos": 0.0}
+        c.post("/fazendas/2/contrato/aprovar")
+        _como_fazenda(2)
+        assert c.get("/financeiro/opcoes").status_code == 200
+        assert c.get("/animais/").status_code == 403  # sem rebanho contratado
+
+    def test_pacotes_do_catalogo_respeitam_as_dependencias(self):
+        from fazenda.models.planos import PLANOS_CATALOGO, validar_contrato_modulos
+
+        for chave, plano in PLANOS_CATALOGO.items():
+            assert validar_contrato_modulos(plano["modulos"]) == [], chave
+
+    def test_plano_com_rebanho_grava_preco_na_linha_do_rebanho(self, client):
+        c, engine = client
+        _como_dono()
+        r = c.put("/fazendas/2/contrato", json={"plano": "gold", "modulos": []})
+        precos = {m["modulo"]: m["preco"] for m in r.json()["modulos"]}
+        assert precos["rebanho"] == 420.0
+        assert sum(precos.values()) == 420.0
+
+    def test_endpoint_dependencias_do_catalogo(self, client):
+        c, engine = client
+        _como_dono()
+        r = c.get("/fazendas/catalogo/dependencias")
+        assert r.status_code == 200, r.text
+        assert r.json() == {
+            "dependencias": {
+                "estoque": ["rebanho", "financeiro"], "pedidos": ["financeiro"], "planejamento": ["financeiro"],
+                "reprodutivo": ["rebanho"], "produtivo": ["rebanho"], "sanitario": ["rebanho"],
+                "alimentacao": ["rebanho"],
+            },
+            "modulos_base": ["rebanho", "financeiro"],
+        }
+
+    def test_apenas_dono_ve_dependencias(self, client):
+        c, engine = client
+        assert c.get("/fazendas/catalogo/dependencias").status_code == 403
+
+    def test_contrato_existente_nao_e_revalidado_na_leitura(self, client):
+        """Grandfather: um contrato antigo (ex.: estoque sem financeiro) segue
+        sendo lido e continua dando acesso — a validação só vale no PUT."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(ContratoFazendaModulo(fazenda_id=2, modulo="estoque", preco=0.0, ativo=True))
+            c2 = s.exec(select(ContratoFazenda).where(ContratoFazenda.fazenda_id == 2)).one()
+            c2.status = "ativo"
+            s.add(c2)
+            s.commit()
+        _como_dono()
+        r = c.get("/fazendas/2/contrato")
+        assert r.status_code == 200
+        assert [m["modulo"] for m in r.json()["modulos"]] == ["estoque"]
 
     def test_apenas_dono_gerencia_contrato(self, client):
         c, engine = client

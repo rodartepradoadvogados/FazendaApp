@@ -11,8 +11,10 @@ import {
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
-import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
+import { type EstoqueItemPicker } from "@/components/EstoquePicker";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
+import { ProdutoPedidoCampo } from "@/components/ProdutoPedidoCampo";
+import { moduloContratado } from "@/lib/modulos";
 import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 import { FormFinanceiro, type PrefillPedido } from "@/components/FormFinanceiro";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
@@ -118,7 +120,8 @@ export default function PedidosPage() {
     fetchOpcoesPedidos().then(setOpcoes).catch(() => {});
     fetchCentrosCusto().then((d) => setCentros(d.filter((c: any) => c.ativo).map((c: any) => c.nome))).catch(() => {});
     fetchPlanoContas().then(setPlanoContas).catch(() => {});
-    fetchEstoqueAtivos().then((d: any) => {
+    // Sem o módulo Estoque não há saldo a prever nem GET /estoque/ a fazer (403 garantido).
+    if (moduloContratado("estoque")) fetchEstoqueAtivos().then((d: any) => {
       const mapa: Record<string, { quantidade: number; estoque_minimo: number | null; unidade: string | null }> = {};
       (d.itens || []).forEach((i: any) => { mapa[i.nome] = { quantidade: i.quantidade ?? 0, estoque_minimo: i.estoque_minimo ?? null, unidade: i.unidade ?? null }; });
       setEstoquePorNome(mapa);
@@ -147,8 +150,9 @@ export default function PedidosPage() {
       <div className="mb-4">
         <h1 className="text-2xl font-bold flex items-center gap-2"><ShoppingCart size={22} style={{ color: "var(--dourado)" }} /> Pedidos</h1>
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
-          Intenção de compra ou venda — não gera movimentação de estoque nem lançamento financeiro por si só.
-          Só passa a refletir em Estoque/Financeiro quando uma nota fiscal, recibo ou entrada de estoque é lançada e vinculada a este pedido.
+          {moduloContratado("estoque")
+            ? "Intenção de compra ou venda — não gera movimentação de estoque nem lançamento financeiro por si só. Só passa a refletir em Estoque/Financeiro quando uma nota fiscal, recibo ou entrada de estoque é lançada e vinculada a este pedido."
+            : "Intenção de compra ou venda — não gera lançamento financeiro por si só. Só passa a refletir no Financeiro quando uma nota fiscal ou recibo é lançado e vinculado a este pedido."}
         </p>
       </div>
 
@@ -399,14 +403,14 @@ function PedidoLinha({ pedido, destacado, expandido, onToggle, onEditar, onExclu
                     </ul>
                   ) : <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Nenhum ainda — pedido não reflete em Financeiro.</p>}
                 </div>
-                <div>
+                {moduloContratado("estoque") && <div>
                   <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.3rem", display: "flex", alignItems: "center", gap: "0.3rem" }}><Package size={13} /> Movimentos de estoque vinculados</div>
                   {detalhe && detalhe.movimentos_estoque.length > 0 ? (
                     <ul style={{ fontSize: "0.78rem", paddingLeft: "1.1rem" }}>
                       {detalhe.movimentos_estoque.map((m: any) => <li key={m.id}>{m.nome_item} — {m.quantidade} {m.unidade || ""}</li>)}
                     </ul>
                   ) : <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Nenhum ainda — pedido não reflete em Estoque.</p>}
-                </div>
+                </div>}
               </div>
 
               <div className="card" style={{ padding: "0.75rem", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.75rem", background: "var(--surface)" }}>
@@ -499,6 +503,8 @@ function MarcarEntregaItem({ pedidoId, item, desabilitado, onEntregaMarcada, est
   // em estoque_baixa.resolver_item; se não bate lá, também não bate aqui).
   estoqueAtual: { quantidade: number; estoque_minimo: number | null; unidade: string | null } | null;
 }) {
+  // Sem o módulo Estoque a conferência é só "recebido" — sem saldo, sem prévia, sem entrada em estoque.
+  const [semEstoque] = useState(() => !moduloContratado("estoque"));
   const [valor, setValor] = useState(String(item.quantidade_entregue ?? 0));
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -525,7 +531,7 @@ function MarcarEntregaItem({ pedidoId, item, desabilitado, onEntregaMarcada, est
   // nada ali). Puramente informativo: o saldo real só muda ao confirmar.
   const quantidadeDigitada = Number(valor);
   const delta = !Number.isNaN(quantidadeDigitada) ? quantidadeDigitada - (item.quantidade_entregue ?? 0) : 0;
-  const preview = estoqueAtual && delta > 0 ? {
+  const preview = !semEstoque && estoqueAtual && delta > 0 ? {
     depois: estoqueAtual.quantidade + delta,
     abaixoDoMinimo: estoqueAtual.estoque_minimo != null && (estoqueAtual.quantidade + delta) < estoqueAtual.estoque_minimo,
   } : null;
@@ -534,16 +540,16 @@ function MarcarEntregaItem({ pedidoId, item, desabilitado, onEntregaMarcada, est
     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.15rem" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
         <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
-          {item.quantidade_entregue ?? 0}{item.quantidade != null ? ` / ${item.quantidade}` : ""} entregue{(item.quantidade_entregue ?? 0) === 1 ? "" : "s"}
+          {item.quantidade_entregue ?? 0}{item.quantidade != null ? ` / ${item.quantidade}` : ""} {semEstoque ? "recebido" : "entregue"}{(item.quantidade_entregue ?? 0) === 1 ? "" : "s"}
         </span>
         <input
           type="number" step="0.01" min={0} disabled={desabilitado || salvando}
           style={{ ...inputStyle, width: "5rem", padding: "0.2rem 0.4rem", fontSize: "0.76rem" }}
           value={valor} onChange={(e) => setValor(e.target.value)}
-          title="Quantidade entregue"
+          title={semEstoque ? "Quantidade recebida" : "Quantidade entregue"}
         />
         <button
-          type="button" title="Marcar entrega" disabled={desabilitado || salvando}
+          type="button" title={semEstoque ? "Marcar recebimento" : "Marcar entrega"} disabled={desabilitado || salvando}
           onClick={confirmar}
           style={{ background: "none", border: "none", cursor: desabilitado ? "not-allowed" : "pointer", color: desabilitado ? "var(--text-muted)" : "var(--green-light)", opacity: desabilitado ? 0.5 : 1 }}
         >
@@ -591,7 +597,8 @@ function FormPedido({ pedido, opcoes, centros, planoContas, onSalvo, onCancelar 
   // cima em PedidosPage; sem isto, cadastrar um fornecedor novo aqui dentro
   // não aparecia no seletor até recarregar a página inteira).
   const [produtosEstoque, setProdutosEstoque] = useState<EstoqueItemPicker[]>([]);
-  const carregarEstoque = () => fetchEstoqueAtivos().then((d: any) => setProdutosEstoque((d.itens || []).map((i: any) => ({
+  const [temEstoque] = useState(() => moduloContratado("estoque"));
+  const carregarEstoque = () => !moduloContratado("estoque") ? Promise.resolve() : fetchEstoqueAtivos().then((d: any) => setProdutosEstoque((d.itens || []).map((i: any) => ({
     nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
     estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
   })))).catch(() => {});
@@ -721,13 +728,13 @@ function FormPedido({ pedido, opcoes, centros, planoContas, onSalvo, onCancelar 
                   ) : (
                     <div className="flex items-center gap-2">
                       <div style={{ flex: 1 }}>
-                        <EstoquePicker itens={produtosEstoque} value={item.produto_servico} todasFinalidades incluirNaoEstocaveis
-                          placeholder="Selecionar produto…"
+                        <ProdutoPedidoCampo temEstoque={temEstoque} itensEstoque={produtosEstoque} value={item.produto_servico}
+                          placeholder="Selecionar produto…" estilo={inputStyle}
                           onChange={(nome) => atualizarItem(idx, { produto_servico: nome })} />
                       </div>
-                      <button type="button" className="btn-ghost" title="Cadastrar novo produto" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoProduto(idx)}>
+                      {temEstoque && <button type="button" className="btn-ghost" title="Cadastrar novo produto" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoProduto(idx)}>
                         <Plus size={13} /> Novo
-                      </button>
+                      </button>}
                     </div>
                   )}
                 </div>
@@ -825,7 +832,7 @@ function FormPedido({ pedido, opcoes, centros, planoContas, onSalvo, onCancelar 
         <button className="btn-primary" disabled={salvando} onClick={salvar}>{salvando ? "Salvando…" : "Salvar"}</button>
       </div>
 
-      {abrirNovoProduto !== null && (
+      {temEstoque && abrirNovoProduto !== null && (
         <Modal title="Novo produto (estoque)" onClose={() => setAbrirNovoProduto(null)} width="900px" zIndex={95}>
           <NovoItemEstoque
             onCriado={(item) => {

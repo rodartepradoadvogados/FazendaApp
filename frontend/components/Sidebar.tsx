@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Calendar,
   Heart,
@@ -26,7 +26,11 @@ import {
   FileSearch,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { checkHealth, getUsuario, getFazendaAtual, podeModulo, ehAdmin, ehDono, podeFormularDietas, ROTA_MODULO } from "@/lib/api";
+import {
+  checkHealth, getUsuario, getFazendaAtual, getModoSuporte, podeModulo, ehAdmin, ehDono, ehMembroEquipeCowData, podeFormularDietas,
+  renovarContrato, EVENTO_CONTRATO,
+} from "@/lib/api";
+import { ITENS_MENU, contextoAtual, insightsHref as insightsHrefDe, itensDoMenu, temInsights as temInsightsDe, type ItemMenu } from "@/lib/modulos";
 import { LogOut, UserCircle } from "lucide-react";
 import { CowIcon } from "@/components/CowIcon";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
@@ -50,12 +54,14 @@ function SidebarLink({ href, title, label, active, recolhida, children }: {
     <Link
       href={href}
       title={title || label}
-      className="flex items-center gap-3 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150"
+      aria-current={active ? "page" : undefined}
+      // Alvo de toque ≥44px no mobile (drawer); no desktop a barra segue compacta.
+      className="flex items-center gap-3 px-3 py-1.5 min-h-[44px] md:min-h-0 rounded-lg font-medium transition-all duration-150"
       style={{
         background: active ? "var(--sidebar-active-bg)" : "transparent",
         color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
         borderLeft: active ? "3px solid var(--sidebar-active-border)" : "3px solid transparent",
-        fontSize: "10px",
+        fontSize: "12px",
         justifyContent: recolhida ? "center" : "flex-start",
         paddingLeft: recolhida ? "0.4rem" : undefined,
         paddingRight: recolhida ? "0.4rem" : undefined,
@@ -73,33 +79,24 @@ function SidebarLink({ href, title, label, active, recolhida, children }: {
 
 // Grupos visuais da navegação (rótulo discreto acima de cada seção) — mesma
 // ordem do fluxo de gestão: (1) ciclo diário; (2) manejo do rebanho; (3)
-// insumos/sanidade (consumíveis do dia a dia); (4) análise; (5) financeiro
-// (Controle Financeiro + Pedidos). Análise e Administração não têm mais
-// grupo aqui — viraram os portais "Insights" e "Administração" (ver
-// components/insights/InsightsLayout.tsx), cada um com o próprio atalho no
-// rodapé desta barra, numa aba nova de verdade do navegador. Recria não tem
-// mais item próprio aqui — virou sub-aba de Indicadores.
+// insumos/sanidade (consumíveis do dia a dia); (4) financeiro (Controle
+// Financeiro + Cotações + Pedidos). Os itens, rótulos, tooltips e a regra de
+// quem enxerga cada um moram em lib/modulos.ts (tabela única, testada) — esta
+// barra só desenha o que o contrato da fazenda e as permissões do usuário
+// liberam. Análise e Administração não têm grupo aqui — viraram os portais
+// "Insights" e "Administração" (ver components/insights/InsightsLayout.tsx),
+// cada um com o próprio atalho no rodapé desta barra, numa aba nova de
+// verdade do navegador. Recria não tem mais item próprio aqui — virou sub-aba
+// de Indicadores.
 const GRUPOS = ["Ciclo diário", "Manejo do rebanho", "Insumos e sanidade", "Financeiro"] as const;
 
-const links = [
-  // ── Ciclo diário ──
-  { href: "/",            label: "Capa",        icon: Home,          title: "Capa — visão geral da fazenda", grupo: "Ciclo diário" },
-  { href: "/agenda",      label: "Agenda",       icon: Calendar,      title: "Agenda de atividades do dia — pendências e eventos a cumprir", grupo: "Ciclo diário" },
-  { href: "/lancamentos", label: "Lançamentos",  icon: ClipboardList, title: "Lançamentos — registrar eventos e dados do dia a dia", grupo: "Ciclo diário" },
-  { href: "/protocolos",  label: "Central de Protocolos", icon: ListChecks, title: "Central de Protocolos — cadastro, aplicação, acompanhamento e concluídos de vacinas, exames, IATF, Indução de Lactação e Customizado", grupo: "Ciclo diário" },
-  // ── Manejo do rebanho ──
-  { href: "/rebanho",     label: "Rebanho",      icon: CowIcon,       title: "Rebanho — animais, movimentações entre lotes e ficha do animal", grupo: "Manejo do rebanho" },
-  { href: "/historico",   label: "Histórico",    icon: Heart,         title: "Histórico — Reprodução (serviços, diagnósticos, partos) e Produção (controle leiteiro, secagem, BST)", grupo: "Manejo do rebanho" },
-  { href: "/ciclos-21-dias", label: "Ciclos de 21 dias", icon: Calendar, title: "Risco de prenhez em ciclos de 21 dias (padrão BREDSUM\\E): elegíveis para inseminação → servidas → elegíveis para prenhez → prenhes", grupo: "Manejo do rebanho" },
-  // ── Insumos e sanidade ──
-  { href: "/sanidade",    label: "Sanidade",     icon: Syringe,       title: "Sanidade — aplicações, protocolos e calendário sanitário", grupo: "Insumos e sanidade" },
-  { href: "/alimentacao", label: "Alimentação",  icon: Wheat,         title: "Alimentação — dieta, consumo e necessidade por lote", grupo: "Insumos e sanidade" },
-  { href: "/estoque",     label: "Estoque",      icon: Package,       title: "Estoque de insumos — quantidades, valores e itens abaixo do mínimo", grupo: "Insumos e sanidade" },
-  // ── Financeiro ──
-  { href: "/financeiro",  label: "Controle Financeiro", icon: BarChart3, title: "Controle Financeiro — contas a pagar/receber, folha e indicadores", grupo: "Financeiro" },
-  { href: "/cotacoes",    label: "Cotações",     icon: FileSearch,    title: "Cotação de Preços com Fornecedores — compara respostas e gera Pedidos com os vencedores", grupo: "Financeiro" },
-  { href: "/pedidos",     label: "Pedidos",      icon: ShoppingCart,  title: "Pedidos — intenção de compra/venda; só reflete em Estoque/Financeiro quando a nota fiscal/recibo é vinculada", grupo: "Financeiro" },
-];
+// Ícone de cada item (a Sidebar é o único lugar que conhece ícones).
+const ICONES: Record<string, React.ComponentType<{ size?: number }>> = {
+  "/": Home, "/agenda": Calendar, "/lancamentos": ClipboardList, "/protocolos": ListChecks,
+  "/rebanho": CowIcon, "/historico": Heart, "/ciclos-21-dias": Calendar,
+  "/sanidade": Syringe, "/alimentacao": Wheat, "/estoque": Package,
+  "/financeiro": BarChart3, "/cotacoes": FileSearch, "/pedidos": ShoppingCart,
+};
 
 // Itens de módulo que não vêm de `links` (montados à parte, mais abaixo) mas
 // que também registram sub-navegação — usado só para dar título à aba nova
@@ -113,7 +110,7 @@ const EXTRAS_TITULO_SIDEBAR: Record<string, string> = {
   "/analise-relatorios": "Relatórios",
 };
 export function rotuloDaPagina(path: string): string {
-  return links.find((l) => l.href === path)?.label ?? EXTRAS_TITULO_SIDEBAR[path] ?? path;
+  return ITENS_MENU.find((l) => l.href === path)?.label ?? EXTRAS_TITULO_SIDEBAR[path] ?? path;
 }
 
 export function Sidebar() {
@@ -152,7 +149,10 @@ export function Sidebar() {
     return () => mq.removeEventListener("change", ouvir);
   }, []);
   const recolhida = recolhidaPref && ehDesktop;
-  const [visiveis, setVisiveis] = useState(links);
+  // Menu só depois de montar: o 1º paint (e o servidor) não sabem contrato nem
+  // permissões, então mostram um esqueleto — nunca o menu completo que logo
+  // piscaria e sumiria para uma fazenda de plano menor.
+  const [itens, setItens] = useState<ItemMenu[] | null>(null);
   const [admin, setAdmin] = useState(false);
   const [dono, setDono] = useState(false);
 
@@ -166,33 +166,30 @@ export function Sidebar() {
   // fixo de sempre, mantido como fallback para quem nunca teve mais de uma
   // fazenda vinculada (ninguém percebe diferença nenhuma).
   const [fazendaNome, setFazendaNome] = useState("Jairo Nasser");
-  // ID da fazenda selecionada — mostrado ao lado do nome (pedido explícito:
-  // ajuda a equipe CowData a identificar a fazenda ao pedir suporte/ao
-  // rodar a sincronização da Fazenda Teste em Painel CowData > Fazendas).
+  // ID da fazenda selecionada — ajuda a equipe CowData a identificar a
+  // fazenda ao pedir suporte/ao rodar a sincronização da Fazenda Teste em
+  // Painel CowData > Fazendas. Só aparece para dono, Equipe CowData e sessão
+  // de suporte: para o cliente é número interno sem significado.
   const [fazendaId, setFazendaId] = useState<number | null>(null);
+  const [mostrarId, setMostrarId] = useState(false);
 
-  useEffect(() => {
-    // Filtra o menu conforme as permissões do usuário logado. "/historico"
-    // reúne Reprodução + Produção — mostra o link se o usuário tiver
-    // qualquer uma das duas (a página em si esconde a sub-aba sem permissão).
-    setVisiveis(links.filter((l) => (
-      l.href === "/historico" ? (podeModulo("reproducao") || podeModulo("producao")) : podeModulo(ROTA_MODULO[l.href] || l.href)
-    )));
+  const recalcular = useCallback(() => {
+    const ctx = contextoAtual();
+    // Menu = tabela única de lib/modulos.ts (permissão do usuário E contrato
+    // da fazenda, qualquer-de): Capa, Lançamentos, Central de Protocolos,
+    // Insights etc. somem quando a fazenda não tem rebanho.
+    setItens(itensDoMenu(ctx));
     setAdmin(ehAdmin());
     setDono(ehDono());
     setTemConfiguracoes(podeModulo("parametros") || podeModulo("upload") || ehAdmin());
     setFazendaNome(getFazendaAtual()?.nome || "Jairo Nasser");
     setFazendaId(getFazendaAtual()?.id ?? null);
-    // Atalho "Insights" (ver botão no rodapé) — só aparece para quem tem
-    // acesso a pelo meno um item do grupo (ver InsightsLayout.tsx:
-    // Indicadores e Relatórios usam o módulo "indicadores"; Listas usa
-    // "reproducao"), diferente de Administração, que sempre tem o Portal
-    // como destino universal.
-    setTemInsights(podeModulo("indicadores") || podeModulo("reproducao"));
-    setInsightsHref(
-      podeModulo("indicadores") ? "/indicadores" :
-      "/relatorios"
-    );
+    setMostrarId(ehDono() || ehMembroEquipeCowData() || getModoSuporte() != null);
+    // Atalho "Insights" (ver botão no rodapé) — só para quem tem acesso a pelo
+    // menos um item do grupo, diferente de Administração, que sempre tem o
+    // Portal como destino universal.
+    setTemInsights(temInsightsDe(ctx));
+    setInsightsHref(insightsHrefDe(ctx));
     // Destino do atalho "Administração" — Controle de Acesso e Painel
     // CowData/Contador são só do dono; Configurações exige módulo próprio;
     // Portal é o único item sem nenhuma permissão, garante que o atalho
@@ -203,7 +200,24 @@ export function Sidebar() {
       "/portal"
     );
     setFormularDietas(podeFormularDietas());
-  }, [path]);
+  }, []);
+
+  // A cada navegação (permissões podem ter mudado desde o login).
+  useEffect(() => { recalcular(); }, [path, recalcular]);
+
+  // Contrato fresco: relê /auth/me ao montar e quando a aba volta ao primeiro
+  // plano (máx. 1× a cada 5 min, compartilhado com o AuthShell — ver
+  // renovarContrato) e reavalia o menu quando o contrato muda, sem novo login.
+  useEffect(() => {
+    renovarContrato();
+    const aoVoltar = () => { if (document.visibilityState === "visible") renovarContrato(); };
+    document.addEventListener("visibilitychange", aoVoltar);
+    window.addEventListener(EVENTO_CONTRATO, recalcular);
+    return () => {
+      document.removeEventListener("visibilitychange", aoVoltar);
+      window.removeEventListener(EVENTO_CONTRATO, recalcular);
+    };
+  }, [recalcular]);
 
   useEffect(() => {
     let ativo = true;
@@ -273,14 +287,14 @@ export function Sidebar() {
           <Menu size={22} />
         </button>
         <CowDataWordmark size="0.85rem" cowColor="var(--sidebar-fg)" />
-        <span style={{ color: "var(--sidebar-muted)", fontSize: "0.7rem" }}>· {fazendaNome}{fazendaId != null ? ` (ID: ${fazendaId})` : ""}</span>
+        <span style={{ color: "var(--sidebar-muted)", fontSize: "0.7rem" }}>· {fazendaNome}{mostrarId && fazendaId != null ? ` (ID: ${fazendaId})` : ""}</span>
       </div>
       {/* Espaçador: reserva a altura da barra fixa (incluindo a faixa de segurança
           do topo) para o conteúdo não ficar por baixo dela. */}
       <div className="md:hidden" style={{ height: "calc(3.25rem + env(safe-area-inset-top, 0px))" }} aria-hidden="true" />
 
       {/* Fundo escuro atrás do drawer aberto (mobile) */}
-      {aberto && <div className="md:hidden fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.55)" }} onClick={() => setAberto(false)} />}
+      {aberto && <div className="md:hidden fixed inset-0 z-40" aria-hidden="true" style={{ background: "rgba(0,0,0,0.55)" }} onClick={() => setAberto(false)} />}
 
       <aside
         // paddingTop com safe-area-inset-top: o drawer mobile (fixed, inset-y-0)
@@ -294,7 +308,13 @@ export function Sidebar() {
         // sempre abre na largura cheia (w-56 base), independente da
         // preferência de recolher salva (essa é só para a barra fixa do
         // desktop; no mobile o menu já fecha inteiro depois de navegar).
-        ref={asideRef} id="menu-mobile" role="dialog" aria-modal="true" aria-label="Menu de navegação"
+        // role="dialog" aria-modal só com o drawer mobile ABERTO: no desktop a
+        // barra é fixa (não é diálogo) e aria-modal tornaria o resto da página
+        // inerte para leitor de tela. Fechado no mobile, `inert` tira o drawer
+        // (fora da tela) da ordem de foco e da árvore de acessibilidade.
+        ref={asideRef} id="menu-mobile" aria-label="Menu de navegação"
+        {...(aberto && !ehDesktop ? { role: "dialog", "aria-modal": true } : {})}
+        inert={!aberto && !ehDesktop}
         className={`w-56 ${recolhida ? "md:w-[52px]" : "md:w-[196px]"} flex flex-col flex-shrink-0 h-full fixed md:relative inset-y-0 left-0 z-50 transform transition-[width,transform] duration-200 ${aberto ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
       >
       {/* Botão fechar — só no mobile */}
@@ -327,7 +347,7 @@ export function Sidebar() {
             <>
               <CowDataWordmark size="1.05rem" cowColor="var(--sidebar-fg)" />
               <p style={{ color: "var(--sidebar-logo-sub)", fontSize: "0.6rem", lineHeight: 1.2 }}>
-                {fazendaNome}{fazendaId != null ? ` (ID: ${fazendaId})` : ""}
+                {fazendaNome}{mostrarId && fazendaId != null ? ` (ID: ${fazendaId})` : ""}
               </p>
             </>
           )}
@@ -340,26 +360,36 @@ export function Sidebar() {
           components/SubNavTabs.tsx, montada em AuthShell.tsx). */}
       <nav className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
         <div className="flex-1 p-3 space-y-1" style={{ overflowY: "auto", minHeight: 0 }}>
-          {(() => {
+          {itens === null ? (
+            // Esqueleto até saber o contrato (sem flash do menu completo).
+            <div aria-hidden="true" className="space-y-2" style={{ padding: "0.2rem 0.3rem" }}>
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} style={{ height: 28, borderRadius: 8, background: "var(--sidebar-border)", opacity: 0.45, width: recolhida ? 28 : "100%" }} />
+              ))}
+            </div>
+          ) : (
             // Administração (Controle de Acesso, Painel CowData, Painel do
             // Contador, Portal, Consultor, Configurações) saiu daqui — mora
             // no portal Administração agora (atalho próprio no rodapé).
-            const todos = visiveis;
-            return GRUPOS.map((grupo, i) => {
-              const itens = todos.filter((l) => l.grupo === grupo);
-              if (!itens.length) return null;
+            GRUPOS.map((grupo, i, todosGrupos) => {
+              const doGrupo = itens.filter((l) => l.grupo === grupo);
+              if (!doGrupo.length) return null;
+              // Rótulo de grupo só quando há mais de um item (um rótulo sobre
+              // um único item é ruído) e, de fato, mais de um grupo na tela.
+              const primeiroVisivel = todosGrupos.findIndex((g) => itens.some((l) => l.grupo === g)) === i;
               return (
                 <div key={grupo}>
-                  {!recolhida && (
+                  {!recolhida && doGrupo.length > 1 && (
                     <p style={{
-                      fontSize: "10px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em",
-                      color: "var(--sidebar-muted)", margin: i === 0 ? "0 0 0.3rem 0.6rem" : "0.7rem 0 0.3rem 0.6rem",
+                      fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em",
+                      color: "var(--sidebar-muted)", margin: primeiroVisivel ? "0 0 0.3rem 0.6rem" : "0.7rem 0 0.3rem 0.6rem",
                     }}>
                       {grupo}
                     </p>
                   )}
-                  {itens.map(({ href, label, icon: Icon, title }) => {
+                  {doGrupo.map(({ href, label, title }) => {
                     const active = path === href || (href !== "/" && path.startsWith(href));
+                    const Icon = ICONES[href] ?? Home;
                     return (
                       <SidebarLink key={href} href={href} title={title} label={label} active={active} recolhida={recolhida}>
                         <Icon size={16} />
@@ -369,8 +399,8 @@ export function Sidebar() {
                   })}
                 </div>
               );
-            });
-          })()}
+            })
+          )}
         </div>
       </nav>
 
@@ -390,7 +420,7 @@ export function Sidebar() {
             className="flex items-center gap-2 rounded-lg transition-all duration-150"
             style={{
               padding: recolhida ? "0.5rem 0.4rem" : "0.5rem 0.6rem", justifyContent: recolhida ? "center" : "flex-start",
-              color: "var(--sidebar-muted)", textDecoration: "none", fontSize: "10px", fontWeight: 600,
+              color: "var(--sidebar-muted)", textDecoration: "none", fontSize: "12px", fontWeight: 600, minHeight: 44,
               border: "1px solid var(--sidebar-border)",
             }}>
             <LineChart size={16} />
@@ -405,7 +435,7 @@ export function Sidebar() {
           className="flex items-center gap-2 rounded-lg transition-all duration-150"
           style={{
             padding: recolhida ? "0.5rem 0.4rem" : "0.5rem 0.6rem", justifyContent: recolhida ? "center" : "flex-start",
-            color: "var(--sidebar-muted)", textDecoration: "none", fontSize: "10px", fontWeight: 600,
+            color: "var(--sidebar-muted)", textDecoration: "none", fontSize: "12px", fontWeight: 600, minHeight: 44,
             border: "1px solid var(--sidebar-border)",
           }}>
           <Building2 size={16} />
@@ -426,7 +456,7 @@ export function Sidebar() {
             className="flex items-center gap-2 rounded-lg transition-all duration-150"
             style={{
               padding: recolhida ? "0.5rem 0.4rem" : "0.5rem 0.6rem", justifyContent: recolhida ? "center" : "flex-start",
-              color: "var(--sidebar-muted)", textDecoration: "none", fontSize: "10px", fontWeight: 600,
+              color: "var(--sidebar-muted)", textDecoration: "none", fontSize: "12px", fontWeight: 600, minHeight: 44,
               border: "1px solid var(--sidebar-border)",
             }}>
             <FlaskConical size={16} />
@@ -440,7 +470,7 @@ export function Sidebar() {
           para rótulo, usuário logado ou versão). */}
       <div
         className="p-2 border-t text-center"
-        style={{ borderColor: "var(--sidebar-border)", fontSize: "0.65rem", color: "var(--sidebar-muted)" }}
+        style={{ borderColor: "var(--sidebar-border)", fontSize: "0.75rem", color: "var(--sidebar-muted)" }}
         title={recolhida ? statusLabel : undefined}
       >
         <div className="flex items-center justify-center gap-1.5" style={{ color: statusColor }}>
@@ -455,10 +485,7 @@ export function Sidebar() {
           {!recolhida && statusLabel}
         </div>
         {!recolhida && (
-          <>
-            <UsuarioLogado />
-            <p className="mt-0.5">v1.0.0 · Sprint 1</p>
-          </>
+          <UsuarioLogado />
         )}
       </div>
       </aside>

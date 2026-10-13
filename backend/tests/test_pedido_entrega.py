@@ -41,6 +41,10 @@ def client():
         for fid in (1, 2):
             s.add(ContratoFazenda(fazenda_id=fid, status="ativo"))
             s.add(ContratoFazendaModulo(fazenda_id=fid, modulo="pedidos", preco=0.0, ativo=True))
+            # Plano Financeiro §1.7: a entrada automática no estoque só acontece se a
+            # fazenda tem o módulo `estoque` contratado (sem ele, ver
+            # test_plano_financeiro_estoque.py) — este arquivo testa a fazenda COM estoque.
+            s.add(ContratoFazendaModulo(fazenda_id=fid, modulo="estoque", preco=0.0, ativo=True))
         # Item de estoque casável por nome com o PedidoItem "produto" usado
         # nos testes abaixo (ver `estoque_baixa.resolver_item`) — unidade
         # preenchida de propósito: sem ela `pode_dar_baixa_direta` recusa a

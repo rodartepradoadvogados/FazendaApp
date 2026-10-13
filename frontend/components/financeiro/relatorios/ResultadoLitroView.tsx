@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Info } from "lucide-react";
 import { fetchResultadoPorLitro } from "@/lib/api";
 import { fetchOrcamentoRelatorio } from "@/lib/apiPlano";
+import { moduloContratado } from "@/lib/modulos";
 import { periodoDeMesesInteiros, type RespostaOrcamento } from "@/lib/relatorioOrcamento";
 import { ESTADO_INICIAL, REGIME_API, REGIME_NOME, brl, delta, deslocar, litros, mesCurto, mesLongo, num } from "@/lib/relatorioContexto";
 import {
@@ -59,7 +60,7 @@ export default function ResultadoLitroView(props: PropsRelatorio) {
 
   const [leituraOrc, setLeituraOrc] = useState<{ k: string; r: RespostaOrcamento | null; erro: string | null } | null>(null);
   const cmpOrc = comparacao?.tipo === "orcado";
-  const orcPossivel = cmpOrc && regras.ativa === true && efetivo.reg === "comp" && periodoDeMesesInteiros(periodo);
+  const orcPossivel = cmpOrc && moduloContratado("planejamento") && regras.ativa === true && efetivo.reg === "comp" && periodoDeMesesInteiros(periodo);
   const chaveOrc = `${periodo.ini}|${periodo.fim}|${centroApi ?? ""}|${tentativa}`;
   useEffect(() => {
     if (!orcPossivel) return;

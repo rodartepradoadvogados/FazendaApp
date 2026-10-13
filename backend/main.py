@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select
 
 from fazenda.auth import (
-    bloquear_escrita_contador, exigir_admin_ou_consultor_fazenda, exigir_contrato_ativo, exigir_modulo,
+    bloquear_escrita_contador, exigir_admin_ou_consultor_fazenda, exigir_algum_modulo_contratado, exigir_contrato_ativo, exigir_modulo,
     exigir_fazenda_selecionada, exigir_modulo_contratado, exigir_modulo_qualquer, exigir_segredo_de_producao,
     get_current_user, seed_admin,
     seed_email_dono_backfill, seed_email_dono_correcao_202607c, seed_permissao_publicar_dono,
@@ -34,6 +34,7 @@ from fazenda.api.routers import (
     cadastro,
     cartao_credito,
     faturas_fornecedor,
+    financeiro_preparar,
     central_documentos,
     central_protocolos,
     chamados,
@@ -856,6 +857,9 @@ app.include_router(publico.router)
 # Fazendas: gerencia os próprios contratos/planos — não leva a trava de
 # módulo contratado (seria circular).
 app.include_router(fazendas.router)
+# "Preparar financeiro" (botão do dono): plano de contas padrão, contas do
+# sistema e regras v2 numa fazenda nova — router próprio, mesmo princípio acima.
+app.include_router(financeiro_preparar.router)
 # Painel Mestre CowData: exigir_dono em cada endpoint (mesmo padrão de
 # fazendas.router) — nunca a trava de módulo contratado (é a própria CowData).
 app.include_router(painel_cowdata.router)
@@ -998,7 +1002,10 @@ app.include_router(central_documentos.router, dependencies=_protegido + _contrat
 # Chamados (suporte) — mesmo padrão de financeiro: contador só escreve
 # (abrir chamado) com o cadeado destravado.
 app.include_router(chamados.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())] + _fazenda_selecionada)
-app.include_router(indicadores.router, dependencies=_protegido + _contrato_ativo)
+# Indicadores são KPIs de rebanho (reprodução, produção, recria): exigem ao
+# menos um dos módulos que os alimentam. Fazenda só-Financeiro (Plano
+# Financeiro) recebe 403 "módulo não contratado" em vez de painéis vazios.
+app.include_router(indicadores.router, dependencies=_protegido + [Depends(exigir_algum_modulo_contratado("rebanho", "reprodutivo", "produtivo"))])
 # Alertas de indicador — preferência pessoal do usuário (config de "avise-me
 # se X passar de Y"), sem gate de módulo contratado.
 app.include_router(alertas_indicador.router, dependencies=_protegido)

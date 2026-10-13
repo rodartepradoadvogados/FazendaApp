@@ -116,6 +116,30 @@ Acesse: http://localhost:3000
 | GET | `/financeiro/dre` | DRE por período e regime |
 | GET | `/financeiro/contas-a-pagar` | Contas próximas |
 
+## Planos comerciais e módulos contratados
+
+Cada fazenda (tenant) tem um contrato (`contrato_fazenda`) com módulos ativos (`contrato_fazenda_modulo`). A trava é dupla:
+a permissão do **usuário** (`exigir_modulo`) e o módulo **contratado pela fazenda** (`exigir_modulo_contratado`, `main.py`). Fazenda nova
+nasce `aguardando_aprovacao` e sem módulo até o dono da plataforma aprovar o contrato (Painel CowData > Fazendas).
+
+| Plano | Módulos | Preço inicial/mês |
+|---|---|---|
+| Standard | rebanho, reprodutivo | R$ 250 |
+| Silver | + produtivo, sanitário, financeiro | R$ 350 |
+| Gold | + planejamento, pedidos, estoque, alimentação, agricultura | R$ 420 |
+| Diamond | Gold + consultor | R$ 500 |
+| **Financeiro** | financeiro, pedidos (sem rebanho) | R$ 200 |
+| Sob medida | módulos avulsos, respeitando as dependências | soma dos módulos |
+
+- **Dependências** (`DEPENDENCIAS_MODULOS`, `fazenda/models/planos.py`): estoque ⇒ rebanho + financeiro; pedidos e planejamento ⇒ financeiro;
+  reprodutivo, produtivo, sanitário e alimentação ⇒ rebanho. Todo contrato precisa de um módulo base (rebanho ou financeiro). Contratos antigos não são revalidados.
+- **Preço**: o preço de cada plano é editável no Painel CowData (`PUT /fazendas/catalogo/precos-plano/{plano}`, tabela `preco_plano`). O preço do contrato **fecha na
+  aprovação** (`contrato_fazenda.preco_mensal_fechado`); mudar o catálogo depois não altera contrato já fechado nem a cobrança (Asaas/boleto).
+- **Estoque**: sem o módulo `estoque` contratado, nenhum efeito colateral (Pedidos, lançamentos do Financeiro) grava estoque (`rules/estoque_baixa.py`).
+- **Fazenda só-financeiro**: sem Capa/indicadores, a página inicial é a Agenda (`lib/modulos.ts::rotaInicial`). A visibilidade de menu/rotas vem de uma tabela única em `frontend/lib/modulos.ts`.
+- **Preparar financeiro**: `POST /fazendas/{id}/financeiro/preparar` (dono, idempotente) carrega um *rascunho* de plano de contas (validar com o contador) e liga as regras v2 só se a fazenda não tem lançamentos.
+- Detalhes e decisões: `docs/planos-plano-financeiro/` (`PLANO_v2.md`, `CONTRATO_API.md`).
+
 ## Regras de negócio implementadas
 
 Todas as regras da Seção 5 do `CONTEXTO_PROJETO_FAZENDA.md` estão em `backend/fazenda/rules/`:
