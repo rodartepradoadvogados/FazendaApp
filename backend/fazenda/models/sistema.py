@@ -312,6 +312,24 @@ class PushNotificacaoRecebida(SQLModel, table=True):
     token_fcm: Optional[str] = None
 
 
+class AtividadeApp(SQLModel, table=True):
+    """Registro de atividade do usuário no app (abertura, primeiro/segundo plano, batimento).
+    Diferente de LoginAcesso (que só registra login com senha), isto registra quando o
+    usuário REALMENTE abre/usa o app, mesmo com 'manter conectado' ativo.
+    Permite relatórios de 'último acesso' (abertura real) vs 'último login' (senha)."""
+    __tablename__ = "atividade_app"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    canal: str = Field(index=True)  # "app" | "pwa" | "web"
+    evento: str = Field(index=True)  # "aberto" | "primeiro_plano" | "segundo_plano" | "batimento"
+    app_versao: Optional[str] = None
+    device_id: Optional[str] = None
+    ocorrido_em: datetime  # timestamp do cliente (quando o evento aconteceu no aparelho)
+    recebido_em: datetime = Field(default_factory=datetime.utcnow)  # timestamp do servidor
+
+
 class BackupAutomatico(SQLModel, table=True):
     """Registro de cada rodada do backup automático semanal (ver
     fazenda.rules.backup) — guarda quando rodou e se deu certo, para decidir

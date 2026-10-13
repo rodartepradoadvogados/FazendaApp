@@ -25,7 +25,7 @@ from fazenda.auth import (
 from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 from fazenda.config import settings
 from fazenda.database import get_session, sessao_sem_recorte_de_fazenda
-from fazenda.models import ContratoFazendaModulo, Fazenda, LoginAcesso, Pessoa, Usuario, UsuarioFazenda, PushNotificacaoRecebida, PushTokenFcm
+from fazenda.models import ContratoFazendaModulo, Fazenda, LoginAcesso, Pessoa, Usuario, UsuarioFazenda, PushNotificacaoRecebida, PushTokenFcm, AtividadeApp
 from fazenda.rules.email import enviar_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -983,3 +983,93 @@ def listar_push_auditoria(
         }
         for r in resultados
     ]
+
+
+# ─── Atividade do App (Heartbeat) ─────────────────────────────────────────
+# Registra abertura/ativação real do app pelo usuário.
+# Frontend chama: ao abrir (aberto), visibilitychange=visible/focus (primeiro_plano),
+# visibilitychange=hidden (segundo_plano), e intervalo ~5 min (batimento).
+class AtividadeIn(BaseModel):
+    canal: str  # "app" | "pwa" | "web"
+    evento: str  # "aberto" | "primeiro_plano" | "segundo_plano" | "batimento"
+    app_versao: str | None = None
+    device_id: str | None = None
+    ocorrido_em: str  # ISO 8601 do cliente
+
+
+@router.post("/atividade")
+def registrar_atividade(
+    dados: AtividadeIn,
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Registra atividade do usuário no app (heartbeat).
+    
+    Cria registro em AtividadeApp. Deduplica: mesmo usuário + canal + evento
+    em < 60s vira no-op (não grava duplicado). Atualiza usuario.ultimo_acesso.
+    
+    Eventos válidos:
+    - "aberto": app aberto do zero (cold start)
+    - "primeiro_plano": app veio para foreground (visibilitychange=visible, focus)
+    - "segundo_plano": app foi para background (visibilitychange=hidden)
+    - "batimento": heartbeat periódico (~5 min enquanto em foreground)
+    
+    Canais válidos: "app" (Capacitor nativo), "pwa" (standalone), "web" (navegador)."""
+    # Validação
+    eventos_validos = {"aberto", "primeiro_plano", "segundo_plano", "batimento"}
+    canais_validos = {"app", "pwa", "web"}
+    if dados.evento not in eventos_validos:
+        raise HTTPException(status_code=422, detail=f"Evento inválido. Válidos: {eventos_validos}")
+    if dados.canal not in canais_validos:
+        raise HTTPException(status_code=422, detail=f"Canal inválido. Válidos: {canais_validos}")
+    
+    # Parse timestamp do cliente
+    try:
+        ocorrido_em = datetime.fromisoformat(dados.ocorrido_em.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="ocorrido_em deve ser ISO 8601 (ex.: 2026-10-12T10:30:00.000Z)")
+    
+    # Dedupe: mesmo usuário + canal + evento em < 60s
+    from datetime import timedelta
+    limite_dedupe = datetime.utcnow() - timedelta(seconds=60)
+    existente = session.exec(
+        select(AtividadeApp).where(
+            AtividadeApp.usuario_id == user.id,
+            AtividadeApp.canal == dados.canal,
+            AtividadeApp.evento == dados.evento,
+            AtividadeApp.recebido_em >= limite_dedupe,
+        )
+    ).first()
+    if existente:
+        return {"ok": True, "deduplicado": True, "id": existente.id}
+    
+    # Resolve fazenda_id (usa a do token se disponível, senão a passada)
+    fid = None
+    if fazenda_id is not None:
+        fid = fazenda_id
+    elif user.pessoa_id:
+        from fazenda.models import Pessoa
+        pessoa = session.get(Pessoa, user.pessoa_id)
+        if pessoa:
+            fid = pessoa.fazenda_id
+    
+    atividade = AtividadeApp(
+        usuario_id=user.id,
+        fazenda_id=fid,
+        canal=dados.canal,
+        evento=dados.evento,
+        app_versao=dados.app_versao,
+        device_id=dados.device_id,
+        ocorrido_em=ocorrido_em,
+    )
+    session.add(atividade)
+    
+    # Atualiza ultimo_acesso do usuário
+    user.ultimo_acesso = datetime.utcnow()
+    session.add(user)
+    
+    session.commit()
+    session.refresh(atividade)
+    
+    return {"ok": True, "id": atividade.id, "recebido_em": atividade.recebido_em.isoformat() + "Z"}
