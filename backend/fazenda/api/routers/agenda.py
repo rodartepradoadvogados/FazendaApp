@@ -97,12 +97,19 @@ MODULO_POR_CATEGORIA = {
 # Chave "técnica"/de permissão do funcionário (a mesma usada em
 # MODULO_POR_CATEGORIA.values() e em Usuario.permissoes) -> chave COMERCIAL
 # do catálogo de planos (fazenda/models/planos.py) — mesma tradução que o
-# frontend já faz em lib/api.ts::MODULO_CONTRATO. "rebanho"/"reproducao"
-# ficam de fora do mapa de propósito: os dois estão em TODO plano do
-# catálogo, não há módulo contratado para checar.
+# frontend já faz em lib/api.ts::MODULO_CONTRATO.
+#
+# "reproducao" -> "reprodutivo" e "rebanho" -> "rebanho" ENTRAM no mapa
+# (Plano Financeiro §1.6): antes ficavam de fora sob a premissa de que "os
+# dois estão em TODO plano do catálogo" — verdade para Standard/Silver/Gold/
+# Diamond, mas falsa para o plano Financeiro ([financeiro, pedidos], sem
+# rebanho) e para qualquer contrato sob medida sem rebanho. Sem isto, a Agenda
+# de uma fazenda assim ainda mostrava candidatas IATF/BST e eventos de
+# Reprodução/Rebanho. Quem tem os módulos (todo plano antigo) não muda nada.
 MODULO_TECNICO_PARA_COMERCIAL = {
     "producao": "produtivo", "sanidade": "sanitario", "financeiro": "financeiro",
     "alimentacao": "alimentacao", "estoque": "estoque",
+    "reproducao": "reprodutivo", "rebanho": "rebanho",
 }
 
 # Prefixos de eventos "comunicado" (aviso informativo, ex.: nova dieta) — ao
@@ -1730,10 +1737,11 @@ def calcular_agenda(
         and (eh_admin or not e.get("apenas_admin"))  # eventos só-admin ocultos para os demais
     ]
     # `modulos` já saiu de cima com a dupla checagem aplicada (funcionário E
-    # fazenda) — só reaproveita aqui. "reproducao" nunca precisou da segunda
-    # trava: está em TODO plano do catálogo (planos.py), não há o que vazar.
+    # fazenda) — só reaproveita aqui, inclusive para "reproducao" (filtrada por
+    # contrato desde o Plano Financeiro: fazenda sem o módulo `reprodutivo`
+    # não vê candidatas IATF/BST nem o resto do bloco reprodutivo).
     tem_financeiro = "financeiro" in modulos
-    tem_reproducao = "reproducao" in modulos_funcionario
+    tem_reproducao = "reproducao" in modulos
     tem_estoque = "estoque" in modulos
 
     diaria_auditorias_pendentes = []
@@ -1768,6 +1776,33 @@ def calcular_agenda(
     # produtor, set/2026) não deveria voltar a pedir compra todo dia só
     # porque o saldo residual ficou abaixo do mínimo cadastrado; desativar já
     # significa "não repor este item".
+    # A RECEBER (Plano Financeiro §1.6, item F do contrato): receitas ainda
+    # em aberto, vencidas (mesma janela de 30 dias das contas a pagar — NÃO
+    # mudou) e a vencer dentro de `dias`. Chave PRÓPRIA e aditiva: NÃO se mistura
+    # com `contas_a_pagar` nem vira evento da Agenda (o comentário da consulta
+    # de `contas`, acima, explica por que receita em `contas_a_pagar` gerava
+    # alarme falso). Mesmo formato dos itens de `contas_a_pagar`.
+    contas_a_receber: list[dict] = []
+    if tem_financeiro:
+        contas_a_receber = sorted(
+            (
+                c for c in (
+                    _model_to_dict(c) for c in session.exec(
+                        _da_fazenda(
+                            select(ContaGerencial).where(
+                                ContaGerencial.data_vencimento >= data - timedelta(days=DIAS_CONTAS_VENCIDAS_NA_AGENDA),
+                                ContaGerencial.data_vencimento <= data + timedelta(days=dias),
+                                ContaGerencial.tipo == "receita",
+                            ),
+                            ContaGerencial,
+                        )
+                    ).all()
+                )
+                if (c.get("valor_pago") or 0) < (c.get("valor_total") or 0)
+            ),
+            key=lambda c: c["data_vencimento"],
+        )
+
     estoque_negativo = []
     estoque_abaixo_minimo = []
     if tem_estoque:
@@ -1802,6 +1837,7 @@ def calcular_agenda(
         "bst_excluidos": [{**b.__dict__, "ja_aplicado_antes": b.numero_matriz in animais_com_bst} for b in result.bst_excluidos] if tem_reproducao else [],
         "bst_nunca_aplicados": [{**b, "ja_aplicado_antes": False} for b in bst_nunca_aplicados] if tem_reproducao else [],
         "contas_a_pagar": result.contas_a_pagar if tem_financeiro else [],
+        "contas_a_receber": contas_a_receber,
         "estoque_negativo": estoque_negativo,
         "estoque_abaixo_minimo": estoque_abaixo_minimo,
         "eventos": eventos_visiveis,
@@ -1813,6 +1849,7 @@ def calcular_agenda(
             "bst_elegiveis": len(result.bst_elegiveis) if tem_reproducao else 0,
             "bst_nunca_aplicados": len(bst_nunca_aplicados) if tem_reproducao else 0,
             "contas_a_pagar": len(result.contas_a_pagar) if tem_financeiro else 0,
+            "contas_a_receber": len(contas_a_receber),
             "eventos": len(eventos_visiveis),
             "diaria_auditorias_pendentes": len(diaria_auditorias_pendentes),
         },

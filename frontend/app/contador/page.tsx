@@ -14,6 +14,7 @@ import {
   formatBRL, formatDate, type LinhaFolhaUnificada, type LinhaRelatorioCompraVendaAnimal, type AnexoLancamento,
 } from "@/lib/api";
 import { exportarMultiExcel, type SecaoFicha } from "@/lib/export";
+import { moduloContratado } from "@/lib/modulos";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { CORES_CONTADOR } from "./layout";
 import { PainelDocumentos } from "@/components/contador/PainelDocumentos";
@@ -158,6 +159,10 @@ function AnexosLinha({ numeroLancamento }: { numeroLancamento: string }) {
 
 export default function PainelContadorPage() {
   const [aba, setAba] = useState<Aba>("dre");
+  // Sem o módulo Rebanho (fazenda só-financeiro) não há compra/venda de animais:
+  // a aba some e a chamada nem sai (GET do relatório de animais = 403 garantido).
+  const [temRebanho] = useState(() => moduloContratado("rebanho"));
+  const abasVisiveis = useMemo(() => ABAS.filter((t) => t.id !== "animais" || temRebanho), [temRebanho]);
   const [lancamentos, setLancamentos] = useState<Lancamento[]>([]);
   const [planoContas, setPlanoContas] = useState<ContaPlano[]>([]);
   const [centros, setCentros] = useState<string[]>([]);
@@ -175,9 +180,12 @@ export default function PainelContadorPage() {
   const [tipoExtrato, setTipoExtrato] = useState<"ambos" | "receita" | "despesa">("ambos");
 
   useEffect(() => {
+    const comRebanho = moduloContratado("rebanho");
     Promise.all([
       fetchLancamentos(), fetchPlanoContas(), fetchOpcoesFinanceiro(), fetchPatrimonio(),
-      fetchFolhaPagamentoUnificada(), fetchRelatorioCompraVendaAnimais({}),
+      fetchFolhaPagamentoUnificada(),
+      // Isolado: a falta do relatório de animais não pode derrubar DRE/extrato/folha/patrimônio.
+      comRebanho ? fetchRelatorioCompraVendaAnimais({}).catch(() => [] as LinhaRelatorioCompraVendaAnimal[]) : Promise.resolve([] as LinhaRelatorioCompraVendaAnimal[]),
     ])
       .then(([lc, pc, op, pat, fp, an]) => {
         setLancamentos(lc.lancamentos || []);
@@ -323,7 +331,7 @@ export default function PainelContadorPage() {
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: "0.2rem", borderBottom: `1px solid ${CORES_CONTADOR.borda}`, marginBottom: aba in PRIMER_ABA ? "0" : "1.3rem", flexWrap: "wrap" }}>
-        {ABAS.map((t) => (
+        {abasVisiveis.map((t) => (
           <button key={t.id} type="button" onClick={() => setAba(t.id)}
             style={{
               background: "none", border: "none", borderBottom: aba === t.id ? `2px solid ${CORES_CONTADOR.cobre}` : "2px solid transparent",
@@ -558,7 +566,7 @@ export default function PainelContadorPage() {
         </div>
       )}
 
-      {aba === "animais" && (
+      {aba === "animais" && temRebanho && (
         <div style={{ ...estiloCard, overflowX: "auto" }}>
           <table className="contador-th" style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>

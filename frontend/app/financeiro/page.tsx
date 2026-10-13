@@ -199,7 +199,10 @@ import { useRegrasV2 } from "@/lib/useRegrasV2";
 import { apresentacaoSituacao } from "@/lib/dreUnica";
 import { migrarFiltrosSalvosAntigos } from "@/lib/financeiroFiltrosMigracao";
 // Fase B dos Relatórios: molde único, árvore por pergunta e as duas primeiras telas novas.
-import { GRUPOS_RELATORIOS, IDS_RELATORIOS, RELATORIOS_NO_MOLDE, VISAO_DO_ID_ANTIGO, grupoDe, idDoRelatorio } from "@/lib/relatoriosNavegacao";
+import { IDS_RELATORIOS, RELATORIOS_NO_MOLDE, VISAO_DO_ID_ANTIGO, avisoFonteNaoContratada, grupoDe, idDoRelatorio, relatoriosVisiveis } from "@/lib/relatoriosNavegacao";
+import { moduloContratado } from "@/lib/modulos";
+import { FonteNaoContratada } from "@/components/financeiro/FonteNaoContratada";
+import { PrimeiraContaVazio } from "@/components/financeiro/PrimeiraContaVazio";
 import DreFazendaView from "@/components/financeiro/relatorios/DreFazendaView";
 import ClassificarView from "@/components/financeiro/relatorios/ClassificarView";
 import ResultadoLitroView from "@/components/financeiro/relatorios/ResultadoLitroView";
@@ -426,7 +429,7 @@ export default function FinanceiroPage() {
     // Fase B: Relatórios organizados por PERGUNTA (aba = grupo, sub-aba = relatório).
     // Planejamento (Orçamento e Cenários) passou a ser o grupo "Plano" daqui — os
     // ids não mudaram, então links salvos (?sub=orcamento) continuam valendo.
-    { id: "relatorios-grupo", label: "Relatórios", icon: FileText, children: GRUPOS_RELATORIOS.map((g) => ({
+    { id: "relatorios-grupo", label: "Relatórios", icon: FileText, children: relatoriosVisiveis(moduloContratado).map((g) => ({
       id: g.id, label: g.label, icon: ICONE_GRUPO[g.id] ?? FileText,
       children: g.itens.map((i) => ({ id: i.id, label: i.label, icon: ICONE_RELATORIO[i.id] ?? BarChart3 })),
     })) },
@@ -763,23 +766,18 @@ export default function FinanceiroPage() {
         </div>
       </div>
 
-      {error && <div className="alert-critico mb-4"><span>Sem dados: {error}. <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importe os lançamentos financeiros</a>.</span></div>}
+      {error && <div className="alert-critico mb-4" role="alert"><span>Não foi possível carregar os lançamentos agora ({error}). Atualize a página; se continuar, fale com a CowData.</span></div>}
       {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {regs && regs.length === 0 && !error && !ACOES_IDS.has(rel) && (
-        <div className="card" style={{ textAlign: "center", padding: "3rem" }}>
-          <BarChart3 size={38} style={{ color: "var(--text-muted)", margin: "0 auto 1rem" }} />
-          <p style={{ color: "var(--text-muted)" }}>Nenhum lançamento financeiro no banco.</p>
-          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginTop: "0.5rem" }}>
-            Suba o <strong>CONTA_GERENCIAL.csv</strong> na tela de <a href="/configuracoes?aba=importar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Importar dados</a>,
-            ou lance direto por <strong>Ações</strong> aqui do lado.
-            Se você já subiu e sumiu, o banco de produção não está persistindo — confira o Postgres no Railway.
-          </p>
-        </div>
+        <PrimeiraContaVazio onLancar={() => setNovoLancAberto("despesa")} onPlanoCarregado={() => { fetchPlanoContas().then(setPlanoContas).catch(() => {}); }} />
       )}
 
       {regs && (regs.length > 0 || ACOES_IDS.has(rel)) && <>
-        {rel === "resumo" ? (
+        {avisoFonteNaoContratada(rel, moduloContratado) ? (
+            <FonteNaoContratada texto={avisoFonteNaoContratada(rel, moduloContratado)!} onVoltar={() => irPara("painel_dono")} />
+          )
+          : rel === "resumo" ? (
             <ResumoView regs={regs}
               onDrill={(d) => { setNotaAlvoRef(null); setContasFiltro({ de: d.de, ate: d.ate, rotulo: d.rotulo }); setRel("a_pagar"); }}
               onAbrirLivro={(rotulo) => { setNotaAlvoRef(null); setConsultaInicial({ modo: "livro", banco: rotulo }); setRel("consultas"); }}
@@ -2894,13 +2892,15 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
   // cadastrar produto/serviço novo sem sair da edição — antes a edição usava
   // uma implementação própria, mais simples, que nunca ganhou esse picker.
   const [tipoItem, setTipoItem] = useState<"produto" | "servico">("produto");
-  const [modoProduto, setModoProduto] = useState<"estoque" | "livre">("estoque");
+  // Sem o módulo Estoque (fazenda só-financeiro) não há cadastro de produto: texto livre, sem picker.
+  const [temEstoqueEdicao] = useState(() => moduloContratado("estoque"));
+  const [modoProduto, setModoProduto] = useState<"estoque" | "livre">(() => (moduloContratado("estoque") ? "estoque" : "livre"));
   const [produtosEstoqueEdicao, setProdutosEstoqueEdicao] = useState<EstoqueItemPicker[]>([]);
   // Lista completa (model_dump() do Estoque, não só o formato reduzido do
   // picker) — precisa dela pra abrir "editar cadastro" de um item já
   // registrado direto da lista de itens da nota (ver `editarItemEstoque`).
   const [estoqueCompletoEdicao, setEstoqueCompletoEdicao] = useState<Record<string, any>[]>([]);
-  const carregarEstoqueEdicao = () => fetchEstoque().then((d) => {
+  const carregarEstoqueEdicao = () => !moduloContratado("estoque") ? Promise.resolve() : fetchEstoque().then((d) => {
     setEstoqueCompletoEdicao(d.itens || []);
     setProdutosEstoqueEdicao((d.itens || []).map((i: any) => ({
       nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
@@ -2926,6 +2926,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
     if (it.eh_vale || !it.produto?.trim()) return true;
     const nome = it.produto.trim().toLowerCase();
     if (it.tipo_item === "servico") return sugestoesServicoEdicao.some((s) => s.toLowerCase() === nome);
+    if (!temEstoqueEdicao) return true; // sem estoque contratado não há cadastro de produto a cobrar
     return produtosEstoqueEdicao.some((p) => p.nome.toLowerCase() === nome);
   }
   const [catalogarItem, setCatalogarItem] = useState<{ id: number; nome: string; tipo: "produto" | "servico" } | null>(null);
@@ -3128,7 +3129,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
             <>
               <div className="flex items-center gap-2 mb-2">
                 {(["produto", "servico"] as const).map((t) => (
-                  <button key={t} type="button" title={t === "produto" ? "Este item é um produto de estoque" : "Este item é um serviço"}
+                  <button key={t} type="button" title={t === "produto" ? (temEstoqueEdicao ? "Este item é um produto de estoque" : "Este item é um produto") : "Este item é um serviço"}
                     onClick={() => { setTipoItem(t); setProduto(""); }}
                     style={{ fontSize: "0.72rem", padding: "0.25rem 0.7rem", borderRadius: "999px", cursor: "pointer",
                       border: "1px solid " + (tipoItem === t ? "var(--dourado)" : "var(--border)"),
@@ -3144,14 +3145,14 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
               ) : (
                 <div>
                   <div className="flex items-center justify-between" style={{ marginBottom: "0.25rem" }}>
-                    <select style={{ background: "transparent", color: "var(--text-muted)", border: "none", fontSize: "0.68rem", cursor: "pointer" }}
+                    {temEstoqueEdicao && <select style={{ background: "transparent", color: "var(--text-muted)", border: "none", fontSize: "0.68rem", cursor: "pointer" }}
                       value={modoProduto} onChange={(e) => setModoProduto(e.target.value as "estoque" | "livre")}
                       title="Do estoque: escolhe um item já cadastrado. Texto livre: qualquer compra, mesmo sem cadastro.">
                       <option value="estoque">do estoque</option>
                       <option value="livre">texto livre</option>
-                    </select>
+                    </select>}
                   </div>
-                  {modoProduto === "estoque" ? (
+                  {temEstoqueEdicao && modoProduto === "estoque" ? (
                     <EstoquePicker itens={produtosEstoqueEdicao} value={produto} todasFinalidades incluirNaoEstocaveis onChange={setProduto} />
                   ) : (
                     <>
@@ -3167,7 +3168,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
               )}
               <button type="button" className="btn-ghost" title="Cadastrar um novo produto ou serviço"
                 style={{ fontSize: "0.72rem", marginTop: "0.4rem" }}
-                onClick={() => { setModoAdicionarEdicao(tipoItem === "servico" ? "servico" : "produto"); setAdicionarNovoAberto(true); }}>
+                onClick={() => { setModoAdicionarEdicao(tipoItem === "servico" || !temEstoqueEdicao ? "servico" : "produto"); setAdicionarNovoAberto(true); }}>
                 <Plus size={13} /> Adicionar {tipoItem === "servico" ? "serviço" : "produto"} novo(a)
               </button>
             </>
@@ -3391,13 +3392,13 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
       {adicionarNovoAberto && (
         <Modal title={`Adicionar ${modoAdicionarEdicao === "servico" ? "serviço" : "produto"} novo(a)`} onClose={() => setAdicionarNovoAberto(false)} width="700px" zIndex={100}>
           <div className="flex items-center gap-2 mb-3">
-            <button type="button" onClick={() => setModoAdicionarEdicao("produto")}
+            {temEstoqueEdicao && <button type="button" onClick={() => setModoAdicionarEdicao("produto")}
               style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
                 border: "1px solid " + (modoAdicionarEdicao === "produto" ? "var(--dourado)" : "var(--border)"),
                 background: modoAdicionarEdicao === "produto" ? "rgba(94,26,46,0.4)" : "transparent",
                 color: modoAdicionarEdicao === "produto" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionarEdicao === "produto" ? 700 : 500 }}>
               Novo produto (estoque)
-            </button>
+            </button>}
             <button type="button" onClick={() => setModoAdicionarEdicao("servico")}
               style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
                 border: "1px solid " + (modoAdicionarEdicao === "servico" ? "var(--dourado)" : "var(--border)"),
@@ -3406,7 +3407,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedor
               Novo serviço
             </button>
           </div>
-          {modoAdicionarEdicao === "produto" ? (
+          {modoAdicionarEdicao === "produto" && temEstoqueEdicao ? (
             <NovoItemEstoque
               onCriado={(item) => {
                 if (item?.nome) { setTipoItem("produto"); setModoProduto("estoque"); setProduto(item.nome); }
@@ -4373,7 +4374,7 @@ function FormImportarPedido({ origemTipo, origemItemId, valorEstimado, nomeItem,
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
         <p style={{ fontSize: "0.85rem" }}>Pedido <strong>{resultado.numero_pedido}</strong> criado a partir de <strong>{nomeItem}</strong> ({formatBRL(valorEstimado)}).</p>
-        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Ele fica em Pedidos como rascunho — só reflete em Estoque/Financeiro quando uma nota fiscal/recibo ou uma entrada de estoque for vinculada a ele.</p>
+        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Ele fica em Pedidos como rascunho — só reflete no Financeiro quando uma nota fiscal/recibo{moduloContratado("estoque") ? " ou uma entrada de estoque" : ""} for vinculada a ele.</p>
         <div className="flex gap-2 justify-end">
           <a href="/pedidos" className="btn-primary" style={{ textDecoration: "none" }}>Ver em Pedidos</a>
           <button className="btn-secondary" onClick={onSalvo}>Fechar</button>

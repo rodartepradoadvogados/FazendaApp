@@ -2,9 +2,10 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
-  getToken, podeModulo, ehDono, ehAdmin, ehContador, ehMembroEquipeCowData, podeFormularDietas, fetchContasDisponiveis,
-  getContaAtivaId, ROTA_MODULO,
+  getToken, ehDono, ehAdmin, ehContador, ehMembroEquipeCowData, podeFormularDietas, fetchContasDisponiveis,
+  getContaAtivaId, renovarContrato, EVENTO_CONTRATO,
 } from "@/lib/api";
+import { contextoAtual, contratoBloqueia, rotaInicial, temCapaUtil, visivel, ROTA_MODULOS, ROTA_CONTRATO_INATIVO } from "@/lib/modulos";
 import { iniciarMonitorInatividade, marcarPresenca, msDesdeUltimaPresenca, LIMITE_INATIVIDADE_MS } from "@/lib/idle";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -91,11 +92,17 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
 
   // O app móvel (/app) tem casca própria (barra inferior, sem sidebar).
   const ehApp = path.startsWith("/app");
-  // Dentro do app nativo/PWA, qualquer navegação "para a raiz" (sessão
-  // expirada, página sem permissão etc.) deve cair no /app (casca mobile),
-  // nunca no site desktop completo — só o botão proposital "Site completo"
-  // do Menu (app/app/menu/page.tsx) deve levar ao "/" de verdade.
-  const destinoRaiz = (ehApp || dentroDoApp) ? "/app" : "/";
+  // Para onde mandar quem não pode abrir a rota atual (sessão expirada,
+  // página sem permissão etc.): a página inicial DESTE contrato (rotaInicial —
+  // Capa só se há rebanho; senão Agenda/Financeiro/Cotações/Pedidos; contrato
+  // aguardando/suspenso → /contrato-inativo). Dentro do app nativo/PWA a raiz
+  // com Capa útil é o /app (casca mobile), nunca o site desktop completo — só
+  // o botão proposital "Site completo" do Menu (app/app/menu/page.tsx) leva ao
+  // "/" de verdade. Fazenda SEM rebanho nunca vai a /app (P8): rotaInicial só
+  // devolve "/" quando há Capa útil, então a troca "/" → "/app" é segura.
+  // Mudança de contrato (releitura de /auth/me, ver efeito mais abaixo)
+  // reexecuta a checagem de acesso da rota atual sem precisar navegar.
+  const [versaoContrato, setVersaoContrato] = useState(0);
 
   // Se o localStorage está vazio dentro do app nativo, tenta restaurar a
   // sessão da cópia nativa (@capacitor/preferences) antes de decidir "checando"
@@ -143,6 +150,12 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
       router.replace(ehApp ? `/login?next=${encodeURIComponent(path)}` : "/login");
       return;
     }
+    // Para onde mandar quem não pode abrir a rota atual (ver comentário no
+    // topo do componente): página inicial do contrato; /app só com Capa útil.
+    const destinoRaiz = () => {
+      const r = rotaInicial(contextoAtual());
+      return r === "/" && (ehApp || dentroDoApp) ? "/app" : r;
+    };
     // Um vínculo de contador só enxerga o Painel do Contador — nunca o resto
     // do sistema (nem o app móvel, que sequer tem essa tela). O proprietário
     // e os administradores da fazenda também podem visitar /contador (mesma
@@ -154,20 +167,56 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     // `fazenda_atual` (ainda) marcado como contador da fazenda anterior
     // bloquearia a própria troca antes dela acontecer.
     if (ehContador() && !ehPainelContador && path !== "/escolher-conta") { router.replace("/contador"); return; }
-    if (ehPainelContador && !ehContador() && !ehDono() && !ehAdmin()) { router.replace(destinoRaiz); return; }
-    // Bloqueia páginas sem permissão (ex.: operador sem financeiro).
-    const mod = ROTA_MODULO[path];
-    if (path === "/usuarios" && !ehDono()) { router.replace(destinoRaiz); return; }
-    if (ehPainelCowData && !ehDono() && !ehMembroEquipeCowData()) { router.replace(destinoRaiz); return; }
-    if (ehDietasPortal && !podeFormularDietas()) { router.replace(destinoRaiz); return; }
-    // "/historico" reúne Reprodução + Produção — basta ter qualquer uma das
-    // duas (a página em si esconde a sub-aba sem permissão).
-    if (path === "/historico" && !(podeModulo("reproducao") || podeModulo("producao"))) { router.replace(destinoRaiz); return; }
-    // Configurações tem a aba "Aparência" (tema/paleta) liberada para todo mundo,
-    // mesmo sem nenhum outro módulo — o filtro por sub-aba já acontece dentro da página.
-    if (mod && mod !== "capa" && !podeModulo(mod)) { router.replace(destinoRaiz); return; }
+    if (ehPainelContador && !ehContador() && !ehDono() && !ehAdmin()) { router.replace(destinoRaiz()); return; }
+    // Anti-laço: nunca "redireciona" para a própria rota onde já estamos (se
+    // rotaInicial() coincidir com o path, mostra a página — último recurso).
+    const ir = (destino: string) => {
+      if (destino === path) { setEstado("logado"); return; }
+      router.replace(destino);
+    };
+    const ctx = contextoAtual();
+    // Contrato aguardando aprovação / suspenso: sem menu, só a tela de aviso
+    // (e a troca de conta). Dono, equipe e sessão de suporte passam. Quando o
+    // contrato volta a ficar ativo, a tela de aviso leva à página inicial.
+    if (contratoBloqueia(ctx)) {
+      if (path === ROTA_CONTRATO_INATIVO || path === "/escolher-conta" || path === "/news" || path.startsWith("/news/")) { setEstado("logado"); return; }
+      router.replace(ROTA_CONTRATO_INATIVO);
+      return;
+    }
+    if (path === ROTA_CONTRATO_INATIVO) { router.replace(destinoRaiz()); return; }
+    // App móvel (/app) é casca de rebanho/curral: fazenda sem rebanho usa o
+    // site responsivo (P8), na página inicial do contrato.
+    if (ehApp && !temCapaUtil(ctx)) { router.replace(destinoRaiz()); return; }
+    if (path === "/usuarios" && !ehDono()) { ir(destinoRaiz()); return; }
+    if (ehPainelCowData && !ehDono() && !ehMembroEquipeCowData()) { ir(destinoRaiz()); return; }
+    if (ehDietasPortal && !podeFormularDietas()) { ir(destinoRaiz()); return; }
+    // Rota da tabela única (lib/modulos.ts): permissão do usuário E contrato da
+    // fazenda (qualquer-de — "/historico" aceita Reprodução ou Produção; "/"
+    // exige Capa útil). Configurações tem a aba "Aparência" liberada para todo
+    // mundo, mesmo sem nenhum outro módulo — o filtro por sub-aba já acontece
+    // dentro da página.
+    if ((path === "/" || path in ROTA_MODULOS) && !visivel(path, ctx)) { ir(destinoRaiz()); return; }
     setEstado("logado");
-  }, [path, router, ehApp, ehPainelCowData, ehPainelContador, hidratado, destinoRaiz]);
+  }, [path, router, ehApp, ehPainelCowData, ehPainelContador, hidratado, dentroDoApp, versaoContrato]);
+
+  // Contrato fresco (Plano Financeiro F2.2): relê /auth/me ao entrar e quando a
+  // aba volta ao primeiro plano (no máx. 1× a cada 5 min, ver
+  // renovarContrato). Se módulos/situação do contrato mudaram, o evento
+  // reexecuta a checagem de acesso acima e a Sidebar reavalia o menu — sem
+  // novo login (sessão "manter conectado" dura 90 dias).
+  useEffect(() => {
+    if (estado !== "logado") return;
+    const reler = () => { renovarContrato(); };
+    const aoVoltar = () => { if (document.visibilityState === "visible") reler(); };
+    const aoMudar = () => setVersaoContrato((v) => v + 1);
+    reler();
+    document.addEventListener("visibilitychange", aoVoltar);
+    window.addEventListener(EVENTO_CONTRATO, aoMudar);
+    return () => {
+      document.removeEventListener("visibilitychange", aoVoltar);
+      window.removeEventListener(EVENTO_CONTRATO, aoMudar);
+    };
+  }, [estado]);
 
   // Ref sempre atualizada com o path atual — o gatilho de "abrir o app"
   // abaixo dispara de um evento assíncrono (appStateChange/visibilitychange,
@@ -357,7 +406,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // EscolherConta.tsx): casca própria e mínima, igual no site e no app —
   // nem a Sidebar da fazenda nem a barra do app móvel fazem sentido antes
   // de saber em qual conta a pessoa está entrando.
-  if (path === "/escolher-conta") return <>{children}</>;
+  if (path === "/escolher-conta" || path === ROTA_CONTRATO_INATIVO) return <>{children}</>;
 
   // Todas as demais cascas logadas (app móvel, Painel do Contador, portais
   // Insights e Dietas, e a casca padrão da fazenda montada abaixo) recebem a

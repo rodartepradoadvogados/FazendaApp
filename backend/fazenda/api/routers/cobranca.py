@@ -17,8 +17,8 @@ from sqlmodel import Session, select
 from fazenda.auth import exigir_dono
 from fazenda.config import settings
 from fazenda.database import get_session
-from fazenda.models import CobrancaBoleto, CobrancaPix, ContratoFazenda, ContratoFazendaModulo, Fazenda, Usuario
-from fazenda.models.planos import PLANOS_CATALOGO
+from fazenda.models import CobrancaBoleto, CobrancaPix, ContratoFazenda, Fazenda, Usuario
+from fazenda.models.planos import preco_mensal_do_contrato
 from fazenda.rules import banco_brasil
 
 router = APIRouter(prefix="/cobranca", tags=["cobranca"])
@@ -28,12 +28,7 @@ def _valor_mensal(session: Session, fazenda_id: int) -> float:
     contrato = session.exec(select(ContratoFazenda).where(ContratoFazenda.fazenda_id == fazenda_id)).first()
     if not contrato:
         raise HTTPException(status_code=400, detail="Fazenda ainda não tem contrato definido")
-    if contrato.plano and contrato.plano in PLANOS_CATALOGO:
-        return PLANOS_CATALOGO[contrato.plano]["preco"]
-    modulos = session.exec(
-        select(ContratoFazendaModulo).where(ContratoFazendaModulo.fazenda_id == fazenda_id, ContratoFazendaModulo.ativo == True)  # noqa: E712
-    ).all()
-    return sum(m.preco for m in modulos)
+    return preco_mensal_do_contrato(session, contrato)
 
 
 class EmitirBoletoIn(BaseModel):

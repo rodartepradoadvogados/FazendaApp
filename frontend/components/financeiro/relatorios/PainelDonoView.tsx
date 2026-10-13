@@ -20,6 +20,7 @@ import {
 import type { RelatorioParaExportar } from "@/lib/export";
 import { ChipVariacao, NotasMetodo, NumeroAnimado, RelatorioShell, VazioQueEnsina } from "./RelatorioShell";
 import { useContextoRelatorio, type TravasContexto } from "./useContextoRelatorio";
+import { moduloContratado } from "@/lib/modulos";
 import { PORQUE_CENTRO_REGRAS_ANTIGAS, useRegrasV2Estado, type PropsRelatorio } from "./comum";
 import { GraficoSaldo, LegendaSaldo } from "./GraficoSaldo";
 import { ApresentarMes } from "./ApresentarMes";
@@ -53,7 +54,9 @@ export default function PainelDonoView(props: PropsRelatorio) {
   const [tentativa, setTentativa] = useState(0);
   const [apresentando, setApresentando] = useState(false);
   const botaoApresentar = useRef<HTMLButtonElement>(null);
-  const orcMeses = mesesDoOrcamento(periodo.ini, periodo.fim);
+  // "Gastei o que planejei?" é do módulo Planejamento: sem ele o cartão, a leitura do orçamento e o alerta somem.
+  const temPlano = moduloContratado("planejamento");
+  const orcMeses = temPlano ? mesesDoOrcamento(periodo.ini, periodo.fim) : null;
 
   useEffect(() => {
     if (regras.ativa === null) return;
@@ -87,7 +90,7 @@ export default function PainelDonoView(props: PropsRelatorio) {
   const la = litro?.a?.atual ?? null, lb = cmpPeriodo ? litro?.b?.atual ?? null : null;
   const okLitro = temResultadoPorLitro(la);
   const cx = useMemo(() => respostaCaixa(caixa?.c ?? null, hoje), [caixa, hoje]);
-  const o = respostaOrcado(orc?.c ?? null, !!orcMeses);
+  const o = temPlano ? respostaOrcado(orc?.c ?? null, !!orcMeses) : null;
   const estado = regras.ativa === null || (!dre && !erro) ? "carregando" : erro && !dre ? "erro" : linhas.every((l) => Math.abs(l.a) < 0.005) ? "vazio" : "ok";
   const frase = frasePainel({ periodoLabel: periodo.label, resultado: res?.a ?? null, litro: okLitro ? la : null, caixa: cx, fmt: FMT });
   const decisoes = decisoesDoMes({
@@ -106,7 +109,7 @@ export default function PainelDonoView(props: PropsRelatorio) {
         { valores: ["Estou ganhando?", t(res?.a, FMT.brl), `Resultado da DRE · receita líquida ${t(rl?.a, FMT.brl)} · geração de caixa ${t(ebitda?.a, FMT.brl)}`] },
         { valores: ["Quanto custa o litro?", okLitro ? `${FMT.brl(la!.coe_l!)}/L` : "—", okLitro ? `Preço líquido ${FMT.brl(la!.preco_liquido_l!)}/L · sobra ${FMT.brl(la!.margem_l!)}/L` : "Sem litros ou sem receita do leite no período"] },
         { valores: ["Quando o caixa aperta?", cx ? FMT.brl(cx.saldoHoje) : "—", cx ? `${cx.negativoEm ? `negativo em ${FMT.dia(cx.negativoEm)}` : cx.abaixoReservaEm ? `abaixo da reserva em ${FMT.dia(cx.abaixoReservaEm)}` : "não fica abaixo da reserva em 60 dias"}${cx.menor ? ` · menor saldo ${FMT.brl(cx.menor.saldo)} em ${FMT.dia(cx.menor.data)}` : ""}` : caixa?.erro ?? "—"] },
-        { valores: ["Gastei o que planejei?", o && o.estado === "ok" ? FMT.brl(o.realizado) : "—", o && o.estado === "ok" ? `orçado ${FMT.brl(o.orcado)} · ${o.acima ? "acima" : "abaixo"} em ${FMT.brl(Math.abs(o.desvio))}` : textoOrcado(o)] },
+        ...(temPlano ? [{ valores: ["Gastei o que planejei?", o && o.estado === "ok" ? FMT.brl(o.realizado) : "—", o && o.estado === "ok" ? `orçado ${FMT.brl(o.orcado)} · ${o.acima ? "acima" : "abaixo"} em ${FMT.brl(Math.abs(o.desvio))}` : textoOrcado(o)] }] : []),
       ],
       nomeArquivoBase: "painel_do_dono",
       notas: ["Números do servidor: DRE da fazenda, Resultado por litro, Caixa real e orçado × realizado do mesmo contexto."],
@@ -148,7 +151,7 @@ export default function PainelDonoView(props: PropsRelatorio) {
           : caixa?.erro || "Carregando o caixa…"}</span>
         <span className="ir"><button type="button" onClick={() => ir("rel_caixa")}>Abrir o Caixa real <ChevronRight size={13} aria-hidden /></button></span>
       </article>
-      <article className="pd-cartao" aria-labelledby="pd-q4">
+      {temPlano && <article className="pd-cartao" aria-labelledby="pd-q4">
         <h3 className="q" id="pd-q4">Gastei o que planejei?</h3>
         <span className="l">Despesas × orçado</span>
         <span className="v">{o && (o.estado === "ok" || o.estado === "sem_orcamento") ? <NumeroAnimado valor={o.realizado} formato="brl0" /> : "—"}</span>
@@ -157,7 +160,7 @@ export default function PainelDonoView(props: PropsRelatorio) {
         )}
         <span className="s">{o && o.estado === "ok" ? <>Orçado para {orcMeses && orcMeses.mes_inicio === orcMeses.mes_fim ? mesLongo(`${orcMeses.ano}-${String(orcMeses.mes_inicio).padStart(2, "0")}`) : "o período"}: <b>{brl(o.orcado, 0)}</b> de despesas.</> : orc?.erro && orcMeses ? `Não foi possível ler o orçamento (${orc.erro}).` : textoOrcado(o, !orc)}</span>
         <span className="ir"><button type="button" onClick={() => ir("rel_orcamento")}>{o?.estado === "sem_orcamento" ? "Montar o orçamento" : "Abrir o Orçamento"} <ChevronRight size={13} aria-hidden /></button></span>
-      </article>
+      </article>}
     </div>
   );
 

@@ -31,6 +31,7 @@ import {
   ehContador, escolherConta, fetchContasDisponiveis, getContaAtivaId, logout, type FazendaAtual,
 } from "@/lib/api";
 import { ehAppDeCampo } from "@/lib/nativo";
+import { rotaInicial } from "@/lib/modulos";
 
 function Conteudo() {
   const router = useRouter();
@@ -52,7 +53,11 @@ function Conteudo() {
     // do login, ver app/login/page.tsx::irParaDestino).
     if (ehContador()) { router.replace("/contador"); return; }
     if (next && next.startsWith("/")) { router.replace(next); return; }
-    router.replace((await ehAppDeCampo()) ? "/app" : "/");
+    // Página inicial do CONTRATO (lib/modulos.ts::rotaInicial): Capa só se há
+    // rebanho; fazenda só-financeiro cai na Agenda. Aparelho de campo vai ao
+    // /app apenas quando a raiz é a Capa (fazenda sem rebanho não vai a /app).
+    const inicial = rotaInicial();
+    router.replace(inicial === "/" && (await ehAppDeCampo()) ? "/app" : inicial);
   };
 
   const aoEscolher = async (opcao: FazendaAtual) => {

@@ -1103,6 +1103,34 @@ def exigir_modulo_contratado(modulo: str):
     return _dep
 
 
+def exigir_algum_modulo_contratado(*modulos: str):
+    """Dependência: exige que A FAZENDA tenha contrato ativo e ao menos UM dos
+    módulos comerciais listados contratado e ativo (Plano Financeiro §1.5).
+    Para áreas transversais que só fazem sentido se existe alguma fonte de
+    dado de rebanho — ex.: /indicadores = algum de {rebanho, reprodutivo,
+    produtivo}; uma fazenda só-Financeiro não tem o que mostrar ali.
+
+    Mesmo bypass de `exigir_modulo_contratado`: sem fazenda selecionada
+    (legado) e sessão de suporte CowData passam direto. Contratos existentes
+    (Standard/Silver/Gold/Diamond e a fazenda #1 grandfathered) sempre têm
+    rebanho, então nada muda para eles — ver tests/test_matriz_modulos.py."""
+    def _dep(
+        fazenda_id: int | None = Depends(get_fazenda_atual_id),
+        suporte: dict = Depends(get_suporte_do_token),
+        session: Session = Depends(get_session),
+    ) -> None:
+        if fazenda_id is None or suporte.get("ativo"):
+            return
+        if not _contrato_ativo(session, fazenda_id):
+            raise HTTPException(status_code=403, detail="Fazenda sem contrato ativo — aguardando aprovação")
+        if not any(fazenda_tem_modulo_contratado(session, fazenda_id, m) for m in modulos):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Módulo não contratado por esta fazenda (requer um de: {', '.join(modulos)})",
+            )
+    return _dep
+
+
 # ---------------------------------------------------------------------------
 # Seed do administrador inicial
 # ---------------------------------------------------------------------------

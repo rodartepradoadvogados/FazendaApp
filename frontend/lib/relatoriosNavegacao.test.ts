@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { GRUPOS_RELATORIOS, IDS_RELATORIOS, REDIRECIONAMENTOS, RELATORIOS_NO_MOLDE, VISAO_DO_ID_ANTIGO, grupoDe, idDoRelatorio } from "./relatoriosNavegacao.ts";
+import {
+  GRUPOS_RELATORIOS, IDS_RELATORIOS, REDIRECIONAMENTOS, RELATORIOS_NO_MOLDE, VISAO_DO_ID_ANTIGO, grupoDe, idDoRelatorio,
+  avisoFonteNaoContratada, primeiroRelatorioVisivel, relatorioDisponivel, relatoriosVisiveis, visoesCustosDisponiveis,
+} from "./relatoriosNavegacao.ts";
 
 // Os relatórios que existiam na aba antiga (RELATORIOS + Custos + Planejamento) — nenhum pode sumir.
 const ANTIGOS = ["fluxo", "caixa_real", "dre", "rmca", "custos", "compra_venda_animais", "compra_semen", "orcamento", "planejamento_financeiro",
@@ -92,4 +95,48 @@ test("integração da Fase C: árvore coerente — toda tela nova no molde, tela
 
 test("Fase C5: pacote, fechamento e conciliação no grupo Entrega ao contador", () => {
   for (const id of ["pacote_contador", "fechamento_mes", "conciliacao"]) assert.equal(grupoDe(id)!.id, "rg-contador", id);
+});
+
+// ── Plano Financeiro §2.7: visibilidade por contrato ──
+const soFinanceiro = (m: string) => ["financeiro", "pedidos"].includes(m);
+const completo = () => true;
+
+test("contrato completo: a árvore visível é a árvore inteira", () => {
+  assert.deepEqual(relatoriosVisiveis(completo), GRUPOS_RELATORIOS);
+  assert.deepEqual(visoesCustosDisponiveis(completo), ["litro", "lote", "ha", "safra"]);
+});
+
+test("só-financeiro: Registros e Plano somem; o resto fica; nenhum grupo vazio", () => {
+  const grupos = relatoriosVisiveis(soFinanceiro);
+  assert.deepEqual(grupos.map((g) => g.label), ["Painel", "Resultado", "Caixa", "Leite", "Entrega ao contador"]);
+  for (const g of grupos) assert.ok(g.itens.length > 0, g.label);
+  const ids = new Set(grupos.flatMap((g) => g.itens.map((i) => i.id)));
+  for (const id of ["compra_venda_animais", "compra_semen", "rel_orcamento", "rel_cenarios", "orcamento_itens", "planejamento_financeiro"]) assert.ok(!ids.has(id), id);
+  for (const id of ["painel_dono", "rel_dre", "rel_caixa", "custos", "pacote_contador", "fechamento_mes", "conciliacao"]) assert.ok(ids.has(id), id);
+});
+
+test("só-financeiro: Custos do leite fica só com a visão por litro", () => {
+  assert.deepEqual(visoesCustosDisponiveis(soFinanceiro), ["litro"]);
+  // Com rebanho mas sem agricultura: lote sim, hectare/safra não.
+  assert.deepEqual(visoesCustosDisponiveis((m) => ["financeiro", "rebanho"].includes(m)), ["litro", "lote"]);
+});
+
+test("ids antigos seguem o destino: o link salvo ?sub=orcamento é checado como rel_orcamento", () => {
+  assert.equal(relatorioDisponivel("orcamento", soFinanceiro), false);
+  assert.equal(relatorioDisponivel("rel_orcamento", (m) => m === "planejamento"), true);
+  assert.equal(relatorioDisponivel("dre", soFinanceiro), true);
+});
+
+test("fonte não contratada: texto claro e sem número; relatório liberado devolve null", () => {
+  const msg = avisoFonteNaoContratada("compra_venda_animais", soFinanceiro)!;
+  assert.match(msg, /Fonte não contratada/);
+  assert.match(msg, /Rebanho/);
+  assert.doesNotMatch(msg, /R\$/);
+  assert.match(avisoFonteNaoContratada("rel_cenarios", soFinanceiro)!, /Planejamento/);
+  assert.equal(avisoFonteNaoContratada("rel_dre", soFinanceiro), null);
+});
+
+test("todo item visível para só-financeiro está liberado e o primeiro destino existe", () => {
+  for (const g of relatoriosVisiveis(soFinanceiro)) for (const i of g.itens) assert.equal(avisoFonteNaoContratada(i.id, soFinanceiro), null, i.id);
+  assert.equal(primeiroRelatorioVisivel(soFinanceiro), "painel_dono");
 });

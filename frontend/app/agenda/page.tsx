@@ -32,6 +32,8 @@ import { ProjecaoAgenda, SeletorHorizonte, type ProjecaoDados } from "@/componen
 import { lerCacheAgenda, gravarCacheAgenda } from "@/components/agenda/cacheAgenda";
 import { PainelLancarBst } from "@/components/PainelLancarBst";
 import { casaBusca } from "@/lib/busca";
+import { moduloContratado } from "@/lib/modulos";
+import { categoriasAgendaVisiveis, gruposPainelVisiveis, podeVincularAnimalLote, resumoContasAgenda } from "@/lib/agendaModulos";
 import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
 import { GavetaAplicar } from "@/components/protocolos/GavetaAplicar";
 import { BannerReagentes } from "@/components/protocolos/exameComum";
@@ -114,6 +116,17 @@ export default function AgendaPage() {
 
 function AgendaConteudo() {
   const router = useRouter();
+  // Módulos contratados (Plano Financeiro §2.6). A página só monta depois do AuthShell confirmar o login
+  // (nunca é desenhada no servidor), então ler o contrato do localStorage na inicialização é seguro.
+  // Os efeitos de carga abaixo consultam moduloContratado() direto, sem esperar este estado.
+  const [mods] = useState(() => ({
+    rebanho: moduloContratado("rebanho"), estoque: moduloContratado("estoque"), reprodutivo: moduloContratado("reprodutivo"),
+    sanitario: moduloContratado("sanitario"), financeiro: moduloContratado("financeiro"),
+  }));
+  const temMod = useCallback((chave: string) => (mods as Record<string, boolean>)[chave] ?? true, [mods]);
+  const categoriasVisiveis = useMemo(() => categoriasAgendaVisiveis(CATEGORIAS, temMod), [temMod]);
+  const gruposPainel = useMemo(() => gruposPainelVisiveis(temMod), [temMod]);
+  const podeVincular = podeVincularAnimalLote(temMod);
   const [data, setData] = useState(today());
   const [agenda, setAgenda] = useState<any>(null);
   // `loading` só vale para a PRIMEIRA carga sem nenhum dado (nem cache): a tela
@@ -193,7 +206,7 @@ function AgendaConteudo() {
   const [animaisTodos, setAnimaisTodos] = useState<AnimalRow[]>([]);
   const [lotesTodos, setLotesTodos] = useState<LoteRow[]>([]);
   const [pickerAberto, setPickerAberto] = useState<"lote" | null>(null);
-  useEffect(() => { if (vinculo === "animal" && !animaisTodos.length) fetchAnimais().then(setAnimaisTodos).catch(() => {}); }, [vinculo, animaisTodos.length]);
+  useEffect(() => { if (vinculo === "animal" && !animaisTodos.length && moduloContratado("rebanho")) fetchAnimais().then(setAnimaisTodos).catch(() => {}); }, [vinculo, animaisTodos.length]);
   const abrirPickerLotes = async () => {
     if (!lotesTodos.length) fetchLotes().then(setLotesTodos).catch(() => {});
     setPickerAberto("lote");
@@ -322,7 +335,7 @@ function AgendaConteudo() {
   const [cronogramaForaJanelaSel, setCronogramaForaJanelaSel] = useState<Record<string, Set<string>>>({});
   const toggleCronogramaForaJanela = (id: string) => setCronogramaForaJanela((p) => ({ ...p, [id]: !p[id] }));
   const algumForaJanelaAberto = Object.values(cronogramaForaJanela).some(Boolean);
-  useEffect(() => { if (algumForaJanelaAberto && !animaisTodos.length) fetchAnimais().then(setAnimaisTodos).catch(() => {}); }, [algumForaJanelaAberto, animaisTodos.length]);
+  useEffect(() => { if (algumForaJanelaAberto && !animaisTodos.length && moduloContratado("rebanho")) fetchAnimais().then(setAnimaisTodos).catch(() => {}); }, [algumForaJanelaAberto, animaisTodos.length]);
   const toggleAnimalForaJanela = (id: string, numero: string) => setCronogramaForaJanelaSel((p) => {
     const atual = new Set(p[id] || []);
     atual.has(numero) ? atual.delete(numero) : atual.add(numero);
@@ -500,8 +513,9 @@ function AgendaConteudo() {
   const [animaisGaveta, setAnimaisGaveta] = useState<AnimalRow[]>([]);
   const [estoqueGaveta, setEstoqueGaveta] = useState<EstoqueItem[]>([]);
   useEffect(() => {
-    fetchAnimais().then(setAnimaisGaveta).catch(() => {});
-    fetchEstoqueAtivos().then((d) => setEstoqueGaveta(d.itens || [])).catch(() => {});
+    // Só com os módulos contratados: sem rebanho/estoque seriam dois 403 garantidos a cada abertura.
+    if (moduloContratado("rebanho")) fetchAnimais().then(setAnimaisGaveta).catch(() => {});
+    if (moduloContratado("estoque")) fetchEstoqueAtivos().then((d) => setEstoqueGaveta(d.itens || [])).catch(() => {});
   }, []);
   const lotesGaveta = useMemo(
     () => Array.from(new Set(animaisGaveta.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort(),
@@ -563,6 +577,7 @@ function AgendaConteudo() {
   // concluído, com data de D0/D11 e os animais que entraram nele).
   const [iatfAtivos, setIatfAtivos] = useState<any[]>([]);
   const carregarIatfAtivos = useCallback(async () => {
+    if (!moduloContratado("reprodutivo")) { setIatfAtivos([]); return; }
     try { setIatfAtivos(await fetchProtocolosIatfAtivos()); } catch { setIatfAtivos([]); }
   }, []);
   useEffect(() => { carregarIatfAtivos(); }, [carregarIatfAtivos]);
@@ -737,6 +752,7 @@ function AgendaConteudo() {
   const [principiosAtivos, setPrincipiosAtivos] = useState<{ id: number; nome: string }[]>([]);
   const [eventosSanitarios, setEventosSanitarios] = useState<any[]>([]);
   useEffect(() => {
+    if (!moduloContratado("sanitario")) return;
     fetchPrincipiosAtivos().then((d: any[]) => setPrincipiosAtivos(d.filter((p) => p.ativo !== false))).catch(() => {});
     fetchEventosSanitarios().then(setEventosSanitarios).catch(() => {});
   }, []);
@@ -2303,7 +2319,7 @@ function AgendaConteudo() {
   const renderDiaADia = () => (
     <div id="ag2-painel-dia" role="tabpanel" aria-labelledby="ag2-tab-dia">
       {/* Reagente de exame (TB/brucelose): aviso persistente, com o registro da notificação — não some ao notificar. */}
-      <BannerReagentes />
+      {temMod("sanitario") && <BannerReagentes />}
 
       <div className="ag2-controles">
         <div className="ag2-visoes" role="group" aria-label="Como ver as tarefas">
@@ -2316,7 +2332,7 @@ function AgendaConteudo() {
           <input id="agenda-filtro-busca" aria-label="Buscar tarefa, lote ou número do animal" value={filtro} onChange={(e) => setFiltro(e.target.value)} placeholder="Buscar tarefa, lote, animal…" />
         </div>
         <select id="agenda-filtro-categoria" className="ag2-select" aria-label="Categoria" value={fCat} onChange={(e) => setFCat(e.target.value)}>
-          <option value="">Categoria</option>{CATEGORIAS.map((c) => <option key={c}>{c}</option>)}
+          <option value="">Categoria</option>{categoriasVisiveis.map((c) => <option key={c}>{c}</option>)}
         </select>
         {(de || ate || fCat || filtro) && (
           <button className="btn-ghost" onClick={() => { setDe(""); setAte(""); setFCat(""); setFiltro(""); }}>Limpar filtros</button>
@@ -2453,7 +2469,10 @@ function AgendaConteudo() {
   const repasse = agenda?.repasse || null;
   const repasseProj = cartoesProj.repasse || null;
   const contasAgora: any[] = agenda?.contas_a_pagar || [];
-  const valorContas = contasAgora.reduce((t: number, c: any) => t + Math.max(0, (c.valor_total || 0) - (c.valor_pago || 0)), 0);
+  const valorContas = resumoContasAgenda(contasAgora).saldo;
+  // "A receber" (contrato F): lista separada de "Contas a pagar", mesmo formato; ausente = vazia.
+  const contasReceber: any[] = agenda?.contas_a_receber || [];
+  const valorReceber = resumoContasAgenda(contasReceber).saldo;
   const listaEsperaTotal: number = agenda?.lista_espera_total ?? 0;
   // O cartão só existe com a rotina ativa E o aviso diário ligado (Parâmetros); o backend decide.
   const mostrarCartaoListaEspera: boolean = agenda?.rotina_lista_espera?.mostrar_card === true;
@@ -2476,6 +2495,7 @@ function AgendaConteudo() {
         <p className="ag2-carregando" role="status">Buscando os números do painel…</p>
       ) : (
         <div ref={bstIndicadoresRef} style={{ scrollMarginTop: "1rem" }}>
+          {gruposPainel.reproducao && (
           <GrupoPainel titulo="Reprodução" cor="var(--cat-reproducao)">
             <CartaoPainel titulo="Candidatas à próxima IATF" icon={HeartPulse} cor="var(--cat-reproducao)" valor={candidatas.length}
               detalhe={proxVisita ? <>próxima visita {proxVisita}</> : "vacas aptas a entrar em protocolo"}
@@ -2503,7 +2523,9 @@ function AgendaConteudo() {
               )
             )}
           </GrupoPainel>
+          )}
 
+          {gruposPainel.sanidade && (
           <GrupoPainel titulo="Sanidade" cor="var(--cat-sanidade)">
             <CartaoPainel titulo="BST · vacas aptas" icon={Syringe} cor="var(--cat-sanidade)" valor={bstAptos.length}
               detalhe={proxBST ? <>próxima aplicação {proxBST}</> : "sem aplicação prevista"}
@@ -2530,16 +2552,23 @@ function AgendaConteudo() {
                 valor={listaEsperaTotal} detalhe="atalho para Protocolos › Aplicar" />
             )}
           </GrupoPainel>
+          )}
 
-          <GrupoPainel titulo="Estoque e gestão" cor="var(--cat-estoque)">
+          <GrupoPainel titulo={gruposPainel.estoque ? "Estoque e gestão" : "Gestão"} cor={gruposPainel.estoque ? "var(--cat-estoque)" : "var(--cat-gestao)"}>
             <CartaoPainel titulo="Pendências" icon={AlertTriangle} cor="var(--cat-financeiro)" valor={pendencias.n} alerta={pendencias.n > 0}
               detalhe={pendencias.n > 0 ? (pendencias.mais_antiga_dias != null ? `a mais antiga há ${pendencias.mais_antiga_dias} ${pendencias.mais_antiga_dias === 1 ? "dia" : "dias"}` : "atrasadas") : "nada atrasado"}
               onClick={pendencias.n > 0 ? () => { mudarVisao("dia"); setModoDia("lista"); setTimeout(() => rolarParaId("ag2-atrasadas"), 250); } : undefined} />
+            {gruposPainel.estoque && (
             <CartaoPainel titulo="Alertas de estoque" icon={PackageSearch} cor="var(--cat-estoque)" valor={estoqueAlertasTotal} alerta={estoqueAlertasTotal > 0}
               detalhe={estoqueAlertasTotal > 0 ? `${estoqueNegativo.length} negativos · ${estoqueAbaixoMinimo.length} abaixo do mínimo` : "tudo dentro do mínimo"}
               onClick={estoqueAlertasTotal > 0 ? () => abrirAlertasEstoque() : undefined} aberto={paineis.has("estoqueAlertas")} />
+            )}
+            {gruposPainel.financeiro && (<>
             <CartaoPainel titulo="Contas a pagar" icon={Wallet} cor="var(--cat-financeiro)" valor={contasAgora.length}
               detalhe={contasAgora.length > 0 ? `${fmtBR(valorContas)} em ${DIAS_PADRAO_FUTURO} dias` : `nada a vencer em ${DIAS_PADRAO_FUTURO} dias`} href={contasAgora.length > 0 ? "/financeiro" : undefined} />
+            <CartaoPainel titulo="A receber" icon={Wallet} cor="var(--cat-financeiro)" valor={contasReceber.length}
+              detalhe={contasReceber.length > 0 ? `${fmtBR(valorReceber)} em ${DIAS_PADRAO_FUTURO} dias` : `nada a receber em ${DIAS_PADRAO_FUTURO} dias`} href={contasReceber.length > 0 ? "/financeiro" : undefined} />
+            </>)}
             <CartaoPainel titulo="Concluídos no período" icon={CheckCircle2} cor="var(--cat-gestao)" valor={totalConcluidos}
               detalhe={<>{fmtCurta(concDe)} a {fmtCurta(concAte)}</>}
               onClick={() => { setConcluidosAberto(true); setTimeout(() => rolarAteSecao("concluidos"), 50); }} aberto={concluidosAberto} />
@@ -2859,6 +2888,7 @@ function AgendaConteudo() {
                 </div>
               ))}
 
+              {podeVincular && (
               <div>
                 <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>Vincular a (opcional)</label>
                 <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
@@ -2890,6 +2920,7 @@ function AgendaConteudo() {
                   </div>
                 )}
               </div>
+              )}
 
               <div>
                 <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>Categoria</label>
@@ -2898,7 +2929,7 @@ function AgendaConteudo() {
                   onChange={e => setForm(p => ({ ...p, categoria: e.target.value }))}
                   style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
                 >
-                  {CATEGORIAS.map(c => <option key={c}>{c}</option>)}
+                  {categoriasVisiveis.map(c => <option key={c}>{c}</option>)}
                 </select>
               </div>
 

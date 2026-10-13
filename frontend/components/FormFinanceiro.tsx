@@ -14,6 +14,7 @@ import { Modal } from "@/components/Modal";
 import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
+import { moduloContratado } from "@/lib/modulos";
 import NovaContaGerencial from "@/components/NovaContaGerencial";
 import NovoServicoRapido from "@/components/NovoServicoRapido";
 import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
@@ -85,7 +86,10 @@ type Item = {
 };
 const itemVazio = (): Item => ({
   codigo_conta_gerencial: "", nome_conta_gerencial: "", centro_custo: "", tipo_item: "produto", produto: "", descricao: "",
-  quantidade: "", valor_unitario: "", valor_total: "", modoValor: "unitario", modoProduto: "estoque",
+  quantidade: "", valor_unitario: "", valor_total: "", modoValor: "unitario",
+  // Sem o módulo Estoque (fazenda só-financeiro) o produto nasce em texto livre: o picker do estoque
+  // não tem fonte (GET /estoque/ = 403) e "Novo produto (estoque)" também falharia.
+  modoProduto: moduloContratado("estoque") ? "estoque" : "livre",
   vale: null,
 });
 
@@ -191,7 +195,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     fornecedor_nome: string | null;
     conta_gerencial_despesa_padrao: string | null; conta_gerencial_receita_padrao: string | null;
   })[]>([]);
-  const carregarEstoque = () => fetchEstoqueAtivos().then((d) => setProdutosEstoque((d.itens || []).map((i: any) => ({
+  const [temEstoque] = useState(() => moduloContratado("estoque"));
+  const carregarEstoque = () => !moduloContratado("estoque") ? Promise.resolve() : fetchEstoqueAtivos().then((d) => setProdutosEstoque((d.itens || []).map((i: any) => ({
     nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
     estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
     fornecedor_nome: i.fornecedor_nome ?? null,
@@ -232,6 +237,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     if (!it.veioDeDocumento || !it.produto.trim()) return false;
     const nome = it.produto.trim().toLowerCase();
     if (it.tipo_item === "servico") return !sugestoesServico.some((s) => s.toLowerCase() === nome);
+    // Sem estoque contratado não existe cadastro de produto a cobrar: o nome do documento vale como está.
+    if (!temEstoque) return false;
     return !produtosEstoque.some((p) => p.nome.toLowerCase() === nome);
   }
 
@@ -1569,7 +1576,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.5rem" }}>Produto/serviço {idx + 1}</p>
             <div className="flex items-center gap-2 mb-3">
               {(["produto", "servico"] as const).map((t) => (
-                <button key={t} type="button" title={t === "produto" ? "Este item é um produto de estoque" : "Este item é um serviço"} onClick={() => atualizarItem(idx, { tipo_item: t, produto: "" })}
+                <button key={t} type="button" title={t === "produto" ? (temEstoque ? "Este item é um produto de estoque" : "Este item é um produto") : "Este item é um serviço"} onClick={() => atualizarItem(idx, { tipo_item: t, produto: "" })}
                   style={{ fontSize: "0.72rem", padding: "0.25rem 0.7rem", borderRadius: "999px", cursor: "pointer",
                     border: "1px solid " + (it.tipo_item === t ? "var(--dourado)" : "var(--border)"),
                     background: it.tipo_item === t ? "var(--dourado)" : "transparent",
@@ -1589,14 +1596,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                 <div>
                   <div className="flex items-center justify-between" style={{ marginBottom: "0.25rem" }}>
                     <label style={lbl}>Produto</label>
-                    <select style={{ background: "transparent", color: "var(--text-muted)", border: "none", fontSize: "0.68rem", cursor: "pointer" }}
+                    {temEstoque && <select style={{ background: "transparent", color: "var(--text-muted)", border: "none", fontSize: "0.68rem", cursor: "pointer" }}
                       value={it.modoProduto} onChange={(e) => atualizarItem(idx, { modoProduto: e.target.value as "estoque" | "livre" })}
                       title="Do estoque: escolhe um item já cadastrado. Texto livre: qualquer compra, mesmo sem cadastro — não entra automaticamente no estoque.">
                       <option value="estoque">do estoque</option>
                       <option value="livre">texto livre</option>
-                    </select>
+                    </select>}
                   </div>
-                  {it.modoProduto === "estoque" ? (
+                  {temEstoque && it.modoProduto === "estoque" ? (
                     <>
                       {/* incluirNaoEstocaveis: aqui é lançamento financeiro, não
                           consumo de estoque — um item cadastrado só para
@@ -1617,6 +1624,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                       <input list={`produtos-financeiro-${idx}`} style={inputStyle} value={it.produto}
                         onChange={(e) => atualizarItem(idx, { produto: e.target.value })}
                         placeholder="ex.: Supermercado, Material de escritório…" />
+                      {!temEstoque && <UltimoPrecoObservacao produto={it.produto} tipo={tipo} />}
                       {/* Histórico de nomes já usados em lançamentos — não precisa
                           estar no estoque pra sugerir aqui (ver Opcoes.produtos). */}
                       <datalist id={`produtos-financeiro-${idx}`}>
@@ -1712,8 +1720,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
               </div>
             )}
             <button type="button" className="btn-ghost" title="Cadastrar um novo produto, serviço ou conta gerencial" style={{ fontSize: "0.75rem", marginTop: "0.6rem" }}
-              onClick={() => { setAdicionarPara(idx); setModoAdicionar(it.tipo_item === "servico" ? "servico" : "produto"); }}>
-              <Plus size={13} /> Adicionar {it.tipo_item === "servico" ? "serviço" : "produto"} ou conta gerencial novo(a)
+              onClick={() => { setAdicionarPara(idx); setModoAdicionar(it.tipo_item === "servico" ? "servico" : temEstoque ? "produto" : "conta"); }}>
+              <Plus size={13} /> {temEstoque ? <>Adicionar {it.tipo_item === "servico" ? "serviço" : "produto"} ou conta gerencial novo(a)</> : it.tipo_item === "servico" ? "Adicionar serviço ou conta gerencial novo(a)" : "Adicionar conta gerencial nova"}
             </button>
           </div>
         ))}
@@ -2057,13 +2065,13 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       {adicionarPara !== null && (
         <Modal title="Adicionar produto, serviço ou conta gerencial" onClose={() => setAdicionarPara(null)} width="900px">
           <div className="flex items-center gap-2 mb-3">
-            <button type="button" title="Cadastrar um novo produto de estoque" onClick={() => setModoAdicionar("produto")}
+            {temEstoque && <button type="button" title="Cadastrar um novo produto de estoque" onClick={() => setModoAdicionar("produto")}
               style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
                 border: "1px solid " + (modoAdicionar === "produto" ? "var(--dourado)" : "var(--border)"),
                 background: modoAdicionar === "produto" ? "rgba(94,26,46,0.4)" : "transparent",
                 color: modoAdicionar === "produto" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionar === "produto" ? 700 : 500 }}>
               Novo produto (estoque)
-            </button>
+            </button>}
             <button type="button" title="Cadastrar um novo serviço" onClick={() => setModoAdicionar("servico")}
               style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
                 border: "1px solid " + (modoAdicionar === "servico" ? "var(--dourado)" : "var(--border)"),
@@ -2079,7 +2087,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
               Nova conta gerencial
             </button>
           </div>
-          {modoAdicionar === "produto" ? (
+          {modoAdicionar === "produto" && temEstoque ? (
             <NovoItemEstoque
               // Pré-preenche com o nome já lançado (ex.: veio do XML/OCR e não
               // batia com nada do estoque) — cadastrar com o MESMO texto é o

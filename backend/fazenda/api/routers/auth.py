@@ -25,7 +25,7 @@ from fazenda.auth import (
 from fazenda.models.equipe_cowdata_acesso import PermissaoEquipeCowData
 from fazenda.config import settings
 from fazenda.database import get_session, sessao_sem_recorte_de_fazenda
-from fazenda.models import ContratoFazendaModulo, Fazenda, LoginAcesso, Pessoa, Usuario, UsuarioFazenda
+from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Fazenda, LoginAcesso, Pessoa, Usuario, UsuarioFazenda
 from fazenda.rules.email import enviar_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -266,7 +266,13 @@ def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None, session:
     # (login()/selecionar_fazenda(), sem contexto nenhum ainda) — sob RLS,
     # o segundo caso negava em silêncio (incidente de 11/09/2026). O filtro
     # explícito em `fazenda_id == f.id` já é o recorte de segurança real.
+    #
+    # `contrato_status` ("ativo" | "aguardando_aprovacao" | "suspenso" | None
+    # sem contrato/sem banco à mão): deixa o frontend distinguir "contrato
+    # aguardando/suspenso" de "módulo não contratado" — mesma leitura sem
+    # recorte e mesmo filtro explícito por fazenda dos módulos acima.
     modulos: list[str] = []
+    contrato_status: str | None = None
     if session is not None:
         with sessao_sem_recorte_de_fazenda(session) as sm:
             modulos = sorted(
@@ -276,6 +282,9 @@ def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None, session:
                     )
                 ).all()
             )
+            contrato_status = sm.exec(
+                select(ContratoFazenda.status).where(ContratoFazenda.fazenda_id == f.id)
+            ).first()
     return {
         "id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf,
         # Fazenda de demonstração/sandbox (ver Fazenda.eh_teste) — o
@@ -286,6 +295,7 @@ def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None, session:
         "vinculo_consultor": bool(vinculo and vinculo.consultor),
         "vinculo_contratante": bool(vinculo and vinculo.contratante),
         "modulos_contratados": modulos,
+        "contrato_status": contrato_status,
     }
 
 

@@ -53,7 +53,9 @@ HORIZONTES = (7, 30, 60, 90)
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 def _modulos(session: Session, usuario: Usuario, fazenda_id: int | None) -> set[str]:
-    """Mesma dupla checagem do `calcular_agenda` (funcionário E fazenda)."""
+    """Mesma dupla checagem do `calcular_agenda` (funcionário E fazenda) —
+    inclui "reproducao"/"rebanho", filtrados por contrato desde o Plano
+    Financeiro (ver MODULO_TECNICO_PARA_COMERCIAL)."""
     liberados = _modulos_liberados(usuario)
     return {
         m for m in liberados
@@ -201,7 +203,7 @@ def agenda_painel(
     base = calcular_agenda(data=hoje, dias=DIAS_JANELA_PADRAO, session=session, usuario=usuario, fazenda_id=fazenda_id_)
     modulos = _modulos(session, usuario, fazenda_id_)
     lista_espera = base["lista_espera_sanitaria"]
-    resumo_rep = resumo_repasse(session, fazenda_id_, hoje) if "reproducao" in _modulos_liberados(usuario) else None
+    resumo_rep = resumo_repasse(session, fazenda_id_, hoje) if "reproducao" in modulos else None
     return {
         "data_referencia": base["data_referencia"],
         "gerado_em": datetime.now().isoformat(timespec="seconds"),
@@ -214,6 +216,8 @@ def agenda_painel(
         "bst_excluidos": base["bst_excluidos"],
         "bst_nunca_aplicados": base["bst_nunca_aplicados"],
         "contas_a_pagar": base["contas_a_pagar"],
+        # Plano Financeiro §1.6 — aditivo, separado de `contas_a_pagar`.
+        "contas_a_receber": base["contas_a_receber"],
         "estoque_negativo": base["estoque_negativo"],
         "estoque_abaixo_minimo": base["estoque_abaixo_minimo"],
         "hormonios_check": base["hormonios_check"],
@@ -270,14 +274,13 @@ def agenda_projecao(
     ate = hoje + timedelta(days=dias)
     semanas = _semanas(hoje, ate)
     base = calcular_agenda(data=hoje, dias=dias, session=session, usuario=usuario, fazenda_id=fazenda_id)
-    liberados = _modulos_liberados(usuario)
     modulos = _modulos(session, usuario, fazenda_id)
     q = fazenda_id
     cards: dict = {}
     repasse_calc: dict | None = None
 
     # Repasse ───────────────────────────────────────────────────────────────
-    if "reproducao" in liberados:
+    if "reproducao" in modulos:
         cfg = repasse_rules.ler_config(session, q)
         calc = _checagens_repasse(session, q, cfg, hoje, ate)
         repasse_calc = calc

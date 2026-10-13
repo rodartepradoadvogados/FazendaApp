@@ -28,6 +28,8 @@ import {
 import { GraficoPrecoCusto, LegendaPrecoCusto } from "./graficos";
 import { BarrasHorizontais, LegendaBarras } from "./barras";
 import { CSS_LEITE_REGISTROS } from "./estilosLeite";
+import { moduloContratado } from "@/lib/modulos";
+import { visoesCustosDisponiveis } from "@/lib/relatoriosNavegacao";
 import { useContextoRelatorio, useDetalheNaUrl, type ContextoRelatorio, type TravasContexto } from "./useContextoRelatorio";
 import { PORQUE_CENTRO_REGRAS_ANTIGAS, useRegrasV2Estado, type PropsRelatorio } from "./comum";
 
@@ -45,7 +47,7 @@ function SeletorVisao({ visao, onMudar, extra }: { visao: VisaoCusto; onMudar: (
     <div className="rl-noprint" style={{ display: "flex", flexWrap: "wrap", gap: ".5rem", alignItems: "flex-end" }}>
       <style>{CSS_LEITE_REGISTROS}</style>
       <div className="rl-seg" role="group" aria-label="Como ver o custo">
-        {VISOES_CUSTO.map((x) => (
+        {VISOES_CUSTO.filter((x) => visoesCustosDisponiveis(moduloContratado).includes(x.v)).map((x) => (
           <button key={x.v} type="button" aria-pressed={visao === x.v} onClick={() => onMudar(x.v)}>{x.rotulo}</button>
         ))}
       </div>
@@ -72,7 +74,9 @@ function useBusca<T>(chave: string | null, buscar: (ini: string, fim: string) =>
 
 export default function CustosLeiteView(props: PropsRelatorio) {
   const [v, abrirVisao] = useDetalheNaUrl("visao");
-  const visao = visaoCusto(v);
+  // Visão cuja fonte não está no contrato (lote → Rebanho; hectare/safra → Agricultura) volta para "por litro".
+  const visaoPedida = visaoCusto(v);
+  const visao = visoesCustosDisponiveis(moduloContratado).includes(visaoPedida) ? visaoPedida : "litro";
   const mudar = (x: VisaoCusto) => abrirVisao(x === "litro" ? "" : x);
   if (visao === "lote") return <CustoPorLote {...props} visao={visao} onVisao={mudar} />;
   if (visao === "ha") return <CustoPorHectare {...props} visao={visao} onVisao={mudar} />;

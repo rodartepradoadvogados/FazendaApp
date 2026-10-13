@@ -94,3 +94,68 @@ export function grupoDe(id: string): GrupoRelatorio | null {
 
 /** Todos os ids que são relatório (para empilhar no histórico ao navegar entre eles). */
 export const IDS_RELATORIOS = new Set(GRUPOS_RELATORIOS.flatMap((g) => g.itens.map((i) => i.id)));
+
+// ── Visibilidade por contrato (Plano Financeiro §2.7) ──────────────────────────────────────────
+// Fazenda só-financeiro ([financeiro, pedidos]) não tem rebanho, planejamento nem agricultura:
+// relatório cuja FONTE não existe não aparece no menu (nunca devolve 403) e, se aberto por link
+// salvo, mostra "fonte não contratada" — jamais R$ 0, que seria informação contábil falsa.
+// As chaves são módulos COMERCIAIS do contrato; `tem` é o moduloContratado de lib/modulos.ts.
+
+export type TemModulo = (chave: string) => boolean;
+
+/** Módulos (todos, E) de que cada relatório depende além do Financeiro. Ausente = só financeiro. */
+const MODULOS_DO_RELATORIO: Record<string, string[]> = {
+  // Registros: animais e sêmen vivem no Rebanho.
+  compra_venda_animais: ["rebanho"],
+  compra_semen: ["rebanho"],
+  // Plano: orçamento e cenários são do módulo Planejamento (main.py: /planejamento).
+  rel_orcamento: ["planejamento"],
+  rel_cenarios: ["planejamento"],
+  orcamento_itens: ["planejamento"],
+  planejamento_financeiro: ["planejamento"],
+};
+
+/** Visões de "Custos do leite" (?visao=) que precisam de fonte além do Financeiro (litro é sempre possível). */
+const MODULOS_DA_VISAO_CUSTOS: Record<string, string[]> = {
+  lote: ["rebanho"], // custo por vaca/lote: lotes e animais
+  ha: ["agricultura"], // custo por hectare: áreas
+  safra: ["agricultura"], // custo por safra: safras
+};
+
+const ROTULO_MODULO: Record<string, string> = {
+  rebanho: "Rebanho", planejamento: "Planejamento", agricultura: "Agricultura", estoque: "Estoque",
+};
+
+/** Ids de relatório acolhem os antigos (redirecionados) — a checagem vale para o destino. */
+export function modulosFaltandoDoRelatorio(id: string, tem: TemModulo): string[] {
+  return (MODULOS_DO_RELATORIO[idDoRelatorio(id)] ?? []).filter((m) => !tem(m));
+}
+
+export function relatorioDisponivel(id: string, tem: TemModulo): boolean {
+  return modulosFaltandoDoRelatorio(id, tem).length === 0;
+}
+
+/** A árvore sem o que a fazenda não pode abrir; grupo que fica sem item some. */
+export function relatoriosVisiveis(tem: TemModulo): GrupoRelatorio[] {
+  return GRUPOS_RELATORIOS
+    .map((g) => ({ ...g, itens: g.itens.filter((i) => relatorioDisponivel(i.id, tem)) }))
+    .filter((g) => g.itens.length > 0);
+}
+
+/** Visões de Custos do leite (ids de ?visao=) abertas para a fazenda. */
+export function visoesCustosDisponiveis(tem: TemModulo): string[] {
+  return ["litro", "lote", "ha", "safra"].filter((v) => (MODULOS_DA_VISAO_CUSTOS[v] ?? []).every(tem));
+}
+
+/** Texto de "fonte não contratada" para um relatório (ou null se pode abrir). */
+export function avisoFonteNaoContratada(id: string, tem: TemModulo): string | null {
+  const falta = modulosFaltandoDoRelatorio(id, tem);
+  if (!falta.length) return null;
+  const nomes = falta.map((m) => ROTULO_MODULO[m] ?? m).join(" e ");
+  return `Fonte não contratada: este relatório usa dados do módulo ${nomes}, que não faz parte do contrato desta fazenda. Fale com a CowData para incluir.`;
+}
+
+/** Primeiro relatório aberto da árvore visível (destino quando o atual some). */
+export function primeiroRelatorioVisivel(tem: TemModulo): string {
+  return relatoriosVisiveis(tem)[0]?.itens[0]?.id ?? "painel_dono";
+}

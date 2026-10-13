@@ -8,21 +8,17 @@ import {
   baixarModeloContrato, assinarContratoZapSign, fetchStatusAssinaturaZapSign,
   criarAssinaturaAsaas, criarPixSemestralAsaas, criarBoletoAsaas, fetchCobrancasAsaas,
   fetchConsultoresCowData,
-  type Fazenda, type ContratoFazenda, type PlanoCatalogo, type PlanoNome, type ModuloComercial,
+  type Fazenda, type ContratoFazenda, type CatalogoPlanos, type ModuloComercial,
   type AnexoContrato, type UsuarioVinculado, type AssinaturaZapSign, type ConsultorCowData,
   type CobrancaAsaas, type CobrancaAsaasIn,
 } from "@/lib/api";
 import { maskCpf, maskCnpj, maskCep, maskCpfCnpj } from "@/lib/masks";
+import { NOME_MODULO, brl, ordenarPlanos, precoDiverge, rotuloPrecoContrato } from "@/lib/planosContrato";
+import { useContratoRascunho } from "@/components/useContratoRascunho";
+import { CORES_WEB, DialogoRemocaoModulos, PrecosPlanos, PrepararFinanceiro } from "@/components/PlanosContratoPartes";
 
 const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
-
-const NOME_MODULO: Record<ModuloComercial, string> = {
-  rebanho: "Rebanho", reprodutivo: "Reprodutivo", produtivo: "Produtivo", sanitario: "Sanitário",
-  financeiro: "Financeiro (básico)", planejamento: "Planejamento", pedidos: "Pedidos", estoque: "Estoque",
-  alimentacao: "Alimentação", agricultura: "Agricultura/Plantio", consultor: "Consultor (Diamond)",
-  formulacao_dietas: "Formulação de Dietas",
-};
 
 function formatarBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -51,14 +47,19 @@ function StatusBadge({ status }: { status: ContratoFazenda["status"] }) {
 export default function FazendasAdmin() {
   const [fazendas, setFazendas] = useState<Fazenda[] | null>(null);
   const [selecionada, setSelecionada] = useState<number | null>(null);
-  const [catalogo, setCatalogo] = useState<Record<PlanoNome, PlanoCatalogo> | null>(null);
+  const [catalogo, setCatalogo] = useState<CatalogoPlanos | null>(null);
   const [contrato, setContrato] = useState<ContratoFazenda | null>(null);
   const [anexos, setAnexos] = useState<AnexoContrato[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  const [planoEscolhido, setPlanoEscolhido] = useState<PlanoNome | "custom">("standard");
-  const [modulosCustom, setModulosCustom] = useState<Record<ModuloComercial, number | null>>({} as any);
+  // Plano/módulos em edição + dependências (ver useContratoRascunho).
+  const {
+    planoEscolhido, escolherPlano, modulosCustom, mudarPrecoModulo, alternarModulo, selecionarSobMedida, carregarDoContrato,
+    aviso: avisoDependencia, regrasIndisponiveis, modulosDoRascunho, erroValidacao, removidosAoSalvar, payload: payloadContrato,
+    consultorNoRascunho, pendenteRemocao, setPendenteRemocao,
+  } = useContratoRascunho(catalogo, contrato);
+  const [mostrarPrecos, setMostrarPrecos] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [aprovando, setAprovando] = useState(false);
   const [enviandoAnexo, setEnviandoAnexo] = useState(false);
@@ -120,17 +121,7 @@ export default function FazendasAdmin() {
   function carregarContrato(fazendaId: number) {
     fetchContratoFazenda(fazendaId).then((ct) => {
       setContrato(ct);
-      if (ct.plano) setPlanoEscolhido(ct.plano);
-      else {
-        setPlanoEscolhido("custom");
-        const mapa: Record<string, number> = {};
-        // Só os ATIVOS — a lista inclui também módulos já desativados no
-        // passado (ct.modulos guarda todo o histórico, ver _publico_contrato
-        // no backend); marcar esses de novo na tela seria reativar sem querer.
-        ct.modulos.filter((m) => m.ativo).forEach((m) => { mapa[m.modulo] = m.preco; });
-        if (mapa.rebanho == null) mapa.rebanho = 0; // sempre obrigatório
-        setModulosCustom(mapa as any);
-      }
+      carregarDoContrato(ct);
     }).catch((e) => setErro(e.message));
     fetchAnexosContrato(fazendaId).then(setAnexos).catch((e) => setErro(e.message));
     fetchUsuariosVinculados(fazendaId).then(setUsuarios).catch((e) => setErro(e.message));
@@ -168,29 +159,6 @@ export default function FazendasAdmin() {
   }
 
   const temModuloConsultor = contrato?.modulos.some((m) => m.modulo === "consultor" && m.ativo) ?? false;
-  // Diferente de `temModuloConsultor` (que lê o contrato JÁ SALVO), este olha
-  // o rascunho na tela — é o que decide mostrar o seletor de Consultor
-  // CowData no mesmo clique em que o usuário escolhe Diamond/sob medida,
-  // sem exigir salvar antes para o campo aparecer.
-  const consultorNoRascunho = planoEscolhido === "diamond"
-    || (planoEscolhido === "custom" && modulosCustom["consultor" as ModuloComercial] != null);
-
-  // Trocar de um plano fechado (ex.: Diamond) para "Sob medida" NÃO herdava
-  // os módulos que a fazenda já tinha — modulosCustom ficava vazio, e como o
-  // checkbox de Rebanho é sempre `disabled` (é obrigatório, não dá pra
-  // desmarcar), ele nascia desmarcado e IMPOSSÍVEL de marcar na tela — ao
-  // salvar, o backend recusava com "Rebanho é obrigatório em todo contrato"
-  // sem nenhuma saída visível. Agora, ao entrar em "Sob medida", pré-marca
-  // com os módulos ATIVOS do contrato atual (preço herdado, ajustável) —
-  // Rebanho sempre entra, mesmo que por algum motivo não estivesse na lista.
-  function selecionarSobMedida() {
-    const semente: Record<string, number> = {};
-    (contrato?.modulos || []).filter((m) => m.ativo).forEach((m) => { semente[m.modulo] = m.preco; });
-    if (semente.rebanho == null) semente.rebanho = 0;
-    setModulosCustom(semente as any);
-    setPlanoEscolhido("custom");
-  }
-
   async function vincular() {
     if (selecionada == null || !novoUsername.trim()) { setErro("Informe o usuário (username)."); return; }
     setVinculando(true); setErro(null); setMsg(null);
@@ -287,14 +255,17 @@ export default function FazendasAdmin() {
     } catch (e: any) { setErro(e.message); } finally { setCriando(false); }
   }
 
-  async function salvarContrato() {
+  // Tirar módulo de contrato ATIVO pede confirmação (diálogo "o que deixa de
+  // aparecer"); `confirmado` é true quando vem do botão do diálogo.
+  async function salvarContrato(confirmado = false) {
     if (selecionada == null) return;
+    if (erroValidacao) { setErro(erroValidacao); return; }
+    const removidos = removidosAoSalvar();
+    if (removidos.length && !confirmado) { setPendenteRemocao(removidos); return; }
+    setPendenteRemocao(null);
     setSalvando(true); setErro(null); setMsg(null);
     try {
-      const dados = planoEscolhido === "custom"
-        ? { plano: null, modulos: Object.entries(modulosCustom).filter(([, v]) => v != null).map(([modulo, preco]) => ({ modulo: modulo as ModuloComercial, preco: preco || 0 })), ciclo_pagamento: "mensal" as const }
-        : { plano: planoEscolhido, modulos: [], ciclo_pagamento: "mensal" as const };
-      const ct = await definirContratoFazenda(selecionada, dados);
+      const ct = await definirContratoFazenda(selecionada, payloadContrato());
       setContrato(ct);
       setMsg("Contrato atualizado. Lembre de aprovar/fechar para liberar os módulos.");
     } catch (e: any) { setErro(e.message); } finally { setSalvando(false); }
@@ -372,13 +343,15 @@ export default function FazendasAdmin() {
     } catch (e: any) { setErro(e.message); } finally { setGerandoCobranca(null); }
   }
 
-  const modulosDoPlano = planoEscolhido !== "custom" && catalogo ? catalogo[planoEscolhido]?.modulos || [] : [];
+  const modulosDoPlano = planoEscolhido !== "custom" ? modulosDoRascunho : [];
+  const temFinanceiro = contrato?.modulos.some((m) => m.modulo === "financeiro" && m.ativo) ?? false;
+  const rotuloPreco = contrato ? rotuloPrecoContrato(contrato.preco_mensal_fechado, contrato.preco_catalogo_hoje) : null;
 
   return (
     <div className="animate-in">
       <h3 className="text-lg font-bold flex items-center gap-2 mb-1"><Building2 size={18} style={{ color: "var(--dourado)" }} /> Fazendas e contratos</h3>
       <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", marginBottom: "1rem" }}>
-        Cada fazenda contrata um plano (ou um mix de módulos sob medida). Nada libera — nem Rebanho — até você aprovar
+        Cada fazenda contrata um plano (ou um mix de módulos sob medida). Nada é liberado até você aprovar
         e fechar o contrato aqui.
       </p>
 
@@ -388,6 +361,21 @@ export default function FazendasAdmin() {
           <Check size={15} /><span>{msg}</span>
         </div>
       )}
+
+      <div className="card mb-4">
+        <button type="button" onClick={() => setMostrarPrecos((v) => !v)} aria-expanded={mostrarPrecos}
+          className="card-header flex items-center justify-between"
+          style={{ width: "100%", background: "transparent", border: "none", cursor: "pointer", padding: 0, margin: 0, color: "inherit" }}>
+          <span>Preços dos planos</span>
+          <span style={{ fontSize: "0.75rem", fontWeight: 400, color: "var(--text-muted)" }}>{mostrarPrecos ? "Ocultar" : "Editar preços"}</span>
+        </button>
+        {mostrarPrecos && (
+          <div className="mt-3">
+            <PrecosPlanos catalogo={catalogo} cores={CORES_WEB} inputStyle={inp}
+              onAtualizado={(plano, novo) => setCatalogo((c) => (c ? { ...c, [plano]: { ...c[plano], ...novo } } : c))} />
+          </div>
+        )}
+      </div>
 
       <div className="flex gap-4" style={{ flexWrap: "wrap", alignItems: "flex-start" }}>
         <div className="card" style={{ minWidth: "220px", flex: "0 0 240px" }}>
@@ -487,7 +475,7 @@ export default function FazendasAdmin() {
 
             <label style={lbl}>Plano</label>
             <div className="flex flex-wrap gap-2 mb-3">
-              {(["standard", "silver", "gold", "diamond"] as const).map((p) => (
+              {ordenarPlanos(Object.keys(catalogo || {})).map((p) => (
                 <label key={p} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.8rem", fontWeight: planoEscolhido === p ? 700 : 400, cursor: "pointer",
                   border: "1px solid " + (planoEscolhido === p ? "var(--dourado)" : "var(--border)"), borderRadius: "var(--r-sm)", padding: "0.35rem 0.6rem",
                   // Fundo sólido + cor de texto explícita (não hardcoded): --pill-active-bg/--pill-active-fg
@@ -497,8 +485,8 @@ export default function FazendasAdmin() {
                   // branco). Mesmo padrão de SeletorTipoProtocolo (app/protocolos/page.tsx).
                   background: planoEscolhido === p ? "var(--pill-active-bg)" : "transparent",
                   color: planoEscolhido === p ? "var(--pill-active-fg)" : "var(--text)" }}>
-                  <input type="radio" name="plano" checked={planoEscolhido === p} onChange={() => setPlanoEscolhido(p)} />
-                  {catalogo?.[p]?.nome || p} — R$ {catalogo?.[p]?.preco.toFixed(2) ?? "—"}/mês
+                  <input type="radio" name="plano" checked={planoEscolhido === p} onChange={() => escolherPlano(p)} />
+                  {catalogo?.[p]?.nome || p} — {brl(catalogo?.[p]?.preco)}/mês
                 </label>
               ))}
               <label style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.8rem", fontWeight: planoEscolhido === "custom" ? 700 : 400, cursor: "pointer",
@@ -512,7 +500,7 @@ export default function FazendasAdmin() {
 
             {planoEscolhido !== "custom" ? (
               <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
-                Módulos inclusos: {modulosDoPlano.map((m) => NOME_MODULO[m]).join(", ")}.
+                Módulos inclusos: {modulosDoPlano.map((m) => NOME_MODULO[m] || m).join(", ")}.
               </p>
             ) : null}
 
@@ -524,21 +512,45 @@ export default function FazendasAdmin() {
                 Ciclo de pagamento: Mensal — R$ {contrato.preco_mensal.toFixed(2)}/mês.
               </p>
             )}
+            {/* Preço fechado no contrato x catálogo hoje: mudar o catálogo não
+                mexe em contrato já fechado, então os dois podem divergir. */}
+            {rotuloPreco && (
+              <p style={{ fontSize: "0.8rem", marginBottom: "1rem", fontWeight: 600,
+                color: precoDiverge(contrato.preco_mensal_fechado, contrato.preco_catalogo_hoje) ? "var(--dourado)" : "var(--text-muted)" }}>
+                {rotuloPreco}
+              </p>
+            )}
 
             {planoEscolhido === "custom" && (
-              <div className="mb-3" style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "0.4rem 0.8rem", alignItems: "center" }}>
-                {(Object.keys(NOME_MODULO) as ModuloComercial[]).map((m) => (
-                  <label key={m} style={{ display: "contents" }}>
-                    <span style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem" }}>
-                      <input type="checkbox" checked={modulosCustom[m] != null} disabled={m === "rebanho"}
-                        onChange={(e) => setModulosCustom((s) => ({ ...s, [m]: e.target.checked ? (s[m] ?? 0) : null }))} />
-                      {NOME_MODULO[m]}
-                    </span>
-                    <input type="number" min={0} step="0.01" placeholder="R$" style={{ ...inp, width: "6rem" }}
-                      disabled={modulosCustom[m] == null} value={modulosCustom[m] ?? ""}
-                      onChange={(e) => setModulosCustom((s) => ({ ...s, [m]: e.target.value === "" ? 0 : Number(e.target.value) }))} />
-                  </label>
-                ))}
+              <div className="mb-3">
+                <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "0.4rem 0.8rem", alignItems: "center" }}>
+                  {(Object.keys(NOME_MODULO) as ModuloComercial[]).map((m) => (
+                    <label key={m} style={{ display: "contents" }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem" }}>
+                        <input type="checkbox" checked={modulosCustom[m] != null}
+                          onChange={(e) => alternarModulo(m, e.target.checked)} />
+                        {NOME_MODULO[m]}
+                      </span>
+                      <input type="number" min={0} step="0.01" placeholder="R$" style={{ ...inp, width: "6rem" }}
+                        disabled={modulosCustom[m] == null} value={modulosCustom[m] ?? ""}
+                        onChange={(e) => mudarPrecoModulo(m, e.target.value === "" ? 0 : Number(e.target.value))} />
+                    </label>
+                  ))}
+                </div>
+                {/* Explica o que o sistema marcou/desmarcou sozinho por causa das dependências. */}
+                <div role="status" aria-live="polite">
+                  {avisoDependencia && (
+                    <p style={{ fontSize: "0.78rem", color: "var(--dourado)", marginTop: "0.5rem", fontWeight: 600 }}>{avisoDependencia}</p>
+                  )}
+                </div>
+                {erroValidacao && (
+                  <p style={{ fontSize: "0.75rem", color: "var(--red)", marginTop: "0.4rem" }}>{erroValidacao}</p>
+                )}
+                {regrasIndisponiveis && (
+                  <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+                    Não foi possível carregar as regras de dependência entre módulos — o servidor confere ao salvar.
+                  </p>
+                )}
               </div>
             )}
 
@@ -580,7 +592,7 @@ export default function FazendasAdmin() {
             )}
 
             <div className="flex items-center gap-2 mb-4" style={{ flexWrap: "wrap" }}>
-              <button onClick={salvarContrato} disabled={salvando} className="btn-primary" style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem" }}>
+              <button onClick={() => salvarContrato()} disabled={salvando} className="btn-primary" style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem" }}>
                 {salvando ? "Salvando…" : "Salvar módulos/plano"}
               </button>
               {contrato.status !== "ativo" ? (
@@ -595,6 +607,8 @@ export default function FazendasAdmin() {
                 </button>
               )}
             </div>
+
+            {temFinanceiro && selecionada != null && <PrepararFinanceiro fazendaId={selecionada} cores={CORES_WEB} />}
 
             <div className="card-header mb-2">Contrato assinado</div>
             <div className="flex flex-wrap gap-2 mb-2">
@@ -741,6 +755,11 @@ export default function FazendasAdmin() {
           </div>
         )}
       </div>
+
+      {pendenteRemocao && (
+        <DialogoRemocaoModulos removidos={pendenteRemocao} salvando={salvando}
+          onCancelar={() => setPendenteRemocao(null)} onConfirmar={() => salvarContrato(true)} />
+      )}
     </div>
   );
 }

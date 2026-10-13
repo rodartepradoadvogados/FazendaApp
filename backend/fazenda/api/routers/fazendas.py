@@ -9,6 +9,7 @@ fazenda/api/routers/auth.py (POST /auth/login, POST /auth/selecionar-fazenda).
 """
 from __future__ import annotations
 
+import math
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
@@ -22,10 +23,12 @@ from fazenda.auth import (
 from fazenda.database import get_session, sessao_sem_recorte_de_fazenda
 from fazenda.models import (
     CentroCusto, ContaCorrente, ContratoAnexo, ContratoAssinaturaZapSign, ContratoFazenda, ContratoFazendaModulo,
-    EmpresaOperadora, Fazenda, PrecoModulo, Usuario, UsuarioFazenda,
+    EmpresaOperadora, Fazenda, PrecoModulo, PrecoPlano, Usuario, UsuarioFazenda,
 )
 from fazenda.models.planos import (
-    DESCONTO_CICLO_PAGAMENTO, MESES_POR_CICLO, MODULO_REBANHO, MODULOS_COMERCIAIS, PLANOS_CATALOGO,
+    DEPENDENCIAS_MODULOS, DESCONTO_CICLO_PAGAMENTO, MESES_POR_CICLO, MODULO_REBANHO, MODULOS_BASE,
+    MODULOS_COMERCIAIS, PLANOS_CATALOGO, preco_catalogo_plano, preco_mensal_do_contrato,
+    validar_contrato_modulos,
 )
 from fazenda.rules.contrato_render import render_contrato
 from fazenda.rules import zapsign
@@ -63,7 +66,7 @@ def provisionar_fazenda_nova(session: Session, fazenda_id: int) -> None:
     - Contas correntes "Banco" e "Carteira", em branco, editáveis.
     - Centros de custo "Pecuária Leiteira" e "Agricultura".
     - Contrato aguardando aprovação, SEM nenhum módulo ativo — nada funciona
-      (nem Rebanho, que é obrigatório em todo plano) até você escolher o
+      (nem Rebanho ou Financeiro, os módulos base) até você escolher o
       plano/módulos e aprovar/fechar o contrato (ver endpoints abaixo).
     Pessoas e calendário sanitário nascem vazios de propósito (cada fazenda
     cadastra os seus funcionários e sua própria agenda sanitária) — ver
@@ -371,7 +374,7 @@ def desvincular_usuario(
 
 # ---------------------------------------------------------------------------
 # Planos e contrato por fazenda — quem contrata o quê, com atenção de que
-# nada (nem Rebanho) libera antes da aprovação/fechamento (ver
+# nada (nem Rebanho ou Financeiro) libera antes da aprovação/fechamento (ver
 # provisionar_fazenda_nova acima e exigir_modulo_contratado/exigir_contrato_ativo
 # em fazenda/auth.py, usados nos include_router de main.py).
 # ---------------------------------------------------------------------------
@@ -386,10 +389,24 @@ class ContratoIn(BaseModel):
     ciclo_pagamento: str = "mensal"  # "mensal"/"trimestral"/"semestral" — ver DESCONTO_CICLO_PAGAMENTO
 
 
-def _preco_mensal_contrato(contrato: ContratoFazenda, modulos: list[ContratoFazendaModulo]) -> float:
-    if contrato.plano and contrato.plano in PLANOS_CATALOGO:
-        return PLANOS_CATALOGO[contrato.plano]["preco"]
-    return sum(m.preco for m in modulos if m.ativo)
+class PrecoPlanoIn(BaseModel):
+    preco: float
+
+
+def _publico_preco_plano(session: Session, plano: str) -> dict:
+    """Preço efetivo do plano de catálogo + quem/quando editou (None = ainda
+    no padrão semeado). Contrato D/A/B de CONTRATO_API.md."""
+    linha = session.get(PrecoPlano, plano)
+    por = None
+    if linha and linha.atualizado_por_usuario_id:
+        u = session.get(Usuario, linha.atualizado_por_usuario_id)
+        por = (u.nome or u.username) if u else None
+    return {
+        "preco": linha.preco if linha else PLANOS_CATALOGO[plano]["preco"],
+        "preco_padrao": PLANOS_CATALOGO[plano]["preco"],
+        "atualizado_em": linha.atualizado_em.isoformat() if linha and linha.atualizado_em else None,
+        "atualizado_por": por,
+    }
 
 
 def _publico_contrato(session: Session, fazenda_id: int) -> dict:
@@ -399,7 +416,7 @@ def _publico_contrato(session: Session, fazenda_id: int) -> dict:
     ).all()
     if not contrato:
         return {"fazenda_id": fazenda_id, "status": None, "plano": None, "modulos": [], "ciclo_pagamento": "mensal"}
-    preco_mensal = _preco_mensal_contrato(contrato, modulos)
+    preco_mensal = preco_mensal_do_contrato(session, contrato, modulos)
     desconto = DESCONTO_CICLO_PAGAMENTO.get(contrato.ciclo_pagamento, 0.0)
     meses = MESES_POR_CICLO.get(contrato.ciclo_pagamento, 1)
     return {
@@ -412,6 +429,12 @@ def _publico_contrato(session: Session, fazenda_id: int) -> dict:
         "ciclo_pagamento": contrato.ciclo_pagamento,
         "desconto_pct": desconto * 100,
         "preco_mensal": preco_mensal,
+        # Preço congelado do pacote (None = rascunho/sob medida) e o que o
+        # catálogo diz HOJE — a UI mostra os dois quando divergem.
+        "preco_mensal_fechado": contrato.preco_mensal_fechado,
+        "preco_catalogo_hoje": (
+            preco_catalogo_plano(session, contrato.plano) if contrato.plano in PLANOS_CATALOGO else None
+        ),
         "valor_total_ciclo": round(preco_mensal * meses * (1 - desconto), 2),
     }
 
@@ -428,10 +451,14 @@ def definir_contrato(
     fazenda_id: int, dados: ContratoIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
 ) -> dict:
     """Monta o "rascunho" do contrato — plano fechado (Standard/Silver/Gold/
-    Diamond, preço do pacote) ou módulos avulsos sob medida (preço livre por
-    módulo). Não muda o status: uma fazenda nova continua aguardando
+    Diamond/Financeiro, preço do pacote) ou módulos avulsos sob medida (preço
+    livre por módulo). Não muda o status: uma fazenda nova continua aguardando
     aprovação até POST /{fazenda_id}/contrato/aprovar; editar os módulos de
-    uma fazenda já ativa aplica na hora (é você mesmo, dono, editando)."""
+    uma fazenda já ativa aplica na hora (é você mesmo, dono, editando).
+    Vale para plano e sob medida: ao menos um módulo base (Rebanho ou
+    Financeiro) e as dependências de DEPENDENCIAS_MODULOS (400 em português).
+    Preço: o pacote é congelado na aprovação; trocar o plano de um contrato
+    ATIVO recongela pelo catálogo de hoje; re-salvar o mesmo plano não muda."""
     if not session.get(Fazenda, fazenda_id):
         raise HTTPException(status_code=404, detail="Fazenda não encontrada")
     if dados.plano is not None and dados.plano not in PLANOS_CATALOGO:
@@ -439,24 +466,41 @@ def definir_contrato(
     if dados.ciclo_pagamento not in DESCONTO_CICLO_PAGAMENTO:
         raise HTTPException(status_code=400, detail=f"Ciclo de pagamento inválido: {dados.ciclo_pagamento}")
 
+    contrato = session.exec(select(ContratoFazenda).where(ContratoFazenda.fazenda_id == fazenda_id)).first()
+    plano_mudou = (contrato.plano if contrato else None) != dados.plano
+
     if dados.plano is not None:
         pacote = PLANOS_CATALOGO[dados.plano]
-        novos = [{"modulo": m, "preco": pacote["preco"] if m == MODULO_REBANHO else 0.0} for m in pacote["modulos"]]
-        # Preço do pacote fica só na 1ª linha (rebanho) pra não somar errado
-        # num relatório futuro — os demais módulos do mesmo pacote entram
-        # com preço 0 (o valor cobrado é o do plano, não a soma dos módulos).
+        # Preço do pacote: o já congelado se o plano é o mesmo; senão o do catálogo de hoje.
+        if contrato and not plano_mudou and contrato.preco_mensal_fechado is not None:
+            preco_pacote = contrato.preco_mensal_fechado
+        else:
+            preco_pacote = preco_catalogo_plano(session, dados.plano)
+        modulos_pacote = list(pacote["modulos"])
+        # Preço do pacote fica só na 1ª linha (rebanho se o pacote tem, senão o
+        # primeiro módulo) pra não somar errado num relatório futuro — os demais
+        # módulos do mesmo pacote entram com preço 0 (o valor cobrado é o do
+        # plano, não a soma dos módulos).
+        primeiro = MODULO_REBANHO if MODULO_REBANHO in modulos_pacote else modulos_pacote[0]
+        novos = [{"modulo": m, "preco": preco_pacote if m == primeiro else 0.0} for m in modulos_pacote]
     else:
         nomes_invalidos = [m.modulo for m in dados.modulos if m.modulo not in MODULOS_COMERCIAIS]
         if nomes_invalidos:
             raise HTTPException(status_code=400, detail=f"Módulo(s) inválido(s): {', '.join(nomes_invalidos)}")
-        if not any(m.modulo == MODULO_REBANHO for m in dados.modulos):
-            raise HTTPException(status_code=400, detail="Rebanho é obrigatório em todo contrato")
         novos = [{"modulo": m.modulo, "preco": m.preco} for m in dados.modulos]
+    erros = validar_contrato_modulos([n["modulo"] for n in novos])
+    if erros:
+        raise HTTPException(status_code=400, detail="; ".join(erros))
 
-    contrato = session.exec(select(ContratoFazenda).where(ContratoFazenda.fazenda_id == fazenda_id)).first()
     if not contrato:
         contrato = ContratoFazenda(fazenda_id=fazenda_id)
         session.add(contrato)
+    if plano_mudou:
+        # Contrato ativo: recongela já pelo catálogo de hoje (sob medida: sem
+        # preço de pacote). Rascunho/suspenso: fecha na aprovação.
+        contrato.preco_mensal_fechado = (
+            preco_catalogo_plano(session, dados.plano) if dados.plano is not None and contrato.status == "ativo" else None
+        )
     contrato.plano = dados.plano
     contrato.ciclo_pagamento = dados.ciclo_pagamento
     contrato.atualizado_em = datetime.utcnow()
@@ -497,6 +541,10 @@ def aprovar_contrato(
     ).first()
     if not tem_modulo_ativo:
         raise HTTPException(status_code=400, detail="Defina ao menos um módulo (PUT .../contrato) antes de aprovar")
+    # Congela o preço do pacote na aprovação (P1). Reaprovar (reativar uma
+    # suspensa) NÃO recongela: o que já foi fechado não muda sozinho.
+    if contrato.plano in PLANOS_CATALOGO and contrato.preco_mensal_fechado is None:
+        contrato.preco_mensal_fechado = preco_catalogo_plano(session, contrato.plano)
     contrato.status = "ativo"
     contrato.aprovado_por_usuario_id = user.id
     contrato.data_fechamento = datetime.utcnow()
@@ -521,8 +569,44 @@ def suspender_contrato(
 
 
 @router.get("/catalogo/planos")
-def listar_planos_catalogo(_: Usuario = Depends(exigir_dono)) -> dict:
-    return PLANOS_CATALOGO
+def listar_planos_catalogo(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
+    """Catálogo + override de preço (tabela preco_plano). `preco` é o efetivo
+    de hoje (vale só para contratos NOVOS); `preco_padrao` é o do código."""
+    return {
+        chave: {"nome": plano["nome"], "modulos": list(plano["modulos"]), **_publico_preco_plano(session, chave)}
+        for chave, plano in PLANOS_CATALOGO.items()
+    }
+
+
+@router.put("/catalogo/precos-plano/{plano}")
+def atualizar_preco_plano(
+    plano: str, dados: PrecoPlanoIn, user: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+) -> dict:
+    """Edita o preço de catálogo de um plano. NÃO muda contratos já fechados
+    (carregam `preco_mensal_fechado`), só os próximos a aprovar."""
+    if plano not in PLANOS_CATALOGO:
+        raise HTTPException(status_code=400, detail=f"Plano inválido: {plano}")
+    if not math.isfinite(dados.preco) or dados.preco < 0:
+        raise HTTPException(status_code=400, detail="O preço do plano não pode ser negativo")
+    linha = session.get(PrecoPlano, plano)
+    if not linha:
+        linha = PrecoPlano(plano=plano)
+    linha.preco = round(dados.preco, 2)
+    linha.atualizado_em = datetime.utcnow()
+    linha.atualizado_por_usuario_id = user.id
+    session.add(linha)
+    session.commit()
+    return {"plano": plano, **_publico_preco_plano(session, plano)}
+
+
+@router.get("/catalogo/dependencias")
+def listar_dependencias_modulos(_: Usuario = Depends(exigir_dono)) -> dict:
+    """Regra de dependência entre módulos (espelho de validar_contrato_modulos)
+    para a UI aplicar/explicar antes de o PUT do contrato recusar."""
+    return {
+        "dependencias": {k: list(v) for k, v in DEPENDENCIAS_MODULOS.items()},
+        "modulos_base": list(MODULOS_BASE),
+    }
 
 
 @router.get("/catalogo/resumo-cowdata")
@@ -547,7 +631,7 @@ def resumo_cowdata(_: Usuario = Depends(exigir_dono), session: Session = Depends
             continue
         contagem[c.status] = contagem.get(c.status, 0) + 1
         if c.status == "ativo":
-            mrr += _preco_mensal_contrato(c, modulos_por_fazenda.get(f.id, []))
+            mrr += preco_mensal_do_contrato(session, c, modulos_por_fazenda.get(f.id, []))
 
     return {"total_fazendas": len(fazendas), "mrr": round(mrr, 2), **contagem}
 
@@ -658,7 +742,7 @@ def _dados_para_minuta(session: Session, fazenda: Fazenda) -> tuple[str | None, 
     modulos = session.exec(
         select(ContratoFazendaModulo).where(ContratoFazendaModulo.fazenda_id == fazenda.id, ContratoFazendaModulo.ativo == True)  # noqa: E712
     ).all()
-    preco_mensal = _preco_mensal_contrato(contrato, modulos)
+    preco_mensal = preco_mensal_do_contrato(session, contrato, modulos)
     return contrato.plano, [m.modulo for m in modulos], preco_mensal, contrato.ciclo_pagamento
 
 

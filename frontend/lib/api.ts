@@ -1,5 +1,6 @@
 // Funções de comunicação com o backend FastAPI
 export const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { contextoAtual, moduloContratado, moduloFrontContratado, podeModuloCtx } from "./modulos.ts";
 
 // Mesmo gerador de `lib/offline.ts::gerarId` (não importado de lá pra evitar
 // import circular — offline.ts já importa authFetch daqui). Usado só pelo
@@ -141,6 +142,10 @@ export type FazendaAtual = {
   // esconder o que a fazenda não comprou. `undefined` (resposta antiga em
   // cache) não filtra nada; lista vazia É uma restrição de verdade.
   modulos_contratados?: string[];
+  // Situação do contrato desta fazenda: "ativo" | "aguardando_aprovacao" |
+  // "suspenso". `null`/ausente (resposta antiga) = sem dado, não bloqueia.
+  // Aguardando/suspenso leva à tela /contrato-inativo (lib/modulos.ts).
+  contrato_status?: "ativo" | "aguardando_aprovacao" | "suspenso" | null;
   // Fazenda-sandbox (ex.: "Fazenda Teste", cópia da fazenda real Jairo
   // Nasser — ver ehFazendaTeste() abaixo e FazendaTesteBanner.tsx). Ausente
   // em respostas antigas do backend (rollout em andamento noutra frente) —
@@ -154,6 +159,39 @@ export type FazendaAtual = {
 export function getFazendaAtual(): FazendaAtual | null {
   if (typeof window === "undefined") return null;
   try { return JSON.parse(localStorage.getItem("fazenda_atual") || "null"); } catch { return null; }
+}
+// Contrato fresco (Plano Financeiro F2.2): `fazenda_atual` é gravado no login e
+// antes só mudava no próximo login (sessão "manter conectado" = 90 dias) —
+// upgrade/downgrade/suspensão no Painel CowData não chegava ao cliente. Relê
+// /auth/me, regrava SÓ os campos de contrato e avisa quem escuta (Sidebar,
+// AuthShell) pelo evento EVENTO_CONTRATO. Máx. 1× a cada 5 min (compartilhado
+// pelos dois chamadores); `forcar` ignora o intervalo. Falha de rede é
+// silenciosa — continua valendo o que já está gravado.
+export const EVENTO_CONTRATO = "cowdata:contrato-atualizado";
+const INTERVALO_CONTRATO_MS = 5 * 60 * 1000;
+let _ultimaLeituraContrato = 0;
+export async function renovarContrato(forcar = false): Promise<boolean> {
+  if (typeof window === "undefined" || !getToken()) return false;
+  const agora = Date.now();
+  if (!forcar && agora - _ultimaLeituraContrato < INTERVALO_CONTRATO_MS) return false;
+  _ultimaLeituraContrato = agora;
+  try {
+    const res = await authFetch(`${API}/auth/me`);
+    if (!res.ok) return false;
+    const me = await res.json();
+    const nova = me?.fazenda_atual as FazendaAtual | undefined;
+    const atual = getFazendaAtual();
+    if (!nova || !atual || nova.id !== atual.id) return false;
+    // Resposta de backend antigo (sem o campo) não apaga o que já está gravado.
+    const modulos = nova.modulos_contratados ?? atual.modulos_contratados;
+    const status = nova.contrato_status !== undefined ? nova.contrato_status : (atual.contrato_status ?? null);
+    const mudou = JSON.stringify(modulos ?? null) !== JSON.stringify(atual.modulos_contratados ?? null)
+      || (status ?? null) !== (atual.contrato_status ?? null);
+    if (!mudou) return false;
+    localStorage.setItem("fazenda_atual", JSON.stringify({ ...atual, modulos_contratados: modulos, contrato_status: status }));
+    window.dispatchEvent(new CustomEvent(EVENTO_CONTRATO));
+    return true;
+  } catch { return false; }
 }
 // A fazenda ATUAL (não uma fazenda qualquer da lista) é o sandbox de testes?
 // Único ponto de leitura de `eh_teste` — FazendaTesteBanner.tsx e qualquer
@@ -181,27 +219,11 @@ export function logout() {
     location.href = "/login";
   }
 }
-// Mapa rota → módulo (para menu e bloqueio de páginas).
-export const ROTA_MODULO: Record<string, string> = {
-  "/": "capa", "/indicadores": "indicadores", "/agenda": "agenda", "/lancamentos": "lancamentos", "/protocolos": "lancamentos",
-  "/reproducao": "reproducao", "/analise-reprodutiva": "analise", "/relatorios": "reproducao", "/rebanho": "rebanho",
-  "/ciclos-21-dias": "reproducao",
-  "/producao": "producao", "/alimentacao": "alimentacao", "/sanidade": "sanidade", "/recria": "recria",
-  "/financeiro": "financeiro", "/estoque": "estoque", "/pedidos": "pedidos", "/cotacoes": "pedidos", "/parametros": "parametros", "/upload": "upload",
-  "/analise-relatorios": "indicadores",
-};
-
-// Mapa módulo do FRONTEND (ROTA_MODULO acima) -> módulo COMERCIAL do
-// backend (fazenda.auth.exigir_modulo_contratado, wireup em main.py) — os
-// nomes são diferentes dos dois lados por motivos históricos (a rota nasceu
-// antes do piloto de planos/módulos). Só entram aqui os módulos com
-// correspondência 1:1 clara e conferida contra main.py; os transversais
-// (agenda, indicadores, parametros, upload, lancamentos, analise) não têm
-// nenhum exigir_modulo_contratado no backend — ficam de fora de propósito.
-const MODULO_CONTRATO: Record<string, string> = {
-  rebanho: "rebanho", producao: "produtivo", recria: "produtivo", alimentacao: "alimentacao",
-  sanidade: "sanitario", financeiro: "financeiro", estoque: "estoque", pedidos: "pedidos", reproducao: "reprodutivo",
-};
+// Mapa rota → módulo (para menu e bloqueio de páginas) e mapa módulo do
+// FRONTEND → módulos COMERCIAIS do contrato: derivados da tabela única em
+// lib/modulos.ts (puro, testado com `npm test`). Reexportados aqui para os
+// chamadores antigos; regra nova entra LÁ, nunca aqui.
+export { ROTA_MODULO } from "./modulos.ts";
 // A FAZENDA (não o usuário) contratou este módulo? Espelha a trava de plano
 // do backend — sem isso, um admin via qualquer plano enxergava "acesso
 // integral" na Sidebar mesmo em fazenda Standard, só descobrindo a
@@ -211,23 +233,15 @@ const MODULO_CONTRATO: Record<string, string> = {
 // restringe nada — só passa a filtrar quando o backend manda a lista de
 // verdade, igual ao "sem retroatividade" de get_fazenda_atual_id. Sessão de
 // suporte sempre libera (getModoSuporte), espelhando o bypass adicionado em
-// exigir_modulo_contratado para o mesmo caso.
+// exigir_modulo_contratado para o mesmo caso. Contrato aguardando/suspenso
+// não libera módulo nenhum (ver lib/modulos.ts::contratoBloqueia).
 export function moduloContratadoPelaFazenda(mod: string): boolean {
-  if (getModoSuporte()) return true;
-  const chaveComercial = MODULO_CONTRATO[mod];
-  if (!chaveComercial) return true;
-  const lista = getFazendaAtual()?.modulos_contratados;
-  if (lista == null) return true;
-  return lista.includes(chaveComercial);
+  return moduloFrontContratado(mod, contextoAtual());
 }
 // Permissão de módulo para o usuário logado (admin tem tudo) — E a fazenda
 // precisa ter contratado esse módulo (ver moduloContratadoPelaFazenda acima).
 export function podeModulo(mod: string): boolean {
-  const u = getUsuario();
-  if (!u) return false;
-  if (!moduloContratadoPelaFazenda(mod)) return false;
-  if (u.papel === "admin") return true;
-  return Array.isArray(u.permissoes) && u.permissoes.includes(mod);
+  return podeModuloCtx(mod, contextoAtual());
 }
 export function ehAdmin(): boolean {
   return getUsuario()?.papel === "admin";
@@ -307,10 +321,7 @@ export function podeFormularDietas(): boolean {
 // têm uma chave em ROTA_MODULO/MODULO_CONTRATO (não aparecem na Sidebar
 // comum) — mesma regra de bypass por suporte e de "sem dado não bloqueia".
 function moduloContratadoDireto(chaveComercial: string): boolean {
-  if (getModoSuporte()) return true;
-  const lista = getFazendaAtual()?.modulos_contratados;
-  if (lista == null) return true;
-  return lista.includes(chaveComercial);
+  return moduloContratado(chaveComercial, contextoAtual());
 }
 // A FAZENDA contratou o módulo à-la-carte Formulação de Dietas? Diferente de
 // podeFormularDietas() (que também exige ser dono/consultor CowData — eixo
@@ -558,7 +569,10 @@ export type ModuloComercial =
   | "rebanho" | "reprodutivo" | "produtivo" | "sanitario" | "financeiro"
   | "planejamento" | "pedidos" | "estoque" | "alimentacao" | "agricultura" | "consultor"
   | "formulacao_dietas";
-export type PlanoNome = "standard" | "silver" | "gold" | "diamond";
+// Plano comercial: standard/silver/gold/diamond + "financeiro" (só Financeiro+
+// Pedidos, sem Rebanho). A lista que a tela mostra vem do catálogo do servidor
+// (fetchPlanosCatalogo) — este tipo só nomeia os conhecidos.
+export type PlanoNome = "standard" | "silver" | "gold" | "diamond" | "financeiro";
 export type ModuloDoContrato = { modulo: ModuloComercial; preco: number; ativo: boolean };
 export type ContratoFazenda = {
   fazenda_id: number;
@@ -571,8 +585,25 @@ export type ContratoFazenda = {
   desconto_pct?: number;
   preco_mensal?: number;
   valor_total_ciclo?: number;
+  // Preço fechado no contrato x preço de catálogo hoje (mudar o catálogo não
+  // mexe em contrato já fechado). null = sem preço fechado / sob medida.
+  preco_mensal_fechado?: number | null;
+  preco_catalogo_hoje?: number | null;
 };
-export type PlanoCatalogo = { nome: string; preco: number; modulos: ModuloComercial[] };
+// `preco` é o preço EFETIVO (o editado no Painel, se houver); `preco_padrao` é
+// o de fábrica. atualizado_* só vêm preenchidos quando alguém editou o preço.
+export type PlanoCatalogo = {
+  nome: string; preco: number; modulos: ModuloComercial[];
+  preco_padrao?: number; atualizado_em?: string | null; atualizado_por?: string | null;
+};
+export type CatalogoPlanos = Record<string, PlanoCatalogo>;
+export type PrecoPlano = {
+  plano: string; preco: number; preco_padrao: number; atualizado_em: string | null; atualizado_por: string | null;
+};
+export type DependenciasModulos = { dependencias: Record<string, ModuloComercial[]>; modulos_base: ModuloComercial[] };
+export type PreparoFinanceiro = {
+  plano_contas_carregado: boolean; contas_criadas: number; regras_v2_ligadas: boolean; ja_preparado: boolean; mensagens: string[];
+};
 export type PrecoModulo = { modulo: ModuloComercial; preco: number };
 export type AnexoContrato = { id: number; nome_arquivo: string; mime_type: string; tamanho_bytes: number; criado_em: string };
 
@@ -620,9 +651,30 @@ export async function suspenderContratoFazenda(fazendaId: number): Promise<Contr
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao suspender contrato"); }
   return res.json();
 }
-export async function fetchPlanosCatalogo(): Promise<Record<PlanoNome, PlanoCatalogo>> {
+export async function fetchPlanosCatalogo(): Promise<CatalogoPlanos> {
   const res = await authFetch(`${API}/fazendas/catalogo/planos`);
   if (!res.ok) throw new Error(`Catálogo de planos error: ${res.status}`);
+  return res.json();
+}
+// Preço mensal de um PLANO (não de módulo — ver atualizarPrecoModulo). Não muda
+// contratos já fechados: só vale para contratos novos / troca de plano.
+export async function atualizarPrecoPlano(plano: string, preco: number): Promise<PrecoPlano> {
+  const res = await authFetch(`${API}/fazendas/catalogo/precos-plano/${encodeURIComponent(plano)}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ preco }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao atualizar preço do plano"); }
+  return res.json();
+}
+// Quem exige quem (estoque exige rebanho+financeiro…) e quais módulos servem de base.
+export async function fetchDependenciasModulos(): Promise<DependenciasModulos> {
+  const res = await authFetch(`${API}/fazendas/catalogo/dependencias`);
+  if (!res.ok) throw new Error(`Dependências de módulos error: ${res.status}`);
+  return res.json();
+}
+// Carrega plano de contas/regras do financeiro da fazenda (idempotente).
+export async function prepararFinanceiroFazenda(fazendaId: number): Promise<PreparoFinanceiro> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/financeiro/preparar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao preparar o financeiro"); }
   return res.json();
 }
 // Cockpit do Painel CowData — ver app/painel-cowdata/.
@@ -1452,6 +1504,13 @@ async function getAgendaV2(caminho: string, qs: Record<string, string | number |
 export const fetchAgendaDia = (data?: string, ate?: string, sinal?: AbortSignal) => getAgendaV2("dia", { data, ate }, sinal);
 export const fetchAgendaPainel = (data?: string, sinal?: AbortSignal) => getAgendaV2("painel", { data }, sinal);
 export const fetchAgendaProjecao = (dias: number, data?: string, sinal?: AbortSignal) => getAgendaV2("projecao", { dias, data }, sinal);
+/** Item de contas_a_pagar / contas_a_receber da Agenda (contrato F do Plano Financeiro: mesmo formato nas duas listas). */
+export type ContaAgendaItem = {
+  descricao?: string | null; fornecedor?: string | null; data_vencimento?: string | null;
+  valor_total?: number | null; valor_pago?: number | null; ref?: string | null;
+};
+/** Trecho financeiro do payload de /agenda/ e /agenda/painel. `contas_a_receber` só vem com o módulo financeiro. */
+export type AgendaContas = { contas_a_pagar?: ContaAgendaItem[]; contas_a_receber?: ContaAgendaItem[] };
 
 /** Materializa (escreve) no máximo a cada 15 min por navegador (e sempre que o dia muda);
  * devolve true se rodou agora. É idempotente: rodar de novo nunca duplica nada. */

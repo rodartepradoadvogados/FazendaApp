@@ -10,6 +10,7 @@ import {
   MODOS_COMPARACAO, REGIME_NOME, TIPOS_PERIODO, comparacaoDe, deslocar, anoAnterior, opcoesPeriodo, periodoDe, periodoPadrao,
   resumoContexto, type ModoComparacao, type TipoPeriodo,
 } from "@/lib/relatorioContexto";
+import { moduloContratado } from "@/lib/modulos";
 import type { ContextoRelatorio } from "./useContextoRelatorio";
 
 export type AcaoExportar = "excel" | "pdf" | "imprimir";
@@ -102,7 +103,12 @@ export function BarraContexto({ ctx, hoje, centros, onExportar, podeExportar }: 
                 mudar({ cmp: "outro", cmpp: q && q.tipo === "periodo" ? q.periodo.cod : deslocar(periodo, -1).cod });
               } else mudar({ cmp: v });
             }}>
-            {MODOS_COMPARACAO.map((m) => <option key={m.v} value={m.v} disabled={m.v === "orc" && travas.cmpOrcado === false}>{m.rotulo}{m.v === "orc" && travas.cmpOrcado === false ? " (não nesta tela)" : ""}</option>)}
+            {MODOS_COMPARACAO.map((m) => {
+              // Orçado = módulo Planejamento: sem ele a opção fica visível porém travada, com o motivo.
+              const semPlano = m.v === "orc" && !moduloContratado("planejamento");
+              const naoNestaTela = m.v === "orc" && travas.cmpOrcado === false;
+              return <option key={m.v} value={m.v} disabled={naoNestaTela || semPlano}>{m.rotulo}{semPlano ? " (plano não contratado)" : naoNestaTela ? " (não nesta tela)" : ""}</option>;
+            })}
           </select>
         </div>
         {mostraQual && (<>
