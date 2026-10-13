@@ -36,7 +36,7 @@ from sqlmodel import Session, select
 
 from fazenda.auth import EMAIL_DONO, get_current_user
 from fazenda.database import engine, get_session
-from fazenda.models import Pessoa, PushEnvio, PushNotificacaoEnviada, PushSubscription, PushTokenFcm, Usuario
+from fazenda.models import Pessoa, PushAck, PushEnvio, PushNotificacaoEnviada, PushSubscription, PushTokenFcm, Usuario
 from fazenda.rules import fcm
 
 logger = logging.getLogger(__name__)
