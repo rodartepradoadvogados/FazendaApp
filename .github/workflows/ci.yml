@@ -155,7 +155,7 @@ jobs:
       # abrira menos workers la.
       - name: Rodar pytest
         working-directory: backend
-        timeout-minutes: 90
+        timeout-minutes: 60
         run: python -m pytest tests/ -q -n auto --dist loadfile
 
   # RLS nao existe em SQLite — e a suite acima roda toda em SQLite. Os testes
