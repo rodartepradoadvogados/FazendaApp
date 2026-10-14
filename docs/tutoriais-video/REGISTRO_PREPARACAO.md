@@ -86,6 +86,12 @@ Fundo de página com a foto das vacas, desfocada. Fonte do app: a carregada pelo
 Os relatórios aceitam na URL `per=m:AAAA-MM` (mês), `cmp=aa` (comparar com o ano passado) ou `cmp=nada`,
 `reg=comp` (mês do gasto) ou `reg=caixa` (dia do pagamento), `cc=<centro de custo>`.
 
+> **Correção (14/10/2026, produção do vídeo — verificado):** abrir `/financeiro?sub=<relatório>` ou `?ir=<id>`
+> direto pela URL **cai no Resumo**; os caminhos `sub=` da tabela acima servem de referência de nome, não de link.
+> Para gravar/capturar, chegue por cliques: aba `Relatórios` → sub-aba (`Resultado`, `Entrega ao contador`…) →
+> item (`DRE da fazenda`, `Conciliação bancária`, `Fechamento do mês`) ou o link `Abrir o Resultado por litro` do
+> Painel do dono. Contas a pagar: aba `Contas`. Ver `apresentacao-financeiro/capturar.mjs`.
+
 ### Conceitos que o vídeo não pode ensinar errado
 
 - **Dois regimes**: "Mês do gasto" (competência) × "Dia do pagamento" (caixa). A DRE e o Resultado por litro
@@ -191,6 +197,11 @@ só escreve em `*/Sessoes/`; o conector do Drive só cria arquivo novo). Aprova�
 7. **Sino com "2" e botão "News"** sempre no canto superior direito: origem não investigada; decidir se mantém.
 8. **Rótulos sem `for`/`id`**: seletores por posição ou por texto de botão.
 9. **Texto em caixa-alta é CSS**: no DOM é "Contas", não "CONTAS" (o seletor por texto falha com a caixa errada).
+10. **Relatório não abre por URL** (`?sub=`/`?ir=` caem no Resumo): navegar por cliques (ver §3).
+11. **Os servidores da demo morrem quando o container da sessão pausa**: antes de capturar, `curl localhost:3000/login`;
+    se não responder, rodar `rebuild.sh --front` de novo (os números se repetem).
+12. **O "WAV" do HeyGen é MP3** (só a extensão é .wav): converter com ffmpeg para PCM antes de ler em Python.
+13. **"Pacote do contador"** já abre em setembro/2026 (o mês anterior), não mais no ano anterior como em §7.
 
 ## 7. Lacunas de dados e de produto (contexto; as decisões estão no §8)
 
@@ -234,3 +245,15 @@ News e o sino sobrepõem a faixa de abas. Duas formas de montar o carrossel:
 - **B**: gravar a versão responsiva (430×932, escala 2 → 860×1864) e usar quase em tela cheia. Mais "cara de
   celular", mas as abas ficam parcialmente cobertas e a barra superior ocupa espaço.
 Combinar A e B por slide também é possível. A escolha depende do roteiro; **não foi gravado nada em vertical ainda**.
+
+## 9. Produção do vídeo de apresentação (14/10/2026)
+
+- **Decisões do Jairo** (entrevista `/grill-me`, todas aceitas): reel único 9:16 de ~60 s para quem ainda não usa
+  o CowData; arco de 8 perguntas do dono (caixa, contas, DRE, litro, conciliação, contador); telas reais capturadas
+  e animadas em código (método "carrossel vivo"); identidade do CowData (nota no cofre
+  `04_CowData/Milk/Sessoes/2026-10-14_identidade_visual_videos_cowdata.md`); trilha própria com ducking; frase-chave
+  na tela; rótulo "Dados ilustrativos"; fecho com @cowdata, **sem WhatsApp** (não existe); distribuição interna, sem
+  publicação por enquanto.
+- **Voz:** teste com Piper (vozes pt-BR abertas, locais) **reprovado** pelo Jairo ("péssimo"); locução feita no
+  HeyGen com a "Voz Jairo Rodarte", **1 geração** (46,0 s), aprovada.
+- **Entrega:** rodada 1 (56 s) — fontes e medições em `apresentacao-financeiro/README.md`. Aguarda aprovação.
