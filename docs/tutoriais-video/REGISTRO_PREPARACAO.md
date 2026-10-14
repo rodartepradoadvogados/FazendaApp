@@ -20,8 +20,8 @@ tudo registrado para a produção (modelo Opus 5.5) começar do ponto certo.
   "Fazenda Vale Verde", ~45 vacas, ~13.000 L/mês, margem do mês anterior de 27%, datas relativas a "hoje".
 - A **captura de tela com cursor visível, em 1920×1080, funciona** (Playwright → WebM → ffmpeg H.264). O ffmpeg
   tem `zoompan`, `xfade`, `drawtext`, `overlay`, `loudnorm`, `libx264`.
-- A **voz do Jairo está no HeyGen** (duas vozes privadas) e o áudio é acessível pelo proxy. **Não gerei fala**
-  (não verificado: qualidade e custo da fala com a voz dele).
+- A **voz do Jairo está no HeyGen** ("Voz Jairo Rodarte", a do avatar dele) e o áudio é acessível pelo proxy. Uso autorizado
+  pelo Jairo (§8). **Não gerei fala** (não verificado: qualidade e custo da fala).
 - O refinamento no **HyperFrames local** é viável em tese (pacote npm `hyperframes` 0.8.157 existe, Chromium e
   ffmpeg estão aqui) mas **não foi instalado nem testado**.
 - Há **9 armadilhas de gravação observadas** (§6) e **lacunas de dados/produto** (§7). Nenhuma impede a produção; todas têm
@@ -49,7 +49,8 @@ tudo registrado para a produção (modelo Opus 5.5) começar do ponto certo.
 | 16 | Receita, lote, folha, cartão, patrimônio, fatura, orçamento, fechar mês, exportar Excel/PDF, pacote do contador (download) | **Não verificado** | as telas abrem; os fluxos de escrita não foram exercitados |
 | 17 | App de campo `/app` (mobile) | **Não verificado** | fora do escopo desta etapa |
 | 18 | HyperFrames local (instalar, compor, renderizar) | **Não verificado** | só confirmei que o pacote existe no npm |
-| 19 | Outras resoluções (1366×768, retrato 9:16) | **Não verificado** | só 1920×1080 |
+| 19 | Tela vertical de celular (430×932, escala 2) | **Verificado** | Resumo, Contas a pagar e DRE abrem sem rolagem horizontal; **o botão News e o sino cobrem a faixa de abas** (aparece "CO›" cortado) |
+| 20 | Outras resoluções (1366×768) | **Não verificado** | só 1920×1080 e 430×932 |
 
 ## 3. O sistema financeiro — mapa para quem vai ensinar
 
@@ -151,21 +152,19 @@ do próximo fluxo, ou grave tudo a partir de um mesmo estado inicial reconstruí
 | Fase | O que | Ferramenta | Gate (quem aprova) |
 |---|---|---|---|
 | 0 | Reproduzir o ambiente e conferir os números de §4 | `rebuild.sh` | automático |
-| 1 | Teste de voz: **uma frase curta** com cada voz do Jairo, escolher a melhor | HeyGen `create_speech` | Jairo ouve e escolhe |
-| 2 | Roteiro do **vídeo-piloto** (1 min) com marcações de tela/clique/zoom | Opus 5.5 | **Jairo aprova** |
+| 1 | Teste de voz: **uma frase curta** com a "Voz Jairo Rodarte" | HeyGen `create_speech` | Jairo ouve e confirma |
+| 2 | Adaptar o **roteiro do Jairo** (carrossel animado 9:16) em cenas com tela/clique/zoom | Opus 5.5 | **Jairo aprova** |
 | 3 | Locução (áudio) do piloto; medir a duração real | `create_speech` + ffprobe | Jairo ouve |
 | 4 | Gravar a tela casando o ritmo dos cliques com a locução | Playwright (`gravar_exemplo.mjs`) | revisão visual |
 | 5 | Motion simples: zoom, destaque, legenda, transições, áudio nivelado | ffmpeg (`zoompan`, `xfade`, `drawtext`, `loudnorm`) | Jairo aprova a rodada 1 |
 | 6 | Refinamento de motion | HyperFrames local (pacote npm `hyperframes`; o MCP do HyperFrames indica `npx skills add heygen-com/hyperframes` — nenhum dos dois foi executado) | Jairo aprova a rodada 2 |
 | 7 | Série: repetir para os demais temas | — | por vídeo |
 
-**Voz**: duas vozes privadas em português na conta HeyGen conectada: "Jairo Rodarte"
-(`43ccb8544a6b48af8272a2798f6465ec`, motor padrão ElevenLabs) e "Voz Jairo Rodarte"
-(`b7ab856295e947bab979a893cad2b326`, motor padrão Orca). Conta com plano Creator e 600 créditos premium até
-12/11/2026; o titular da conta **não é o Jairo** — confirmar a autorização antes de gastar crédito. Cada `create_speech`
-é uma geração e consome crédito; texto de 1 a 5.000 caracteres; aceita pausas `<break time="0.35s"/>` e `speed`
-0,5–2,0. **Nada de vídeo/avatar no HeyGen**: só áudio. O áudio volta como URL (precisa baixar para o ffmpeg).
-Em caso de erro ou timeout, perguntar antes de tentar de novo.
+**Voz**: usar a **"Voz Jairo Rodarte"** (`b7ab856295e947bab979a893cad2b326`; motor padrão Orca; voz padrão do avatar
+"Jairo Rodarte"), autorizada pelo Jairo na conta conectada (conta correta; plano Creator, 600 créditos premium até
+12/11/2026). Cada `create_speech` é uma geração e consome crédito; texto de 1 a 5.000 caracteres; aceita pausas
+`<break time="0.35s"/>` e `speed` 0,5–2,0. **Nada de vídeo/avatar no HeyGen**: só áudio. O áudio volta como URL
+(precisa baixar para o ffmpeg). Em caso de erro ou timeout, perguntar antes de tentar de novo.
 
 **Gravação**: Playwright grava a 25 fps em WebM; converter a 30 fps. Gravar com **login feito antes** e o vídeo
 começando já no Financeiro. Cursor desenhado por script (padrão ouro/marinho do sistema). Gravar o clique e a
@@ -193,9 +192,9 @@ só escreve em `*/Sessoes/`; o conector do Drive só cria arquivo novo). Aprova�
 8. **Rótulos sem `for`/`id`**: seletores por posição ou por texto de botão.
 9. **Texto em caixa-alta é CSS**: no DOM é "Contas", não "CONTAS" (o seletor por texto falha com a caixa errada).
 
-## 7. Lacunas de dados e de produto (para decidir antes do roteiro)
+## 7. Lacunas de dados e de produto (contexto; as decisões estão no §8)
 
-**Dados que faltam** para tutoriais desses temas (o sistema tem as telas; a demo não tem os dados): Orçamento
+**Telas sem dados, vazias por decisão do Jairo (§8.6), não semear** — tutoriais desses temas (o sistema tem as telas; a demo não tem os dados): Orçamento
 (planilha não criada), Patrimônio, Cartão de crédito, Folha/holerites, Gestão de faturas, Compra/venda de animais e
 sêmen, Pedidos, Documentos, Classificação do lançamento (lista vazia no formulário), produtos de estoque além do
 "Leite", Classificar (nada pendente), Conta corrente da Cooperativa sem movimento. **Cada tema novo pede um passo de
@@ -211,11 +210,27 @@ seed** — acrescentar a `seed_demo.py`.
   ganhando?"; usar o mês anterior.
 - O "Fôlego de 258 dias" do Caixa real sai de uma média de saída de poucos meses de dados: não comentar o número.
 
-## 8. Decisões que dependem do Jairo
+## 8. Decisões do Jairo (14/10/2026) — valem para toda a produção
 
-1. Autorizar o uso da conta HeyGen conectada (titular diferente) e o gasto de crédito de **áudio**.
-2. Qual voz: "Jairo Rodarte" (ElevenLabs) ou "Voz Jairo Rodarte" (Orca) — decidir ouvindo uma frase de cada.
-3. Quais temas viram vídeo e em que ordem (os que dependem de dados que faltam pedem seed primeiro).
-4. Manter ou esconder o sino e o botão "News" no canto superior direito.
-5. Formato: só 16:9 (tela cheia) ou também 9:16 (celular).
-6. Corrigir a Capa/cabeçalho/acessibilidade agora ou só contornar na gravação.
+1. **Voz**: autorizado o uso da voz dele no HeyGen, na conta conectada (a conta é a correta). É a voz do avatar
+   "Jairo Rodarte": **"Voz Jairo Rodarte", `b7ab856295e947bab979a893cad2b326`** (voz padrão do avatar, verificada
+   na listagem de avatares). A outra voz ("Jairo Rodarte", `43ccb854…`) **não** será usada. Só **áudio**; nada de
+   vídeo ou avatar gerado no HeyGen.
+2. **Sino e botão "News"**: **mantidos** visíveis.
+3. **Faixa vermelha de teste**: **removida** (já resolvido no ambiente de demonstração: `eh_teste=False`).
+4. **Formato**: **Instagram, stories e reels** (vertical **9:16, 1080×1920**), em **carrossel animado**. O Jairo
+   tem um roteiro breve e o entregará no prompt de produção. (Duração de 1 minuto segue como referência dele.)
+5. **Rótulos sem `for`/`id` e demais ajustes de produto**: **não corrigir**. Contornar na gravação (§6). Capa e
+   cabeçalho público com o nome da fazenda real: **também só contornar** (nunca gravar a Capa nem o login).
+6. **Telas vazias ficam vazias** (Orçamento, Patrimônio, Cartão, Folha, Faturas, Compra/venda de animais, Pedidos,
+   Documentos): ele não vai usá-las agora. **Não semear dados para elas.** Os vídeos usam só as telas com dado.
+
+### Consequência para o vertical 9:16 (a decidir na produção, com o roteiro dele)
+O app é um site: em 1920×1080 tem barra lateral, abas e muito espaço; em celular (430 px) ele reorganiza, mas o
+News e o sino sobrepõem a faixa de abas. Duas formas de montar o carrossel:
+- **A (recomendada)**: gravar em 1920×1080 (cliques reais, tudo legível) e montar cada slide 1080×1920 recortando e
+  ampliando a região que importa (card, tabela, gráfico), com título e legenda no padrão do CowData. Mantém o
+  News/sino quando o recorte pega o canto superior direito.
+- **B**: gravar a versão responsiva (430×932, escala 2 → 860×1864) e usar quase em tela cheia. Mais "cara de
+  celular", mas as abas ficam parcialmente cobertas e a barra superior ocupa espaço.
+Combinar A e B por slide também é possível. A escolha depende do roteiro; **não foi gravado nada em vertical ainda**.
