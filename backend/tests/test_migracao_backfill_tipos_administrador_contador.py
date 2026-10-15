@@ -84,8 +84,11 @@ def test_backfill_e_idempotente(tmp_path):
     conn.commit()
     conn.close()
 
-    _rodar_alembic(db_path, "upgrade", "head")
-    _rodar_alembic(db_path, "downgrade", "-1")
+    # Sobe até o backfill, desfaz SÓ ele (volta à revisão anterior) e sobe tudo de novo. Não dá para usar
+    # "downgrade -1" a partir do head: hoje o head é uma migração de merge (duas cabeças unidas) e o alembic
+    # recusa "-1" nela ("Ambiguous walk").
+    _rodar_alembic(db_path, "upgrade", "bd9c8a966d75")
+    _rodar_alembic(db_path, "downgrade", "0bfa9fbc2926")
     _rodar_alembic(db_path, "upgrade", "head")
 
     conn = sqlite3.connect(db_path)
