@@ -505,3 +505,70 @@ fieldset.nota:first-child { border-top: 0; padding-top: 0; }
   .nota .c-doc, .nota .c-emi { grid-column: span 6; } .nota .c-item, .nota .c-conta { grid-column: span 12; } .nota .c-val { grid-column: span 10; } .nota .x { grid-column: span 2; }
 }
 @container main (max-width: 940px) and (min-width: 701px) { .nota .c-doc, .nota .c-emi { grid-column: span 4; } .nota .c-item { grid-column: span 4; } }
+
+/* ═════════ v2 — correções da crítica independente ═════════ */
+:root { --field: #8393A6; --ph: #68758A; --link: var(--pri); }
+[data-theme="escuro"] { --field: #6A86A0; --ph: #8FA2B5; --link: #9CC0E0; }
+.in, select.in, textarea.in, .chip, .btn-sec, .seg2, .seg2 label + label { border-color: var(--field); }
+.in::placeholder { color: var(--ph); }
+[data-theme] a, [data-theme] .link, [data-theme] .btn-ghost { color: var(--link); }
+[data-theme] .btn-ghost.btn-danger { color: var(--bad); }
+[data-theme="escuro"] .chip[aria-pressed="true"] { background: var(--pri); color: var(--pri-ink); border-color: var(--pri); }
+[data-theme="escuro"] .seg2 label:has(input:checked) { background: var(--pri); box-shadow: none; }
+[data-theme="escuro"] body { caret-color: var(--text); }
+.actionbar kbd { background: rgba(0, 0, 0, .24); }
+.modtabs [aria-disabled="true"] { color: #4A5668; opacity: 1; }
+[data-theme="escuro"] .modtabs [aria-disabled="true"] { color: #8CA0B4; }
+.side .dead { opacity: 1; color: #8FA3B8; }
+.side .nh { font-size: 11px; letter-spacing: .13em; text-transform: uppercase; color: #8FA3B8; font-weight: 600; padding: 14px 10px 4px; }
+
+/* texto longo nunca estoura a coluna */
+.rail, .done, .note, .banner, .errsum, .eff dd, .ctx li, .files li, .dest, .hint, .err { overflow-wrap: anywhere; }
+.rail .note { margin-bottom: 12px; }
+
+/* resumo do efeito dentro da barra de ação (quando o painel lateral desce) */
+.fx { display: none; font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.btnhint { flex-basis: 100%; text-align: right; color: var(--muted); }
+@container main (max-width: 940px) { .fx { display: block; } }
+@container main (max-width: 700px) { .btnhint { display: none; } .actionbar .sum { display: block; } .actionbar .sum .t { display: inline-block; margin-right: 10px; } }
+
+/* parcelas sem tabela larga */
+.parcs { display: grid; border: 1px solid var(--border); border-radius: var(--r); }
+.phead, .prow { display: grid; grid-template-columns: 52px 150px 150px minmax(0, 1fr) 110px; gap: 8px 10px; align-items: center; padding: 8px 10px; }
+.phead { background: var(--surface-2); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; font-weight: 700; color: var(--muted); border-bottom: 1px solid var(--border-strong); }
+.phead .r { text-align: right; }
+.prow { border-bottom: 1px solid var(--border); }
+.prow .in { min-height: 38px; }
+.pn { font-weight: 600; }
+.pchk { min-height: 38px; padding: 0; }
+.pfoot { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; padding: 10px; background: var(--surface-2); }
+.pfoot .link { margin-left: auto; }
+@container main (max-width: 700px) { .phead { display: none; } .prow { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prow .pn { grid-column: 1 / -1; } }
+
+/* toque */
+@media (pointer: coarse) {
+  .link { display: inline-flex; align-items: center; min-height: 44px; }
+  .tabs.sub [role="tab"], .tabs [role="tab"] { min-height: 48px; }
+  .chk { min-height: 44px; } .chk input { width: 24px; height: 24px; }
+  .item .x, .nota .x { min-height: 44px; }
+}
+@container main (max-width: 700px) { .tabs.sub [role="tab"] { min-height: 44px; } .chip { min-height: 40px; } }
+
+/* moldura do celular rola; celular real tem barra fixa que gruda */
+[data-device="mobile"] .app { grid-template-rows: minmax(0, 1fr); min-height: 0; }
+[data-device="mobile"] .col { min-height: 0; }
+@media (max-width: 520px) { [data-device="mobile"] .stage { overflow: visible; } .mockbar .lbl { display: none; } }
+@media (max-width: 520px) { .actionbar { bottom: 59px; } .main { padding-bottom: 12px; } }
+.actionbar kbd { background: transparent; border: 1px solid currentColor; }
+/* escopo da cor de link: não vaza para menu, botões-link e navegação */
+[data-theme] .side a { color: var(--side-text); }
+[data-theme] .side a[aria-current="page"] { color: var(--side-active-text); }
+[data-theme] .botnav a { color: var(--muted); }
+[data-theme] .botnav a[aria-current="page"] { color: var(--pri); }
+[data-theme="escuro"] .botnav a[aria-current="page"] { color: var(--gold); }
+[data-theme] a.btn-pri { color: var(--pri-ink); }
+[data-theme] a.btn-sec { color: var(--text); }
+[data-theme] a.btn-gold { color: var(--gold-ink); }
+.phead, .prow { grid-template-columns: 72px 150px 150px minmax(0, 1fr) 110px; }
+.phead span { white-space: nowrap; }
+@container main (max-width: 700px) { .phead { display: none; } .prow { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prow .pn { grid-column: 1 / -1; } .prow .in { min-width: 0; } }

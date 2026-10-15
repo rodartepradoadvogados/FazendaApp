@@ -37,6 +37,11 @@
       <button type="button" data-dev="desktop" aria-pressed="true">Computador</button>
       <button type="button" data-dev="mobile" aria-pressed="false">Celular</button>
     </span></span>
+  <span class="grp"><span class="lbl">Perfil</span>
+    <span class="seg" role="group" aria-label="Perfil de acesso">
+      <button type="button" data-perfil="dono" aria-pressed="true">Dono</button>
+      <button type="button" data-perfil="funcionario" aria-pressed="false">Funcionário</button>
+    </span></span>
   <span class="grp"><span class="lbl">Tema</span>
     <span class="seg" role="group" aria-label="Tema">
       <button type="button" data-theme="claro" aria-pressed="true">Claro</button>
@@ -55,14 +60,14 @@
     <div class="app" id="app">
       <aside class="side" aria-label="Menu do CowData">
         <div class="brand"><span class="mark" aria-hidden="true">C</span><div><strong>Cow<i>Data</i></strong><small>Fazenda Vale Verde</small></div></div>
-        <h2>Ciclo diário</h2>
+        <div class="nh">Ciclo diário</div>
         <span class="dead" aria-disabled="true"><svg class="ic"><use href="#i-home"/></svg>Capa</span>
         <span class="dead" aria-disabled="true"><svg class="ic"><use href="#i-cal"/></svg>Agenda</span>
         <a href="#lancar" data-nav="lancar" id="nav-lancar"><svg class="ic"><use href="#i-clip"/></svg>Lançamentos</a>
-        <h2>Manejo do rebanho</h2>
+        <div class="nh">Manejo do rebanho</div>
         <span class="dead" aria-disabled="true"><svg class="ic"><use href="#i-heart"/></svg>Rebanho</span>
         <span class="dead" aria-disabled="true"><svg class="ic"><use href="#i-pkg"/></svg>Estoque</span>
-        <h2>Financeiro</h2>
+        <div class="nh">Financeiro</div>
         <a href="#pagar" data-nav="pagar" id="nav-pagar"><svg class="ic"><use href="#i-chart"/></svg>Contas a pagar</a>
         <a href="#receber" data-nav="receber" id="nav-receber"><svg class="ic"><use href="#i-chart"/></svg>Contas a receber</a>
         <span class="dead" aria-disabled="true"><svg class="ic"><use href="#i-cart"/></svg>Pedidos</span>

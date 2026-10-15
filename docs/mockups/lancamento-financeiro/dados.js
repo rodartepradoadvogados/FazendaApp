@@ -69,6 +69,7 @@ function grupoDe(code) {
   if (code.startsWith("3.07")) return "Fora do resultado · investimento";
   if (code.startsWith("3.06.03")) return "Fora do resultado · financiamento";
   if (code.startsWith("3.08")) return "Fora do resultado · retirada do produtor";
+  if (code.startsWith("3.05.01")) return "Deduções da receita";
   if (code.startsWith("3.05")) return "Impostos e taxas";
   if (code.startsWith("3.06")) return "Outras receitas e despesas";
   if (code.startsWith("3.")) return "Outros custeios";
@@ -180,8 +181,8 @@ const LANC = [
   { id: "LC-2026-00010", tipo: "despesa", forn: "Agropecuária Boa Safra", item: "Ração concentrada", qtd: 7000, unit: 1.89, valor: 13230, emissao: "2026-08-05", venc: "2026-09-04", doc: "NF 1344", conta: "3.01.01.01", centro: "Pecuária Leiteira", pago: { data: "2026-09-04", valor: 13230, banco: 0, forma: "Boleto" } },
   { id: "LC-2026-00011", tipo: "despesa", forn: "Vetnil Saúde Animal", item: "Vacinas", valor: 1400, emissao: "2026-08-20", venc: "2026-09-09", doc: "NF 4301", conta: "3.01.02.01", centro: "Pecuária Leiteira", pago: { data: "2026-09-09", valor: 1400, banco: 0, forma: "Pix" } },
   { id: "LC-2026-00012", tipo: "despesa", forn: "Posto Estrada Real", item: "Diesel S10", qtd: 172, unit: 6.1, valor: 1050, emissao: "2026-09-10", venc: "2026-09-25", doc: "NF 9710", conta: "3.04.02", centro: "Pecuária Leiteira", pago: { data: "2026-09-25", valor: 1050, banco: 0, forma: "Boleto" } },
-  { id: "LC-2026-00005", tipo: "receita", forn: "Laticínio Vale do Sol", item: "Leite — setembro/2026", valor: 18000, emissao: "2026-10-01", venc: "2026-10-30", doc: "Nota 7712", conta: "2.01.01.01", centro: "Pecuária Leiteira" },
-  { id: "LC-2026-00004", tipo: "receita", forn: "Laticínio Vale do Sol", item: "Leite — agosto/2026", valor: 33040, emissao: "2026-09-01", venc: "2026-09-20", doc: "Nota 7501", conta: "2.01.01.01", centro: "Pecuária Leiteira", pago: { data: "2026-09-21", valor: 33040, banco: 0, forma: "TED" } },
+  { id: "LC-2026-00005", tipo: "receita", forn: "Laticínio Vale do Sol", item: "Leite — setembro/2026", mes: "2026-09", valor: 18000, emissao: "2026-10-01", venc: "2026-10-30", doc: "Nota 7712", conta: "2.01.01.01", centro: "Pecuária Leiteira" },
+  { id: "LC-2026-00004", tipo: "receita", forn: "Laticínio Vale do Sol", item: "Leite — agosto/2026", mes: "2026-08", valor: 33040, emissao: "2026-09-01", venc: "2026-09-20", doc: "Nota 7501", conta: "2.01.01.01", centro: "Pecuária Leiteira", pago: { data: "2026-09-21", valor: 33040, banco: 0, forma: "TED" } },
 ];
 const PRECO_ANT = {}; // último preço pago por item (derivado do livro)
 
