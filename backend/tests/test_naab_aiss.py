@@ -424,3 +424,40 @@ class TestNormalizarNaab:
 
     def test_codigo_fora_do_padrao_so_e_limpo(self):
         assert naab_aiss.normalizar_naab(" xyz ") == "XYZ"
+
+
+class TestTourosInativosNoCatalogo:
+    def test_saido_vira_inativo_e_nao_e_apagado(self, session):
+        from fazenda.rules.naab_aiss import inativar_touros_saidos
+
+        session.add(Touro(naab="011HO00001", nome="SAIU"))
+        session.commit()
+        r = inativar_touros_saidos(session, ["11HO00001", "999HO99999"])
+        assert r == {"inativados": ["011HO00001"], "pulados": ["999HO99999"]}
+        t = session.exec(select(Touro).where(Touro.naab == "011HO00001")).first()
+        assert t is not None and t.ativo is False
+
+    def test_touro_mantido_pelo_dono_nao_e_inativado(self, session):
+        from fazenda.rules.naab_aiss import inativar_touros_saidos
+
+        session.add(Touro(naab="011HO00002", nome="FICA"))
+        session.commit()
+        marcar_mantido(session, "011HO00002", motivo="genética boa")
+        assert inativar_touros_saidos(session, ["011HO00002"])["inativados"] == []
+        assert session.exec(select(Touro).where(Touro.naab == "011HO00002")).first().ativo is True
+
+    def test_inativo_nao_reaparece_em_saidos_toda_semana(self, session):
+        session.add(Touro(naab="000FORADOCATALOGO", nome="FORA", ativo=False))
+        session.commit()
+        assert comparar_catalogo(session, ler_catalogo_aiss(LINHA_A)).saidos == []
+
+    def test_inativo_que_volta_ao_catalogo_e_reativado_ao_gravar(self, session):
+        from fazenda.rules.touros import aplicar_atualizacoes_confirmadas
+
+        session.add(Touro(naab="200HO13678", nome="TIMETRAVELER", ativo=False))
+        session.commit()
+        linhas = ler_catalogo_aiss(LINHA_A)
+        rel = comparar_catalogo(session, linhas)
+        assert rel.reativados == [{"naab": "200HO13678", "nome": "TIMETRAVELER"}]
+        aplicar_atualizacoes_confirmadas(session, ["200HO13678"], linhas, fonte="NAAB AISS", rodada="Ago/2026")
+        assert session.exec(select(Touro).where(Touro.naab == "200HO13678")).first().ativo is True

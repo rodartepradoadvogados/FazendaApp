@@ -1295,6 +1295,19 @@ class ProtocoloInducaoAplicacao(SQLModel, table=True):
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
+class TouroAtivadoFazenda(SQLModel, table=True):
+    """Touro INATIVO no catálogo NAAB que uma fazenda decidiu usar mesmo
+    assim (comprar, aplicar, selecionar). Não altera o catálogo global."""
+
+    __tablename__ = "touro_ativado_fazenda"
+    __table_args__ = (UniqueConstraint("fazenda_id", "touro_id", name="uq_touro_ativado_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: int = Field(foreign_key="fazenda.id", index=True)
+    touro_id: int = Field(foreign_key="touro.id", index=True)
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Touro(SQLModel, table=True):
     """Catálogo genético de touros (provas do fornecedor / NAAB-CDCB). Guarda o
     código NAAB, nome e as provas (produção, índices econômicos, tipo/saúde) —
@@ -1329,6 +1342,10 @@ class Touro(SQLModel, table=True):
     fonte: Optional[str] = None       # ABS, Alta, Select Sires, CRV, manual...
     rodada_prova: Optional[str] = None  # ex.: "Abr/2026"
     observacao: Optional[str] = None
+    # Catálogo global: False = touro que saiu da lista de comercializados da
+    # NAAB (arquivo AISS), mas cujo sêmen ainda pode circular no mercado.
+    # Cada fazenda pode ativá-lo para uso próprio (`TouroAtivadoFazenda`).
+    ativo: bool = Field(default=True, sa_column_kwargs={"server_default": "1"})
     # Dados brutos da planilha do fornecedor além dos campos curados acima —
     # JSON com lista [[rótulo original, valor], ...], na ordem da planilha.
     # Garante que nenhuma coluna do catálogo se perca mesmo quando o fornecedor

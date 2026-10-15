@@ -3,7 +3,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { Dna, Trash2, Search, RefreshCw, Plus, Pencil, ChevronDown, ChevronRight, X, Upload } from "lucide-react";
 import {
   fetchTouros, fetchTourosCowData, criarTouroCowData, atualizarTouroCowData, excluirTouroCowData,
-  recarregarCatalogoTourosCowData, importarPlanilhaTourosCowData, type Touro, type TouroIn,
+  ativarTouroNaFazenda, desativarTouroNaFazenda, importarPlanilhaTourosCowData, type Touro, type TouroIn,
 } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { casaBusca } from "@/lib/busca";
@@ -121,6 +121,13 @@ export function FormTouro({ inicial, onSalvar, onCancelar }: { inicial: TouroIn;
             <input style={inputStyle} value={dados.nome || ""} onChange={(e) => set("nome", e.target.value)} placeholder="ex.: AltaBRONTIDE" />
           </div>
           <div>
+            <label style={labelStyle}>Status no catálogo NAAB</label>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.85rem", color: "var(--text)" }}>
+              <input type="checkbox" checked={dados.ativo !== false} onChange={(e) => set("ativo", e.target.checked)} />
+              Ativo (comercializado)
+            </label>
+          </div>
+          <div>
             <label style={labelStyle}>Nome completo</label>
             <input style={inputStyle} value={dados.nome_completo || ""} onChange={(e) => set("nome_completo", e.target.value)} />
           </div>
@@ -194,7 +201,7 @@ export function FormTouro({ inicial, onSalvar, onCancelar }: { inicial: TouroIn;
 //   "fazenda" (padrão) — SOMENTE LEITURA. A fazenda consulta, busca, ordena e
 //     abre os dados da planilha; quem edita o catálogo de todo mundo não pode
 //     ser o administrador de uma fazenda-cliente. Os botões de cadastrar,
-//     editar, excluir e recarregar simplesmente não existem aqui — e o
+//     editar e excluir simplesmente não existem aqui — e o
 //     backend também não tem mais as rotas (ver cadastro/genetica.py).
 //
 //   "painel" — Painel CowData. Lê e escreve pelas rotas /painel-cowdata/
@@ -214,7 +221,7 @@ export default function CadastroTouros({ contexto = "fazenda" }: { contexto?: Co
   const [busca, setBusca] = useState("");
   const [expandido, setExpandido] = useState<number | null>(null);
   const [editando, setEditando] = useState<Touro | "novo" | null>(null);
-  const [recarregando, setRecarregando] = useState(false);
+  const [incluirInativos, setIncluirInativos] = useState(false);
   // Importar a planilha do fornecedor — saiu de Configurações › Importar
   // dados da fazenda junto com o resto da manutenção do catálogo (ver o
   // comentário do componente). Sem esta caixa aqui, atualizar a rodada de
@@ -253,17 +260,15 @@ export default function CadastroTouros({ contexto = "fazenda" }: { contexto?: Co
     }
   }
 
-  async function recarregarCatalogo() {
-    setRecarregando(true);
+  async function alternarAtivacao(t: Touro) {
+    if (!t.id) return;
     setErro(""); setInfo("");
     try {
-      const r = await recarregarCatalogoTourosCowData();
+      if (t.ativado_pela_fazenda) await desativarTouroNaFazenda(t.id);
+      else await ativarTouroNaFazenda(t.id);
       await carregar();
-      setInfo(`Catálogo padrão recarregado: ${r.touros_depois} touro(s) no banco (eram ${r.touros_antes}).`);
     } catch (e: any) {
-      setErro(e.message || "Falha ao recarregar o catálogo");
-    } finally {
-      setRecarregando(false);
+      setErro(e.message || "Falha ao alterar a ativação do touro");
     }
   }
 
@@ -271,18 +276,20 @@ export default function CadastroTouros({ contexto = "fazenda" }: { contexto?: Co
     setCarregando(true);
     setErro("");
     try {
-      setTouros(await (podeEditar ? fetchTourosCowData() : fetchTouros()));
+      setTouros(await (podeEditar ? fetchTourosCowData() : fetchTouros(incluirInativos)));
     } catch (e: any) {
       setErro(e.message || "Falha ao carregar touros");
     } finally {
       setCarregando(false);
     }
   }
-  useEffect(() => { carregar(); }, [contexto]);  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { carregar(); }, [contexto, incluirInativos]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const filtrados = useMemo(
-    () => touros.filter((t) => casaBusca(`${t.naab || ""} ${t.nome || ""} ${t.central || ""} ${t.raca || ""}`, busca)),
-    [touros, busca]
+    () => touros.filter((t) =>
+      (!podeEditar || incluirInativos || t.ativo !== false) &&
+      casaBusca(`${t.naab || ""} ${t.nome || ""} ${t.central || ""} ${t.raca || ""}`, busca)),
+    [touros, busca, incluirInativos, podeEditar]
   );
   const ord = useOrdenacao(filtrados);
 
@@ -324,10 +331,6 @@ export default function CadastroTouros({ contexto = "fazenda" }: { contexto?: Co
         </div>
         {podeEditar && (
           <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-            <button onClick={recarregarCatalogo} disabled={recarregando} className="btn-secondary" title="Reimporta o catálogo padrão empacotado no servidor (upsert por NAAB — não apaga touros existentes). Use se o catálogo não aparecer."
-              style={{ display: "flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}>
-              <RefreshCw size={15} /> {recarregando ? "Recarregando..." : "Recarregar catálogo padrão"}
-            </button>
             <button onClick={() => setEditando("novo")} className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}>
               <Plus size={15} /> Novo touro
             </button>
@@ -367,6 +370,11 @@ export default function CadastroTouros({ contexto = "fazenda" }: { contexto?: Co
         <button onClick={carregar} className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
           <RefreshCw size={14} /> Atualizar
         </button>
+        <label title="Touros inativos saíram da lista de comercializados da NAAB, mas o sêmen ainda pode circular no mercado"
+          style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem", color: "var(--text-muted)", cursor: "pointer", whiteSpace: "nowrap" }}>
+          <input type="checkbox" checked={incluirInativos} onChange={(e) => setIncluirInativos(e.target.checked)} />
+          Incluir inativos
+        </label>
         <div title="Unidade de exibição de Leite/Gordura/Proteína (o banco continua em kg)"
           style={{ display: "flex", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
           {(["kg", "lb"] as UnidadePeso[]).map((u) => (
@@ -411,7 +419,7 @@ export default function CadastroTouros({ contexto = "fazenda" }: { contexto?: Co
                 <ThOrdenavel label="Fert. filhas" campo="fertilidade_filhas" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
                 <ThOrdenavel label="Fac. parto" campo="facilidade_parto" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
                 <th style={th}>Fonte / rodada</th>
-                {podeEditar && <th style={th}></th>}
+                <th style={th}></th>
               </tr>
             </thead>
             <tbody>
@@ -430,7 +438,15 @@ export default function CadastroTouros({ contexto = "fazenda" }: { contexto?: Co
                         )}
                       </td>
                       <td style={{ ...td, fontWeight: 700, color: "var(--dourado-light)" }}>{t.naab}</td>
-                      <td style={td}>{t.nome || "—"}</td>
+                      <td style={td}>
+                        {t.nome || "—"}
+                        {(podeEditar ? t.ativo === false : t.ativo_na_fazenda === false || (t.ativo === false && !t.ativado_pela_fazenda)) && (
+                          <span title="Saiu da lista de comercializados da NAAB" style={{ marginLeft: "0.4rem", fontSize: "0.68rem", fontWeight: 700, color: "var(--text-muted)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0 0.3rem" }}>inativo</span>
+                        )}
+                        {!podeEditar && t.ativo === false && t.ativado_pela_fazenda && (
+                          <span title="Inativo no catálogo, mas ativado por esta fazenda" style={{ marginLeft: "0.4rem", fontSize: "0.68rem", fontWeight: 700, color: "var(--dourado)", border: "1px solid var(--dourado)", borderRadius: "var(--r-sm)", padding: "0 0.3rem" }}>ativado aqui</span>
+                        )}
+                      </td>
                       <td style={td}>{t.central || "—"}</td>
                       <td style={td}>{t.raca || "—"}</td>
                       <td style={{ ...td, textAlign: "right" }}>{fmt(paraUnidade(t.leite_kg, unidadePeso), unidadePeso === "lb" ? 1 : 0)}</td>
@@ -441,6 +457,16 @@ export default function CadastroTouros({ contexto = "fazenda" }: { contexto?: Co
                       <td style={{ ...td, textAlign: "right" }}>{fmt(t.fertilidade_filhas, 1)}</td>
                       <td style={{ ...td, textAlign: "right" }}>{fmt(t.facilidade_parto, 1)}</td>
                       <td style={{ ...td, fontSize: "0.74rem", color: "var(--text-muted)" }}>{[t.fonte, t.rodada_prova].filter(Boolean).join(" · ") || "—"}</td>
+                      {!podeEditar && (
+                        <td style={{ ...td, textAlign: "right" }}>
+                          {t.ativo === false && (
+                            <button onClick={() => alternarAtivacao(t)} className="btn-secondary" style={{ fontSize: "0.72rem", padding: "0.15rem 0.5rem" }}
+                              title={t.ativado_pela_fazenda ? "Voltar a tratar este touro como inativo nesta fazenda" : "Usar este touro nesta fazenda (comprar, aplicar, selecionar)"}>
+                              {t.ativado_pela_fazenda ? "Parar de usar" : "Usar nesta fazenda"}
+                            </button>
+                          )}
+                        </td>
+                      )}
                       {podeEditar && (
                         <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
                           <button onClick={() => setEditando(t)} title="Editar touro"
@@ -456,7 +482,7 @@ export default function CadastroTouros({ contexto = "fazenda" }: { contexto?: Co
                     </tr>
                     {aberto && (
                       <tr>
-                        <td colSpan={podeEditar ? 14 : 13} style={{ padding: "0.6rem 1rem 0.9rem 2.2rem", borderBottom: "1px solid var(--border)", background: "var(--surface)" }}>
+                        <td colSpan={14} style={{ padding: "0.6rem 1rem 0.9rem 2.2rem", borderBottom: "1px solid var(--border)", background: "var(--surface)" }}>
                           <p style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.4rem" }}>
                             Todos os dados da planilha do fornecedor
                           </p>

@@ -178,6 +178,7 @@ from .sanidade import (
     ProtocoloInducaoMedicamento,
     ProtocoloInducaoAplicacao,
     Touro,
+    TouroAtivadoFazenda,
 )
 from .alimentacao import (
     CategoriaAlimento,
@@ -534,6 +535,7 @@ __all__ = [
     "ProtocoloInducaoMedicamento",
     "ProtocoloInducaoAplicacao",
     "Touro",
+    "TouroAtivadoFazenda",
     "CategoriaAlimento",
     "Alimento",
     "Dieta",

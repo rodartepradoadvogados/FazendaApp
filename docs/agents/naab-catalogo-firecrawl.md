@@ -167,8 +167,12 @@ linhas reais do arquivo, validadas campo a campo contra as páginas públicas de
   proteína, TPI, NM$, PTAT, UDC, FLC, SCS, DPR, SCE) mudaram além de uma tolerância de
   arredondamento (0,01) — só os campos que de fato mudaram, com antes/depois.
 - **Saídos**: touro cadastrado cujo NAAB **não** aparece mais no AISS baixado — item **só com NAAB
-  e nome**, sem prova nenhuma (pedido explícito do dono). "Saiu" **nunca apaga nem esconde** o
-  touro automaticamente: é sempre uma nota no relatório, para o dono decidir. Se o dono já decidiu
+  e nome**, sem prova nenhuma (pedido explícito do dono). "Saiu" **nunca apaga** o touro: por
+  decisão do dono (out/2026), quem "saiu" é marcado **INATIVO** (`Touro.ativo = False`, via
+  `naab_aiss.inativar_touros_saidos`) — o sêmen pode circular no mercado depois de a central parar
+  de comercializar. Cada fazenda pode ativar um inativo para uso próprio (`TouroAtivadoFazenda`:
+  comprar, aplicar, selecionar) e a listagem tem "Incluir inativos". Touro que volta ao AISS é
+  reativado ao gravar (`reativados` no relatório). Se o dono já decidiu
   mantê-lo (`marcar_mantido`, que grava `"[NAAB] mantido por decisão do dono em DD/MM/AAAA: <motivo>"`
   em `Touro.observacao`, sem apagar o que já havia lá), o touro **não** volta a aparecer em "saídos"
   nas semanas seguintes.
@@ -215,9 +219,10 @@ O Painel CowData (`frontend/components/CadastroTouros.tsx`, usado tanto em modo 
 modo "fazenda" — só leitura) ganhou um alternador kg ⇄ lb para as colunas Leite/Gordura/Proteína —
 só exibição (o banco continua em kg), preferência guardada em `localStorage` do navegador.
 
-**Proibido, sem exceção:** `DELETE`, `PUT` que zere campos, `POST /recarregar-catalogo` (reimporta a
-planilha embutida da Alta e pode sobrescrever dados mais novos) e gravar qualquer touro sem
-aprovação explícita do dono no chat.
+**Proibido, sem exceção:** `DELETE`, `PUT` que zere campos (faça `PUT` completo, fundindo os valores
+atuais com os novos) e gravar qualquer touro sem aprovação explícita do dono no chat. O botão e a
+rota `POST /recarregar-catalogo` foram **removidos** (reimportavam a planilha antiga da Alta e
+sobrescreviam dados mais novos).
 
 ### 4.6 Relatório de cada execução
 Enviar ao dono no chat:

@@ -37,7 +37,7 @@ import logging
 import re
 import zipfile
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from urllib.parse import urljoin
 
 import httpx
@@ -373,6 +373,8 @@ class RelatorioNaab:
     alterados: list[dict] = field(default_factory=list)
     saidos: list[dict] = field(default_factory=list)
     novos: list[dict] = field(default_factory=list)
+    # Touros hoje INATIVOS no banco que voltaram a aparecer no AISS.
+    reativados: list[dict] = field(default_factory=list)
 
 
 def _comparar_campos_curados(touro: Touro, mapa: dict) -> dict:
@@ -425,15 +427,18 @@ def comparar_catalogo(session: Session, linhas_aiss: list[dict], nome_arquivo: s
 
     alterados: list[dict] = []
     saidos: list[dict] = []
+    reativados: list[dict] = []
     for naab, touro in existentes_por_naab.items():
         mapa = mapeadas.get(naab)
         if mapa is not None:
+            if not getattr(touro, "ativo", True):
+                reativados.append({"naab": naab, "nome": touro.nome})
             mudancas = _comparar_campos_curados(touro, mapa)
             if mudancas:
                 alterados.append({"naab": naab, "nome": touro.nome, "mudancas": mudancas})
         else:
-            if MARCA_MANTIDO in (touro.observacao or ""):
-                continue
+            if MARCA_MANTIDO in (touro.observacao or "") or not getattr(touro, "ativo", True):
+                continue  # decisão já tomada, ou já está inativo — não repete toda semana
             saidos.append({"naab": naab, "nome": touro.nome})
 
     novos: list[dict] = [mapa for naab, mapa in mapeadas.items() if naab not in existentes_por_naab]
@@ -445,6 +450,7 @@ def comparar_catalogo(session: Session, linhas_aiss: list[dict], nome_arquivo: s
         alterados=alterados,
         saidos=saidos,
         novos=novos,
+        reativados=reativados,
     )
 
 
@@ -467,3 +473,26 @@ def marcar_mantido(session: Session, naab: str, motivo: str | None = None) -> No
     touro.observacao = f"{obs_atual}\n{linha_nova}" if obs_atual else linha_nova
     session.add(touro)
     session.commit()
+
+
+def inativar_touros_saidos(session: Session, naabs: list[str]) -> dict:
+    """Marca como INATIVO (`Touro.ativo = False`) os touros que saíram do
+    catálogo AISS — o sêmen deles ainda pode circular no mercado, então nada é
+    apagado nem escondido das fazendas que o ativarem (`TouroAtivadoFazenda`).
+    Pula touro "mantido por decisão do dono" (`marcar_mantido`) e NAAB que não
+    existe no banco. Devolve `{"inativados": [...], "pulados": [...]}`."""
+    inativados: list[str] = []
+    pulados: list[str] = []
+    for naab in naabs:
+        naab_norm = normalizar_naab(naab)
+        touro = session.exec(select(Touro).where(Touro.naab == naab_norm)).first()
+        if touro is None or MARCA_MANTIDO in (touro.observacao or ""):
+            pulados.append(naab_norm)
+            continue
+        if touro.ativo:
+            touro.ativo = False
+            touro.atualizado_em = datetime.utcnow()
+            session.add(touro)
+        inativados.append(naab_norm)
+    session.commit()
+    return {"inativados": inativados, "pulados": pulados}

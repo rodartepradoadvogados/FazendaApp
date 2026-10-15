@@ -244,7 +244,9 @@ def importar_touros_planilha_rica(session: Session, content: bytes, fonte: str |
     return {"criados": criados, "atualizados": atualizados, "erros": erros}
 
 
-def _upsert_touros_por_naab(session: Session, linhas_mapeadas: list[dict], fonte: str | None, rodada: str | None) -> dict:
+def _upsert_touros_por_naab(
+    session: Session, linhas_mapeadas: list[dict], fonte: str | None, rodada: str | None, reativar: bool = False,
+) -> dict:
     """Núcleo do upsert por código NAAB, comum a `importar_touros` (que
     mapeia colunas de planilha por apelido ANTES de chegar aqui) e a
     `aplicar_atualizacoes_confirmadas` (catálogo AISS da NAAB, já mapeado por
@@ -252,7 +254,8 @@ def _upsert_touros_por_naab(session: Session, linhas_mapeadas: list[dict], fonte
     `linhas_mapeadas` já usa os NOMES DE CAMPO do modelo `Touro` como chave
     (ex.: `{"naab": "007HO123", "leite_kg": 30.5, ...}`) — nada de apelido de
     planilha aqui. Atualiza só os campos presentes (valor vazio/None é
-    ignorado, nunca zera); nunca apaga touro existente."""
+    ignorado, nunca zera); nunca apaga touro existente. `reativar=True` marca
+    como ATIVO o touro que está na remessa (voltou à lista da NAAB)."""
     from datetime import datetime
 
     existentes: dict[str, Touro] = {t.naab: t for t in session.exec(select(Touro)).all()}
@@ -274,6 +277,8 @@ def _upsert_touros_por_naab(session: Session, linhas_mapeadas: list[dict], fonte
         # Central: usa a da remessa; se faltar, deriva do código NAAB.
         if not touro.central:
             touro.central = central_por_codigo_naab(naab)
+        if reativar:
+            touro.ativo = True
         if fonte:
             touro.fonte = fonte
         if rodada:
@@ -347,7 +352,7 @@ def aplicar_atualizacoes_confirmadas(
         "Aplicando atualizações NAAB confirmadas pelo dono: %d de %d touro(s) do catálogo AISS, fonte=%s, rodada=%s",
         len(linhas_mapeadas), len(confirmados), fonte, rodada,
     )
-    return _upsert_touros_por_naab(session, linhas_mapeadas, fonte, rodada)
+    return _upsert_touros_por_naab(session, linhas_mapeadas, fonte, rodada, reativar=True)
 
 
 def bootstrap_touros_naab(session: Session, forcar: bool = False) -> None:

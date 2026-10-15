@@ -233,22 +233,6 @@ class TestCadastroManual:
         assert "NM$" in rotulos
         assert "naab" not in [r.lower() for r in rotulos]
 
-    def test_recarregar_catalogo_chama_bootstrap_forcado(self, client, monkeypatch):
-        c, _engine = client
-        chamadas = []
-
-        def _fake_bootstrap(session, forcar=False):
-            chamadas.append(forcar)
-            session.add(Touro(naab="000FAKE001", nome="Recarregado"))
-            session.commit()
-
-        monkeypatch.setattr("fazenda.rules.touros.bootstrap_touros_naab", _fake_bootstrap)
-        resp = c.post("/painel-cowdata/touros/recarregar-catalogo")
-        assert resp.status_code == 200, resp.text
-        corpo = resp.json()
-        assert corpo["touros_depois"] == corpo["touros_antes"] + 1
-        assert chamadas == [True]
-
 
 class TestProvaMediaSemen:
     def test_simples_e_ponderada_entre_touros_com_dose_em_estoque(self, client):
@@ -467,3 +451,79 @@ class TestProvaAoVivoSemen:
         resp2 = c.get("/cadastro/estoque-semen/prova-ao-vivo", params={"ano_nascimento": 2022, "de": "2026-01-01", "ate": "2026-03-01"})
         assert resp2.status_code == 200
         assert resp2.json()["total_servicos"] == 1
+
+
+class TestTourosInativos:
+    """Touro que saiu da lista da NAAB fica INATIVO (não some): a listagem da
+    fazenda só o mostra com `incluir_inativos`, ou se a própria fazenda o
+    ativou — sem mexer no catálogo das demais."""
+
+    @pytest.fixture
+    def cat(self, client):
+        c, engine = client
+        import main
+        from fazenda.auth import get_fazenda_atual_id
+
+        main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 1
+        with Session(engine) as s:
+            s.add(Touro(naab="007HO00001", nome="ATIVO", tpi=3000))
+            s.add(Touro(naab="007HO00002", nome="INATIVO", tpi=2900, ativo=False))
+            s.commit()
+        return c, engine
+
+    @staticmethod
+    def _id(engine, naab):
+        from sqlmodel import select
+        with Session(engine) as s:
+            return s.exec(select(Touro).where(Touro.naab == naab)).first().id
+
+    def test_inativo_fica_fora_da_listagem_padrao(self, cat):
+        c, _ = cat
+        assert [t["naab"] for t in c.get("/cadastro/touros").json()] == ["007HO00001"]
+
+    def test_incluir_inativos_mostra_todos_e_marca_o_status(self, cat):
+        c, _ = cat
+        itens = {t["naab"]: t for t in c.get("/cadastro/touros?incluir_inativos=true").json()}
+        assert set(itens) == {"007HO00001", "007HO00002"}
+        assert itens["007HO00002"]["ativo"] is False
+        assert itens["007HO00002"]["ativo_na_fazenda"] is False
+
+    def test_fazenda_ativa_e_desativa_um_inativo(self, cat):
+        c, engine = cat
+        tid = self._id(engine, "007HO00002")
+        r = c.post(f"/cadastro/touros/{tid}/ativar-na-fazenda")
+        assert r.status_code == 200, r.text
+        naabs = {t["naab"]: t for t in c.get("/cadastro/touros").json()}
+        assert "007HO00002" in naabs
+        assert naabs["007HO00002"]["ativado_pela_fazenda"] is True
+        # idempotente
+        assert c.post(f"/cadastro/touros/{tid}/ativar-na-fazenda").status_code == 200
+        assert c.delete(f"/cadastro/touros/{tid}/ativar-na-fazenda").status_code == 200
+        assert [t["naab"] for t in c.get("/cadastro/touros").json()] == ["007HO00001"]
+
+    def test_ativacao_de_uma_fazenda_nao_vale_para_outra(self, cat):
+        c, engine = cat
+        import main
+        from fazenda.auth import get_fazenda_atual_id
+
+        tid = self._id(engine, "007HO00002")
+        c.post(f"/cadastro/touros/{tid}/ativar-na-fazenda")
+        main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 2
+        assert [t["naab"] for t in c.get("/cadastro/touros").json()] == ["007HO00001"]
+
+    def test_recarregar_catalogo_nao_existe_mais(self, client):
+        c, _ = client
+        r = c.post("/painel-cowdata/touros/recarregar-catalogo")
+        assert r.status_code in (404, 405)
+
+    def test_painel_edita_status_sem_zerar_quando_ativo_nao_vem(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Touro(naab="007HO00003", nome="X", ativo=False))
+            s.commit()
+        tid = self._id(engine, "007HO00003")
+        r = c.put(f"/painel-cowdata/touros/{tid}", json={"naab": "007HO00003", "nome": "X2"})
+        assert r.status_code == 200, r.text
+        assert r.json()["ativo"] is False
+        r = c.put(f"/painel-cowdata/touros/{tid}", json={"naab": "007HO00003", "nome": "X2", "ativo": True})
+        assert r.json()["ativo"] is True

@@ -9326,13 +9326,23 @@ export type Touro = {
   ccs_score?: number | null; fertilidade_filhas?: number | null; facilidade_parto?: number | null;
   fonte?: string | null; rodada_prova?: string | null; observacao?: string | null; atualizado_em?: string | null;
   dados_extra?: string | null; // JSON [[rótulo, valor], ...] — demais dados da planilha do fornecedor
+  // Touro INATIVO = saiu da lista de comercializados da NAAB (o sêmen ainda pode circular).
+  ativo?: boolean;
+  ativo_na_fazenda?: boolean;      // ativo no catálogo OU ativado por esta fazenda (só na leitura da fazenda)
+  ativado_pela_fazenda?: boolean;  // esta fazenda ativou um touro inativo
 };
-export type TouroIn = Omit<Touro, "id" | "atualizado_em" | "dados_extra"> & { dados_extra?: [string, string][] | null };
+export type TouroIn = Omit<Touro, "id" | "atualizado_em" | "dados_extra" | "ativo_na_fazenda" | "ativado_pela_fazenda"> & { dados_extra?: [string, string][] | null };
 // LEITURA do catálogo NAAB pela fazenda — não mudou, e é ela que alimenta
 // listagem/busca, prova média, estudo de touros, inseminação (inclusive com
 // touro fora do estoque), sugestão de acasalamento, ficha do animal e compra
 // de sêmen.
-export const fetchTouros = (): Promise<Touro[]> => _rGet(`/cadastro/touros`);
+export const fetchTouros = (incluirInativos = false): Promise<Touro[]> =>
+  _rGet(`/cadastro/touros${incluirInativos ? "?incluir_inativos=true" : ""}`);
+// A fazenda passa a usar (ou deixa de usar) um touro INATIVO do catálogo — só vale para ela.
+export const ativarTouroNaFazenda = (id: number): Promise<{ touro_id: number; ativo_na_fazenda: boolean }> =>
+  _rSend(`/cadastro/touros/${id}/ativar-na-fazenda`, "POST");
+export const desativarTouroNaFazenda = (id: number): Promise<{ touro_id: number; ativo_na_fazenda: boolean }> =>
+  _rSend(`/cadastro/touros/${id}/ativar-na-fazenda`, "DELETE");
 
 // MANUTENÇÃO do catálogo — só no Painel CowData (set/2026). O catálogo é
 // GLOBAL (um `Touro` só, sem fazenda_id, lido por todas as fazendas-cliente):
@@ -9345,8 +9355,6 @@ export const fetchCamposPlanilhaTourosCowData = (): Promise<string[]> => _pcGet(
 export const criarTouroCowData = (d: TouroIn): Promise<Touro> => _pcSend(`/touros`, "POST", d);
 export const atualizarTouroCowData = (id: number, d: TouroIn): Promise<Touro> => _pcSend(`/touros/${id}`, "PUT", d);
 export const excluirTouroCowData = (id: number) => _pcSend(`/touros/${id}`, "DELETE");
-export const recarregarCatalogoTourosCowData = (): Promise<{ touros_antes: number; touros_depois: number }> =>
-  _pcSend(`/touros/recarregar-catalogo`, "POST");
 
 // Importar a planilha do fornecedor (Excel ou CSV do ABS BullSearch, Alta,
 // Select Sires...). Era `POST /importar/touros_naab`, dentro do Importar

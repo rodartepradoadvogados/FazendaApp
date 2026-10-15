@@ -15,10 +15,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_fazenda_atual_id, get_fazenda_id_escrita
+from fazenda.auth import exigir_admin, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.api.routers.estoque import sincronizar_item_estoque_semen
-from fazenda.models import EstoqueSemen, SeedFlag, Servico, Touro
+from fazenda.models import EstoqueSemen, SeedFlag, Servico, Touro, TouroAtivadoFazenda
 from fazenda.parsers.utils import parse_date
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import minimos_semen_por_tipo
@@ -416,13 +416,92 @@ def prova_ao_vivo_semen(
 
 
 # ── Catálogo genético de touros (NAAB/provas) ───────────────────────────────
+def _ids_ativados_na_fazenda(session: Session, fazenda_id: int | None) -> set[int]:
+    if not isinstance(fazenda_id, int):  # chamada direta (assistente) sem a dependência resolvida
+        return set()
+    return {
+        a.touro_id for a in session.exec(
+            select(TouroAtivadoFazenda).where(TouroAtivadoFazenda.fazenda_id == fazenda_id)
+        ).all()
+    }
+
+
 @router_touros_leitura.get("/touros")
-def listar_touros(session: Session = Depends(get_session)) -> list[dict]:
+def listar_touros(
+    incluir_inativos: bool = False,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     """Banco de touros importado do catálogo do fornecedor, ordenado por TPI
-    (maior primeiro) e depois por nome."""
-    touros = session.exec(select(Touro)).all()
-    touros.sort(key=lambda t: (-(t.tpi if t.tpi is not None else -1e9), (t.nome or t.naab)))
-    return [t.model_dump() for t in touros]
+    (maior primeiro) e depois por nome.
+
+    Touro INATIVO (saiu da lista de comercializados da NAAB; o sêmen ainda
+    pode circular no mercado) só aparece com `incluir_inativos=true`, a menos
+    que ESTA fazenda o tenha ativado (`ativo_na_fazenda`) — assim as telas de
+    seleção (compra, inseminação, acasalamento) só oferecem touro ativo ou
+    ativado pela própria fazenda, e a busca do cadastro pode incluir os demais.
+    """
+    ativados = _ids_ativados_na_fazenda(session, fazenda_id)
+    itens = []
+    for t in session.exec(select(Touro)).all():
+        ativo_na_fazenda = bool(t.ativo) or (t.id in ativados)
+        if not ativo_na_fazenda and not incluir_inativos:
+            continue
+        itens.append((t, ativo_na_fazenda, t.id in ativados))
+    itens.sort(key=lambda x: (-(x[0].tpi if x[0].tpi is not None else -1e9), (x[0].nome or x[0].naab)))
+    return [
+        {**t.model_dump(), "ativo_na_fazenda": ativo_na_fazenda, "ativado_pela_fazenda": ativado}
+        for t, ativo_na_fazenda, ativado in itens
+    ]
+
+
+@router_touros_leitura.post("/touros/{touro_id}/ativar-na-fazenda")
+def ativar_touro_na_fazenda(
+    touro_id: int,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_id_escrita),
+    _: object = Depends(exigir_admin),
+) -> dict:
+    """A fazenda passa a usar um touro INATIVO do catálogo (comprar, aplicar,
+    selecionar). Só vale para esta fazenda — o catálogo global não muda."""
+    if fazenda_id is None:
+        raise HTTPException(status_code=400, detail="Selecione uma fazenda antes de ativar um touro.")
+    touro = session.get(Touro, touro_id)
+    if not touro:
+        raise HTTPException(status_code=404, detail="Touro não encontrado")
+    existe = session.exec(
+        select(TouroAtivadoFazenda).where(
+            TouroAtivadoFazenda.fazenda_id == fazenda_id, TouroAtivadoFazenda.touro_id == touro_id
+        )
+    ).first()
+    if not existe:
+        session.add(TouroAtivadoFazenda(fazenda_id=fazenda_id, touro_id=touro_id))
+        session.commit()
+    return {"touro_id": touro_id, "ativo_na_fazenda": True}
+
+
+@router_touros_leitura.delete("/touros/{touro_id}/ativar-na-fazenda")
+def desativar_touro_na_fazenda(
+    touro_id: int,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_id_escrita),
+    _: object = Depends(exigir_admin),
+) -> dict:
+    """Desfaz a ativação feita por esta fazenda (o touro volta a seguir o
+    status do catálogo). Não apaga touro nenhum."""
+    if fazenda_id is None:
+        raise HTTPException(status_code=400, detail="Selecione uma fazenda antes de alterar um touro.")
+    existe = session.exec(
+        select(TouroAtivadoFazenda).where(
+            TouroAtivadoFazenda.fazenda_id == fazenda_id, TouroAtivadoFazenda.touro_id == touro_id
+        )
+    ).first()
+    if existe:
+        session.delete(existe)
+        session.commit()
+    touro = session.get(Touro, touro_id)
+    return {"touro_id": touro_id, "ativo_na_fazenda": bool(touro.ativo) if touro else False}
+
 
 # ── MANUTENÇÃO DO CATÁLOGO: SAIU DAQUI (furo de segurança, set/2026) ────────
 # `POST/PUT/DELETE /cadastro/touros`, `POST /cadastro/touros/recarregar-
