@@ -252,6 +252,20 @@ def ler_catalogo_aiss(texto: str) -> list[dict]:
     return linhas
 
 
+def normalizar_naab(codigo: str) -> str:
+    """Leva o código NAAB ao formato canônico do banco: prefixo da central
+    com 3 dígitos, raça com 2 letras e número do touro com 5 dígitos
+    (ex.: `9AY156` → `009AY00156`). Sem isso, a comparação semanal marcava
+    como "saído" e "novo" o mesmo touro por diferença só de zeros à
+    esquerda. Código fora desse padrão volta só limpo (maiúsculas, sem
+    espaços)."""
+    limpo = (codigo or "").strip().upper()
+    m = re.fullmatch(r"(\d{1,3})([A-Z]{2})(\d{1,5})", limpo)
+    if not m:
+        return limpo
+    return f"{m.group(1).zfill(3)}{m.group(2)}{m.group(3).zfill(5)}"
+
+
 def mapear_para_touro(linha: dict) -> dict:
     """Converte uma linha crua do catálogo AISS (chaves = `CAMPOS_AISS`,
     valores = string bruta) para os nomes de campo do modelo `Touro`, já
@@ -268,7 +282,7 @@ def mapear_para_touro(linha: dict) -> dict:
 
     saida: dict = {}
 
-    naab = _texto("Full NAAB Code").upper()
+    naab = normalizar_naab(_texto("Full NAAB Code"))
     if naab:
         saida["naab"] = naab
     nome = _texto("Short Name")

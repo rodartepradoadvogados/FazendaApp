@@ -410,3 +410,17 @@ class TestBaixarCatalogoAiss:
         monkeypatch.setattr(httpx, "get", fake_get)
         with pytest.raises(RuntimeError, match="Falha ao baixar"):
             baixar_catalogo_aiss()
+
+
+class TestNormalizarNaab:
+    """O banco guarda o NAAB como prefixo(3) + raça(2) + número(5)."""
+
+    def test_completa_zeros_a_esquerda(self):
+        assert naab_aiss.normalizar_naab("9AY156") == "009AY00156"
+        assert naab_aiss.normalizar_naab("  11ho15872 ") == "011HO15872"
+
+    def test_codigo_ja_canonico_nao_muda(self):
+        assert naab_aiss.normalizar_naab("200HO13678") == "200HO13678"
+
+    def test_codigo_fora_do_padrao_so_e_limpo(self):
+        assert naab_aiss.normalizar_naab(" xyz ") == "XYZ"
