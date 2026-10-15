@@ -26,7 +26,7 @@ import hashlib
 import json
 import logging
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -38,6 +38,7 @@ from fazenda.auth import EMAIL_DONO, get_current_user
 from fazenda.database import engine, get_session
 from fazenda.models import Pessoa, PushAck, PushEnvio, PushNotificacaoEnviada, PushSubscription, PushTokenFcm, Usuario
 from fazenda.rules import fcm
+from fazenda.rules.datas import agora_local, hoje_local
 
 logger = logging.getLogger(__name__)
 
@@ -359,7 +360,7 @@ def enviar_push(
     `count`, quando informado, viaja no payload e é usado pelo service worker
     (sw.js)/pelo ícone do app nativo para atualizar o "badge" mesmo com o app
     fechado — hoje só a Agenda do dia informa esse número (ver
-    despachar_agenda_do_dia abaixo).
+    despachar_resumo_da_noite abaixo).
     
     `categoria`: categoria do push ("pendencia" | "comunicado") para auditoria no push_envio."""
     _session_propria = session is None
@@ -393,16 +394,81 @@ def usuarios_com_canal_push(session: Session) -> set[int]:
 
 
 # ---------------------------------------------------------------------------
-# Deduplicação: mesma decisão de alerta (calcular_agenda/notificacoes) pode
-# ser recalculada várias vezes por dia (poll do sino a cada 5 min, ou a
-# varredura periódica abaixo) — sem isso, o mesmo aviso reenviaria push a
-# cada checagem. A chave é derivada do conteúdo do item (tipo+categoria+
-# descrição), não de um id próprio, porque nem todo item hoje carrega um id
-# estável (ex.: itens de portal têm id; eventos de agenda nem sempre).
+# Quando avisar (regra do dono, 15/10/2026): o app NÃO fica repetindo.
+#   1. À NOITE (a partir de HORA_RESUMO_NOITE, horário de Brasília) UM resumo com
+#      todos os compromissos do dia seguinte (despachar_resumo_da_noite).
+#   2. Depois disso, só o que for NOVO — e UMA vez por evento. O que já entrou no
+#      resumo da noite, ou já foi avisado, não avisa de novo.
+#
+# Como se garante "uma vez por evento": a identidade do evento (_chave_evento) NÃO
+# leva a data de hoje. Antes a chave era (conteúdo + dia), então todo alerta que a
+# Agenda recria diariamente (atrasadas, estoque abaixo do mínimo, descarte vencido,
+# conta vencida...) voltava a avisar todo dia, e cada item virava um push próprio.
+# Agora a marca fica enquanto o evento continua existindo, e é esquecida (reaberta)
+# quando ele some da lista da varredura — assim, se o mesmo problema voltar depois
+# de resolvido, é de fato um evento novo e avisa uma vez.
 # ---------------------------------------------------------------------------
-def _chave_item(item: dict) -> str:
-    base = f"{item.get('tipo', '')}|{item.get('categoria', '')}|{item.get('descricao', '')}"
+HORA_RESUMO_NOITE = 18          # a partir daqui (Brasília) sai o resumo de amanhã
+LIMITE_PUSH_INDIVIDUAL = 3      # mais novidades que isto numa varredura viram UM push agrupado
+_PREFIXO_CHAVE = "e:"           # marcas no formato novo (as antigas eram o hash puro)
+_CHAVE_RESUMO_NOITE = "resumo_amanha"   # 1 por usuário por dia-alvo (data_referencia = o dia dos compromissos)
+
+
+def _hash(base: str) -> str:
     return hashlib.sha256(base.encode()).hexdigest()
+
+
+def _chave_item(item: dict) -> str:
+    """Chave ANTIGA (conteúdo, sem identidade do evento). Só para reconhecer marcas gravadas antes da
+    mudança e não reavisar tudo no deploy."""
+    return _hash(f"{item.get('tipo', '')}|{item.get('categoria', '')}|{item.get('descricao', '')}")
+
+
+def _chave_evento(item: dict) -> str:
+    """Identidade estável do evento: nada que mude de um dia para o outro."""
+    if item.get("portal_mensagem_id") is not None:
+        base = f"portal|{item['portal_mensagem_id']}"
+    elif item.get("solicitacao_id") is not None:
+        base = f"exclusao|{item['solicitacao_id']}"
+    elif item.get("alerta_id") is not None:
+        base = f"alerta_indicador|{item['alerta_id']}"
+    elif item.get("evento_tipo") == "visita_reprodutiva":
+        # a descrição muda ("Amanhã: …" na véspera, "Visita reprodutiva" no dia): a visita é UM evento
+        base = f"visita_reprodutiva|{item.get('data_visita') or ''}"
+    else:
+        base = "|".join(str(item.get(k) or "") for k in ("tipo", "evento_tipo", "categoria", "descricao", "numero_animal", "ref"))
+    return _PREFIXO_CHAVE + _hash(base)
+
+
+def _data_efetiva(item: dict) -> date | None:
+    """Dia a que o item se refere (a visita reprodutiva avisa na véspera: vale a data da visita)."""
+    bruto = item.get("data_visita") or item.get("data")
+    try:
+        return date.fromisoformat(str(bruto)[:10]) if bruto else None
+    except ValueError:
+        return None
+
+
+def _ja_avisado(session: Session, usuario_id: int, item: dict, chave: str, hoje: date) -> bool:
+    if session.exec(select(PushNotificacaoEnviada.id).where(
+        PushNotificacaoEnviada.usuario_id == usuario_id, PushNotificacaoEnviada.chave == chave,
+    )).first() is not None:
+        return True
+    # Marca no formato antigo (conteúdo + dia): evita um "reaviso geral" no deploy. Itens da agenda só valem
+    # se avisados HOJE (a mesma tarefa semanal de outra semana é outro evento); mensagens/pendências/alertas,
+    # que não têm data, valem de qualquer dia.
+    sem_data = any(item.get(k) is not None for k in ("portal_mensagem_id", "solicitacao_id", "alerta_id"))
+    q = select(PushNotificacaoEnviada.id).where(
+        PushNotificacaoEnviada.usuario_id == usuario_id, PushNotificacaoEnviada.chave == _chave_item(item),
+    )
+    if not sem_data:
+        q = q.where(PushNotificacaoEnviada.data_referencia == hoje)
+    return session.exec(q).first() is not None
+
+
+def _marcar(session: Session, usuario_id: int, chave: str, hoje: date) -> None:
+    session.add(PushNotificacaoEnviada(usuario_id=usuario_id, chave=chave, data_referencia=hoje))
+    session.commit()
 
 
 # Mesma lógica de destino usada pelo sino no frontend
@@ -455,46 +521,73 @@ def _categoria_push(item: dict) -> str:
     return "pendencia"
 
 
-def notificar_push_para_itens(usuario_id: int, itens: list[dict], session: Session) -> None:
-    """Ponto único chamado pelo rewire (notificacoes.py) e pela varredura
-    periódica: para cada item já decidido como alerta hoje, dispara push
-    (deduplicado) SE o usuário tiver ao menos um canal ativo (Web Push ou
-    FCM) — consulta rápida evita gastar uma chamada de rede à toa. O título é
-    fixo por categoria de push (Pendências/Comunicados), não mais o
-    `categoria` do item individual — ver _categoria_push."""
+def _enviar_novidades(usuario_id: int, novos: list[dict], session: Session) -> None:
+    """Entrega o que é novo: um push por item até LIMITE_PUSH_INDIVIDUAL; acima disso, UM push agrupado."""
+    if not novos:
+        return
+    if len(novos) <= LIMITE_PUSH_INDIVIDUAL:
+        for item in novos:
+            cat = _categoria_push(item)
+            enviar_push(
+                usuario_id=usuario_id, titulo=TITULOS_PUSH[cat], corpo=item.get("descricao") or "",
+                url=url_destino(item), session=session, categoria=cat,
+            )
+        return
+    enviar_push(
+        usuario_id=usuario_id, titulo=TITULOS_PUSH["pendencia"],
+        corpo=f"{len(novos)} novidades: " + "; ".join(_curto(i.get("descricao")) for i in novos[:3]) + f" e mais {len(novos) - 3}",
+        url="/agenda", session=session, categoria="pendencia",
+    )
+
+
+def _curto(texto: str | None, limite: int = 60) -> str:
+    texto = (texto or "").strip()
+    return texto if len(texto) <= limite else texto[: limite - 1].rstrip() + "…"
+
+
+def notificar_push_para_itens(
+    usuario_id: int, itens: list[dict], session: Session, *, incluir_amanha: bool = False, reabrir: bool = False,
+) -> None:
+    """Ponto único do push de pendências (sino e varredura): avisa só o que é NOVO e UMA vez por evento
+    (identidade em _chave_evento, sem a data de hoje). Só se o usuário tiver canal ativo (Web Push ou FCM).
+
+    - Item que se refere a um dia FUTURO (ex.: a visita reprodutiva na véspera) não avisa aqui: é assunto do
+      resumo da noite. `incluir_amanha=True` (varredura, depois que o resumo saiu) libera os de amanhã.
+    - `reabrir=True` (só a varredura, que enxerga a lista completa): esquece a marca de quem saiu da lista,
+      para o mesmo problema, se voltar depois de resolvido, avisar de novo UMA vez.
+    - A marca é gravada ANTES do envio: duas consultas ao mesmo tempo (sino aberto em duas telas + varredura)
+      não mandam o mesmo aviso duas vezes."""
     if not tem_canal_push(usuario_id, session):
         return
 
-    hoje = date.today()
+    hoje = hoje_local()
+    limite = hoje + timedelta(days=1 if incluir_amanha else 0)
+    presentes: set[str] = set()
+    novos: list[dict] = []
     for item in itens:
-        chave = _chave_item(item)
-        ja_enviado = session.exec(
-            select(PushNotificacaoEnviada).where(
-                PushNotificacaoEnviada.usuario_id == usuario_id,
-                PushNotificacaoEnviada.chave == chave,
-                PushNotificacaoEnviada.data_referencia == hoje,
-            )
-        ).first()
-        if ja_enviado:
+        chave = _chave_evento(item)
+        presentes.add(chave)
+        efetiva = _data_efetiva(item)
+        if efetiva is not None and efetiva > limite:
             continue
-        cat = _categoria_push(item)
-        enviar_push(
-            usuario_id=usuario_id,
-            titulo=TITULOS_PUSH[cat],
-            corpo=item.get("descricao") or "",
-            url=url_destino(item),
-            session=session,
-            categoria=cat,
-        )
-        session.add(PushNotificacaoEnviada(usuario_id=usuario_id, chave=chave, data_referencia=hoje))
+        if _ja_avisado(session, usuario_id, item, chave, hoje):
+            if session.exec(select(PushNotificacaoEnviada.id).where(
+                PushNotificacaoEnviada.usuario_id == usuario_id, PushNotificacaoEnviada.chave == chave,
+            )).first() is None:
+                _marcar(session, usuario_id, chave, hoje)   # migra a marca antiga para a nova, sem avisar
+            continue
+        _marcar(session, usuario_id, chave, hoje)
+        novos.append(item)
+
+    if reabrir:
+        for marca in session.exec(select(PushNotificacaoEnviada).where(
+            PushNotificacaoEnviada.usuario_id == usuario_id, PushNotificacaoEnviada.chave.like(_PREFIXO_CHAVE + "%"),
+        )).all():
+            if marca.chave not in presentes:
+                session.delete(marca)
         session.commit()
 
-
-# Chave fixa (não é hash de conteúdo, ao contrário de _chave_item): o
-# resumo é 1x por usuário por dia por definição, então não há "conteúdo"
-# variável a deduplicar — a mera existência de uma linha com esta chave e a
-# data de hoje já basta para saber que o resumo de hoje já foi enviado.
-_CHAVE_AGENDA_DO_DIA = "agenda_do_dia"
+    _enviar_novidades(usuario_id, novos, session)
 
 
 def _fazenda_do_usuario(session: Session, usuario: Usuario) -> int | None:
@@ -511,65 +604,80 @@ def _fazenda_do_usuario(session: Session, usuario: Usuario) -> int | None:
     return pessoa.fazenda_id if pessoa else None
 
 
-def despachar_agenda_do_dia(session: Session) -> None:
-    """Varredura diária (mesmo loop de despachar_push_pendentes; a dedup por
-    usuário+dia abaixo evita reenviar a cada checagem): manda, para cada
-    usuário ativo com algum canal de push (Web Push ou FCM), UM push-resumo
-    ("Agenda do dia") com a contagem de itens da Agenda que caem em hoje —
-    não um push por item. Reaproveita calcular_agenda (fazenda/api/routers/
-    agenda.py, que por sua vez usa fazenda.rules.agenda_engine.AgendaEngine.
-    calcular — mesmíssima função que monta a Agenda em si e alimenta
-    montar_itens_notificacoes) só para CONTAR os itens de hoje; não recalcula
-    nenhuma regra da agenda."""
-    from fazenda.api.routers.agenda import calcular_agenda
+def _resumo_da_noite_enviado(session: Session, usuario_id: int, alvo: date) -> bool:
+    return session.exec(select(PushNotificacaoEnviada.id).where(
+        PushNotificacaoEnviada.usuario_id == usuario_id,
+        PushNotificacaoEnviada.chave == _CHAVE_RESUMO_NOITE,
+        PushNotificacaoEnviada.data_referencia == alvo,
+    )).first() is not None
 
-    hoje = date.today()
+
+def despachar_resumo_da_noite(session: Session) -> None:
+    """À noite (a partir de HORA_RESUMO_NOITE, Brasília): UM push por usuário com TODOS os compromissos do dia
+    seguinte (não um por item). Substitui o antigo "Agenda do dia" da manhã, que repetia o que já se sabia.
+
+    Os itens que entram no resumo ficam marcados como avisados: nem hoje à noite nem amanhã de manhã voltam
+    como push individual — só um evento NOVO (criado depois) avisa, uma vez. Sem compromissos amanhã, não manda
+    push vazio e não marca (se algo surgir mais tarde, a próxima volta ainda manda o resumo)."""
+    from fazenda.api.routers.notificacoes import itens_da_agenda
+
+    agora = agora_local()
+    if agora.hour < HORA_RESUMO_NOITE:
+        return
+    alvo = agora.date() + timedelta(days=1)
     for usuario_id in usuarios_com_canal_push(session):
         usuario = session.get(Usuario, usuario_id)
-        if not usuario or not usuario.ativo:
-            continue
-        ja_enviado = session.exec(
-            select(PushNotificacaoEnviada).where(
-                PushNotificacaoEnviada.usuario_id == usuario_id,
-                PushNotificacaoEnviada.chave == _CHAVE_AGENDA_DO_DIA,
-                PushNotificacaoEnviada.data_referencia == hoje,
-            )
-        ).first()
-        if ja_enviado:
+        if not usuario or not usuario.ativo or _resumo_da_noite_enviado(session, usuario_id, alvo):
             continue
         try:
-            fazenda_id = _fazenda_do_usuario(session, usuario)
-            agenda = calcular_agenda(data=hoje, dias=0, session=session, usuario=usuario, fazenda_id=fazenda_id)
-            total = sum(1 for e in agenda["eventos"] if e["data"] == hoje.isoformat())
+            itens = itens_da_agenda(usuario, session, _fazenda_do_usuario(session, usuario), alvo)
         except Exception:
-            logger.exception("Falha ao calcular agenda do dia para usuário %s", usuario_id)
+            logger.exception("Falha ao calcular os compromissos de amanhã para o usuário %s", usuario_id)
             continue
-        if total == 0:
-            continue  # sem itens hoje: não manda push vazio (e não marca como enviado — se
-            # algum item surgir mais tarde no mesmo dia, a próxima checagem ainda pode avisar)
+        if not itens:
+            continue
+        total = len(itens)
+        resumo = "; ".join(_curto(i.get("descricao")) for i in itens[:3]) + (f" e mais {total - 3}" if total > 3 else "")
+        # grava as marcas ANTES de enviar (mesma razão de notificar_push_para_itens)
+        for item in itens:
+            chave = _chave_evento(item)
+            if session.exec(select(PushNotificacaoEnviada.id).where(
+                PushNotificacaoEnviada.usuario_id == usuario_id, PushNotificacaoEnviada.chave == chave,
+            )).first() is None:
+                session.add(PushNotificacaoEnviada(usuario_id=usuario_id, chave=chave, data_referencia=agora.date()))
+        session.add(PushNotificacaoEnviada(usuario_id=usuario_id, chave=_CHAVE_RESUMO_NOITE, data_referencia=alvo))
+        session.commit()
         enviar_push(
             usuario_id=usuario_id,
-            titulo="Agenda do dia",
-            corpo=f"Você tem {total} atividade{'s' if total != 1 else ''} na agenda hoje",
-            url="/agenda",
-            session=session,
-            count=total,
-            categoria="comunicado",
+            titulo="Compromissos de amanhã",
+            corpo=f"Amanhã: {total} compromisso{'s' if total != 1 else ''} — {resumo}",
+            url="/agenda", session=session, categoria="comunicado",
         )
-        session.add(PushNotificacaoEnviada(usuario_id=usuario_id, chave=_CHAVE_AGENDA_DO_DIA, data_referencia=hoje))
-        session.commit()
+
+
+def _limpar_marcas_velhas(session: Session, hoje: date) -> None:
+    """Marcas do formato antigo (conteúdo + dia), do "Agenda do dia" e dos resumos já vencidos não servem mais."""
+    for marca in session.exec(select(PushNotificacaoEnviada).where(
+        PushNotificacaoEnviada.data_referencia < hoje - timedelta(days=7),
+    )).all():
+        if not marca.chave.startswith(_PREFIXO_CHAVE):
+            session.delete(marca)
+    session.commit()
 
 
 def despachar_push_pendentes(session: Session) -> None:
-    """Varredura periódica (ver loop em main.py) — cobre o caso de NINGUÉM
-    estar com o app aberto: sem isso, o rewire em notificacoes.py só dispara
-    quando alguém efetivamente consulta o sino (poll do app aberto), o que
-    não cumpre "funciona mesmo com o app fechado". Reaproveita 100% da mesma
-    função que decide os alertas (montar_itens_notificacoes) — só itera cada
-    usuário ativo com algum canal de push (Web Push ou FCM) e despacha o que
-    for novo."""
-    from fazenda.api.routers.notificacoes import montar_itens_notificacoes
+    """Varredura periódica (loop de main.py; cobre o app fechado): avisa só o que é NOVO, uma vez por evento.
+    Depois que o resumo da noite saiu, também enxerga o que for criado para amanhã. Reaproveita a mesma
+    função que decide os alertas do sino (montar_itens_notificacoes)."""
+    from fazenda.api.routers.notificacoes import itens_da_agenda, montar_itens_notificacoes
 
+    agora = agora_local()
+    hoje = agora.date()
+    alvo = hoje + timedelta(days=1)
+    try:
+        _limpar_marcas_velhas(session, hoje)
+    except Exception:
+        logger.exception("Falha ao limpar marcas antigas de push")
     for usuario_id in usuarios_com_canal_push(session):
         usuario = session.get(Usuario, usuario_id)
         if not usuario or not usuario.ativo:
@@ -577,7 +685,10 @@ def despachar_push_pendentes(session: Session) -> None:
         try:
             fazenda_id = _fazenda_do_usuario(session, usuario)
             itens = montar_itens_notificacoes(usuario, session, fazenda_id)
-            notificar_push_para_itens(usuario_id, itens, session)
+            depois_do_resumo = agora.hour >= HORA_RESUMO_NOITE and _resumo_da_noite_enviado(session, usuario_id, alvo)
+            if depois_do_resumo:
+                itens = itens + itens_da_agenda(usuario, session, fazenda_id, alvo)
+            notificar_push_para_itens(usuario_id, itens, session, incluir_amanha=depois_do_resumo, reabrir=True)
         except Exception:
             logger.exception("Falha ao despachar push periódico para usuário %s", usuario_id)
 

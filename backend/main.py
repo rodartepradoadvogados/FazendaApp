@@ -144,7 +144,7 @@ from fazenda.rules import rotina_lista_espera as _rotina_lista_espera
 from fazenda.rules.backup import executar_backup_se_necessario
 from fazenda.rules.manual_fazenda import enviar_manual_semanal_todas_fazendas
 from fazenda.rules.supabase_storage import garantir_buckets
-from fazenda.api.routers.push import despachar_agenda_do_dia, despachar_push_pendentes
+from fazenda.api.routers.push import despachar_push_pendentes, despachar_resumo_da_noite
 
 # Confere a cada 6h se já passou 1 semana desde o último backup automático
 # bem-sucedido (ver fazenda.rules.backup) — não uma tarefa agendada em
@@ -199,10 +199,11 @@ async def _loop_despacho_push() -> None:
             # `_loop_backup_automatico` acima.
             with Session(engine_manutencao) as session:
                 despachar_push_pendentes(session)
-                # "Agenda do dia": resumo 1x/dia (não 1 push por item) — dedup
-                # por usuário+dia em despachar_agenda_do_dia já evita reenvio
-                # a cada volta deste mesmo loop de 30 min.
-                despachar_agenda_do_dia(session)
+                # Resumo da NOITE: 1 push por usuário com os compromissos de
+                # amanhã (não 1 por item); a marca por usuário+dia-alvo em
+                # despachar_resumo_da_noite evita reenvio a cada volta deste
+                # loop de 30 min. O resto do dia só avisa o que for novo.
+                despachar_resumo_da_noite(session)
         except Exception:
             pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
         await asyncio.sleep(_INTERVALO_DESPACHO_PUSH_SEGUNDOS)
