@@ -170,3 +170,44 @@ class TestCompraPorEmbalagemViaFinanceiro:
         r_editar = c.put(f"/financeiro/lancamentos/{item_criado_id}", json={"quantidade": 12})
         assert r_editar.status_code == 400
         assert "embalagem" in r_editar.json()["detail"].lower()
+
+
+class TestCustoDaCompraNoEstoque:
+    """A compra pelo Financeiro leva o custo por UNIDADE DE ESTOQUE para o item — é ele que dá custo à aplicação
+    do medicamento (ver rules/aplicacao_preventiva.py: custo = dose × Estoque.valor_unitario)."""
+
+    def _lancar(self, c, item):
+        r = c.post("/financeiro/lancamentos", json={"tipo": "despesa", "itens": [item], "data_emissao": "2026-09-04"})
+        assert r.status_code == 201, r.text
+
+    def test_compra_por_embalagem_vira_custo_por_ml(self, client):
+        c, engine = client
+        item_id = _criar_item(c)
+        emb = c.post(f"/estoque/{item_id}/embalagens", json={"quantidade": 100}).json()
+        # 6 frascos de 100 ml a R$ 80 cada (valor unitário por embalagem): R$ 0,80 por ml
+        self._lancar(c, {"produto": "Agrovet", "tipo_item": "produto", "quantidade": 6, "valor_unitario": 80.0,
+                         "valor_total": 480.0, "apresentacao_id": emb["id"]})
+        with Session(engine) as s:
+            item = s.get(Estoque, item_id)
+            assert item.quantidade == 600
+            assert item.valor_unitario == pytest.approx(0.8)
+            mov = s.exec(select(MovimentoEstoque).where(MovimentoEstoque.estoque_id == item_id)).first()
+            assert mov.valor_unitario == pytest.approx(0.8)  # o movimento já guarda o custo desta compra
+            lote = s.exec(select(LoteEstoque).where(LoteEstoque.estoque_id == item_id)).first()
+            assert lote.valor_unitario == 80.0  # o lote guarda o preço de UMA embalagem (como digitado)
+
+    def test_compra_direta_e_so_com_valor_total(self, client):
+        c, engine = client
+        item_id = _criar_item(c)
+        # 200 ml por R$ 100 no total, sem valor unitário informado: R$ 0,50 por ml
+        self._lancar(c, {"produto": "Agrovet", "tipo_item": "produto", "quantidade": 200, "valor_total": 100.0})
+        with Session(engine) as s:
+            assert s.get(Estoque, item_id).valor_unitario == pytest.approx(0.5)
+
+    def test_segunda_compra_atualiza_para_o_ultimo_custo(self, client):
+        c, engine = client
+        item_id = _criar_item(c)
+        self._lancar(c, {"produto": "Agrovet", "tipo_item": "produto", "quantidade": 100, "valor_total": 50.0})
+        self._lancar(c, {"produto": "Agrovet", "tipo_item": "produto", "quantidade": 100, "valor_total": 70.0})
+        with Session(engine) as s:
+            assert s.get(Estoque, item_id).valor_unitario == pytest.approx(0.7)

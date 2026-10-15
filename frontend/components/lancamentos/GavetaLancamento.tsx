@@ -65,7 +65,7 @@ export function GavetaLancamento({
     return () => cancelAnimationFrame(id);
   }, [montado]);
   const visivel = aberto && pronto;
-  const painelRef = useRef<HTMLElement>(null);
+  const painelRef = useRef<HTMLDivElement>(null);
 
   // Trava o scroll do fundo enquanto a gaveta está aberta — mesmo cuidado que
   // um modal de tela cheia teria, senão a página por trás rola junto no celular.
@@ -126,7 +126,7 @@ export function GavetaLancamento({
           transition: "opacity 0.2s ease",
         }}
       />
-      <aside
+      <div
         ref={painelRef} tabIndex={-1}
         role="dialog" aria-modal="true" aria-label={titulo}
         // Fechada, a gaveta fica fora da tela mas montada: `inert` tira o conteúdo
@@ -197,7 +197,7 @@ export function GavetaLancamento({
             </div>
           </div>
         )}
-      </aside>
+      </div>
     </>,
     document.body
   );

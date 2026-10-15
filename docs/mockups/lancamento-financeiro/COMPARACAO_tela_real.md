@@ -56,19 +56,19 @@ Receita → `apresentacao_id: null`, 201. Backend já tinha teste da compra com 
 | Rótulos acessíveis | **feito** — `Campo` agora liga o rótulo ao primeiro controle real (antes 5 de 15 controles ficavam sem nome); axe-core no tema claro: **0 violações** na página |
 | Faixa "Financeiro já grava de verdade…" | **trocada** por uma frase útil (só na aba financeira; as outras abas não foram tocadas) |
 
-## 4. O que **ainda não** foi trazido do mockup (decisão sua)
+## 4. O que veio do mockup depois da 1ª entrega (15/10/2026, 2ª rodada) e o que ainda falta
 
-| Item do mockup | Por que não entrou | Esforço |
-|---|---|---|
-| Os 4 campos essenciais + "Mais detalhes" no topo (emissão = hoje, centro padrão) | muda a ordem/fluxo de quem já usa; precisa de aval | médio |
-| Fornecedor sugere item/conta/prazo/forma ("sugerido pelo último lançamento") | precisa de endpoint novo ou reaproveitar `fetchContextoFornecedor` | médio |
-| "Para onde vai" como frase editável com nome do dono (Comida/Gente/Outros) | hoje é só leitura no cartão "O que muda" | médio |
-| Confirmação com **Desfazer** e "Lançar outro igual" | depende de endpoint de desfazer lançamento | médio |
-| Mês fechado / vale > 40% / investimento sem bem como **prevenção antes de salvar** | hoje o backend recusa só ao salvar | médio |
-| Unificar "Lançamento" e "Lançamento simplificado"; aba própria para venda de leite | decisão de produto | alto |
-| Natureza **por item** (o backend aceita; a tela real não oferece) | decisão de produto | baixo |
-| Rascunho com escopo de usuário/fazenda; data "hoje" em UTC; re-render a cada tecla | achados P2 da auditoria, correção independente | médio |
-| Sub-abas Lote, Faturas e Compra de sêmen | **não foram alteradas**; só herdam os tokens neutros | — |
+| Item do mockup | Situação |
+|---|---|
+| Os 4 campos essenciais no topo | **feito** — a nota mostra só Fornecedor, Vencimento e Valor; centro de custo, classificação, natureza e emissão ficam em "Mais detalhes" (abre sozinho quando já têm valor); centro e descrição do item ficam em "Detalhes do item". Emissão em branco = hoje (antes ia nula) |
+| Fornecedor sugere o resto | **feito** — último lançamento do fornecedor sugere produto, conta, centro, classificação e prazo, **só em campo vazio**, marcado "Sugerido pelo último lançamento de …" e com "Desfazer sugestões". Usa o extrato que o app já carrega (sem endpoint novo) |
+| Confirmação com **Desfazer** e "Lançar outro igual" | **feito** — cartão com número, valor, vencimento, avisos, "Ver em Controle Financeiro", "Lançar outro igual" e "Desfazer" (mesmo fluxo de Excluir lançamento: impacto, motivo, trilha; operador gera pedido ao administrador) |
+| "Para onde vai" como frase editável (Comida/Gente/Outros) | só leitura no cartão "O que muda ao salvar" |
+| Mês fechado / vale > 40% / investimento sem bem **antes** de salvar | ainda recusado só ao salvar |
+| Unificar "Lançamento" e "Lançamento simplificado"; aba própria para venda de leite | decisão de produto, não feito |
+| Natureza **por item** (o backend aceita; a tela real não oferece) | não feito |
+| Rascunho com escopo de usuário/fazenda; data "hoje" em UTC; re-render a cada tecla | não feito (achados P2 da auditoria) |
+| Sub-aba **Faturas › Lançar notas** | refeita na 2ª rodada — ver `docs/auditoria-faturas-lancar-notas.md` |
 
 ## 5. Verificação desta entrega
 

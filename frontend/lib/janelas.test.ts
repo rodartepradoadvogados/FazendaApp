@@ -1,8 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  LARGURA_GAVETA_BAIXA, TETO_DOBRO_PX, desempilhar, dobroEmPx, ehTopo, empilhar, idParaFecharComEsc, larguraDobrada,
+  LARGURA_GAVETA_75, LARGURA_GAVETA_BAIXA, TETO_DOBRO_PX, desempilhar, dobroEmPx, ehTopo, empilhar, idParaFecharComEsc, larguraDobrada,
 } from "./janelas.ts";
+
+test("gaveta de 75%: 75% da tela, mas nunca menos que 960 px nem mais que a tela (celular = largura toda)", () => {
+  assert.equal(LARGURA_GAVETA_75, "max(75vw, min(100vw, 960px))");
+  const largura = (vw: number) => Math.max(0.75 * vw, Math.min(vw, 960));
+  assert.equal(largura(2000), 1500);   // telão: 75%
+  assert.equal(largura(1200), 960);    // notebook: o formulário ainda cabe
+  assert.equal(largura(390), 390);     // celular: largura toda
+});
 
 test("gaveta de baixa: o dobro dos 560 px do painel antigo", () => {
   assert.equal(LARGURA_GAVETA_BAIXA, "min(1120px, 100vw)");

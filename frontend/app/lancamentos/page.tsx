@@ -236,7 +236,20 @@ export default function LancamentosPage() {
     // Vacina/exame (preventivo) não se lança mais aqui: links antigos
     // (?ir=preventivo_aplicacao e ?ir=calendario_sanitario) levam a Protocolos.
     if (ir === "preventivo_aplicacao" || ir === "calendario_sanitario") { window.location.replace("/protocolos?aba=aplicar"); return; }
-    if (ir && TIPOS_LEAFS.some((t) => t.id === ir)) setSel(ir);
+    if (ir && TIPOS_LEAFS.some((t) => t.id === ir)) {
+      setSel(ir);
+      // `ir` é só o atalho de ENTRADA: depois de usado sai da URL. Se ficasse, ao trocar de aba o `sub=` mudava mas o
+      // `ir=` antigo continuava lá — e, ao recarregar, ele vencia e a tela voltava para a aba de onde o usuário saiu.
+      // A partir daqui a aba aberta mora só em `sub` (escrito por useSubNavRegister). Os outros parâmetros ficam.
+      // Exceção: link com parâmetros EXTRAS (ex.: Agenda → sanidade_aplicacao&numero_matriz=…&produto=…) — os formulários
+      // filhos leem `ir` e esses parâmetros da URL ao abrir, então ali o `ir` precisa ficar.
+      const url = new URL(window.location.href);
+      const extras = Array.from(url.searchParams.keys()).filter((k) => k !== "ir" && k !== "sub");
+      if (!extras.length) {
+        url.searchParams.delete("ir");
+        window.history.replaceState(window.history.state, "", url);
+      }
+    }
   }, []);
 
   // modo_lancamento_alimentacao (Configurações > Parâmetros > Alimentação):

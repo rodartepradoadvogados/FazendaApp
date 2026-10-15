@@ -136,6 +136,15 @@ nasce `aguardando_aprovacao` e sem módulo até o dono da plataforma aprovar o c
 - **Preço**: o preço de cada plano é editável no Painel CowData (`PUT /fazendas/catalogo/precos-plano/{plano}`, tabela `preco_plano`). O preço do contrato **fecha na
   aprovação** (`contrato_fazenda.preco_mensal_fechado`); mudar o catálogo depois não altera contrato já fechado nem a cobrança (Asaas/boleto).
 - **Estoque**: sem o módulo `estoque` contratado, nenhum efeito colateral (Pedidos, lançamentos do Financeiro) grava estoque (`rules/estoque_baixa.py`).
+- **Custo do estoque (15/10/2026)**: toda compra de produto estocável pelo Financeiro grava o **último custo por unidade de estoque** em
+  `Estoque.valor_unitario` (valor unitário da linha ÷ tamanho da embalagem, quando a compra é por embalagem; ou valor total ÷ quantidade).
+  É esse campo que dá custo à aplicação de medicamento (`rules/aplicacao_preventiva.py`). `LoteEstoque.valor_unitario` guarda o preço de
+  **uma embalagem**, como digitado — nenhum relatório lê esse campo hoje. Política = último custo; média ponderada é decisão pendente.
+- **Lançamento financeiro (15/10/2026)**: despesa por **embalagem** (`apresentacao_id` por item, nº de embalagens × tamanho = unidade do estoque);
+  fornecedor sugere o resto pelo último lançamento dele (só campos vazios); confirmação com **Desfazer** (usa o fluxo de Excluir lançamento) e
+  "Lançar outro igual". **Faturas › Lançar notas** e **Pedidos em aberto › Finalizar pedido** abrem em **gaveta de 75% da tela**;
+  `responsavel` opcional em `LoteIn`/`NotasNaFaturaIn`/`NotasAvulsasIn` (devolvido por nota). Detalhes: `docs/auditoria-faturas-lancar-notas.md`
+  e `docs/mockups/lancamento-financeiro/COMPARACAO_tela_real.md`.
 - **Fazenda só-financeiro**: sem Capa/indicadores, a página inicial é a Agenda (`lib/modulos.ts::rotaInicial`). A visibilidade de menu/rotas vem de uma tabela única em `frontend/lib/modulos.ts`.
 - **Preparar financeiro**: `POST /fazendas/{id}/financeiro/preparar` (dono, idempotente) carrega um *rascunho* de plano de contas (validar com o contador) e liga as regras v2 só se a fazenda não tem lançamentos.
 - Detalhes e decisões: `docs/planos-plano-financeiro/` (`PLANO_v2.md`, `CONTRATO_API.md`).

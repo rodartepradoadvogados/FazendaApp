@@ -4453,6 +4453,16 @@ def criar_lancamento(
                 embalagem = session.get(ApresentacaoEmbalagemEstoque, item_in.apresentacao_id)
                 if embalagem is not None and embalagem.estoque_id != estoque_item.id:
                     embalagem = None
+            # Custo por UNIDADE DE ESTOQUE (ex.: R$/ml) = último custo de compra. Sem isto, comprar 6 frascos a R$ 80 deixava
+            # o item sem custo e a aplicação do medicamento (custo = dose × Estoque.valor_unitario) saía sem custo nos
+            # relatórios. Vem do valor unitário da linha (por embalagem, quando há) ÷ tamanho da embalagem; atualiza ANTES
+            # da movimentação para o snapshot do movimento já guardar o custo desta compra.
+            if estoque_item is not None:
+                preco_linha = item_in.valor_unitario or (
+                    item_in.valor_total / item_in.quantidade if item_in.quantidade else None)
+                if preco_linha and preco_linha > 0:
+                    estoque_item.valor_unitario = round(preco_linha / (embalagem.quantidade if embalagem is not None and embalagem.quantidade else 1), 4)
+                    session.add(estoque_item)
             if embalagem is not None:
                 _, avisos_lote = estoque_baixa.abrir_lote(
                     session, item=estoque_item, quantidade=quantidade_entrada * embalagem.quantidade,

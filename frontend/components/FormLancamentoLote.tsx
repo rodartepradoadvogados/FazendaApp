@@ -552,7 +552,7 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado, onFaturaAlterada
       setAvisoFatura(campo === "conta_bancaria"
         ? `Conta da fatura: ${valor || "nenhuma"}.`
         : `Centro de custo da fatura: ${valor || "nenhum"}. Vale para as próximas notas; as já lançadas ficam como estão.`);
-    } catch (e: any) { setErro(e.message || "Não foi possível alterar a fatura."); } finally { setTrocando(false); }
+    } catch (e) { setErro(e instanceof Error && e.message ? e.message : "Não foi possível alterar a fatura."); } finally { setTrocando(false); }
   }
 
   const aviso = (cor: string): React.CSSProperties => ({ fontSize: "0.8rem", padding: "0.45rem 0.65rem", borderRadius: "var(--r-sm)", border: `1px solid ${cor}`, margin: "0.4rem 0" });
@@ -622,13 +622,13 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado, onFaturaAlterada
               </div>
               <div style={{ padding: "0.7rem 0.8rem" }}>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
-                  <div><label style={lbl}>Tipo de documento</label>
-                    <select style={inputStyle} value={n.tipoDoc} onChange={(e) => setNota(n.uid, { tipoDoc: e.target.value })}>
+                  <div><label style={lbl} htmlFor={`lote-td-${n.uid}`}>Tipo de documento</label>
+                    <select id={`lote-td-${n.uid}`} style={inputStyle} value={n.tipoDoc} onChange={(e) => setNota(n.uid, { tipoDoc: e.target.value })}>
                       {Array.from(new Set([...tiposDoc, n.tipoDoc])).map((t) => <option key={t} value={t}>{t}</option>)}</select></div>
-                  <div><label style={lbl}>Número do documento</label>
-                    <input style={inputStyle} value={n.numero} disabled={n.semNumero} onChange={(e) => setNota(n.uid, { numero: e.target.value })} placeholder={n.semNumero ? "sem número" : "Obrigatório"} /></div>
-                  <div><label style={lbl}>Data (emissão)</label>
-                    <input type="date" style={inputStyle} value={n.data} onChange={(e) => setNota(n.uid, { data: e.target.value })} /></div>
+                  <div><label style={lbl} htmlFor={`lote-nd-${n.uid}`}>Número do documento</label>
+                    <input id={`lote-nd-${n.uid}`} style={inputStyle} value={n.numero} disabled={n.semNumero} onChange={(e) => setNota(n.uid, { numero: e.target.value })} placeholder={n.semNumero ? "sem número" : "Obrigatório"} /></div>
+                  <div><label style={lbl} htmlFor={`lote-dt-${n.uid}`}>Data (emissão)</label>
+                    <input id={`lote-dt-${n.uid}`} type="date" style={inputStyle} value={n.data} onChange={(e) => setNota(n.uid, { data: e.target.value })} /></div>
                   <div><label style={lbl}>Anexo (foto do cupom)</label>
                     {n.anexo ? (
                       <div className="flex items-center justify-between gap-2" style={{ fontSize: "0.76rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem" }}>
@@ -702,7 +702,7 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado, onFaturaAlterada
                           {faltaCadastro && (
                             <div className="flex items-center gap-2" style={{ flexWrap: "wrap", background: "rgba(180,120,0,0.14)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", marginTop: "0.4rem" }}>
                               <AlertTriangle size={14} style={{ color: "var(--amber)", flexShrink: 0 }} aria-hidden />
-                              <span style={{ fontSize: "0.76rem", color: "var(--amber)" }}>
+                              <span style={{ fontSize: "0.76rem" }}>
                                 &ldquo;{it.produto}&rdquo; veio do documento lido, mas não está cadastrado no {it.tipoItem === "servico" ? "cadastro de serviços" : "estoque"}.
                               </span>
                               <button type="button" className="btn-secondary" style={{ fontSize: "0.74rem" }}
