@@ -256,6 +256,9 @@ class Usuario(SQLModel, table=True):
     # fazenda e liberar o relatório de acessos (ver fazenda.auth.exigir_dono).
     email: Optional[str] = None
     ultimo_login: Optional[datetime] = None
+    # Último batimento do app (POST /auth/atividade) — a coluna e o índice vêm da migração
+    # i0j1k2l3m4n5; sem o campo aqui o heartbeat quebrava ao gravar `usuario.ultimo_acesso`.
+    ultimo_acesso: Optional[datetime] = Field(default=None, index=True)
     # Permissão específica para publicar matérias no blog (News) — independente
     # de papel/admin (ver fazenda.auth.exigir_pode_publicar). Todo usuário
     # nasce sem essa permissão; o proprietário recebe uma única vez via seed

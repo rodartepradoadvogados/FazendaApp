@@ -16,7 +16,8 @@ import {
 } from "@/lib/api";
 import { CampoMoeda } from "@/components/CampoMoeda";
 import { Modal } from "@/components/Modal";
-import { larguraDobrada } from "@/lib/janelas";
+import { larguraDobrada, LARGURA_GAVETA_75, MSG_SAIR_SEM_SALVAR } from "@/lib/janelas";
+import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
 import { EstiloFatura, PilulaFatura } from "@/components/financeiro/faturaVisual";
 
 const FormLancamentoLote = dynamic(() => import("@/components/FormLancamentoLote").then((m) => m.FormLancamentoLote), { ssr: false });
@@ -442,6 +443,12 @@ function Detalhe({ id, onVoltar, onMudou }: { id: number; onVoltar: () => void; 
   const [acao, setAcao] = useState<Acao>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [lancando, setLancando] = useState(false);
+  // Formulário de notas com algo digitado: fechar a gaveta pergunta antes de descartar.
+  const [lancandoSujo, setLancandoSujo] = useState(false);
+  const fecharLancamento = useCallback(() => {
+    if (lancandoSujo && !window.confirm(MSG_SAIR_SEM_SALVAR)) return;
+    setLancando(false); setLancandoSujo(false);
+  }, [lancandoSujo]);
   const carregar = useCallback(() => fetchFatura(id).then(setF).catch((e) => setErro(e.message)), [id]);
   useEffect(() => { carregar(); }, [carregar]);
   const atualizar = (nova: FaturaDetalhe) => { setF(nova); setAcao(null); onMudou(); };
@@ -523,7 +530,7 @@ function Detalhe({ id, onVoltar, onMudou }: { id: number; onVoltar: () => void; 
       <section aria-labelledby="fv-h-notas">
         <div className="fv-sec-topo">
           <h3 id="fv-h-notas" className="fv-tit">Notas da fatura</h3>
-          {aberta && !lancando && <button type="button" className="btn-secondary fv-mini" onClick={() => setLancando(true)}><Plus size={13} aria-hidden /> Lançar notas nesta fatura</button>}
+          {aberta && <button type="button" className="btn-secondary fv-mini" onClick={() => setLancando(true)}><Plus size={13} aria-hidden /> Lançar notas nesta fatura</button>}
         </div>
         {f.lista_notas.length === 0 ? <div className="fv-vazio"><FileText size={22} aria-hidden /><b>Nenhuma nota ainda.</b></div> : (
           <div className="fv-tw">
@@ -546,15 +553,14 @@ function Detalhe({ id, onVoltar, onMudou }: { id: number; onVoltar: () => void; 
         )}
       </section>
 
-      {aberta && lancando && (
-        <section className="fv-pan" aria-labelledby="fv-h-lancar">
-          <div className="fv-sec-topo">
-            <h3 id="fv-h-lancar" className="fv-tit">Lançar notas na fatura</h3>
-            <button type="button" className="btn-ghost fv-btn fv-mini" onClick={() => setLancando(false)}><X size={13} aria-hidden /> Fechar formulário</button>
-          </div>
-          <FormLancamentoLote fatura={f} onLancado={() => { carregar(); onMudou(); }} />
-        </section>
-      )}
+      {/* Lançar notas: gaveta de 75% da tela, por cima — o formulário é largo (várias colunas por item) e não
+          deve se misturar com a lista de notas e as parcelas; com a gaveta aberta o fundo continua à vista. */}
+      <GavetaLancamento aberto={aberta && lancando} onFechar={fecharLancamento} titulo={`Lançar notas — ${f.rotulo}`} icone={FileText} largura={LARGURA_GAVETA_75}>
+        {aberta && lancando && (
+          <FormLancamentoLote fatura={f} onSujo={setLancandoSujo}
+            onLancado={() => { carregar(); onMudou(); }} onFaturaAlterada={(nova) => { setF(nova); onMudou(); }} />
+        )}
+      </GavetaLancamento>
 
       {acao?.t === "editar" && <ModalCadastro fatura={f} onClose={() => setAcao(null)} onSalvo={atualizar} />}
       {acao?.t === "fechar" && <ModalFechar fatura={f} onClose={() => setAcao(null)} onFeita={atualizar} />}

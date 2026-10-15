@@ -1,6 +1,6 @@
 "use client";
-import { Fragment, cloneElement, isValidElement, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2, Camera, ChevronDown, ChevronRight } from "lucide-react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2, Camera, ChevronDown, ChevronRight, Undo2 } from "lucide-react";
 import {
   fetchOpcoesFinanceiro, fetchEstoqueAtivos, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
   lerDocumentoFinanceiro, formatBRL, fetchPedidos, fetchPossiveisDuplicados, anexarArquivoLancamento, type LancamentoParecido,
@@ -8,19 +8,20 @@ import {
   fetchContextoFornecedor, type ContextoFornecedor as ContextoFornecedorTipo,
   fetchCandidatosVinculoSanitarioReprodutivo, vincularEventoSanitarioReprodutivo, type CandidatoVinculoSanitarioReprodutivo,
   type PatrimonioPayload, fetchUltimoPrecoProduto, type UltimoPrecoProduto, today,
-  fetchFaturasParaSelecao, type FaturaSelectorItem,
+  fetchFaturasParaSelecao, type FaturaSelectorItem, fetchLancamentos,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
 import { CampoMoeda } from "@/components/CampoMoeda";
-import NovoItemEstoque from "@/components/NovoItemEstoque";
 import { moduloContratado } from "@/lib/modulos";
-import NovaContaGerencial from "@/components/NovaContaGerencial";
-import NovoServicoRapido from "@/components/NovoServicoRapido";
 import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
 import { ServicoPicker } from "@/components/ServicoPicker";
+import { SeletorUnidadeCompra, infoUnidadeCompra, pluralEmbalagem, useEmbalagensEstoque } from "@/components/financeiro/UnidadeCompra";
+import { DesfazerLancamentoModal } from "@/components/financeiro/DesfazerLancamento";
+import { somarDias, sugestaoDoFornecedor, type LinhaExtrato, type SugestaoFornecedor } from "@/lib/sugestaoFornecedor";
+import { ModalAdicionarCadastro, ModalAssociarExistente } from "@/components/financeiro/CadastroRapidoModais";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { NATUREZAS_FIN } from "@/lib/naturezaFin";
 import { onPedidoLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
@@ -33,13 +34,22 @@ const inputStyle: React.CSSProperties = {
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 
 function Campo({ label, children, full }: { label: string; children: React.ReactNode; full?: boolean }) {
-  const idGerado = useId();
-  const id = isValidElement(children) ? ((children.props as any).id ?? idGerado) : undefined;
-  const conteudo = isValidElement(children) && id ? cloneElement(children as React.ReactElement<any>, { id }) : children;
+  // Liga o rótulo ao primeiro controle real que estiver dentro do campo, mesmo
+  // aninhado em <div>/fragmento (antes só funcionava quando o filho era UM
+  // elemento direto — fornecedor, datas e outros ficavam sem nome acessível).
+  const idBase = useId();
+  const raiz = useRef<HTMLDivElement>(null);
+  const rotulo = useRef<HTMLLabelElement>(null);
+  useLayoutEffect(() => {
+    const alvo = raiz.current?.querySelector<HTMLElement>("input:not([type=hidden]), select, textarea");
+    if (!alvo || !rotulo.current) return;
+    if (!alvo.id) alvo.id = idBase;
+    rotulo.current.htmlFor = alvo.id;
+  });
   return (
-    <div style={{ gridColumn: full ? "1 / -1" : undefined }}>
-      <label htmlFor={id} style={lbl}>{label}</label>
-      {conteudo}
+    <div ref={raiz} style={{ gridColumn: full ? "1 / -1" : undefined }}>
+      <label ref={rotulo} style={lbl}>{label}</label>
+      {children}
     </div>
   );
 }
@@ -83,8 +93,14 @@ type Item = {
   // compra que nunca vai virar item de estoque (ex.: "Supermercado") — a
   // inconsistência real é só quando o sistema "adivinhou" um nome sozinho.
   veioDeDocumento?: boolean;
+  // Embalagem cadastrada (ApresentacaoEmbalagemEstoque) em que o produto foi
+  // comprado — "" = direto na unidade do estoque. Com embalagem, `quantidade`
+  // é o Nº DE EMBALAGENS e `valor_unitario` o preço de UMA embalagem; o
+  // backend converte para a unidade do estoque e abre o lote.
+  apresentacao_id: string;
 };
 const itemVazio = (): Item => ({
+  apresentacao_id: "",
   codigo_conta_gerencial: "", nome_conta_gerencial: "", centro_custo: "", tipo_item: "produto", produto: "", descricao: "",
   quantidade: "", valor_unitario: "", valor_total: "", modoValor: "unitario",
   // Sem o módulo Estoque (fazenda só-financeiro) o produto nasce em texto livre: o picker do estoque
@@ -156,6 +172,8 @@ function dividirParcelas(valorTotal: number, qtd: number, primeiraData: string):
  */
 export type PrefillPedido = {
   id: number;
+  /** Só para rotular a gaveta "Finalizar pedido" (Lançamentos); o formulário em si não usa. */
+  numeroPedido?: string;
   fornecedorCliente?: string | null;
   itens: {
     produto: string; tipo_item: "produto" | "servico"; quantidade?: number | null;
@@ -197,13 +215,28 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   })[]>([]);
   const [temEstoque] = useState(() => moduloContratado("estoque"));
   const carregarEstoque = () => !moduloContratado("estoque") ? Promise.resolve() : fetchEstoqueAtivos().then((d) => setProdutosEstoque((d.itens || []).map((i: any) => ({
-    nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
+    id: i.id ?? null, nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
     estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
+    unidade_embalagem: i.unidade_embalagem ?? null, medida_embalagem: i.medida_embalagem ?? null,
+    quantidade_embalagem: i.quantidade_embalagem ?? null,
     fornecedor_nome: i.fornecedor_nome ?? null,
     conta_gerencial_despesa_padrao: i.conta_gerencial_despesa_padrao ?? null,
     conta_gerencial_receita_padrao: i.conta_gerencial_receita_padrao ?? null,
   })))).catch(() => {});
   useEffect(() => { carregarEstoque(); }, []);
+  // Embalagens cadastradas por item de estoque, buscadas sob demanda ao escolher o produto (só as ativas).
+  const { porEstoque: embalagensPorEstoque, garantir: garantirEmbalagens } = useEmbalagensEstoque();
+  // Estoque + embalagens + embalagem escolhida do item da linha (null = não é produto do estoque).
+  function infoEmbalagem(it: Item) {
+    if (tipo !== "despesa" || it.tipo_item !== "produto" || it.modoProduto !== "estoque") return null;
+    return infoUnidadeCompra(produtosEstoque.find((p) => p.nome === it.produto), embalagensPorEstoque, it.apresentacao_id);
+  }
+  // ── Sugestão pelo fornecedor ─────────────────────────────────────────────
+  // Ao escolher o fornecedor, o último lançamento dele sugere produto, conta, centro de custo, classificação e
+  // prazo de vencimento — só em campo ainda VAZIO, sempre marcado como sugestão e desfazível.
+  type CampoSugerido = { campo: "produto" | "conta" | "centro" | "classificacao" | "vencimento"; rotulo: string; aplicado: string };
+  const [sugestaoAplicada, setSugestaoAplicada] = useState<{ s: SugestaoFornecedor; campos: CampoSugerido[]; fornecedor: string } | null>(null);
+  const extratoRef = useRef<LinhaExtrato[] | null>(null);
   const [fornecedoresCadastro, setFornecedoresCadastro] = useState<string[]>([]);
   const [fornecedoresPorId, setFornecedoresPorId] = useState<Map<number, string>>(new Map());
   useEffect(() => {
@@ -522,6 +555,13 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const [sugestoesCadastro, setSugestoesCadastro] = useState<SugestoesCadastro | null>(null);
   const [sugestoesEscolhidas, setSugestoesEscolhidas] = useState<Record<string, boolean>>({});
 
+  useEffect(() => {
+    itens.forEach((it) => {
+      if (it.tipo_item === "produto" && it.modoProduto === "estoque" && it.produto) {
+        garantirEmbalagens(produtosEstoque.find((p) => p.nome === it.produto)?.id);
+      }
+    });
+  }, [itens, produtosEstoque]);
   function atualizarItem(idx: number, patch: Partial<Item>) {
     setItens((arr) => arr.map((it, i) => {
       if (i !== idx) return it;
@@ -628,7 +668,86 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     setParcelas((arr) => arr.map((p, i) => (i === idx ? { ...p, ...patch } : p)));
   }
 
+  // Estado mais recente para o que roda DEPOIS de um atraso (a sugestão): nunca sobrescreve o que o usuário digitou nesse meio-tempo.
+  const estadoAtual = useRef({ itens, centroCusto, classificacao, dataVencimento, dataEmissao, parcelado, produtosEstoque, temEstoque, opcoes });
+  useEffect(() => { estadoAtual.current = { itens, centroCusto, classificacao, dataVencimento, dataEmissao, parcelado, produtosEstoque, temEstoque, opcoes }; });
+  useEffect(() => {
+    const nome = fornecedor.trim();
+    if (!nome || prefillPedido) return; // pedido já traz fornecedor e itens
+    let vivo = true;
+    const t = setTimeout(async () => {
+      try {
+        if (!extratoRef.current) { const d = await fetchLancamentos(); extratoRef.current = (d?.lancamentos || []) as LinhaExtrato[]; }
+        if (!vivo) return;
+        const s = sugestaoDoFornecedor(extratoRef.current, nome, tipo);
+        if (!s) return;
+        const agora = estadoAtual.current;
+        const campos: CampoSugerido[] = [];
+        const it0 = agora.itens[0];
+        if (it0 && !it0.produto.trim() && !it0.nome_conta_gerencial && !it0.valor_total && s.produto) {
+          const noEstoque = s.tipoItem === "produto" && agora.temEstoque && agora.produtosEstoque.some((p) => p.nome === s.produto);
+          const patch: Partial<Item> = { produto: s.produto, tipo_item: s.tipoItem, modoProduto: noEstoque ? "estoque" : "livre" };
+          campos.push({ campo: "produto", rotulo: "produto", aplicado: s.produto });
+          if (s.codigoConta && s.nomeConta) { patch.codigo_conta_gerencial = s.codigoConta; patch.nome_conta_gerencial = s.nomeConta; campos.push({ campo: "conta", rotulo: "conta gerencial", aplicado: s.codigoConta }); }
+          atualizarItem(0, patch);
+          if (noEstoque) garantirEmbalagens(agora.produtosEstoque.find((p) => p.nome === s.produto)?.id);
+        }
+        if (s.centroCusto && agora.centroCusto === CENTRO_CUSTO_PADRAO && s.centroCusto !== CENTRO_CUSTO_PADRAO && agora.opcoes.centros_custo.includes(s.centroCusto)) {
+          setCentroCusto(s.centroCusto); campos.push({ campo: "centro", rotulo: "centro de custo", aplicado: s.centroCusto });
+        }
+        if (s.classificacao && !agora.classificacao && agora.opcoes.classificacoes.includes(s.classificacao)) {
+          setClassificacao(s.classificacao); campos.push({ campo: "classificacao", rotulo: "classificação", aplicado: s.classificacao });
+        }
+        if (s.prazoDias != null && s.prazoDias > 0 && !agora.parcelado && !agora.dataVencimento) {
+          const venc = somarDias(agora.dataEmissao || today(), s.prazoDias);
+          setDataVencimento(venc); campos.push({ campo: "vencimento", rotulo: `vencimento em ${s.prazoDias} dia${s.prazoDias === 1 ? "" : "s"}`, aplicado: venc });
+        }
+        if (campos.length) setSugestaoAplicada({ s, campos, fornecedor: nome });
+      } catch { /* sugestão é conveniência: sem ela, o formulário segue igual */ }
+    }, 350);
+    return () => { vivo = false; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fornecedor, tipo]);
+  // Desfaz só o que a sugestão preencheu E que o usuário ainda não mexeu.
+  function desfazerSugestao() {
+    if (!sugestaoAplicada) return;
+    const agora = estadoAtual.current;
+    for (const c of sugestaoAplicada.campos) {
+      if (c.campo === "produto" && agora.itens[0]?.produto === c.aplicado) atualizarItem(0, { produto: "", modoProduto: moduloContratado("estoque") ? "estoque" : "livre", apresentacao_id: "" });
+      if (c.campo === "conta" && agora.itens[0]?.codigo_conta_gerencial === c.aplicado) atualizarItem(0, { codigo_conta_gerencial: "", nome_conta_gerencial: "" });
+      if (c.campo === "centro" && agora.centroCusto === c.aplicado) setCentroCusto(CENTRO_CUSTO_PADRAO);
+      if (c.campo === "classificacao" && agora.classificacao === c.aplicado) setClassificacao("");
+      if (c.campo === "vencimento" && agora.dataVencimento === c.aplicado) setDataVencimento("");
+    }
+    setSugestaoAplicada(null);
+  }
+
+  // ── Confirmação do que foi salvo (com "Lançar outro igual" e "Desfazer") ──
+  type Salvo = {
+    numero: string; idConta: number | null; valor: number; fornecedor: string; tipo: "despesa" | "receita";
+    parcelas: number; vencimento: string | null; quitado: boolean; avisos: string;
+    igual: { fornecedor: string; itens: Item[]; centroCusto: string; classificacao: string; naturezaFin: string; tipoDocumento: string; responsavel: string };
+  };
+  const [salvo, setSalvo] = useState<Salvo | null>(null);
+  const [desfazendo, setDesfazendo] = useState(false);
+  const [desfeito, setDesfeito] = useState(false);
+  function lancarOutroIgual() {
+    if (!salvo) return;
+    const g = salvo.igual;
+    setFornecedor(g.fornecedor); setItens(g.itens.length ? g.itens : [itemVazio()]);
+    setCentroCusto(g.centroCusto); setClassificacao(g.classificacao); setNaturezaFin(g.naturezaFin);
+    setTipoDocumento(g.tipoDocumento); setResponsavel(g.responsavel);
+    setSalvo(null); setSucesso(null);
+  }
+
+  // O bloco "Mais detalhes" fica aberto sozinho enquanto centro de custo, classificação, natureza ou emissão tiverem valor
+  // (leitura de documento, sugestão, rascunho) — esconder um valor já preenchido seria esconder o que vai ser gravado.
+  const detalhesNotaPreenchidos = !!(classificacao || naturezaFin || dataEmissao || centroCusto !== CENTRO_CUSTO_PADRAO
+    || responsavel || tipoDocumento || numeroDocumento || numeroOsOrcamento || numeroBoleto || dataPrevistaEntrada || dataPedido
+    || Number(desconto) || Number(acrescimo) || pedidoId);
+
   function limpar() {
+    setSugestaoAplicada(null);
     setItens([itemVazio()]);
     setCentroCusto(CENTRO_CUSTO_PADRAO); setClassificacao(""); setNaturezaFin(""); setFornecedor(""); setResponsavel(""); setTipoDocumento("");
     setNumeroDocumento(""); setNumeroOsOrcamento(""); setNumeroBoleto("");
@@ -647,8 +766,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   // cadastro) e perdia tudo. Agora o formulário salva um rascunho sozinho
   // enquanto está preenchido e, ao voltar, oferece retomar ou descartar.
   const RASCUNHO_KEY = `rascunho_financeiro_${tipo}`;
+  // Formulário aberto a partir de um pedido (gaveta "Finalizar pedido") NÃO usa o rascunho: ele coexiste com o da página,
+  // que tem a mesma chave — senão um sobrescreveria/apagaria o outro.
   const [rascunhoPendente, setRascunhoPendente] = useState<any | null>(() => {
-    if (typeof window === "undefined") return null;
+    if (typeof window === "undefined" || prefillPedido) return null;
     try { const raw = localStorage.getItem(RASCUNHO_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
   });
 
@@ -688,6 +809,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   // Salva/limpa o rascunho e avisa o pai enquanto o formulário muda.
   useEffect(() => {
     onSujo?.(sujo);
+    if (prefillPedido) return;
     try {
       if (sujo) localStorage.setItem(RASCUNHO_KEY, JSON.stringify(montarRascunho()));
       else localStorage.removeItem(RASCUNHO_KEY);
@@ -707,6 +829,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   function retomarRascunho() { aplicarRascunho(rascunhoPendente); setRascunhoPendente(null); }
   function descartarRascunho() {
     setRascunhoPendente(null);
+    if (prefillPedido) return;
     try { localStorage.removeItem(RASCUNHO_KEY); } catch { /* ignore */ }
   }
 
@@ -1048,6 +1171,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           quantidade: i.quantidade ? Number(i.quantidade) : null,
           valor_unitario: i.valor_unitario ? Number(i.valor_unitario) : null,
           valor_total: Number(i.valor_total) || 0,
+          apresentacao_id: tipo === "despesa" && i.tipo_item === "produto" && i.modoProduto === "estoque" && i.apresentacao_id
+            ? Number(i.apresentacao_id) : null,
           // Só os campos do contrato (ValeItemNovoIn) — pessoa_nome/origem_label
           // são de UI (ver checkbox acima e ValeItemModal), não vão no payload.
           vale: i.vale ? {
@@ -1074,7 +1199,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       // nunca duplicado nas demais (regra do item 4; o backend reforça isso
       // de novo, defensivamente).
       numero_boleto: !parcelado ? (numeroBoleto || null) : null,
-      data_emissao: dataEmissao || null,
+      // Em branco = hoje (o formulário nasce sem data de emissão; antes ia nula e a competência ficava sem referência).
+      data_emissao: dataEmissao || today(),
       // Só vale para lançamento não-parcelado; nas parcelas cada uma tem seu vencimento.
       data_vencimento: !parcelado ? (dataVencimento || null) : null,
       data_prevista_entrada: dataPrevistaEntrada || null,
@@ -1167,6 +1293,17 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           .then((candidatos) => setPopupVinculo({ numeroLancamento: r.numero_lancamento, candidatos }))
           .catch(() => {});
       }
+      extratoRef.current = null; // a próxima sugestão já enxerga este lançamento
+      setSalvo({
+        numero: r.numero_lancamento, idConta: Array.isArray(r.ids) && r.ids.length ? Number(r.ids[0]) : null,
+        valor: valorLiquido, fornecedor, tipo, parcelas: numeroParcelasResumo, vencimento: primeiroVencimentoResumo,
+        quitado: parcelado ? parcelas.length > 0 && parcelas.every((p) => p.pago) : jaPago, avisos: `${avisoAnexo}${avisoEstoque}`.trim(),
+        // "Lançar outro igual": repete fornecedor, itens, centro, classificação e natureza — nunca nº de documento, datas, pagamento nem vale.
+        igual: {
+          fornecedor, centroCusto, classificacao, naturezaFin, tipoDocumento, responsavel,
+          itens: itens.filter((i) => i.produto.trim()).map((i) => ({ ...i, vale: null, veioDeDocumento: false })),
+        },
+      });
       limpar();
       onSujo?.(false);
       onSalvo?.(`Lançamento ${r.numero_lancamento} salvo com sucesso.${avisoAnexo}${avisoEstoque}`);
@@ -1191,6 +1328,33 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
 
   return (
     <>
+      {salvo && (
+        <div className="card mb-3" role="status" data-testid="lancamento-salvo" style={{ borderLeft: "4px solid var(--green-light)" }}>
+          <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+            <Check size={16} style={{ color: "var(--green-light)" }} aria-hidden />
+            <strong style={{ fontSize: "0.9rem" }}>Lançamento {salvo.numero} salvo</strong>
+            <span style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
+              {salvo.fornecedor ? `${salvo.fornecedor} · ` : ""}{formatBRL(salvo.valor)}
+              {salvo.quitado ? (salvo.tipo === "despesa" ? " · já paga" : " · já recebida")
+                : salvo.vencimento ? ` · ${salvo.parcelas > 1 ? `${salvo.parcelas} parcelas, a 1ª vence` : "vence"} ${new Date(salvo.vencimento + "T00:00:00").toLocaleDateString("pt-BR")}` : ""}
+            </span>
+          </div>
+          {salvo.avisos && <p style={{ fontSize: "0.78rem", color: "var(--amber)", margin: "0.4rem 0 0" }}>{salvo.avisos}</p>}
+          <div className="flex items-center gap-2 mt-2" style={{ flexWrap: "wrap" }}>
+            <a className="btn-secondary" style={{ fontSize: "0.78rem", textDecoration: "none" }} href="/financeiro">Ver em Controle Financeiro</a>
+            <button type="button" className="btn-secondary" style={{ fontSize: "0.78rem" }} onClick={lancarOutroIgual}
+              title="Repete fornecedor, produtos/serviços, centro de custo e classificação — sem nº de documento, datas nem pagamento">Lançar outro igual</button>
+            {salvo.idConta != null && <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setDesfazendo(true)}><Undo2 size={13} /> Desfazer</button>}
+            <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem", marginLeft: "auto" }} onClick={() => setSalvo(null)} aria-label="Dispensar esta confirmação"><X size={13} /></button>
+          </div>
+        </div>
+      )}
+      {desfazendo && salvo?.idConta != null && (
+        // Só some com a confirmação DEPOIS que o usuário fecha o resultado do modal (desfeito = a exclusão aconteceu).
+        <DesfazerLancamentoModal idConta={salvo.idConta} numero={salvo.numero}
+          onClose={() => { setDesfazendo(false); if (desfeito) { setSalvo(null); setSucesso(null); setDesfeito(false); } }}
+          onDesfeito={() => setDesfeito(true)} />
+      )}
       {criarPatrimonio && (
         <div className="card mb-3" style={{ border: "1px solid var(--dourado)", background: "rgba(94,26,46,0.08)" }}>
           <p style={{ fontSize: "0.8rem", margin: 0 }}>
@@ -1226,8 +1390,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           lançamento (editável) + contexto/histórico do fornecedor (só
           leitura); direita = produtos/serviços, pagamento e anexos — mesmo
           padrão já usado em Alimentação > Nova dieta. */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+      <div className="fin-coluna">
 
       {/* Dados da nota (uma vez por lançamento) */}
       <div className="card" style={{ background: "var(--fin-nota-bg)" }}>
@@ -1242,7 +1406,39 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
               <Plus size={13} /> Novo
             </button>
           </div>
+          {sugestaoAplicada && sugestaoAplicada.fornecedor === fornecedor.trim() && (
+            <p role="status" data-testid="sugestao-fornecedor" style={{ fontSize: "0.72rem", color: "var(--text-muted)", margin: "0.3rem 0 0" }}>
+              Sugerido pelo último lançamento de <b>{fornecedor}</b> ({sugestaoAplicada.s.numeroLancamento}
+              {sugestaoAplicada.s.dataEmissao ? `, ${new Date(sugestaoAplicada.s.dataEmissao + "T00:00:00").toLocaleDateString("pt-BR")}` : ""}):{" "}
+              {sugestaoAplicada.campos.map((c) => c.rotulo).join(", ")}. Tudo editável.{" "}
+              <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem", padding: "0 0.2rem", textDecoration: "underline" }} onClick={desfazerSugestao}>Desfazer sugestões</button>
+            </p>
+          )}
         </Campo>
+        {!parcelado && (
+          <Campo label="Data de vencimento">
+            <input type="date" style={inputStyle} value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} />
+            <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>
+              Usada para lançar em Contas a pagar e na Agenda.
+            </span>
+          </Campo>
+        )}
+        <div>
+          <label style={lbl}>Valor líquido da nota</label>
+          <div style={{ ...inputStyle, fontWeight: 700 }}>{formatBRL(valorLiquido)}</div>
+        </div>
+      </div>
+
+      {/* Progressive disclosure (achado do lote 2) — responsável, tipo/número
+          de documento, datas de entrega/pedido, vínculo a pedido, entrega e
+          desconto/acréscimo são preenchidos com menos frequência do que os
+          campos acima; ficam atrás deste toggle em vez de sempre expostos. */}
+      <button type="button" className="btn-ghost" onClick={() => setMaisDetalhesNotaAberto((a) => !a)}
+        aria-expanded={maisDetalhesNotaAberto || detalhesNotaPreenchidos} style={{ fontSize: "0.76rem", marginTop: "0.6rem", padding: "0.3rem 0.2rem" }}>
+        {maisDetalhesNotaAberto || detalhesNotaPreenchidos ? <ChevronDown size={13} /> : <ChevronRight size={13} />} Mais detalhes <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>— centro de custo, classificação, natureza, emissão, documento, pedido…</span>
+      </button>
+      {(maisDetalhesNotaAberto || detalhesNotaPreenchidos) && (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3" style={{ marginTop: "0.6rem" }}>
         <Campo label="Centro de custo">
           <select style={inputStyle} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
             <option value="">Selecione…</option>
@@ -1296,31 +1492,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             </p>
           )}
         </Campo>
-        <Campo label="Data de emissão"><input type="date" style={inputStyle} value={dataEmissao} onChange={(e) => handleDataEmissaoChange(e.target.value)} /></Campo>
-        {!parcelado && (
-          <Campo label="Data de vencimento">
-            <input type="date" style={inputStyle} value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} />
-            <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>
-              Usada para lançar em Contas a pagar e na Agenda.
-            </span>
-          </Campo>
-        )}
-        <div>
-          <label style={lbl}>Valor líquido da nota</label>
-          <div style={{ ...inputStyle, fontWeight: 700, color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</div>
-        </div>
-      </div>
-
-      {/* Progressive disclosure (achado do lote 2) — responsável, tipo/número
-          de documento, datas de entrega/pedido, vínculo a pedido, entrega e
-          desconto/acréscimo são preenchidos com menos frequência do que os
-          campos acima; ficam atrás deste toggle em vez de sempre expostos. */}
-      <button type="button" className="btn-ghost" onClick={() => setMaisDetalhesNotaAberto((a) => !a)}
-        aria-expanded={maisDetalhesNotaAberto} style={{ fontSize: "0.76rem", marginTop: "0.6rem", padding: "0.3rem 0.2rem" }}>
-        {maisDetalhesNotaAberto ? <ChevronDown size={13} /> : <ChevronRight size={13} />} Mais detalhes
-      </button>
-      {maisDetalhesNotaAberto && (
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3" style={{ marginTop: "0.6rem" }}>
+        <Campo label="Data de emissão">
+          <input type="date" style={inputStyle} value={dataEmissao} onChange={(e) => handleDataEmissaoChange(e.target.value)} />
+          <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>Em branco, vale a data de hoje.</span>
+        </Campo>
         <Campo label="Responsável pelo lançamento">
           <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
             <option value="">Selecione…</option>
@@ -1383,6 +1558,57 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         </p>
       )}
       </div>
+
+      {/* O que muda ao salvar — só leitura, mesma conta que a barra fixa de
+          baixo já usa (nenhuma regra nova): em qual lista a conta vai aparecer,
+          em que linha do resultado cai e o que acontece no caixa e no estoque.
+          Fica na primeira coluna, que sobrava vazia, pra o dono ver o efeito
+          do lançamento enquanto preenche. */}
+      {(() => {
+        const rotuloConta = tipo === "despesa" ? "Contas a pagar" : "Contas a receber";
+        const quitado = parcelado ? parcelas.length > 0 && parcelas.every((p) => p.pago) : jaPago;
+        let situacao = "informe o vencimento";
+        if (quitado) situacao = tipo === "despesa" ? "Paga" : "Recebida";
+        else if (primeiroVencimentoResumo) {
+          const dias = Math.round((new Date(primeiroVencimentoResumo + "T00:00:00").getTime() - new Date(today() + "T00:00:00").getTime()) / 86400000);
+          situacao = dias < 0 ? `Vencida há ${-dias} dia${dias === -1 ? "" : "s"}` : dias === 0 ? "Vence hoje" : `Vence em ${dias} dia${dias === 1 ? "" : "s"}`;
+        }
+        const itemConta = itens.find((i) => i.codigo_conta_gerencial);
+        const conta = itemConta ? planoContas.find((c) => c.codigo === itemConta.codigo_conta_gerencial) : null;
+        const grupo = conta?.rmca_custo_alimentacao ? "Comida" : conta?.rmca_receita_leite ? "Receita do leite" : null;
+        const entradasEstoque = tipo === "despesa"
+          ? itens.flatMap((it) => {
+              const info = infoEmbalagem(it);
+              const q = Number(it.quantidade) || 0;
+              if (!info || info.est.estocavel === false || q <= 0) return [];
+              const entra = info.emb ? q * info.emb.quantidade : q;
+              return [`${it.produto}: +${entra.toLocaleString("pt-BR")} ${info.est.unidade || ""}`.trim()];
+            })
+          : [];
+        const linhas: [string, React.ReactNode][] = [
+          ["Vai aparecer em", <>{rotuloConta} › <b>{situacao}</b></>],
+          ["Valor", <>{formatBRL(valorLiquido)}{numeroParcelasResumo > 1 ? ` em ${numeroParcelasResumo}x` : ""}</>],
+          ["Cai no resultado", <>{centroCusto || "—"}{classificacao ? ` · ${classificacao}` : ""}
+            {itemConta
+              ? <><br />{grupo ? <b>{grupo} · </b> : null}{itemConta.nome_conta_gerencial || conta?.nome} <span style={{ color: "var(--text-muted)" }}>{itemConta.codigo_conta_gerencial}</span></>
+              : <><br /><span style={{ color: "var(--text-muted)" }}>conta gerencial ainda não escolhida</span></>}</>],
+          ["Caixa", quitado
+            ? (tipo === "despesa" ? "Sai do caixa na data do pagamento informado" : "Entra no caixa na data do recebimento informado")
+            : (tipo === "despesa" ? "Não mexe no caixa até dar baixa no pagamento" : "Não mexe no caixa até dar baixa no recebimento")],
+        ];
+        if (entradasEstoque.length) linhas.push(["Estoque", <>{entradasEstoque.map((t) => <span key={t} style={{ display: "block" }}>{t}</span>)}</>]);
+        if (pedidoVinculadoResumo) linhas.push(["Pedido", pedidoVinculadoResumo.numero_pedido]);
+        return (
+          <div className="card mt-3" style={{ background: "var(--surface-2)" }} data-testid="o-que-muda">
+            <p style={{ fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+              O que muda ao salvar
+            </p>
+            <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "max-content 1fr", gap: "0.35rem 0.9rem", fontSize: "0.82rem" }}>
+              {linhas.map(([k, v]) => (<Fragment key={k}><dt style={{ color: "var(--text-muted)" }}>{k}</dt><dd style={{ margin: 0 }}>{v}</dd></Fragment>))}
+            </dl>
+          </div>
+        );
+      })()}
 
       {/* Contexto do fornecedor/cliente — só leitura, histórico pra decidir
           antes de lançar (em aberto, último lançamento, últimos
@@ -1456,7 +1682,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       )}
 
       </div>
-      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      <div className="fin-coluna">
 
       {/* Anexo e leitura automática — UM local só pra qualquer documento
           deste lançamento (nota, boleto, orçamento, comprovante de
@@ -1573,7 +1799,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                 <Trash2 size={13} />
               </button>
             )}
-            <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.5rem" }}>Produto/serviço {idx + 1}</p>
+            <p style={{ fontSize: "0.8rem", fontWeight: 700, marginBottom: "0.5rem" }}>Produto/serviço {idx + 1}</p>
             <div className="flex items-center gap-2 mb-3">
               {(["produto", "servico"] as const).map((t) => (
                 <button key={t} type="button" title={t === "produto" ? (temEstoque ? "Este item é um produto de estoque" : "Este item é um produto") : "Este item é um serviço"} onClick={() => atualizarItem(idx, { tipo_item: t, produto: "" })}
@@ -1585,7 +1811,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                 </button>
               ))}
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {it.tipo_item === "servico" ? (
                 <Campo label="Serviço">
                   <ServicoPicker servicos={sugestoesServico.map((nome) => ({ nome }))}
@@ -1597,7 +1823,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                   <div className="flex items-center justify-between" style={{ marginBottom: "0.25rem" }}>
                     <label style={lbl}>Produto</label>
                     {temEstoque && <select style={{ background: "transparent", color: "var(--text-muted)", border: "none", fontSize: "0.68rem", cursor: "pointer" }}
-                      value={it.modoProduto} onChange={(e) => atualizarItem(idx, { modoProduto: e.target.value as "estoque" | "livre" })}
+                      aria-label="De onde vem o produto" value={it.modoProduto} onChange={(e) => atualizarItem(idx, { modoProduto: e.target.value as "estoque" | "livre" })}
                       title="Do estoque: escolhe um item já cadastrado. Texto livre: qualquer compra, mesmo sem cadastro — não entra automaticamente no estoque.">
                       <option value="estoque">do estoque</option>
                       <option value="livre">texto livre</option>
@@ -1611,7 +1837,9 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                           aparecer igual a um estocável. */}
                       <EstoquePicker itens={produtosEstoque} value={it.produto} todasFinalidades incluirNaoEstocaveis onChange={(nomeProduto) => {
                         const match = produtosEstoque.find((p) => p.nome === nomeProduto);
-                        const patch: Partial<Item> = { produto: nomeProduto };
+                        // Trocar de produto zera a embalagem: ela pertence ao produto anterior.
+                        const patch: Partial<Item> = { produto: nomeProduto, apresentacao_id: "" };
+                        garantirEmbalagens(match?.id);
                         const conta = contaGerencialPadrao(tipo === "despesa" ? match?.conta_gerencial_despesa_padrao : match?.conta_gerencial_receita_padrao);
                         if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
                         atualizarItem(idx, patch);
@@ -1645,17 +1873,6 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                   placeholder="Escolha a conta (só o galho mais baixo)…"
                 />
               </Campo>
-              <Campo label="Centro de custo (opcional — só este item)">
-                <select style={inputStyle} value={it.centro_custo || ""} onChange={(e) => atualizarItem(idx, { centro_custo: e.target.value })}
-                  title="Deixe em branco para usar o centro de custo da nota inteira (acima). Preencha só quando este item, especificamente, for de outro centro.">
-                  <option value="">— Usar o da nota ({centroCusto || "—"}) —</option>
-                  {it.centro_custo && !opcoes.centros_custo.includes(it.centro_custo) && <option value={it.centro_custo}>{it.centro_custo}</option>}
-                  {opcoes.centros_custo.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </Campo>
-              <Campo label="Descrição (opcional)">
-                <input style={inputStyle} value={it.descricao} onChange={(e) => atualizarItem(idx, { descricao: e.target.value })} />
-              </Campo>
             </div>
             {itemNaoCadastradoDeDocumento(it) && (
               <div className="flex items-center gap-2 mt-2" style={{ flexWrap: "wrap", background: "rgba(180,120,0,0.14)", borderRadius: "var(--r-sm)", padding: "0.5rem 0.7rem" }}>
@@ -1674,6 +1891,33 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                 </button>
               </div>
             )}
+            {(() => {
+              const info = infoEmbalagem(it);
+              if (!info) return null;
+              return (
+                <div style={{ marginTop: "0.75rem" }}>
+                  <SeletorUnidadeCompra info={info} apresentacaoId={it.apresentacao_id} testId={`unidade-compra-${idx}`}
+                    onChange={(v) => atualizarItem(idx, { apresentacao_id: v })}
+                    quantidade={Number(it.quantidade) || 0} valorTotal={Number(it.valor_total) || 0} />
+                </div>
+              );
+            })()}
+            <details style={{ marginTop: "0.5rem", fontSize: "0.78rem" }} open={!!(it.centro_custo || it.descricao)}>
+              <summary style={{ cursor: "pointer", color: "var(--text-muted)" }}>Detalhes do item (centro de custo só deste item, descrição)</summary>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+              <Campo label="Centro de custo (opcional — só este item)">
+                <select style={inputStyle} value={it.centro_custo || ""} onChange={(e) => atualizarItem(idx, { centro_custo: e.target.value })}
+                  title="Deixe em branco para usar o centro de custo da nota inteira (acima). Preencha só quando este item, especificamente, for de outro centro.">
+                  <option value="">— Usar o da nota ({centroCusto || "—"}) —</option>
+                  {it.centro_custo && !opcoes.centros_custo.includes(it.centro_custo) && <option value={it.centro_custo}>{it.centro_custo}</option>}
+                  {opcoes.centros_custo.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </Campo>
+              <Campo label="Descrição (opcional)">
+                <input style={inputStyle} value={it.descricao} onChange={(e) => atualizarItem(idx, { descricao: e.target.value })} />
+              </Campo>
+              </div>
+            </details>
             <div className="flex items-center gap-2 mt-3 mb-1" style={{ flexWrap: "wrap" }}>
               {(["unitario", "total"] as const).map((m) => (
                 <button key={m} type="button"
@@ -1688,8 +1932,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
               ))}
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-1">
-              <Campo label="Quantidade"><input type="number" inputMode="decimal" style={inputStyle} value={it.quantidade} onChange={(e) => atualizarItem(idx, { quantidade: e.target.value })} /></Campo>
-              <Campo label={it.modoValor === "unitario" ? "Valor unitário (R$)" : "Valor unitário (R$) — calculado"}>
+              <Campo label={infoEmbalagem(it)?.emb ? `Quantidade (nº de ${pluralEmbalagem(infoEmbalagem(it)!.est.unidade_embalagem)})` : "Quantidade"}><input type="number" inputMode="decimal" style={inputStyle} value={it.quantidade} onChange={(e) => atualizarItem(idx, { quantidade: e.target.value })} /></Campo>
+              <Campo label={(infoEmbalagem(it)?.emb ? `Valor por ${infoEmbalagem(it)!.est.unidade_embalagem || "embalagem"} (R$)` : "Valor unitário (R$)") + (it.modoValor === "unitario" ? "" : " — calculado")}>
                 <CampoMoeda
                   style={it.modoValor === "unitario" ? inputStyle : { ...inputStyle, opacity: 0.55, cursor: "not-allowed" }}
                   value={Number(it.valor_unitario) || 0} disabled={it.modoValor === "total"}
@@ -1762,7 +2006,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                     {p.pago && (
                       <tr>
                         <td colSpan={5} style={{ padding: 0, border: 0 }}>
-                          <div style={{ padding: "0.6rem", background: "var(--fin-pagamento-bg)", borderRadius: "var(--r-sm)", margin: "0.2rem 0 0.5rem" }}>
+                          <div style={{ padding: "0.6rem", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", margin: "0.2rem 0 0.5rem" }}>
                             <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
                               <Campo label="Data de pagamento">
                                 <input type="date" style={inputStyle} value={p.data_pagamento || ""}
@@ -1878,12 +2122,12 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       <div className="card" style={{
         position: "sticky", bottom: 0, marginTop: "1rem", zIndex: 5,
         display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap",
-        boxShadow: "0 -2px 10px rgba(20,30,45,0.16)",
+        boxShadow: "none", borderTop: "2px solid var(--border)",
       }}>
         <div className="flex items-center gap-4" style={{ flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total do lançamento</div>
-            <div style={{ fontWeight: 800, fontSize: "1.05rem", color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</div>
+            <div style={{ fontWeight: 800, fontSize: "1.05rem" }}>{formatBRL(valorLiquido)}</div>
           </div>
           <div>
             <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Parcelas</div>
@@ -1914,7 +2158,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.3rem" }}>
           {erro && <p style={{ color: "var(--red)", fontSize: "0.78rem", margin: 0, maxWidth: "22rem", textAlign: "right" }}>{erro}</p>}
-          {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.78rem", margin: 0, maxWidth: "22rem", textAlign: "right" }}>{sucesso}</p>}
+          {sucesso && !salvo && <p style={{ color: "var(--green-light)", fontSize: "0.78rem", margin: 0, maxWidth: "22rem", textAlign: "right" }}>{sucesso}</p>}
           <button className="btn-primary" title="Salvar este lançamento financeiro" onClick={salvar} disabled={salvando || verificandoDuplicado}>
             {salvando ? "Salvando…" : verificandoDuplicado ? "Verificando…" : "Salvar lançamento"}
           </button>
@@ -2063,100 +2307,47 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       )}
 
       {adicionarPara !== null && (
-        <Modal title="Adicionar produto, serviço ou conta gerencial" onClose={() => setAdicionarPara(null)} width="900px">
-          <div className="flex items-center gap-2 mb-3">
-            {temEstoque && <button type="button" title="Cadastrar um novo produto de estoque" onClick={() => setModoAdicionar("produto")}
-              style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
-                border: "1px solid " + (modoAdicionar === "produto" ? "var(--dourado)" : "var(--border)"),
-                background: modoAdicionar === "produto" ? "rgba(94,26,46,0.4)" : "transparent",
-                color: modoAdicionar === "produto" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionar === "produto" ? 700 : 500 }}>
-              Novo produto (estoque)
-            </button>}
-            <button type="button" title="Cadastrar um novo serviço" onClick={() => setModoAdicionar("servico")}
-              style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
-                border: "1px solid " + (modoAdicionar === "servico" ? "var(--dourado)" : "var(--border)"),
-                background: modoAdicionar === "servico" ? "rgba(94,26,46,0.4)" : "transparent",
-                color: modoAdicionar === "servico" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionar === "servico" ? 700 : 500 }}>
-              Novo serviço
-            </button>
-            <button type="button" title="Cadastrar uma nova conta gerencial" onClick={() => setModoAdicionar("conta")}
-              style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
-                border: "1px solid " + (modoAdicionar === "conta" ? "var(--dourado)" : "var(--border)"),
-                background: modoAdicionar === "conta" ? "rgba(94,26,46,0.4)" : "transparent",
-                color: modoAdicionar === "conta" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionar === "conta" ? 700 : 500 }}>
-              Nova conta gerencial
-            </button>
-          </div>
-          {modoAdicionar === "produto" && temEstoque ? (
-            <NovoItemEstoque
-              // Pré-preenche com o nome já lançado (ex.: veio do XML/OCR e não
-              // batia com nada do estoque) — cadastrar com o MESMO texto é o
-              // que faz esse item "virar" reconhecido: o resto do sistema
-              // reconhece por igualdade de nome, não por vínculo.
-              prefill={adicionarPara !== null && itens[adicionarPara]?.produto.trim() ? { nome: itens[adicionarPara].produto.trim() } : undefined}
-              onCriado={(item) => {
-                if (item?.nome && adicionarPara !== null) {
-                  const patch: Partial<Item> = { produto: item.nome };
-                  const conta = contaGerencialPadrao(tipo === "despesa" ? item.conta_gerencial_despesa_padrao : item.conta_gerencial_receita_padrao);
-                  if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
-                  atualizarItem(adicionarPara, patch);
-                  const nomeFornecedor = item.fornecedor_id ? fornecedoresPorId.get(item.fornecedor_id) : null;
-                  if (nomeFornecedor) setFornecedor(nomeFornecedor);
-                }
-                carregarEstoque();
-                setAdicionarPara(null);
-              }}
-              onCancelar={() => setAdicionarPara(null)}
-            />
-          ) : modoAdicionar === "servico" ? (
-            <NovoServicoRapido
-              prefillNome={adicionarPara !== null ? itens[adicionarPara]?.produto.trim() : undefined}
-              onCriado={(servico) => {
-                if (servico?.nome && adicionarPara !== null) atualizarItem(adicionarPara, { produto: servico.nome });
-                carregarServicos();
-                setAdicionarPara(null);
-              }}
-              onCancelar={() => setAdicionarPara(null)}
-            />
-          ) : (
-            <NovaContaGerencial
-              tipoSugerido={tipo}
-              onCriado={(conta) => {
-                if (adicionarPara !== null) atualizarItem(adicionarPara, { codigo_conta_gerencial: conta.codigo, nome_conta_gerencial: conta.nome });
-                carregarOpcoes();
-                setAdicionarPara(null);
-              }}
-              onCancelar={() => setAdicionarPara(null)}
-            />
-          )}
-        </Modal>
+        <ModalAdicionarCadastro tipo={tipo} temEstoque={temEstoque} modoInicial={modoAdicionar}
+          nomeSugerido={itens[adicionarPara]?.produto} onClose={() => setAdicionarPara(null)}
+          onProduto={(item) => {
+            if (item?.nome && adicionarPara !== null) {
+              const patch: Partial<Item> = { produto: item.nome, apresentacao_id: "" };
+              const conta = contaGerencialPadrao(tipo === "despesa" ? item.conta_gerencial_despesa_padrao : item.conta_gerencial_receita_padrao);
+              if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
+              atualizarItem(adicionarPara, patch);
+              const nomeFornecedor = item.fornecedor_id ? fornecedoresPorId.get(item.fornecedor_id) : null;
+              if (nomeFornecedor) setFornecedor(nomeFornecedor);
+            }
+            carregarEstoque();
+            setAdicionarPara(null);
+          }}
+          onServico={(servico) => {
+            if (servico?.nome && adicionarPara !== null) atualizarItem(adicionarPara, { produto: servico.nome });
+            carregarServicos();
+            setAdicionarPara(null);
+          }}
+          onConta={(conta) => {
+            if (adicionarPara !== null) atualizarItem(adicionarPara, { codigo_conta_gerencial: conta.codigo, nome_conta_gerencial: conta.nome });
+            carregarOpcoes();
+            setAdicionarPara(null);
+          }} />
       )}
 
       {associarPara !== null && (
-        <Modal title={`Associar a ${itens[associarPara]?.tipo_item === "servico" ? "serviço" : "produto"} já existente`} onClose={() => setAssociarPara(null)} width="600px">
-          {itens[associarPara]?.tipo_item === "servico" ? (
-            <ServicoPicker servicos={sugestoesServico.map((nome) => ({ nome }))}
-              value="" onChange={(nomeEscolhido) => {
-                if (!nomeEscolhido) return;
-                atualizarItem(associarPara, { produto: nomeEscolhido });
-                setAssociarPara(null);
-              }} />
-          ) : (
-            <EstoquePicker itens={produtosEstoque} value="" todasFinalidades incluirNaoEstocaveis
-              onChange={(nomeProduto) => {
-                if (!nomeProduto) return;
-                const match = produtosEstoque.find((p) => p.nome === nomeProduto);
-                const patch: Partial<Item> = { produto: nomeProduto };
-                const conta = contaGerencialPadrao(tipo === "despesa" ? match?.conta_gerencial_despesa_padrao : match?.conta_gerencial_receita_padrao);
-                if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
-                atualizarItem(associarPara, patch);
-                setAssociarPara(null);
-              }} />
-          )}
-          <div className="flex justify-end mt-3">
-            <button type="button" className="btn-ghost" onClick={() => setAssociarPara(null)}>Cancelar</button>
-          </div>
-        </Modal>
+        <ModalAssociarExistente tipoItem={itens[associarPara]?.tipo_item === "servico" ? "servico" : "produto"}
+          produtos={produtosEstoque} servicos={sugestoesServico} onClose={() => setAssociarPara(null)}
+          onEscolher={(nome) => {
+            const patch: Partial<Item> = { produto: nome };
+            if (itens[associarPara]?.tipo_item !== "servico") {
+              const match = produtosEstoque.find((p) => p.nome === nome);
+              const conta = contaGerencialPadrao(tipo === "despesa" ? match?.conta_gerencial_despesa_padrao : match?.conta_gerencial_receita_padrao);
+              if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
+              patch.apresentacao_id = "";
+              garantirEmbalagens(match?.id);
+            }
+            atualizarItem(associarPara, patch);
+            setAssociarPara(null);
+          }} />
       )}
 
       {abrirNovoFornecedor && (

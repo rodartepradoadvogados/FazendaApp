@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { fetchAnimais, fetchEstoqueAtivos, fetchServicosAnalise, fetchSanidade, fetchParametros, fetchLotes } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
+import { LARGURA_GAVETA_75 } from "@/lib/janelas";
 import { AnimalRow } from "@/components/AnimalModal";
 // Formulários grandes de cada sub-aba: dynamic() para que o navegador só baixe
 // o código da sub-aba realmente aberta, em vez de tudo de uma vez com a página.
@@ -196,11 +197,18 @@ export default function LancamentosPage() {
   // Trocar de sub-aba sempre limpa (mesmo raciocínio de `mensagemSalva`
   // acima): nunca deixa o pré-preenchimento de despesa vazar pra receita ou
   // vice-versa.
-  const [prefillPedido, setPrefillPedido] = useState<PrefillPedido | null>(null);
+  // "Finalizar pedido" abre o lançamento numa gaveta de 75% da tela (e não preenche o formulário da própria tela, o que
+  // parecia um lançamento novo qualquer, sem relação com o pedido).
+  const [pedidoGaveta, setPedidoGaveta] = useState<{ tipo: "despesa" | "receita"; prefill: PrefillPedido } | null>(null);
+  const [pedidosRecarregar, setPedidosRecarregar] = useState(0);
+  // "Sujo" PRÓPRIO da gaveta: o formulário da página (embaixo) continua com o dele — compartilhar o mesmo estado fazia um apagar o aviso do outro.
+  const [sujoPedido, setSujoPedido] = useState(false);
+  const [avisoPedido, setAvisoPedido] = useState<string | null>(null);
   useEffect(() => {
     setGavetaAberta(false);
     setMensagemSalva(null);
-    setPrefillPedido(null);
+    setPedidoGaveta(null);
+    setAvisoPedido(null);
   }, [sel]);
   const fecharGaveta = useCallback(() => {
     if (sujo && !window.confirm("Você tem certeza que quer sair dessa página? Os dados não salvos serão perdidos.")) return;
@@ -216,24 +224,34 @@ export default function LancamentosPage() {
   // completo (ver FormFinanceiroSimplificado.tsx).
   const [modoDespesa, setModoDespesa] = useState<"generico" | "compra_semen" | "simplificado" | "lote" | "faturas">("generico");
   const [modoReceita, setModoReceita] = useState<"generico" | "simplificado">("generico");
-  // "Finalizar pedido" (card "Pedidos em aberto") força o modo de volta pra
-  // "genérico" — só ele aceita a prop `prefillPedido` — antes de guardar o
-  // pré-preenchimento.
-  const finalizarPedidoDespesa = useCallback((p: PrefillPedido) => {
-    setModoDespesa("generico");
-    setPrefillPedido(p);
-  }, [setModoDespesa, setPrefillPedido]);
-  const finalizarPedidoReceita = useCallback((p: PrefillPedido) => {
-    setModoReceita("generico");
-    setPrefillPedido(p);
-  }, [setModoReceita, setPrefillPedido]);
+  // "Finalizar pedido" (card "Pedidos em aberto"): abre a gaveta com o formulário genérico já preenchido pelo pedido.
+  const finalizarPedidoDespesa = useCallback((p: PrefillPedido) => { setAvisoPedido(null); setSujoPedido(false); setPedidoGaveta({ tipo: "despesa", prefill: p }); }, []);
+  const finalizarPedidoReceita = useCallback((p: PrefillPedido) => { setAvisoPedido(null); setSujoPedido(false); setPedidoGaveta({ tipo: "receita", prefill: p }); }, []);
+  const fecharPedidoGaveta = useCallback(() => {
+    if (sujoPedido && !window.confirm("Você tem certeza que quer sair dessa página? Os dados não salvos serão perdidos.")) return;
+    setSujoPedido(false);
+    setPedidoGaveta(null);
+  }, [sujoPedido]);
   // Atalho vindo da Agenda (ex.: "Ir para Inseminação" de um lembrete D11 de protocolo IATF).
   useEffect(() => {
     const ir = new URLSearchParams(window.location.search).get("ir");
     // Vacina/exame (preventivo) não se lança mais aqui: links antigos
     // (?ir=preventivo_aplicacao e ?ir=calendario_sanitario) levam a Protocolos.
     if (ir === "preventivo_aplicacao" || ir === "calendario_sanitario") { window.location.replace("/protocolos?aba=aplicar"); return; }
-    if (ir && TIPOS_LEAFS.some((t) => t.id === ir)) setSel(ir);
+    if (ir && TIPOS_LEAFS.some((t) => t.id === ir)) {
+      setSel(ir);
+      // `ir` é só o atalho de ENTRADA: depois de usado sai da URL. Se ficasse, ao trocar de aba o `sub=` mudava mas o
+      // `ir=` antigo continuava lá — e, ao recarregar, ele vencia e a tela voltava para a aba de onde o usuário saiu.
+      // A partir daqui a aba aberta mora só em `sub` (escrito por useSubNavRegister). Os outros parâmetros ficam.
+      // Exceção: link com parâmetros EXTRAS (ex.: Agenda → sanidade_aplicacao&numero_matriz=…&produto=…) — os formulários
+      // filhos leem `ir` e esses parâmetros da URL ao abrir, então ali o `ir` precisa ficar.
+      const url = new URL(window.location.href);
+      const extras = Array.from(url.searchParams.keys()).filter((k) => k !== "ir" && k !== "sub");
+      if (!extras.length) {
+        url.searchParams.delete("ir");
+        window.history.replaceState(window.history.state, "", url);
+      }
+    }
   }, []);
 
   // modo_lancamento_alimentacao (Configurações > Parâmetros > Alimentação):
@@ -418,7 +436,7 @@ export default function LancamentosPage() {
         <Info size={16} style={{ color: "var(--dourado-light)", marginTop: "0.15rem", flexShrink: 0 }} />
         <p style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
           {sel === "financeiro_despesa" || sel === "financeiro_receita" ? (
-            <><strong style={{ color: "var(--text)" }}>Financeiro já grava de verdade.</strong> Os lançamentos aqui vão para o banco permanente e aparecem nas 5 abas de contas do menu Financeiro.</>
+            <>Cada lançamento aparece nas contas a pagar/receber do menu Financeiro e no resultado do mês.</>
           ) : sel === "controle" ? (
             <><strong style={{ color: "var(--text)" }}>Controle leiteiro já grava de verdade.</strong> As pesagens lançadas aqui vão para o banco permanente.</>
           ) : sel === "pesagem" ? (
@@ -485,9 +503,12 @@ export default function LancamentosPage() {
           {sel === "inducao_lactacao" && <FormInducaoLactacao animais={animais} />}
           {sel === "qualidade_leite" && <FormQualidadeLeite animais={animais} />}
           {sel === "entrega_leite" && <FormEntregaLeite />}
+          {(sel === "financeiro_despesa" || sel === "financeiro_receita") && avisoPedido && (
+            <div role="status" className="card mb-4" style={{ background: "var(--surface-2)", fontSize: "0.84rem" }}>✓ {avisoPedido}</div>
+          )}
           {sel === "financeiro_despesa" && (
             <>
-              <PedidosEmAbertoCard tipo="despesa" onFinalizar={finalizarPedidoDespesa} />
+              <PedidosEmAbertoCard tipo="despesa" onFinalizar={finalizarPedidoDespesa} recarregar={pedidosRecarregar} />
               <div className="flex flex-wrap gap-2 mb-4">
                 <button type="button" className={modoDespesa === "generico" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
                   onClick={() => setModoDespesa("generico")}>
@@ -538,13 +559,13 @@ export default function LancamentosPage() {
                   <FormFinanceiroSimplificado tipo="despesa" onSujo={setSujo} />
                 </>
               ) : (
-                <FormFinanceiro tipo="despesa" responsaveis={nomesResponsaveis} onSujo={setSujo} prefillPedido={prefillPedido} />
+                <FormFinanceiro tipo="despesa" responsaveis={nomesResponsaveis} onSujo={setSujo} />
               )}
             </>
           )}
           {sel === "financeiro_receita" && (
             <>
-              <PedidosEmAbertoCard tipo="receita" onFinalizar={finalizarPedidoReceita} />
+              <PedidosEmAbertoCard tipo="receita" onFinalizar={finalizarPedidoReceita} recarregar={pedidosRecarregar} />
               <div className="flex flex-wrap gap-2 mb-4">
                 <button type="button" className={modoReceita === "generico" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
                   onClick={() => setModoReceita("generico")}>
@@ -565,7 +586,7 @@ export default function LancamentosPage() {
                   <FormFinanceiroSimplificado tipo="receita" onSujo={setSujo} />
                 </>
               ) : (
-                <FormFinanceiro tipo="receita" responsaveis={nomesResponsaveis} onSujo={setSujo} prefillPedido={prefillPedido} />
+                <FormFinanceiro tipo="receita" responsaveis={nomesResponsaveis} onSujo={setSujo} />
               )}
             </>
           )}
@@ -577,6 +598,28 @@ export default function LancamentosPage() {
           {sel === "exclusao" && <FormExclusao />}
         </div>
       )}
+
+      <GavetaLancamento
+        aberto={!!pedidoGaveta}
+        onFechar={fecharPedidoGaveta}
+        titulo={pedidoGaveta ? `Finalizar pedido ${pedidoGaveta.prefill.numeroPedido || ""}${pedidoGaveta.prefill.fornecedorCliente ? ` — ${pedidoGaveta.prefill.fornecedorCliente}` : ""}`.trim() : "Finalizar pedido"}
+        icone={Wallet}
+        largura={LARGURA_GAVETA_75}
+        aviso={pedidoGaveta ? <>Você está <strong>finalizando um pedido</strong>: fornecedor/cliente e itens vêm do pedido. Ao salvar, este lançamento fica vinculado a ele e entra no que já foi atendido.</> : undefined}
+      >
+        {pedidoGaveta && (
+          <FormFinanceiro
+            key={pedidoGaveta.prefill.id}
+            tipo={pedidoGaveta.tipo} responsaveis={nomesResponsaveis} onSujo={setSujoPedido} prefillPedido={pedidoGaveta.prefill}
+            onSalvo={(mensagem) => {
+              setSujoPedido(false);
+              setPedidoGaveta(null);
+              setAvisoPedido(`${mensagem} Pedido ${pedidoGaveta.prefill.numeroPedido || ""} atualizado.`.replace(/\s+/g, " "));
+              setPedidosRecarregar((n) => n + 1);
+            }}
+          />
+        )}
+      </GavetaLancamento>
 
       <GavetaLancamento
         aberto={ehGaveta && gavetaAberta}

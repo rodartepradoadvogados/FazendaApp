@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<style>
+@font-face{font-family:Archivo;font-weight:600;src:url(fontes/archivo-latin-600-normal.woff2)}
+@font-face{font-family:Archivo;font-weight:700;src:url(fontes/archivo-latin-700-normal.woff2)}
+@font-face{font-family:Archivo;font-weight:800;src:url(fontes/archivo-latin-800-normal.woff2)}
+:root{--marinho:#0E2A47;--prof:#0A1F36;--aco:#416180;--ouro:#8A6D2F;--ouroc:#C9A44C;--bg:#F4F6F9;--mudo:#6B7280}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1080px;height:1920px;overflow:hidden;font-family:Archivo,sans-serif}
+body.abertura{background:var(--prof);color:#fff}
+body.fecho{background:var(--bg);color:var(--marinho)}
+.rot{position:absolute;left:72px;font-weight:600;font-size:30px;letter-spacing:.14em;text-transform:uppercase}
+.abertura .rot{color:var(--ouroc)}
+#pre{position:absolute;left:72px;top:560px;font-weight:700;font-size:64px;color:#DCE3EA;letter-spacing:-.01em}
+#pre .w{display:inline-block}
+#grande{position:absolute;left:72px;top:680px;width:900px;font-weight:800;font-size:132px;line-height:1.0;letter-spacing:-.025em}
+#litro{display:inline-block;color:var(--ouroc);transform-origin:0 100%}
+.fil{position:absolute;height:8px;background:var(--ouroc);transform-origin:0 50%}
+#marca{position:absolute;left:72px;top:1496px;display:flex;align-items:center;gap:18px;font-size:28px;font-weight:600;letter-spacing:.08em;color:#DCE3EA;text-transform:uppercase}
+#marca img{width:56px;height:56px;border:1px solid #416180;border-radius:12px}
+/* fecho */
+#logo{position:absolute;left:50%;top:560px;width:760px;margin-left:-380px;transform-origin:50% 100%}
+#frase{position:absolute;left:72px;right:72px;top:1060px;text-align:center;font-weight:800;font-size:64px;line-height:1.12;letter-spacing:-.015em;color:var(--marinho)}
+#arroba{position:absolute;left:0;right:0;top:1290px;text-align:center;font-weight:700;font-size:48px;letter-spacing:.02em;color:var(--aco)}
+</style></head><body>
+<script>
+const io = t => t < .5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2, oc = t => 1 - Math.pow(1-t, 3), iq = t => t*t;
+const cl = (x,a=0,b=1) => Math.min(b, Math.max(a, x)), seg = (t,a,b) => cl((t-a)/(b-a));
+const $ = id => document.getElementById(id);
+function quique(t, t0, alt, est, ach){
+  const u = t - t0; if (u < -1 || u > .5) return {y:0, sx:1, sy:1};
+  if (u < -.5){ const k = oc(seg(u,-1,-.5)); return {y:-alt*k, sx:1, sy:1}; }
+  if (u < 0){ const k = iq(seg(u,-.5,0)); const s = 1 + est*k; return {y:-alt*(1-k), sx:1/s, sy:s}; }
+  const k = u/.5, a = ach*Math.exp(-5*k)*Math.cos(3*Math.PI*k)*(1-k); const sy = 1 - a; return {y:0, sx:1/sy, sy};
+}
+const tr = q => `translateY(${q.y}px) scale(${q.sx},${q.sy})`;
+let C;
+const fil = (el, t, a, b, s) => { const k = t < a ? 0 : t < a + .5 ? io(seg(t, a, a + .5)) : t < b ? 1 : 1 - io(seg(t, b, b + .5)); el.style.transform = `scaleX(${k})`; };
+window.montar = function(cfg){
+  C = cfg; document.body.className = cfg.tipo;
+  if (cfg.tipo === "abertura"){
+    document.body.insertAdjacentHTML("beforeend", `
+      <div class="rot" style="top:262px">CowData · Financeiro</div>
+      <div id="pre">Sua fazenda dá <span class="w" id="lucro">lucro?</span></div>
+      <div class="fil" id="f1" style="left:530px;top:640px;width:200px"></div>
+      <div id="grande">Quanto sobra em cada <span id="litro">litro?</span></div>
+      <div class="fil" id="f2" style="left:72px;top:1095px;width:360px"></div>
+      <div id="marca"><img src="cowdata-simbolo.svg" alt=""><span>Dados ilustrativos</span></div>`);
+  } else {
+    document.body.insertAdjacentHTML("beforeend", `
+      <img id="logo" src="cowdata-vertical.svg" alt="CowData">
+      <div id="frase">O financeiro da fazenda,<br><span id="sp">sem planilha.</span></div>
+      <div class="fil" id="f3" style="left:338px;top:1212px;width:404px"></div>
+      <div id="arroba">@cowdata</div>`);
+  }
+  const ims = [...document.images];
+  return Promise.all([document.fonts.ready, ...ims.map(i => i.complete ? 1 : new Promise(r => i.onload = r))]).then(() => {
+    if (cfg.tipo === "abertura"){ // posiciona os filetes sob as palavras reais
+      const r1 = $("lucro").getBoundingClientRect(), r2 = $("litro").getBoundingClientRect();
+      Object.assign($("f1").style, {left: r1.left + "px", top: (r1.bottom + 4) + "px", width: r1.width + "px"});
+      Object.assign($("f2").style, {left: r2.left + "px", top: (r2.bottom + 6) + "px", width: r2.width + "px"});
+    } else { const r = $("sp").getBoundingClientRect(); Object.assign($("f3").style, {left: r.left + "px", top: (r.bottom + 6) + "px", width: r.width + "px"}); }
+  });
+};
+window.seek = function(t){
+  if (C.tipo === "abertura"){
+    fil($("f1"), t, C.f1[0], C.f1[1]);
+    $("litro").style.transform = tr(quique(t, C.litro, 44, .12, .18));
+    fil($("f2"), t, C.f2[0], C.f2[1]);
+  } else {
+    $("logo").style.transform = tr(quique(t, C.logo, 34, .04, .06));
+    fil($("f3"), t, C.f3[0], C.f3[1]);
+  }
+};
+</script></body></html>

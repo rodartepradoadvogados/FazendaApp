@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="pt-BR" data-tema="claro" data-pal="azul">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CowData · Lançar no financeiro (mockup)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body data-device="desktop">
+
+<div class="mockbar" role="region" aria-label="Controles do mockup (não fazem parte do produto)">
+  <span><b>MOCKUP navegável</b> · dados fictícios · hoje 15/10/2026</span>
+  <span class="grow"></span>
+  <span class="grp"><label for="mb-cen">Cenário</label>
+    <select id="mb-cen" aria-label="Carregar um cenário de demonstração">
+      <option value="">— escolher —</option>
+      <option value="vazio">Começar do zero (despesa)</option>
+      <option value="doc">Nota lida do documento</option>
+      <option value="parcelado">Compra parcelada (3×)</option>
+      <option value="pago">Já paguei, com desconto</option>
+      <option value="duplicado">Possível duplicado</option>
+      <option value="vale">Vale de funcionário</option>
+      <option value="bem">Compra de bem (investimento)</option>
+      <option value="erro">Faltam dados (erro de validação)</option>
+      <option value="fechado">Mês fechado</option>
+      <option value="leite">Receita: venda de leite</option>
+      <option value="lote">Lote de notas</option>
+      <option value="faturas">Faturas</option>
+      <option value="semen">Compra de sêmen</option>
+      <option value="controle">Ver Contas a pagar</option>
+    </select></span>
+  <span class="grp"><span class="lbl">Tela</span>
+    <span class="seg" role="group" aria-label="Dispositivo">
+      <button type="button" data-dev="desktop" aria-pressed="true">Computador</button>
+      <button type="button" data-dev="mobile" aria-pressed="false">Celular</button>
+    </span></span>
+  <span class="grp"><span class="lbl">Perfil</span>
+    <span class="seg" role="group" aria-label="Perfil de acesso">
+      <button type="button" data-perfil="dono" aria-pressed="true">Dono</button>
+      <button type="button" data-perfil="funcionario" aria-pressed="false">Funcionário</button>
+    </span></span>
+  <span class="grp"><span class="lbl">Tema</span>
+    <span class="seg" role="group" aria-label="Tema">
+      <button type="button" data-tema="claro" aria-pressed="true">Claro</button>
+      <button type="button" data-tema="escuro" aria-pressed="false">Escuro</button>
+    </span></span>
+  <span class="grp"><span class="lbl">Paleta</span>
+    <span class="seg" role="group" aria-label="Paleta">
+      <button type="button" data-pal="azul" aria-pressed="true">Azul</button>
+      <button type="button" data-pal="vinho" aria-pressed="false">Vinho</button>
+      <button type="button" data-pal="verde" aria-pressed="false">Verde</button>
+    </span></span>
+</div>
+
+<div class="stagewrap">
+  <div class="stage" id="stage">
+    <div class="app" id="app">
+      <aside class="side" aria-label="Menu do CowData">
+        <div class="brand"><span class="mark" aria-hidden="true">C</span><div><strong>Cow<i>Data</i></strong><small>Fazenda Vale Verde</small></div></div>
+        <div class="nh">Ciclo diário</div>
+        <span class="dead" aria-disabled="true"><svg class="ic"><use href="#i-home"/></svg>Capa</span>
+        <span class="dead" aria-disabled="true"><svg class="ic"><use href="#i-cal"/></svg>Agenda</span>
+        <a href="#lancar" data-nav="lancar" id="nav-lancar"><svg class="ic"><use href="#i-clip"/></svg>Lançamentos</a>
+        <div class="nh">Manejo do rebanho</div>
+        <span class="dead" aria-disabled="true"><svg class="ic"><use href="#i-heart"/></svg>Rebanho</span>
+        <span class="dead" aria-disabled="true"><svg class="ic"><use href="#i-pkg"/></svg>Estoque</span>
+        <div class="nh">Financeiro</div>
+        <a href="#pagar" data-nav="pagar" id="nav-pagar"><svg class="ic"><use href="#i-chart"/></svg>Contas a pagar</a>
+        <a href="#receber" data-nav="receber" id="nav-receber"><svg class="ic"><use href="#i-chart"/></svg>Contas a receber</a>
+        <span class="dead" aria-disabled="true"><svg class="ic"><use href="#i-cart"/></svg>Pedidos</span>
+        <div class="foot">Administrador<br>mockup — o resto do app não está aqui</div>
+      </aside>
+      <div class="col">
+        <header class="topm"><span class="mark" aria-hidden="true">C</span><div><strong>CowData</strong><small>Fazenda Vale Verde</small></div></header>
+        <main class="main" id="main" tabindex="-1"><div id="view"></div></main>
+        <nav class="botnav" aria-label="Navegação do app">
+          <span class="dead" aria-disabled="true"><svg class="ic"><use href="#i-home"/></svg>Hoje</span>
+          <a href="#lancar" data-nav="lancar" id="bn-lancar"><svg class="ic"><use href="#i-clip"/></svg>Lançar</a>
+          <a href="#pagar" data-nav="pagar" id="bn-pagar"><svg class="ic"><use href="#i-chart"/></svg>Contas</a>
+          <span class="dead" aria-disabled="true"><svg class="ic"><use href="#i-heart"/></svg>Rebanho</span>
+        </nav>
+      </div>
+    </div>
+  </div>
+</div>
+
+<dialog id="dlg" aria-labelledby="dlg-t"></dialog>
+<div id="live" class="sr" role="status" aria-live="polite" aria-atomic="true"></div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></symbol>
+    <symbol id="i-cam" viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V21H3z"/></symbol>
+    <symbol id="i-cal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/></symbol>
+    <symbol id="i-pkg" viewBox="0 0 24 24"><path d="m7.5 4.3 9 5.2M21 8v8a2 2 0 0 1-1 1.7l-7 4a2 2 0 0 1-2 0l-7-4A2 2 0 0 1 3 16V8a2 2 0 0 1 1-1.7l7-4a2 2 0 0 1 2 0l7 4A2 2 0 0 1 21 8z"/><path d="M3.3 7 12 12l8.7-5M12 22V12"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18M7 16v-5M12 16V7M17 16v-3"/></symbol>
+    <symbol id="i-cart" viewBox="0 0 24 24"><circle cx="9" cy="20" r="1"/><circle cx="18" cy="20" r="1"/><path d="M2 3h3l2.7 11.4a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 7H6"/></symbol>
+    <symbol id="i-wallet" viewBox="0 0 24 24"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  </defs>
+</svg>
+
+<script src="dados.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

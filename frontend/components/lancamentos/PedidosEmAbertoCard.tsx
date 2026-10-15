@@ -31,9 +31,11 @@ type PedidoAberto = {
  * atendido) e entrega pro pai, que repassa pra prop `prefillPedido` do
  * FormFinanceiro genérico ao lado.
  */
-export function PedidosEmAbertoCard({ tipo, onFinalizar }: {
+export function PedidosEmAbertoCard({ tipo, onFinalizar, recarregar = 0 }: {
   tipo: "despesa" | "receita";
   onFinalizar: (prefill: PrefillPedido) => void;
+  /** Muda para a lista ser buscada de novo (ex.: depois de finalizar um pedido). */
+  recarregar?: number;
 }) {
   const [pedidos, setPedidos] = useState<PedidoAberto[] | null>(null);
 
@@ -44,7 +46,7 @@ export function PedidosEmAbertoCard({ tipo, onFinalizar }: {
     fetchPedidos({ tipo: tipo === "despesa" ? "compra" : "venda" })
       .then((lista: PedidoAberto[]) => setPedidos(lista.filter((p) => p.status !== "cancelado" && p.status !== "atendido")))
       .catch(() => setPedidos([]));
-  }, [tipo]);
+  }, [tipo, recarregar]);
 
   // Sem endpoint novo, sem card vazio poluindo a tela — some por completo
   // enquanto carrega ou quando não há nenhum pedido em aberto do tipo atual.
@@ -74,7 +76,7 @@ export function PedidosEmAbertoCard({ tipo, onFinalizar }: {
               </div>
               <button type="button" className="btn-secondary" style={{ fontSize: "0.76rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
                 onClick={() => onFinalizar({
-                  id: p.id, fornecedorCliente: p.fornecedor_cliente,
+                  id: p.id, numeroPedido: p.numero_pedido, fornecedorCliente: p.fornecedor_cliente,
                   itens: p.itens.map((i) => ({
                     produto: i.produto_servico, tipo_item: i.tipo_item,
                     quantidade: i.quantidade, valor_unitario_estimado: i.valor_unitario_estimado,

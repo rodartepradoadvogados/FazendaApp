@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy import text
+from sqlalchemy import func
 from sqlmodel import Session, or_, select
 
 from fazenda.auth import exigir_admin, exigir_nao_consultor, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
@@ -4126,6 +4127,27 @@ def _aprender_conta_gerencial_padrao(session: Session, fazenda_id: int | None, t
             session.add(estoque_item)
 
 
+def _pode_atualizar_custo_do_estoque(session: Session, item, embalagem, fazenda_id: int | None, data_compra) -> bool:
+    """A compra só vira CUSTO POR UNIDADE DE ESTOQUE quando dá para ter certeza de que o preço da linha está nessa
+    unidade e de que esta é a compra mais recente — senão o custo da aplicação de medicamento sairia errado:
+    - módulo Estoque contratado e item ativo (sem entrada de estoque não há custo a registrar);
+    - não é item espelho de sêmen (o preço dele mora em EstoqueSemen, por dose);
+    - item com embalagem padrão (saca de 30 kg…) comprado SEM escolher a embalagem: a linha pode estar em sacas
+      enquanto o estoque está em kg — preserva o custo cadastrado em vez de gravar R$/saca como R$/kg;
+    - compra com data anterior à da última compra já registrada não sobrescreve o custo mais novo."""
+    if item is None or not estoque_baixa.estoque_contratado(session, fazenda_id):
+        return False
+    if getattr(item, "estoque_semen_id", None) is not None:
+        return False
+    if embalagem is None and (item.unidade_embalagem or item.quantidade_embalagem):
+        return False
+    ultima = session.exec(
+        select(func.max(MovimentoEstoque.data_movimento)).where(
+            MovimentoEstoque.estoque_id == item.id, MovimentoEstoque.origem_tipo == "compra_financeiro")
+    ).one()
+    return ultima is None or data_compra is None or data_compra >= ultima
+
+
 @router.post("/lancamentos", status_code=201)
 def criar_lancamento(
     dados: LancamentoIn,
@@ -4453,6 +4475,16 @@ def criar_lancamento(
                 embalagem = session.get(ApresentacaoEmbalagemEstoque, item_in.apresentacao_id)
                 if embalagem is not None and embalagem.estoque_id != estoque_item.id:
                     embalagem = None
+            # Custo por UNIDADE DE ESTOQUE (ex.: R$/ml) = último custo de compra. Sem isto, comprar 6 frascos a R$ 80 deixava
+            # o item sem custo e a aplicação do medicamento (custo = dose × Estoque.valor_unitario) saía sem custo nos
+            # relatórios. Vem do valor unitário da linha (por embalagem, quando há) ÷ tamanho da embalagem; atualiza ANTES
+            # da movimentação para o snapshot do movimento já guardar o custo desta compra.
+            if _pode_atualizar_custo_do_estoque(session, estoque_item, embalagem, fazenda_id, data_movimento):
+                preco_linha = item_in.valor_unitario or (
+                    item_in.valor_total / item_in.quantidade if item_in.quantidade else None)
+                if preco_linha and preco_linha > 0:
+                    estoque_item.valor_unitario = round(preco_linha / (embalagem.quantidade if embalagem is not None and embalagem.quantidade else 1), 4)
+                    session.add(estoque_item)
             if embalagem is not None:
                 _, avisos_lote = estoque_baixa.abrir_lote(
                     session, item=estoque_item, quantidade=quantidade_entrada * embalagem.quantidade,

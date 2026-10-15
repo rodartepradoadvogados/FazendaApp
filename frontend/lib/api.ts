@@ -3918,6 +3918,20 @@ export async function fetchTransferenciaLoteAutomatica(): Promise<boolean> {
   return (await res.json()).automatica === true;
 }
 
+/**
+ * Data da próxima visita reprodutiva DEFINIDA pelo usuário (`null` = remove a definição e volta o cálculo automático:
+ * último serviço + intervalo). É a data única que a Agenda (comunicado), a Agenda Reprodutiva (projeção), as candidatas
+ * projetadas de IATF e Configurações > Parâmetros leem — ver backend rules/visita_reprodutiva.py.
+ */
+export type VisitaReprodutivaResposta = { ok: boolean; proxima_visita_reprodutiva: string | null; origem_visita_reprodutiva: "definida" | "calculada" | null; definida: string | null };
+export async function definirVisitaReprodutiva(data: string | null): Promise<VisitaReprodutivaResposta> {
+  const res = await authFetch(`${API}/reproducao/visita-reprodutiva`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao definir a data da visita reprodutiva"); }
+  return res.json();
+}
+
 export async function atualizarParametro(chave: string, valor: number | string | boolean) {
   const res = await authFetch(`${API}/parametros/${chave}`, {
     method: "PUT",
@@ -9147,8 +9161,10 @@ export function formatDate(iso: string): string {
   return `${d}/${m}/${y}`;
 }
 
+/** Hoje no calendário LOCAL do usuário (AAAA-MM-DD). Antes era a data UTC: depois das 21h no Brasil já vinha o dia seguinte. */
 export function today(): string {
-  return new Date().toISOString().split("T")[0];
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 export function firstDayOfMonth(): string {
@@ -10480,6 +10496,8 @@ export async function fetchExtratosCaixa(p: { mes: string; pessoaIds?: number[];
 export type LoteItemIn = {
   codigo_conta_gerencial: string | null; nome_conta_gerencial: string | null; produto: string;
   tipo_item: "produto" | "servico"; quantidade: number | null; valor_unitario: number | null; valor_total: number;
+  // Mesmos campos do lançamento normal (ItemIn no backend): detalhe do item, centro só deste item e embalagem de compra.
+  descricao?: string | null; centro_custo?: string | null; apresentacao_id?: number | null;
 };
 export type LoteNotaIn = {
   tipo_documento: string; numero_documento: string | null; sem_numero: boolean; data_emissao: string;
@@ -10491,10 +10509,13 @@ export type LoteIn = {
   parcelamento: { n: number; primeiro_vencimento: string; intervalo: "mensal" | "30dias" } | null;
   pagamento: { data_pagamento: string; forma_pagamento: string; conta_bancaria: string | null; numero_documento_pagamento: string | null } | null;
   total_fornecedor: number | null; rotulo?: string | null; confirmar_divergencia?: boolean; confirmar_duplicados?: boolean;
+  /** Quem responde pelas notas; ausente/null = o usuário logado. */
+  responsavel?: string | null;
 };
 export type LoteResultado = {
   fatura_id: number; rotulo: string; status: string; valor_total: number; ids_contas: number[];
-  notas: { nota: number; numero_lancamento: string; valor_liquido: number; ids: number[]; avisos_estoque: string[] }[];
+  // `responsavel`: quem ficou como responsável de fato (ausente em servidor antigo, que ignora a escolha).
+  notas: { nota: number; numero_lancamento: string; valor_liquido: number; ids: number[]; avisos_estoque: string[]; responsavel?: string | null }[];
 };
 export async function criarLoteFatura(dados: LoteIn): Promise<LoteResultado> {
   const chave = gerarChaveIdempotencia();  // mesma chave nas retentativas: nunca grava o lote duas vezes
@@ -10565,14 +10586,14 @@ export const fetchFaturasParaSelecao = (apenasAbertas: boolean = true): Promise<
 export const fetchFatura = (id: number): Promise<FaturaDetalhe> => _fj(`/${id}`, { cache: "no-store" }, "Erro ao carregar a fatura");
 export const abrirFatura = (d: FaturaCadastroIn): Promise<FaturaDetalhe> => _fj("", _fbody("POST", d), "Erro ao abrir a fatura");
 export const editarFatura = (id: number, d: FaturaCadastroIn): Promise<FaturaDetalhe> => _fj(`/${id}`, _fbody("PUT", d), "Erro ao salvar a fatura");
-export async function lancarNotasNaFatura(id: number, d: { notas: LoteNotaIn[]; confirmar_duplicados?: boolean; confirmar_fora_periodo?: boolean }): Promise<{ fatura_id: number; notas: LoteResultado["notas"]; ids_contas: number[]; valor: number }> {
+export async function lancarNotasNaFatura(id: number, d: { notas: LoteNotaIn[]; responsavel?: string | null; confirmar_duplicados?: boolean; confirmar_fora_periodo?: boolean }): Promise<{ fatura_id: number; notas: LoteResultado["notas"]; ids_contas: number[]; valor: number }> {
   const chave = gerarChaveIdempotencia();
   const res = await fetchComRetry(() => authFetch(`${API}/financeiro/faturas/${id}/notas`, {
     method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": chave }, body: JSON.stringify(d),
   }));
   return faturaJson(res, "Erro ao lançar as notas na fatura");
 }
-export const lancarNotasAvulsas = (d: { fornecedor: string; conta_bancaria: string | null; centro_custo: string | null; notas: LoteNotaIn[]; data_vencimento: string; confirmar_duplicados?: boolean }): Promise<{ notas: LoteResultado["notas"]; ids_contas: number[] }> =>
+export const lancarNotasAvulsas = (d: { fornecedor: string; conta_bancaria: string | null; centro_custo: string | null; notas: LoteNotaIn[]; data_vencimento: string; responsavel?: string | null; confirmar_duplicados?: boolean }): Promise<{ notas: LoteResultado["notas"]; ids_contas: number[] }> =>
   _fj("/notas-avulsas", _fbody("POST", d), "Erro ao lançar as notas");
 export const fecharFatura = (id: number, d: { total_fornecedor?: number | null; confirmar_divergencia?: boolean; modo: "vista" | "parcelar"; parcelamento?: FaturaCadastroIn["parcelamento"]; data_vencimento?: string | null }): Promise<FaturaDetalhe> =>
   _fj(`/${id}/fechar`, _fbody("POST", d), "Erro ao fechar a fatura");

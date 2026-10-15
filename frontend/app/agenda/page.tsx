@@ -35,6 +35,7 @@ import { casaBusca } from "@/lib/busca";
 import { moduloContratado } from "@/lib/modulos";
 import { categoriasAgendaVisiveis, gruposPainelVisiveis, podeVincularAnimalLote, resumoContasAgenda } from "@/lib/agendaModulos";
 import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
+import { DefinirDataVisitaModal } from "@/components/reproducao/DefinirDataVisitaModal";
 import { GavetaAplicar } from "@/components/protocolos/GavetaAplicar";
 import { BannerReagentes } from "@/components/protocolos/exameComum";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
@@ -114,8 +115,15 @@ export default function AgendaPage() {
   );
 }
 
+// Insights › Listas › Agenda Reprodutiva (a aba "vet" de /relatorios, aberta pelo ?sub=).
+const URL_AGENDA_REPRODUTIVA = "/relatorios?sub=vet";
+/** Comunicado da Agenda (nova dieta, sobra, visita reprodutiva…): só o que a lista usa de campos fixos. */
+type ComunicadoAgenda = { id: string; descricao: string; data: string; tipo?: string; categoria?: string; observacao?: string };
+
 function AgendaConteudo() {
   const router = useRouter();
+  // "Definir nova data da visita" (comunicado da visita reprodutiva) — mesmo diálogo da Agenda Reprodutiva do Insights.
+  const [definindoVisita, setDefinindoVisita] = useState<{ data: string | null; origem: "definida" | "calculada" | null; intervalo: number | null } | null>(null);
   // Módulos contratados (Plano Financeiro §2.6). A página só monta depois do AuthShell confirmar o login
   // (nunca é desenhada no servidor), então ler o contrato do localStorage na inicialização é seguro.
   // Os efeitos de carga abaixo consultam moduloContratado() direto, sem esperar este estado.
@@ -2316,10 +2324,67 @@ function AgendaConteudo() {
   };
   const horaAtualizado = agenda?.gerado_em ? new Date(agenda.gerado_em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : null;
 
+  // Card de comunicados (Painel: todos; Dia a dia: só a visita reprodutiva).
+  const renderComunicados = (lista: ComunicadoAgenda[]) => (
+    <>
+      {/* Comunicados — avisos informativos (ex.: nova dieta do lote). Diferente
+          de uma atividade: não têm botão de excluir/realizado, ficam fixos
+          enquanto vigoram e somem sozinhos quando a data passa. */}
+      {lista.length > 0 && (
+        <div className="card mb-4" style={{ border: "1px solid var(--dourado)" }}>
+          <div className="card-header mb-3 flex items-center gap-2" style={{ color: "var(--dourado-light)" }}>
+            <Megaphone size={15} /> Comunicados ({lista.length})
+          </div>
+          <div className="space-y-2">
+            {lista.map((e: any) => (
+              // Visita reprodutiva: o card inteiro leva à Agenda Reprodutiva (Insights › Listas); os botões abaixo também.
+              <div key={e.id} className="flex items-start justify-between gap-3" data-testid={e.tipo === "visita_reprodutiva" ? "comunicado-visita-reprodutiva" : undefined}
+                onClick={e.tipo === "visita_reprodutiva" ? () => router.push(URL_AGENDA_REPRODUTIVA) : undefined}
+                style={{ padding: "0.6rem 0.8rem", borderRadius: "var(--r-sm)", background: "var(--surface-2)", border: "1px solid var(--border)", cursor: e.tipo === "visita_reprodutiva" ? "pointer" : undefined }}>
+                <div>
+                  <p style={{ fontSize: "0.83rem", fontWeight: 600 }}>
+                    {e.tipo === "visita_reprodutiva"
+                      ? <a href={URL_AGENDA_REPRODUTIVA} onClick={(ev) => ev.stopPropagation()} style={{ color: "inherit", textDecoration: "underline" }}>{e.descricao}</a>
+                      : e.descricao}
+                  </p>
+                  {e.observacao && <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>{e.observacao}</p>}
+                </div>
+                {/* Só o comunicado de NOVA DIETA leva à tela de dieta. A
+                    condição era por categoria, e o alerta de sobra também sai
+                    como "alimentacao" — então herdava este botão, que é
+                    exatamente o atalho de lançamento que o alerta de sobra não
+                    pode ter: ele é comunicado, resolve-se com o Check e nada
+                    mais. */}
+                {e.tipo === "visita_reprodutiva" && (
+                  <div className="flex items-center gap-2" style={{ flexWrap: "wrap", justifyContent: "flex-end" }} onClick={(ev) => ev.stopPropagation()}>
+                    <a href={URL_AGENDA_REPRODUTIVA} className="btn-secondary" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap", textDecoration: "none" }}>
+                      <ClipboardList size={12} /> Ver agenda reprodutiva
+                    </a>
+                    <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }}
+                      onClick={() => setDefinindoVisita({ data: e.data_visita ?? e.data, origem: e.origem_visita ?? null, intervalo: e.intervalo_visita ?? null })}>
+                      <Calendar size={12} /> Definir nova data da visita
+                    </button>
+                  </div>
+                )}
+                {e.categoria === "alimentacao" && (e as any).tipo === "nova_dieta" && (
+                  <a href={`/alimentacao?lote=${encodeURIComponent(e.lote ?? "")}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }}>
+                    <Wheat size={12} /> Ir para Dieta
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+
   const renderDiaADia = () => (
     <div id="ag2-painel-dia" role="tabpanel" aria-labelledby="ag2-tab-dia">
       {/* Reagente de exame (TB/brucelose): aviso persistente, com o registro da notificação — não some ao notificar. */}
       {temMod("sanitario") && <BannerReagentes />}
+
+      {renderComunicados((agenda?.comunicados_dia as ComunicadoAgenda[] | undefined) || [])}
 
       <div className="ag2-controles">
         <div className="ag2-visoes" role="group" aria-label="Como ver as tarefas">
@@ -2721,37 +2786,7 @@ function AgendaConteudo() {
       </SecaoRecolhivel>
 
       </div>
-      {/* Comunicados — avisos informativos (ex.: nova dieta do lote). Diferente
-          de uma atividade: não têm botão de excluir/realizado, ficam fixos
-          enquanto vigoram e somem sozinhos quando a data passa. */}
-      {comunicados.length > 0 && (
-        <div className="card mb-4" style={{ border: "1px solid var(--dourado)" }}>
-          <div className="card-header mb-3 flex items-center gap-2" style={{ color: "var(--dourado-light)" }}>
-            <Megaphone size={15} /> Comunicados ({comunicados.length})
-          </div>
-          <div className="space-y-2">
-            {comunicados.map((e: any) => (
-              <div key={e.id} className="flex items-start justify-between gap-3" style={{ padding: "0.6rem 0.8rem", borderRadius: "var(--r-sm)", background: "var(--surface-2)", border: "1px solid var(--border)" }}>
-                <div>
-                  <p style={{ fontSize: "0.83rem", fontWeight: 600 }}>{e.descricao}</p>
-                  {e.observacao && <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>{e.observacao}</p>}
-                </div>
-                {/* Só o comunicado de NOVA DIETA leva à tela de dieta. A
-                    condição era por categoria, e o alerta de sobra também sai
-                    como "alimentacao" — então herdava este botão, que é
-                    exatamente o atalho de lançamento que o alerta de sobra não
-                    pode ter: ele é comunicado, resolve-se com o Check e nada
-                    mais. */}
-                {e.categoria === "alimentacao" && (e as any).tipo === "nova_dieta" && (
-                  <a href={`/alimentacao?lote=${encodeURIComponent(e.lote ?? "")}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }}>
-                    <Wheat size={12} /> Ir para Dieta
-                  </a>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {renderComunicados(comunicados)}
 
       <div ref={estoqueAlertasRef} style={{ scrollMarginTop: "1rem" }} />
       {(estoqueNegativo.length > 0 || estoqueAbaixoMinimo.length > 0) && (
@@ -2828,6 +2863,11 @@ function AgendaConteudo() {
       )}
 
       {visao === "painel" ? renderPainel() : renderDiaADia()}
+
+      {definindoVisita && (
+        <DefinirDataVisitaModal dataAtual={definindoVisita.data} origem={definindoVisita.origem} intervalo={definindoVisita.intervalo}
+          onClose={() => setDefinindoVisita(null)} onSalvo={() => { carregar(); }} />
+      )}
 
       {/* Modal sugestão de movimentação entre lotes */}
       {sugestaoMovAberta && (

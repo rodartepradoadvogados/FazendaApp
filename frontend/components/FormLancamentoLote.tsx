@@ -2,11 +2,11 @@
 // Lançamento em lote: várias notas de UM fornecedor lançadas de uma vez (ex.: as ~20 notas do posto de
 // combustível pagas na virada do mês). Cada nota é um lançamento completo; o lote as agrupa numa fatura
 // já fechada (ou paga). Grava TUDO OU NADA. Rascunho automático no navegador.
-import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Check, Copy, FileSpreadsheet, Plus, Trash2, X, FileText } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { AlertTriangle, Check, Copy, FileSpreadsheet, Pencil, Plus, Trash2, X, FileText } from "lucide-react";
 import {
-  abrirFatura, anexarArquivoLancamentoPorId, anexarComprovanteEmLote, criarLoteFatura, fetchCentrosCusto, lancarNotasAvulsas, lancarNotasNaFatura, fetchContasCorrentes,
-  fetchEstoqueAtivos, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, formatBRL, getUsuario, importarXmlFinanceiro,
+  abrirFatura, anexarArquivoLancamentoPorId, anexarComprovanteEmLote, criarLoteFatura, editarFatura, fetchCentrosCusto, lancarNotasAvulsas, lancarNotasNaFatura, fetchContasCorrentes,
+  fetchEstoqueAtivos, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, fetchServicosCadastro, formatBRL, getUsuario, importarXmlFinanceiro,
   type ContaCorrenteCadastro, type FaturaDetalhe, type LoteIn, type LoteResultado,
 } from "@/lib/api";
 import { CampoMoeda } from "@/components/CampoMoeda";
@@ -15,6 +15,11 @@ import { ImportarPlanilhaLote } from "@/components/ImportarPlanilhaLote";
 import type { ResultadoImportacao } from "@/lib/planilhaLote";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
+import { ServicoPicker } from "@/components/ServicoPicker";
+import { SeletorUnidadeCompra, infoUnidadeCompra, pluralEmbalagem, useEmbalagensEstoque } from "@/components/financeiro/UnidadeCompra";
+import { ModalAdicionarCadastro, ModalAssociarExistente, type ModoAdicionar } from "@/components/financeiro/CadastroRapidoModais";
+import { moduloContratado } from "@/lib/modulos";
+import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { Modal } from "@/components/Modal";
 
@@ -26,29 +31,70 @@ const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted
 const FORMAS = [{ v: "pix", r: "Pix" }, { v: "transferencia", r: "Transferência" }, { v: "boleto", r: "Boleto" }, { v: "debito", r: "Débito" }];
 const TIPOS_DOC_PADRAO = ["Nota fiscal", "Cupom fiscal", "Recibo", "Comprovante", "Fatura"];
 const CHAVE_RASCUNHO = "cowdata_lote_rascunho_v1";
+const COLUNAS_ITEM = "175px minmax(170px,1.5fr) minmax(170px,1.4fr) 70px 110px 110px 30px";
 const hoje = () => new Date().toISOString().slice(0, 10);
 
-type Item = { uid: number; tipoItem: "produto" | "servico"; produto: string; codigo: string; nome: string; qtd: string; unit: number };
+type Item = {
+  uid: number; tipoItem: "produto" | "servico"; produto: string; codigo: string; nome: string; qtd: string; unit: number;
+  // "estoque" escolhe de um item cadastrado; "livre" digita qualquer nome (compra que não precisa estar no catálogo).
+  modo: "estoque" | "livre";
+  // Embalagem cadastrada em que o produto foi comprado ("" = direto na unidade do estoque): ver SeletorUnidadeCompra.
+  apres: string;
+  descricao: string; centro: string;
+  // Veio de leitura automática (XML/planilha): se não bate com o cadastro, a tela avisa e oferece cadastrar/associar.
+  doc?: boolean;
+};
 type Nota = {
   uid: number; tipoDoc: string; numero: string; semNumero: boolean; data: string; itens: Item[];
   desconto: number; acrescimo: number; anexo: File | null;
 };
-type Produto = EstoqueItemPicker & { conta_gerencial_despesa_padrao: string | null };
+type Produto = EstoqueItemPicker & { conta_gerencial_despesa_padrao: string | null; fornecedor_nome?: string | null };
 
 let _uid = 0;
 const novoUid = () => ++_uid;
-const itemVazio = (): Item => ({ uid: novoUid(), tipoItem: "produto", produto: "", codigo: "", nome: "", qtd: "", unit: 0 });
+const itemVazio = (): Item => ({
+  uid: novoUid(), tipoItem: "produto", produto: "", codigo: "", nome: "", qtd: "", unit: 0,
+  // Sem o módulo Estoque o produto nasce em texto livre (o seletor do estoque não teria fonte).
+  modo: moduloContratado("estoque") ? "estoque" : "livre", apres: "", descricao: "", centro: "",
+});
 const notaVazia = (tipoDoc: string, data: string): Nota => ({
   uid: novoUid(), tipoDoc, numero: "", semNumero: false, data, itens: [itemVazio()], desconto: 0, acrescimo: 0, anexo: null,
 });
 const totalItem = (i: Item) => Math.round((Number(i.qtd.replace(",", ".")) || 0) * i.unit * 100) / 100;
 const liquidoNota = (n: Nota) => Math.round((n.itens.reduce((s, i) => s + totalItem(i), 0) - n.desconto + n.acrescimo) * 100) / 100;
 
-export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
+/**
+ * Valor da linha-resumo que vira campo ao passar o mouse (ou focar): é um <select> nativo de verdade — vale para
+ * teclado, leitor de tela e celular — só que "vestido" de texto até o usuário chegar nele (ver .inline-edit em globals.css).
+ */
+function CampoInline({ rotulo, valor, opcoes, onTroca, dica, ocupado, podeFicarVazio = true }: {
+  rotulo: string; valor: string; opcoes: string[]; onTroca: (v: string) => void; dica: string; ocupado?: boolean;
+  /** false = sempre há um valor (ex.: responsável) — sem a opção "—". */
+  podeFicarVazio?: boolean;
+}) {
+  const id = useId();
+  const lista = valor && !opcoes.includes(valor) ? [valor, ...opcoes] : opcoes;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+      <label htmlFor={id} style={{ margin: 0 }}>{rotulo}:</label>
+      <span className="inline-edit" title={dica}>
+        <select id={id} value={valor} disabled={ocupado} onChange={(e) => onTroca(e.target.value)}>
+          {podeFicarVazio && <option value="">—</option>}
+          {lista.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+        <Pencil size={12} className="inline-edit-ic" aria-hidden />
+      </span>
+    </span>
+  );
+}
+
+export function FormLancamentoLote({ onSujo, fatura, onLancado, onFaturaAlterada }: {
   onSujo?: (sujo: boolean) => void;
   /** Modo fatura: as notas entram numa fatura ABERTA; fornecedor, conta e centro de custo vêm dela e não há vencimento/pagamento aqui. */
   fatura?: FaturaDetalhe;
   onLancado?: () => void;
+  /** Modo fatura: o usuário trocou conta/centro de custo na linha-resumo — a fatura salva volta para quem a mostra. */
+  onFaturaAlterada?: (f: FaturaDetalhe) => void;
 }) {
   const modoFatura = !!fatura;
   const [fornecedores, setFornecedores] = useState<string[]>([]);
@@ -57,21 +103,35 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
   const [centros, setCentros] = useState<{ nome: string; padrao?: boolean; ativo?: boolean }[]>([]);
   const [plano, setPlano] = useState<ContaPlano[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
+  const [servicos, setServicos] = useState<string[]>([]);
+  // Só avisa "não cadastrado" depois que o cadastro CARREGOU: lista vazia por falha de rede não prova que o item não existe.
+  const [catalogoCarregado, setCatalogoCarregado] = useState({ produtos: false, servicos: false });
+  const [opcoesProdutos, setOpcoesProdutos] = useState<string[]>([]);
+  const temEstoque = useMemo(() => moduloContratado("estoque"), []);
+  const embalagens = useEmbalagensEstoque();
+  const { nomes: nomesPessoas } = usePessoasAtivas();
+  const carregarProdutos = () => fetchEstoqueAtivos().then((d) => { setProdutos((d.itens || []).map((i: any) => ({
+    id: i.id ?? null, nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
+    estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
+    unidade_embalagem: i.unidade_embalagem ?? null, medida_embalagem: i.medida_embalagem ?? null, quantidade_embalagem: i.quantidade_embalagem ?? null,
+    conta_gerencial_despesa_padrao: i.conta_gerencial_despesa_padrao ?? null,
+  }))); setCatalogoCarregado((c) => ({ ...c, produtos: true })); }).catch(() => {});
+  const carregarServicos = () => fetchServicosCadastro().then((l: { nome: string; ativo?: boolean }[]) => { setServicos((l || []).filter((x) => x.ativo).map((x) => x.nome).sort((a, b) => a.localeCompare(b, "pt-BR"))); setCatalogoCarregado((c) => ({ ...c, servicos: true })); }).catch(() => {});
   useEffect(() => {
     Promise.all([fetchFornecedores().catch(() => []), fetchOpcoesFinanceiro().catch(() => ({} as any))]).then(([cad, op]: any[]) => {
       const nomes = new Set<string>([...(op.fornecedores || []), ...(cad || []).map((f: any) => f.nome)]);
       setFornecedores(Array.from(nomes).sort((a, b) => a.localeCompare(b, "pt-BR")));
       if (op.tipos_documento?.length) setTiposDoc(op.tipos_documento);
+      setOpcoesProdutos(op.produtos || []);
     });
     fetchContasCorrentes().then(setContas).catch(() => {});
     fetchCentrosCusto().then((l: any[]) => setCentros(l.filter((c) => c.ativo !== false))).catch(() => {});
     fetchPlanoContas().then(setPlano).catch(() => {});
-    fetchEstoqueAtivos().then((d) => setProdutos((d.itens || []).map((i: any) => ({
-      nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
-      estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
-      conta_gerencial_despesa_padrao: i.conta_gerencial_despesa_padrao ?? null,
-    })))).catch(() => {});
-  }, []);
+    if (moduloContratado("estoque")) carregarProdutos();
+    carregarServicos();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Embalagens dos produtos já escolhidos (rascunho restaurado, XML, planilha): busca uma vez por item.
+  const garantirEmbalagens = embalagens.garantir;
   const contasAtivas = useMemo(() => contas.filter((c) => c.ativo), [contas]);
 
   const [fornecedorLivre, setFornecedor] = useState("");
@@ -100,6 +160,10 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
 
   const usuario = getUsuario();
   const responsavel = usuario?.nome || usuario?.username || "Você";
+  // Quem responde pelas notas: por padrão o usuário logado; a linha-resumo deixa trocar.
+  const [responsavelEscolhido, setResponsavelEscolhido] = useState("");
+  const responsavelAtual = responsavelEscolhido || responsavel;
+  const opcoesResponsavel = useMemo(() => Array.from(new Set([responsavel, ...nomesPessoas, responsavelAtual])), [responsavel, nomesPessoas, responsavelAtual]);
 
   const totalNotas = useMemo(() => Math.round(notas.reduce((s, n) => s + liquidoNota(n), 0) * 100) / 100, [notas]);
   const totalItens = useMemo(() => notas.reduce((s, n) => s + n.itens.length, 0), [notas]);
@@ -123,6 +187,22 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
     });
   }, [modo, parcN, parcPrimeiro, parcIntervalo, notas]);
   const diferenca = totalForn > 0 ? Math.round((totalForn - totalNotas) * 100) / 100 : null;
+
+  // Item vindo de leitura automática que não bate com o cadastro — mesma regra do lançamento normal.
+  function naoCadastrado(i: Item): boolean {
+    if (!i.doc || !i.produto.trim()) return false;
+    const nome = i.produto.trim().toLowerCase();
+    if (i.tipoItem === "servico") return catalogoCarregado.servicos && !servicos.some((x) => x.toLowerCase() === nome);
+    if (!temEstoque || !catalogoCarregado.produtos) return false;
+    return !produtos.some((p) => p.nome.toLowerCase() === nome);
+  }
+  const [adicionar, setAdicionar] = useState<{ nuid: number; iuid: number; modo: ModoAdicionar } | null>(null);
+  const [associar, setAssociar] = useState<{ nuid: number; iuid: number; tipoItem: "produto" | "servico" } | null>(null);
+  useEffect(() => {
+    notas.forEach((n) => n.itens.forEach((i) => {
+      if (i.tipoItem === "produto" && i.modo === "estoque" && i.produto) garantirEmbalagens(produtos.find((p) => p.nome === i.produto)?.id);
+    }));
+  }, [notas, produtos, garantirEmbalagens]);
 
   // Estocáveis: avisa na própria tela quais itens darão entrada no estoque.
   const estocaveis = useMemo(() => {
@@ -173,7 +253,7 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
     setFornecedor(d.fornecedor || ""); setContaBancaria(d.contaBancaria || ""); setCentroCusto(d.centroCusto || "");
     setModo(d.modo || "venc"); setVencimento(d.vencimento || ""); setParcN(d.parcN || "3"); setParcPrimeiro(d.parcPrimeiro || "");
     setParcIntervalo(d.parcIntervalo || "mensal"); setPagData(d.pagData || hoje()); setPagForma(d.pagForma || "pix"); setPagComp(d.pagComp || ""); setTotalForn(d.totalForn || 0);
-    if (Array.isArray(d.notas) && d.notas.length) setNotas(d.notas.map((n: Nota) => ({ ...n, uid: novoUid(), anexo: null, itens: n.itens.map((i) => ({ ...i, uid: novoUid() })) })));
+    if (Array.isArray(d.notas) && d.notas.length) setNotas(d.notas.map((n: Nota) => ({ ...n, uid: novoUid(), anexo: null, itens: n.itens.map((i) => ({ ...itemVazio(), ...i, uid: novoUid() })) })));
     setRascunhoSalvo(null);
   }
   function descartarRascunho() { try { localStorage.removeItem(chaveRascunho); } catch { /* ignora */ } setRascunhoSalvo(null); }
@@ -205,7 +285,7 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
   function carregarImportacao(r: ResultadoImportacao, substituir: boolean) {
     const novas: Nota[] = r.notas.map((n) => ({
       uid: novoUid(), tipoDoc: n.tipoDoc, numero: n.numero, semNumero: n.semNumero, data: n.data, desconto: n.desconto, acrescimo: n.acrescimo, anexo: null,
-      itens: n.itens.map((i) => ({ uid: novoUid(), tipoItem: i.tipoItem, produto: i.produto, codigo: i.codigo, nome: i.nome, qtd: i.qtd, unit: i.unit })),
+      itens: n.itens.map((i) => ({ ...itemVazio(), uid: novoUid(), tipoItem: i.tipoItem, produto: i.produto, codigo: i.codigo, nome: i.nome, qtd: i.qtd, unit: i.unit, doc: true })),
     }));
     setNotas((a) => (substituir || formularioVazio ? novas : [...a, ...novas]));
     setImportando(false); setErro(null);
@@ -222,15 +302,24 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
       // Aplica os dados do XML na nota correspondente
       setNotas((a) => a.map((n) => {
         if (n.uid !== uid) return n;
-        const itens: typeof n.itens = (dados.itens || []).map((it: any, i: number) => ({
-          uid: novoUid(),
-          tipoItem: it.tipo_item === "servico" ? "servico" : "produto",
-          produto: it.produto || it.descricao || `Item ${i + 1}`,
-          codigo: it.codigo_conta_gerencial || "",
-          nome: it.nome_conta_gerencial || "",
-          qtd: String(it.quantidade || 1),
-          unit: Number(it.valor_unitario || 0),
-        }));
+        const itens: typeof n.itens = (dados.itens || []).map((it: any, i: number) => {
+          const nomeItem = it.produto || it.descricao || `Item ${i + 1}`;
+          const ehServico = it.tipo_item === "servico";
+          // Produto lido que já existe no estoque entra "do estoque"; o que não existe fica em texto livre + aviso de cadastro.
+          const noEstoque = !ehServico && produtos.some((p) => p.nome.toLowerCase() === String(nomeItem).trim().toLowerCase());
+          return {
+            ...itemVazio(),
+            uid: novoUid(),
+            tipoItem: ehServico ? "servico" : "produto",
+            modo: noEstoque ? "estoque" : "livre",
+            produto: nomeItem,
+            codigo: it.codigo_conta_gerencial || "",
+            nome: it.nome_conta_gerencial || "",
+            qtd: String(it.quantidade || 1),
+            unit: Number(it.valor_unitario || 0),
+            doc: true,
+          } as Item;
+        });
         return {
           ...n,
           tipoDoc: dados.tipo_documento || n.tipoDoc,
@@ -258,8 +347,14 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [sucesso, setSucesso] = useState<string | null>(null);
-  const [pendencia, setPendencia] = useState<{ tipo: "divergencia" | "duplicadas" | "fora_periodo"; mensagem: string; itens?: any[]; fora?: { nota: number; data_emissao: string; motivo: string }[] } | null>(null);
+  const [pendencia, setPendencia] = useState<{ tipo: "divergencia" | "duplicadas" | "fora_periodo" | "nao_cadastrado"; mensagem: string; itens?: any[]; nomes?: string[]; fora?: { nota: number; data_emissao: string; motivo: string }[] } | null>(null);
+  // O usuário já viu o aviso de "produto/serviço não cadastrado" e quer lançar assim mesmo (vale para as chamadas seguintes do mesmo envio).
+  const confirmouNaoCadastrado = useRef(false);
+  // O servidor devolveu o responsável gravado? Servidor antigo ignora a escolha — a tela avisa em vez de fingir.
+  const semEcoResponsavel = useRef(false);
 
+  // Só manda o responsável quando o usuário trocou (padrão = usuário logado, como o servidor já faz).
+  const responsavelEnvio = responsavelAtual !== responsavel ? responsavelAtual : null;
   function montar(conf: { divergencia?: boolean; duplicados?: boolean }): LoteIn {
     const parcelas = Number(parcN) || 0;
     return {
@@ -270,12 +365,16 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
         itens: n.itens.map((i) => ({
           codigo_conta_gerencial: i.codigo || null, nome_conta_gerencial: i.nome || null, produto: i.produto.trim(), tipo_item: i.tipoItem,
           quantidade: Number(i.qtd.replace(",", ".")) || null, valor_unitario: i.unit || null, valor_total: totalItem(i),
+          descricao: i.descricao.trim() || null, centro_custo: i.centro || null,
+          // Com embalagem, a quantidade é o nº de embalagens e o servidor converte para a unidade do estoque.
+          apresentacao_id: i.tipoItem === "produto" && i.modo === "estoque" && i.apres ? Number(i.apres) : null,
         })),
       })),
       modo, data_vencimento: modo === "venc" ? vencimento : null,
       parcelamento: modo === "parc" ? { n: parcelas, primeiro_vencimento: parcPrimeiro, intervalo: parcIntervalo } : null,
       pagamento: modo === "pago" ? { data_pagamento: pagData, forma_pagamento: pagForma, conta_bancaria: contaBancaria || null, numero_documento_pagamento: pagComp.trim() || null } : null,
       total_fornecedor: totalForn > 0 ? totalForn : null,
+      responsavel: responsavelEnvio,
       confirmar_divergencia: !!conf.divergencia, confirmar_duplicados: !!conf.duplicados,
     };
   }
@@ -319,6 +418,9 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
 
   function encerrar(texto: string) {
     escolhaFora.current = undefined;
+    confirmouNaoCadastrado.current = false;
+    if (semEcoResponsavel.current) texto += ` Atenção: o servidor ainda não grava o responsável escolhido — as notas ficaram em nome de ${responsavel}.`;
+    semEcoResponsavel.current = false;
     setSucesso(texto);
     descartarRascunho();
     if (!fatura) setFornecedor("");
@@ -352,8 +454,11 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
     const avisos: string[] = [];
     const resumo: string[] = [];
     const pegar = (idxs: number[]) => idxs.map((i) => todas[i]);
-    const registrar = (idxs: number[], notasFeitas: { ids: number[]; avisos_estoque: string[] }[]) => {
-      notasFeitas.forEach((r, k) => { porNota.push({ idx: idxs[k], ids: r.ids }); avisos.push(...r.avisos_estoque); });
+    const registrar = (idxs: number[], notasFeitas: { ids: number[]; avisos_estoque: string[]; responsavel?: string | null }[]) => {
+      notasFeitas.forEach((r, k) => {
+        porNota.push({ idx: idxs[k], ids: r.ids }); avisos.push(...r.avisos_estoque);
+        if (responsavelEnvio && r.responsavel === undefined) semEcoResponsavel.current = true;
+      });
     };
     const dentroEnviar = escolha === "nesta" ? [...dentro, ...fora] : dentro;
     let novaFaturaId: number | null = null;
@@ -368,19 +473,19 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
           data_vencimento: fatura.data_vencimento, conta_bancaria: fatura.conta_bancaria, centro_custo: fatura.centro_custo,
         });
         novaFaturaId = nova.id;
-        const r = await lancarNotasNaFatura(nova.id, { notas: pegar(fora), confirmar_duplicados: !!conf.duplicados, confirmar_fora_periodo: true });
+        const r = await lancarNotasNaFatura(nova.id, { notas: pegar(fora), responsavel: responsavelEnvio, confirmar_duplicados: !!conf.duplicados, confirmar_fora_periodo: true });
         registrar(fora, r.notas);
         resumo.push(`${fora.length} nota(s) na nova fatura "${nova.rotulo}"`);
       } else if (fora.length && escolha === "avulsa") {
         const r = await lancarNotasAvulsas({
           fornecedor: fatura.fornecedor, conta_bancaria: fatura.conta_bancaria, centro_custo: fatura.centro_custo,
-          notas: pegar(fora), data_vencimento: fatura.data_vencimento || hoje(), confirmar_duplicados: !!conf.duplicados,
+          notas: pegar(fora), data_vencimento: fatura.data_vencimento || hoje(), responsavel: responsavelEnvio, confirmar_duplicados: !!conf.duplicados,
         });
         registrar(fora, r.notas);
         resumo.push(`${fora.length} nota(s) sem fatura`);
       }
       if (dentroEnviar.length) {
-        const r = await lancarNotasNaFatura(fatura.id, { notas: pegar(dentroEnviar), confirmar_duplicados: !!conf.duplicados, confirmar_fora_periodo: true });
+        const r = await lancarNotasNaFatura(fatura.id, { notas: pegar(dentroEnviar), responsavel: responsavelEnvio, confirmar_duplicados: !!conf.duplicados, confirmar_fora_periodo: true });
         registrar(dentroEnviar, r.notas);
         resumo.unshift(`${dentroEnviar.length} nota(s) na fatura "${fatura.rotulo}"`);
       }
@@ -398,6 +503,14 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
     setErro(null); setSucesso(null);
     const problema = validar();
     if (problema) { setErro(problema); return; }
+    const faltam = notas.flatMap((n) => n.itens.filter(naoCadastrado).map((i) => i.produto.trim()));
+    if (faltam.length && !confirmouNaoCadastrado.current) {
+      setPendencia({
+        tipo: "nao_cadastrado", nomes: Array.from(new Set(faltam)),
+        mensagem: "Este(s) item(ns) veio(vieram) do documento lido, mas não estão no cadastro — vão salvar como texto solto, sem centro de custo padrão e sem aparecer para seleção em telas de aplicação/consumo:",
+      });
+      return;
+    }
     setSalvando(true);
     try {
       if (modoFatura) { await lancarNaFatura(conf); return; }
@@ -405,6 +518,7 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
       setPendencia(null);
       const falhas = await anexarDepois(r.notas.map((x, i) => ({ idx: i, ids: x.ids })), modo === "pago" ? r.ids_contas : undefined);
       const avisos = r.notas.flatMap((x) => x.avisos_estoque);
+      if (responsavelEnvio && r.notas.some((x) => x.responsavel === undefined)) semEcoResponsavel.current = true;
       encerrar(
         `Lote lançado: ${r.notas.length} nota(s), ${formatBRL(r.valor_total)}, fatura "${r.rotulo}" (${r.status === "paga" ? "paga" : "fechada"}).` +
         (avisos.length ? ` ${avisos.join(" ")}` : "") +
@@ -418,7 +532,31 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
       }
       else if (e.status === 409 && d?.codigo === "duplicadas") setPendencia({ tipo: "duplicadas", mensagem: d.mensagem, itens: d.duplicadas });
       else setErro(e.message || (modoFatura ? "Erro ao lançar as notas." : "Erro ao lançar o lote. Nada foi gravado."));
+      // Falhou depois de confirmar o aviso de "não cadastrado": ao reenviar, o usuário pode ter mudado os itens — pergunta de novo.
+      if (!(e.status === 409)) confirmouNaoCadastrado.current = false;
     } finally { setSalvando(false); }
+  }
+
+  // Linha-resumo (modo fatura): trocar conta ou centro de custo ali mesmo salva no cadastro da fatura.
+  const [trocando, setTrocando] = useState(false);
+  const [avisoFatura, setAvisoFatura] = useState<string | null>(null);
+  async function trocarNaFatura(campo: "conta_bancaria" | "centro_custo", valor: string) {
+    if (!fatura) return;
+    setErro(null); setAvisoFatura(null); setTrocando(true);
+    try {
+      const nova = await editarFatura(fatura.id, {
+        fornecedor: fatura.fornecedor, rotulo: fatura.rotulo, data_abertura: fatura.data_abertura,
+        data_fechamento_prevista: fatura.data_fechamento_prevista, data_vencimento: fatura.data_vencimento,
+        conta_bancaria: campo === "conta_bancaria" ? valor || null : fatura.conta_bancaria,
+        centro_custo: campo === "centro_custo" ? valor || null : fatura.centro_custo,
+        parcelamento: fatura.parcelas_n && fatura.parcelamento_origem === "cadastro"
+          ? { n: fatura.parcelas_n, primeiro_vencimento: fatura.parcelas_primeiro || "", intervalo: fatura.parcelas_intervalo || "mensal" } : null,
+      });
+      onFaturaAlterada?.(nova);
+      setAvisoFatura(campo === "conta_bancaria"
+        ? `Conta da fatura: ${valor || "nenhuma"}.`
+        : `Centro de custo da fatura: ${valor || "nenhum"}. Vale para as próximas notas; as já lançadas ficam como estão.`);
+    } catch (e) { setErro(e instanceof Error && e.message ? e.message : "Não foi possível alterar a fatura."); } finally { setTrocando(false); }
   }
 
   const aviso = (cor: string): React.CSSProperties => ({ fontSize: "0.8rem", padding: "0.45rem 0.65rem", borderRadius: "var(--r-sm)", border: `1px solid ${cor}`, margin: "0.4rem 0" });
@@ -440,13 +578,19 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
       <div className="card">
         <p className="card-header mb-2">{modoFatura ? `Fatura: ${fatura!.rotulo}` : "Dados do lote"}</p>
         {modoFatura ? (
-          <div className="flex flex-wrap gap-x-8 gap-y-1" style={{ fontSize: "0.84rem" }}>
+          <>
+          <div className="flex flex-wrap items-center gap-x-8 gap-y-1" style={{ fontSize: "0.84rem" }} data-testid="resumo-fatura">
             <span>Fornecedor: <strong>{fatura!.fornecedor}</strong></span>
-            <span>Conta: <strong>{fatura!.conta_bancaria || "—"}</strong></span>
-            <span>Centro de custo: <strong>{fatura!.centro_custo || "—"}</strong></span>
+            <CampoInline rotulo="Conta" valor={fatura!.conta_bancaria || ""} opcoes={contasAtivas.map((c) => c.rotulo)} ocupado={trocando}
+              onTroca={(v) => trocarNaFatura("conta_bancaria", v)} dica="Passe o mouse e clique para trocar a conta bancária desta fatura" />
+            <CampoInline rotulo="Centro de custo" valor={fatura!.centro_custo || ""} opcoes={centros.map((c) => c.nome)} ocupado={trocando}
+              onTroca={(v) => trocarNaFatura("centro_custo", v)} dica="Passe o mouse e clique para trocar o centro de custo desta fatura (vale para as próximas notas)" />
             <span>Período: <strong>{fatura!.data_abertura.split("-").reverse().join("/")}{fatura!.data_fechamento_prevista ? ` a ${fatura!.data_fechamento_prevista.split("-").reverse().join("/")}` : " (sem fechamento previsto)"}</strong></span>
-            <span>Responsável: <strong>{responsavel} (você)</strong></span>
+            <CampoInline rotulo="Responsável" valor={responsavelAtual} opcoes={opcoesResponsavel} podeFicarVazio={false} onTroca={(v) => setResponsavelEscolhido(v === responsavel ? "" : v)}
+              dica="Passe o mouse e clique para escolher quem responde por estas notas" />
           </div>
+          {avisoFatura && <p role="status" style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>{avisoFatura}</p>}
+          </>
         ) : (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div><label style={lbl} htmlFor="lote-forn">Fornecedor (único)</label>
@@ -459,7 +603,8 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
             <select id="lote-cc" style={inputStyle} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
               <option value="">Selecione…</option>{centros.map((c) => <option key={c.nome} value={c.nome}>{c.nome}</option>)}</select></div>
           <div><label style={lbl} htmlFor="lote-resp">Responsável</label>
-            <input id="lote-resp" style={{ ...inputStyle, background: "transparent", borderStyle: "dashed" }} value={`${responsavel} (você)`} readOnly /></div>
+            <select id="lote-resp" style={inputStyle} value={responsavelAtual} onChange={(e) => setResponsavelEscolhido(e.target.value === responsavel ? "" : e.target.value)}>
+              {opcoesResponsavel.map((n) => <option key={n} value={n}>{n === responsavel ? `${n} (você)` : n}</option>)}</select></div>
         </div>
         )}
       </div>
@@ -481,13 +626,13 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
               </div>
               <div style={{ padding: "0.7rem 0.8rem" }}>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
-                  <div><label style={lbl}>Tipo de documento</label>
-                    <select style={inputStyle} value={n.tipoDoc} onChange={(e) => setNota(n.uid, { tipoDoc: e.target.value })}>
+                  <div><label style={lbl} htmlFor={`lote-td-${n.uid}`}>Tipo de documento</label>
+                    <select id={`lote-td-${n.uid}`} style={inputStyle} value={n.tipoDoc} onChange={(e) => setNota(n.uid, { tipoDoc: e.target.value })}>
                       {Array.from(new Set([...tiposDoc, n.tipoDoc])).map((t) => <option key={t} value={t}>{t}</option>)}</select></div>
-                  <div><label style={lbl}>Número do documento</label>
-                    <input style={inputStyle} value={n.numero} disabled={n.semNumero} onChange={(e) => setNota(n.uid, { numero: e.target.value })} placeholder={n.semNumero ? "sem número" : "Obrigatório"} /></div>
-                  <div><label style={lbl}>Data (emissão)</label>
-                    <input type="date" style={inputStyle} value={n.data} onChange={(e) => setNota(n.uid, { data: e.target.value })} /></div>
+                  <div><label style={lbl} htmlFor={`lote-nd-${n.uid}`}>Número do documento</label>
+                    <input id={`lote-nd-${n.uid}`} style={inputStyle} value={n.numero} disabled={n.semNumero} onChange={(e) => setNota(n.uid, { numero: e.target.value })} placeholder={n.semNumero ? "sem número" : "Obrigatório"} /></div>
+                  <div><label style={lbl} htmlFor={`lote-dt-${n.uid}`}>Data (emissão)</label>
+                    <input id={`lote-dt-${n.uid}`} type="date" style={inputStyle} value={n.data} onChange={(e) => setNota(n.uid, { data: e.target.value })} /></div>
                   <div><label style={lbl}>Anexo (foto do cupom)</label>
                     {n.anexo ? (
                       <div className="flex items-center justify-between gap-2" style={{ fontSize: "0.76rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.3rem 0.5rem" }}>
@@ -499,33 +644,102 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
                 </div>
 
                 <div style={{ overflowX: "auto" }}>
-                  <div style={{ minWidth: 820 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "96px minmax(170px,1.5fr) minmax(170px,1.4fr) 70px 110px 110px 30px", gap: "0.4rem", fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-muted)", marginBottom: "0.25rem" }}>
+                  <div style={{ minWidth: 900 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: COLUNAS_ITEM, gap: "0.4rem", fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-muted)", marginBottom: "0.25rem" }}>
                       <span>Tipo</span><span>Produto ou serviço</span><span>Conta gerencial</span><span style={{ textAlign: "right" }}>Qtd</span><span style={{ textAlign: "right" }}>Vl. unit.</span><span style={{ textAlign: "right" }}>Total</span><span />
                     </div>
-                    {n.itens.map((it) => (
-                      <div key={it.uid} data-item={it.uid} style={{ display: "grid", gridTemplateColumns: "96px minmax(170px,1.5fr) minmax(170px,1.4fr) 70px 110px 110px 30px", gap: "0.4rem", alignItems: "center", marginBottom: "0.35rem" }}>
-                        <select style={inputStyle} aria-label="Tipo do item" value={it.tipoItem} onChange={(e) => setItem(n.uid, it.uid, { tipoItem: e.target.value as "produto" | "servico", produto: "", qtd: e.target.value === "servico" ? "1" : "" })}>
-                          <option value="produto">produto</option><option value="servico">serviço</option></select>
-                        {it.tipoItem === "produto" ? (
-                          <div data-foco tabIndex={-1}>
-                            <EstoquePicker itens={produtos} value={it.produto} todasFinalidades incluirNaoEstocaveis onChange={(nome) => {
-                              const p = produtos.find((x) => x.nome === nome);
-                              const padrao = p?.conta_gerencial_despesa_padrao ? plano.find((c) => c.codigo === p.conta_gerencial_despesa_padrao) : null;
-                              setItem(n.uid, it.uid, { produto: nome, ...(padrao ? { codigo: padrao.codigo, nome: padrao.nome } : {}) });
-                            }} />
+                    {n.itens.map((it) => {
+                      const est = it.tipoItem === "produto" && it.modo === "estoque" ? produtos.find((p) => p.nome === it.produto) : undefined;
+                      const info = infoUnidadeCompra(est, embalagens.porEstoque, it.apres);
+                      const tipoSel = it.tipoItem === "servico" ? "servico" : it.modo;
+                      const faltaCadastro = naoCadastrado(it);
+                      const aplicarProduto = (nome: string, match?: Produto) => {
+                        const padrao = match?.conta_gerencial_despesa_padrao ? plano.find((c) => c.codigo === match.conta_gerencial_despesa_padrao) : null;
+                        setItem(n.uid, it.uid, { produto: nome, apres: "", modo: "estoque", ...(padrao ? { codigo: padrao.codigo, nome: padrao.nome } : {}) });
+                        garantirEmbalagens(match?.id);
+                      };
+                      return (
+                        <div key={it.uid} data-item={it.uid} style={{ marginBottom: "0.7rem" }}>
+                          <div style={{ display: "grid", gridTemplateColumns: COLUNAS_ITEM, gap: "0.4rem", alignItems: "center" }}>
+                            <select style={inputStyle} aria-label="Tipo do item" value={tipoSel}
+                              title="Do estoque: escolhe um produto cadastrado. Texto livre: qualquer compra, mesmo sem cadastro; se o nome for igual ao de um item do estoque, a entrada é dada nele."
+                              onChange={(e) => {
+                                const v = e.target.value as "estoque" | "livre" | "servico";
+                                if (v === "servico") setItem(n.uid, it.uid, { tipoItem: "servico", modo: "livre", produto: "", qtd: "1", apres: "" });
+                                else setItem(n.uid, it.uid, { tipoItem: "produto", modo: v, apres: "", ...(it.tipoItem === "servico" ? { produto: "", qtd: "" } : {}) });
+                              }}>
+                              {temEstoque && <option value="estoque">produto · estoque</option>}
+                              <option value="livre">produto · texto livre</option>
+                              <option value="servico">serviço</option>
+                            </select>
+                            {it.tipoItem === "servico" ? (
+                              <div data-foco tabIndex={-1}>
+                                <ServicoPicker servicos={servicos.map((nome) => ({ nome }))} value={it.produto} onChange={(v) => setItem(n.uid, it.uid, { produto: v })} />
+                              </div>
+                            ) : it.modo === "estoque" && temEstoque ? (
+                              <div data-foco tabIndex={-1}>
+                                <EstoquePicker itens={produtos} value={it.produto} todasFinalidades incluirNaoEstocaveis
+                                  onChange={(nome) => aplicarProduto(nome, produtos.find((x) => x.nome === nome))} />
+                              </div>
+                            ) : (
+                              <>
+                                <input data-foco list={`lote-prod-${it.uid}`} style={inputStyle} aria-label="Produto (texto livre)" value={it.produto}
+                                  onChange={(e) => setItem(n.uid, it.uid, { produto: e.target.value })} placeholder="ex.: Supermercado, Material de escritório…" />
+                                <datalist id={`lote-prod-${it.uid}`}>{opcoesProdutos.map((nm) => <option key={nm} value={nm} />)}</datalist>
+                              </>
+                            )}
+                            <SeletorContaGerencial contas={plano} tipo="despesa" natureza={it.tipoItem} codigo={it.codigo} nome={it.nome}
+                              onSelect={(codigo, nome) => setItem(n.uid, it.uid, { codigo, nome })} placeholder="Conta (galho mais baixo)…" />
+                            <input style={{ ...inputStyle, textAlign: "right" }} aria-label={info?.emb ? `Quantidade de ${pluralEmbalagem(info.est.unidade_embalagem)}` : "Quantidade"} inputMode="decimal" value={it.qtd} onChange={(e) => setItem(n.uid, it.uid, { qtd: e.target.value })} />
+                            <CampoMoeda style={{ ...inputStyle, textAlign: "right" }} value={it.unit} onChange={(v) => setItem(n.uid, it.uid, { unit: v })} />
+                            <input style={{ ...inputStyle, textAlign: "right", background: "transparent", borderStyle: "dashed", fontVariantNumeric: "tabular-nums" }} aria-label="Valor total do item" readOnly value={formatBRL(totalItem(it))} />
+                            <button type="button" className="btn-ghost" style={{ color: "var(--red)", padding: "0.2rem" }} aria-label="Remover item" onClick={() => removerItem(n.uid, it.uid)}><X size={13} /></button>
                           </div>
-                        ) : (
-                          <input data-foco style={inputStyle} aria-label="Descrição do serviço" value={it.produto} onChange={(e) => setItem(n.uid, it.uid, { produto: e.target.value })} placeholder="ex.: Lavagem" />
-                        )}
-                        <SeletorContaGerencial contas={plano} tipo="despesa" natureza={it.tipoItem} codigo={it.codigo} nome={it.nome}
-                          onSelect={(codigo, nome) => setItem(n.uid, it.uid, { codigo, nome })} placeholder="Conta (galho mais baixo)…" />
-                        <input style={{ ...inputStyle, textAlign: "right" }} aria-label="Quantidade" inputMode="decimal" value={it.qtd} onChange={(e) => setItem(n.uid, it.uid, { qtd: e.target.value })} />
-                        <CampoMoeda style={{ ...inputStyle, textAlign: "right" }} value={it.unit} onChange={(v) => setItem(n.uid, it.uid, { unit: v })} />
-                        <input style={{ ...inputStyle, textAlign: "right", background: "transparent", borderStyle: "dashed", fontVariantNumeric: "tabular-nums" }} aria-label="Valor total do item" readOnly value={formatBRL(totalItem(it))} />
-                        <button type="button" className="btn-ghost" style={{ color: "var(--red)", padding: "0.2rem" }} aria-label="Remover item" onClick={() => removerItem(n.uid, it.uid)}><X size={13} /></button>
-                      </div>
-                    ))}
+
+                          {info && (
+                            <div style={{ marginTop: "0.4rem" }}>
+                              <SeletorUnidadeCompra info={info} apresentacaoId={it.apres} testId={`unidade-compra-${it.uid}`}
+                                onChange={(v) => setItem(n.uid, it.uid, { apres: v })} quantidade={Number(it.qtd.replace(",", ".")) || 0} valorTotal={totalItem(it)} />
+                            </div>
+                          )}
+
+                          {faltaCadastro && (
+                            <div className="flex items-center gap-2" style={{ flexWrap: "wrap", background: "rgba(180,120,0,0.14)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", marginTop: "0.4rem" }}>
+                              <AlertTriangle size={14} style={{ color: "var(--amber)", flexShrink: 0 }} aria-hidden />
+                              <span style={{ fontSize: "0.76rem" }}>
+                                &ldquo;{it.produto}&rdquo; veio do documento lido, mas não está cadastrado no {it.tipoItem === "servico" ? "cadastro de serviços" : "estoque"}.
+                              </span>
+                              <button type="button" className="btn-secondary" style={{ fontSize: "0.74rem" }}
+                                onClick={() => setAdicionar({ nuid: n.uid, iuid: it.uid, modo: it.tipoItem === "servico" ? "servico" : "produto" })}><Plus size={13} /> Cadastrar novo</button>
+                              <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem" }}
+                                onClick={() => setAssociar({ nuid: n.uid, iuid: it.uid, tipoItem: it.tipoItem })}>Associar a existente</button>
+                            </div>
+                          )}
+
+                          <div className="flex items-center gap-3" style={{ flexWrap: "wrap", marginTop: "0.25rem" }}>
+                            <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem" }} title="Cadastrar um novo produto, serviço ou conta gerencial"
+                              onClick={() => setAdicionar({ nuid: n.uid, iuid: it.uid, modo: it.tipoItem === "servico" ? "servico" : temEstoque ? "produto" : "conta" })}>
+                              <Plus size={12} /> Novo produto, serviço ou conta
+                            </button>
+                            {(!faltaCadastro && it.produto.trim() && (it.tipoItem === "servico" || temEstoque)) && (
+                              <button type="button" className="btn-ghost" style={{ fontSize: "0.74rem" }} title="Trocar este item por um produto/serviço que já existe no cadastro"
+                                onClick={() => setAssociar({ nuid: n.uid, iuid: it.uid, tipoItem: it.tipoItem })}>Associar a existente</button>
+                            )}
+                            <details style={{ fontSize: "0.74rem" }}>
+                              <summary style={{ cursor: "pointer", color: "var(--text-muted)" }}>Detalhes do item (descrição, centro de custo)</summary>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2" style={{ minWidth: 320 }}>
+                                <div><label style={lbl} htmlFor={`lote-desc-${it.uid}`}>Descrição (opcional)</label>
+                                  <input id={`lote-desc-${it.uid}`} style={inputStyle} value={it.descricao} onChange={(e) => setItem(n.uid, it.uid, { descricao: e.target.value })} /></div>
+                                <div><label style={lbl} htmlFor={`lote-cci-${it.uid}`}>Centro de custo (só este item)</label>
+                                  <select id={`lote-cci-${it.uid}`} style={inputStyle} value={it.centro} onChange={(e) => setItem(n.uid, it.uid, { centro: e.target.value })}>
+                                    <option value="">— Usar o da {modoFatura ? "fatura" : "nota"} ({centroCusto || "—"}) —</option>
+                                    {centros.map((c) => <option key={c.nome} value={c.nome}>{c.nome}</option>)}</select></div>
+                              </div>
+                            </details>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -650,7 +864,7 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
         <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
           <div className="card" style={{ width: "560px", maxWidth: "95vw" }}>
             <div className="flex items-center gap-2 mb-2"><AlertTriangle size={18} style={{ color: "var(--amber)" }} />
-              <strong>{pendencia.tipo === "divergencia" ? "O total não confere com o fornecedor" : pendencia.tipo === "fora_periodo" ? "Nota fora do período da fatura" : "Notas que parecem já lançadas"}</strong></div>
+              <strong>{pendencia.tipo === "divergencia" ? "O total não confere com o fornecedor" : pendencia.tipo === "fora_periodo" ? "Nota fora do período da fatura" : pendencia.tipo === "nao_cadastrado" ? "Produto/serviço não cadastrado" : "Notas que parecem já lançadas"}</strong></div>
             {pendencia.mensagem && <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "0.7rem" }}>{pendencia.mensagem}</p>}
             {pendencia.fora && (
               <>
@@ -659,6 +873,9 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
                 </ul>
                 <p style={{ fontSize: "0.82rem", marginBottom: "0.7rem" }}>O que fazer com {pendencia.fora.length === 1 ? "essa nota" : "essas notas"}?</p>
               </>
+            )}
+            {pendencia.nomes && (
+              <ul style={{ fontSize: "0.82rem", paddingLeft: "1.2rem", marginBottom: "0.7rem" }}>{pendencia.nomes.map((nm) => <li key={nm}>{nm}</li>)}</ul>
             )}
             {pendencia.itens && (
               <ul style={{ fontSize: "0.8rem", paddingLeft: "1rem", marginBottom: "0.7rem" }}>
@@ -672,14 +889,56 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado }: {
                   <button type="button" className="btn-ghost" disabled={salvando} onClick={() => lancar({ foraPeriodo: "nova" })}>Abrir nova fatura</button>
                   <button type="button" className="btn-ghost" disabled={salvando} onClick={() => lancar({ foraPeriodo: "avulsa" })}>Lançar sem fatura</button>
                 </>
+              ) : pendencia.tipo === "nao_cadastrado" ? (
+                <button type="button" className="btn-primary" disabled={salvando}
+                  onClick={() => { confirmouNaoCadastrado.current = true; setPendencia(null); lancar({ foraPeriodo: escolhaFora.current }); }}><Check size={14} /> Lançar mesmo assim</button>
               ) : (
                 <button type="button" className="btn-primary" disabled={salvando}
                   onClick={() => lancar({ ...(pendencia.tipo === "divergencia" ? { divergencia: true } : { duplicados: true, divergencia: true }), foraPeriodo: escolhaFora.current })}><Check size={14} /> Lançar mesmo assim</button>
               )}
-              <button type="button" className="btn-ghost" onClick={() => { escolhaFora.current = undefined; setPendencia(null); }}><X size={14} /> Voltar e revisar</button>
+              <button type="button" className="btn-ghost" onClick={() => { escolhaFora.current = undefined; if (pendencia.tipo === "nao_cadastrado") confirmouNaoCadastrado.current = false; setPendencia(null); }}><X size={14} /> {pendencia.tipo === "nao_cadastrado" ? "Voltar e cadastrar" : "Voltar e revisar"}</button>
             </div>
           </div>
         </div>
+      )}
+
+      {adicionar && (
+        <ModalAdicionarCadastro tipo="despesa" temEstoque={temEstoque} modoInicial={adicionar.modo}
+          nomeSugerido={notas.find((x) => x.uid === adicionar.nuid)?.itens.find((x) => x.uid === adicionar.iuid)?.produto}
+          onClose={() => setAdicionar(null)}
+          onProduto={(item) => {
+            if (item?.nome) {
+              const padrao = item.conta_gerencial_despesa_padrao ? plano.find((c) => c.codigo === item.conta_gerencial_despesa_padrao) : null;
+              setItem(adicionar.nuid, adicionar.iuid, { tipoItem: "produto", modo: "estoque", produto: item.nome, apres: "", ...(padrao ? { codigo: padrao.codigo, nome: padrao.nome } : {}) });
+            }
+            carregarProdutos();
+            setAdicionar(null);
+          }}
+          onServico={(servico) => {
+            if (servico?.nome) setItem(adicionar.nuid, adicionar.iuid, { tipoItem: "servico", modo: "livre", produto: servico.nome, apres: "", qtd: "1" });
+            carregarServicos();
+            setAdicionar(null);
+          }}
+          onConta={(conta) => {
+            setItem(adicionar.nuid, adicionar.iuid, { codigo: conta.codigo, nome: conta.nome });
+            fetchPlanoContas().then(setPlano).catch(() => {});
+            setAdicionar(null);
+          }} />
+      )}
+
+      {associar && (
+        <ModalAssociarExistente tipoItem={associar.tipoItem === "servico" ? "servico" : "produto"} produtos={produtos} servicos={servicos}
+          onClose={() => setAssociar(null)}
+          onEscolher={(nome) => {
+            if (associar.tipoItem === "servico") setItem(associar.nuid, associar.iuid, { produto: nome });
+            else {
+              const match = produtos.find((p) => p.nome === nome);
+              const padrao = match?.conta_gerencial_despesa_padrao ? plano.find((c) => c.codigo === match.conta_gerencial_despesa_padrao) : null;
+              setItem(associar.nuid, associar.iuid, { produto: nome, modo: "estoque", apres: "", ...(padrao ? { codigo: padrao.codigo, nome: padrao.nome } : {}) });
+              garantirEmbalagens(match?.id);
+            }
+            setAssociar(null);
+          }} />
       )}
 
       {/* Modal para colar XML */}

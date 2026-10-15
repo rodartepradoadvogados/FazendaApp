@@ -1046,7 +1046,7 @@ def registrar_atividade(
     dados: AtividadeIn,
     user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int | None = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Registra atividade do usuário no app (heartbeat).
     

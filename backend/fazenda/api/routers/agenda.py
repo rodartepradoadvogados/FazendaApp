@@ -66,6 +66,7 @@ from fazenda.rules import repasse as _repasse_rules
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
 from fazenda.rules.nomenclatura_protocolo import nome_curto
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
+from fazenda.rules.visita_reprodutiva import data_definida as _visita_data_definida
 from fazenda.rules.parametros import bst_ajuste_ancora_data, get_param, intervalo_bst, minimos_semen_por_tipo, patrimonio_atualizacao_valor_mercado_meses
 from fazenda.rules.patrimonio import proxima_atualizacao_valor_mercado, status_manutencao
 from fazenda.rules.unidades import kg_equivalente
@@ -120,7 +121,7 @@ MODULO_TECNICO_PARA_COMERCIAL = {
 # C): mesma imunidade de "nova_dieta_" (não dá para marcar realizado nem
 # excluir — o alerta é recalculado a cada consulta, a partir do ConsumoSobra
 # vigente do dia, e some sozinho quando a sobra volta à faixa ou o dia passa).
-COMUNICADO_PREFIXOS = ("nova_dieta_", "alerta_sobra_")
+COMUNICADO_PREFIXOS = ("nova_dieta_", "alerta_sobra_", "visita_reprodutiva_")
 
 TIPOS_EVENTO = ["Compra", "Venda", "Serviço", "Outro"]
 
@@ -754,6 +755,7 @@ def calcular_agenda(
         eventos_manuais=manuais,
         dias_contas_a_pagar=dias,
         proxima_visita_bst_real=proxima_visita_bst_real,
+        proxima_visita_definida=_visita_data_definida(data),
         lotes=lotes,
         secagens=secagens,
         pedidos_documentos_vencendo=pedidos_documentos_vencendo,
@@ -785,7 +787,13 @@ def calcular_agenda(
     if fazenda_id is not None:
         query_realizados = query_realizados.where(EventoRealizado.fazenda_id.in_((fazenda_id, None)))
     realizados = {r.evento_id for r in session.exec(query_realizados).all()}
-    eventos = [e for e in result.eventos if e.chave not in realizados]
+    # A visita reprodutiva de hoje/amanhã vira COMUNICADO (abaixo); o item-tarefa do motor só segue valendo quando a
+    # visita já passou (aparece em Atrasados) ou ainda está longe — assim a mesma visita não aparece duas vezes.
+    def _visita_vira_comunicado(e) -> bool:
+        return (e.categoria == "Reprodutivo" and e.descricao.startswith("Visita reprodutiva")
+                and e.data in (data, data + timedelta(days=1)))
+
+    eventos = [e for e in result.eventos if e.chave not in realizados and not _visita_vira_comunicado(e)]
 
     # Compromisso de agenda para o dia da aplicação de BST — antes disso a
     # "próxima aplicação" só existia como número informativo (proxima_visita_bst)
@@ -1290,6 +1298,27 @@ def calcular_agenda(
             "aviso": aviso,
         })
 
+    # Visita reprodutiva: comunicado na véspera ("Amanhã: visita reprodutiva") e no dia ("Visita reprodutiva"), com os
+    # botões "Ver agenda reprodutiva" e "Definir nova data da visita" (ver app/agenda/page.tsx). A data vem da MESMA regra
+    # que a projeção da Agenda Reprodutiva e os Parâmetros leem (rules/visita_reprodutiva.py): definida por você, ou
+    # último serviço + intervalo. Como "nova dieta", é computado a cada consulta — mudou a data, o comunicado acompanha.
+    eventos_visita_repro = []
+    visita_vr = result.proxima_visita_iatf
+    if visita_vr is not None and visita_vr in (data, data + timedelta(days=1)):
+        chave_vr = f"visita_reprodutiva_{visita_vr.isoformat()}_{data.isoformat()}"
+        if chave_vr not in realizados:
+            eventos_visita_repro.append({
+                "id": chave_vr, "data": data.isoformat(), "categoria": "Reprodutivo",  # `data` = dia do aviso (hoje); a visita vai em `data_visita`
+                "descricao": "Visita reprodutiva" if visita_vr == data else "Amanhã: visita reprodutiva",
+                "numero_animal": None,
+                "observacao": ("Data definida por você." if _visita_data_definida(data) == visita_vr
+                               else "Data calculada: último serviço do rebanho + intervalo da visita."),
+                "fonte": "auto", "cor": "var(--dourado)", "ref": visita_vr.isoformat(), "tipo": "visita_reprodutiva",
+                "comunicado": True, "data_visita": visita_vr.isoformat(),
+                "origem_visita": "definida" if _visita_data_definida(data) == visita_vr else "calculada",
+                "intervalo_visita": int(get_param("intervalo_visita_reprodutiva", 21) or 21),
+            })
+
     # Nova dieta: alerta um dia antes ("para amanhã") e no dia ("hoje"), com
     # link para abrir a dieta. A chave inclui a data de referência → o alerta
     # de véspera e o do dia são eventos distintos (marcar um não some o outro).
@@ -1729,7 +1758,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_confirmar_lactacao_inducao + eventos_nova_dieta + eventos_alerta_sobra + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_diaria_trabalho + eventos_empreitada_penultima_etapa + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario + eventos_perda_prenhez_pendente
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_confirmar_lactacao_inducao + eventos_nova_dieta + eventos_alerta_sobra + eventos_visita_repro + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_diaria_trabalho + eventos_empreitada_penultima_etapa + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario + eventos_perda_prenhez_pendente
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis

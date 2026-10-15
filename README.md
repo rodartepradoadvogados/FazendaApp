@@ -113,6 +113,7 @@ Acesse: http://localhost:3000
 | POST | `/upload/{tipo}` | Upload CSV (geral/reprodutivo/estoque/conta_gerencial) |
 | GET | `/agenda/` | Agenda preditiva (param: `?data=YYYY-MM-DD`) |
 | POST | `/agenda/manual` | Adicionar evento manual |
+| PUT | `/reproducao/visita-reprodutiva` | Define (ou limpa, com `{"data": null}`) a data da próxima visita reprodutiva; `data` < hoje → 400 |
 | GET | `/financeiro/dre` | DRE por período e regime |
 | GET | `/financeiro/contas-a-pagar` | Contas próximas |
 
@@ -136,6 +137,21 @@ nasce `aguardando_aprovacao` e sem módulo até o dono da plataforma aprovar o c
 - **Preço**: o preço de cada plano é editável no Painel CowData (`PUT /fazendas/catalogo/precos-plano/{plano}`, tabela `preco_plano`). O preço do contrato **fecha na
   aprovação** (`contrato_fazenda.preco_mensal_fechado`); mudar o catálogo depois não altera contrato já fechado nem a cobrança (Asaas/boleto).
 - **Estoque**: sem o módulo `estoque` contratado, nenhum efeito colateral (Pedidos, lançamentos do Financeiro) grava estoque (`rules/estoque_baixa.py`).
+- **Custo do estoque (15/10/2026)**: toda compra de produto estocável pelo Financeiro grava o **último custo por unidade de estoque** em
+  `Estoque.valor_unitario` (valor unitário da linha ÷ tamanho da embalagem, quando a compra é por embalagem; ou valor total ÷ quantidade).
+  É esse campo que dá custo à aplicação de medicamento (`rules/aplicacao_preventiva.py`). Só atualiza quando a unidade é segura e a compra é a mais recente (não mexe em item de sêmen, nem em item com embalagem padrão comprado sem escolher a embalagem, nem com data anterior à última compra). `LoteEstoque.valor_unitario` guarda o preço de
+  **uma embalagem**, como digitado — nenhum relatório lê esse campo hoje. Política = último custo; média ponderada é decisão pendente.
+- **Lançamento financeiro (15/10/2026)**: despesa por **embalagem** (`apresentacao_id` por item, nº de embalagens × tamanho = unidade do estoque);
+  fornecedor sugere o resto pelo último lançamento dele (só campos vazios); confirmação com **Desfazer** (usa o fluxo de Excluir lançamento) e
+  "Lançar outro igual". **Faturas › Lançar notas** e **Pedidos em aberto › Finalizar pedido** abrem em **gaveta de 75% da tela**;
+  `responsavel` opcional em `LoteIn`/`NotasNaFaturaIn`/`NotasAvulsasIn` (devolvido por nota). Detalhes: `docs/auditoria-faturas-lancar-notas.md`
+  e `docs/mockups/lancamento-financeiro/COMPARACAO_tela_real.md`.
+- **Lançamento financeiro — colunas (15/10/2026)**: as duas colunas de despesa/receita têm **rolagem própria** (classe `.fin-coluna` em `globals.css`; só a partir de `lg`, altura = janela − cabeçalho/barra de salvar; dentro de modal e gaveta sobra menos).
+- **Visita reprodutiva (15/10/2026)**: UMA regra (`rules/visita_reprodutiva.py`) para a data da próxima visita: **data definida por você** (parâmetro `proxima_visita_reprodutiva_data`, enquanto não passou) > último serviço do rebanho + `intervalo_visita_reprodutiva` > nenhuma.
+  Quem lê: motor da Agenda, **comunicado da Agenda** ("Amanhã: visita reprodutiva" na véspera, "Visita reprodutiva" no dia — vem em `GET /agenda/` e `/agenda/painel` (`comunicados`) e, no Dia a dia, em `GET /agenda/dia` (`comunicados_dia`); `data` = dia do aviso, `data_visita` = a visita),
+  a projeção da **Insights › Listas › Agenda Reprodutiva** (nota "Cenário projetado para …" tem a data clicável) e as candidatas de IATF. Dois lugares mudam a data com o mesmo diálogo
+  (`components/reproducao/DefinirDataVisitaModal.tsx` → `PUT /reproducao/visita-reprodutiva`): o comunicado da Agenda ("Definir nova data da visita") e a nota do cenário projetado; também dá para editar em Configurações › Parâmetros.
+  O comunicado leva a `/relatorios?sub=vet` (a página aplica `?sub=vet` depois de ler a permissão `vet`) e, no app do celular, a `/app/menu#agenda-reprodutiva`. Data definida que já passou volta sozinha ao cálculo automático.
 - **Fazenda só-financeiro**: sem Capa/indicadores, a página inicial é a Agenda (`lib/modulos.ts::rotaInicial`). A visibilidade de menu/rotas vem de uma tabela única em `frontend/lib/modulos.ts`.
 - **Preparar financeiro**: `POST /fazendas/{id}/financeiro/preparar` (dono, idempotente) carrega um *rascunho* de plano de contas (validar com o contador) e liga as regras v2 só se a fazenda não tem lançamentos.
 - Detalhes e decisões: `docs/planos-plano-financeiro/` (`PLANO_v2.md`, `CONTRATO_API.md`).

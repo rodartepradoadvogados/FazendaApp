@@ -332,7 +332,9 @@ export default function Pagina() {
   const [tela, setTela] = useState<"news" | "estoque" | "recria" | "protocolos" | "controleAcesso" | "portal" | "assistente" | "aparencia" | "sincronizacao" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(() => {
     if (typeof window === "undefined") return null;
-    return window.location.hash === "#calendario-sanitario" ? "calendario" : null;
+    // Atalhos por hash: o calendário sanitário e, a partir do comunicado "Visita reprodutiva" da Agenda, a Agenda Reprodutiva.
+    if (window.location.hash === "#calendario-sanitario") return "calendario";
+    return window.location.hash === "#agenda-reprodutiva" ? "agendaVet" : null;
   });
   const fila = usePendentes();
   const [confirmarDescartarId, setConfirmarDescartarId] = useState<string | null>(null);
@@ -370,6 +372,7 @@ export default function Pagina() {
   useEffect(() => {
     const abrirSeHashCalendario = () => {
       if (window.location.hash === "#calendario-sanitario") setSub("calendario");
+      if (window.location.hash === "#agenda-reprodutiva") setSub("agendaVet");
     };
 
     abrirSeHashCalendario();

@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<style>
+@font-face{font-family:Archivo;font-weight:400;src:url(fontes/archivo-latin-400-normal.woff2)}
+@font-face{font-family:Archivo;font-weight:600;src:url(fontes/archivo-latin-600-normal.woff2)}
+@font-face{font-family:Archivo;font-weight:700;src:url(fontes/archivo-latin-700-normal.woff2)}
+@font-face{font-family:Archivo;font-weight:800;src:url(fontes/archivo-latin-800-normal.woff2)}
+:root{--marinho:#0E2A47;--prof:#0A1F36;--aco:#416180;--ouro:#8A6D2F;--ouroc:#C9A44C;--bg:#F4F6F9;--borda:#C3CDD8;--texto:#1F2937;--mudo:#6B7280;--verm:#C0392B;--verde:#2E7D52}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1080px;height:1920px;overflow:hidden;background:var(--bg);font-family:Archivo,sans-serif;color:var(--texto);font-variant-numeric:tabular-nums}
+.rot{position:absolute;left:72px;top:262px;font-weight:600;font-size:30px;letter-spacing:.14em;text-transform:uppercase;color:var(--marinho)}
+#titulo{position:absolute;left:72px;top:306px;width:860px;font-weight:800;font-size:100px;line-height:1.02;letter-spacing:-.02em;color:var(--marinho)}
+#titulo em{font-style:normal;color:var(--ouro)}
+#janela{position:absolute;left:72px;top:540px;width:936px;height:420px;overflow:hidden;border:2px solid var(--borda);border-radius:2px;background:#fff;box-shadow:0 1px 4px rgba(20,30,45,.10)}
+#janela::before{content:"";position:absolute;left:0;top:0;bottom:0;width:6px;background:var(--marinho);z-index:5}
+#palco{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0}
+#palco img{position:absolute;left:0;top:0;width:1920px;height:1080px}
+.grifo{position:absolute;border:5px solid var(--ouroc);border-radius:2px;z-index:2}
+.visto{position:absolute;z-index:3;overflow:visible}
+#cursor{position:absolute;width:44px;height:44px;border-radius:50%;background:rgba(201,164,76,.55);border:4px solid var(--ouro);z-index:6}
+.linha{position:absolute;left:72px;display:flex;align-items:baseline;gap:24px}
+.linha.acima{flex-direction:column;align-items:flex-start;gap:4px}
+.num{font-weight:800;letter-spacing:-.02em;display:inline-block;transform-origin:0 100%;line-height:1}
+.lab{font-weight:600;font-size:30px;letter-spacing:.12em;text-transform:uppercase;color:var(--aco)}
+.m .num{color:var(--marinho)} .g .num{color:var(--ouro)} .r .num{color:var(--verm)}
+.g .lab,.r .lab{color:var(--marinho)}
+.regua{position:absolute;left:72px;height:4px;width:720px;background:var(--marinho);transform-origin:0 50%}
+.sub{position:absolute;left:72px;height:8px;background:var(--ouroc);transform-origin:0 50%}
+#rodape{position:absolute;left:72px;top:1496px;display:flex;align-items:center;gap:18px;font-size:26px;color:var(--mudo)}
+#rodape img{width:44px;height:44px}
+</style></head><body>
+<div class="rot" id="rot"></div>
+<div id="titulo"></div>
+<div id="janela"><div id="palco"></div><div id="cursor"></div></div>
+<div id="nums"></div>
+<div id="rodape"><img src="cowdata-simbolo.svg" alt=""><span>Dados ilustrativos · fazenda fictícia</span></div>
+<script>
+// Contrato: window.montar(cfg) monta a cena; window.seek(t) desenha o quadro de t (função pura, sem rAF/timer/acaso).
+const JW = 936, JH = 420, AR = JW / JH;
+const io = t => t < .5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2, oc = t => 1 - Math.pow(1-t, 3), iq = t => t*t;
+const cl = (x,a=0,b=1) => Math.min(b, Math.max(a, x)), seg = (t,a,b) => b === a ? (t >= b ? 1 : 0) : cl((t-a)/(b-a)), lerp = (a,b,k) => a + (b-a)*k;
+const $ = id => document.getElementById(id);
+let C, linhas = [], grifos = [], vistos = [], imgs = [];
+function quique(t, t0, alt, est, ach){
+  const u = t - t0; if (u < -1 || u > .5) return {y:0, sx:1, sy:1};
+  if (u < -.5){ const k = oc(seg(u,-1,-.5)); return {y:-alt*k, sx:1, sy:1}; }
+  if (u < 0){ const k = iq(seg(u,-.5,0)); const s = 1 + est*k; return {y:-alt*(1-k), sx:1/s, sy:s}; }
+  const k = u/.5, a = ach*Math.exp(-5*k)*Math.cos(3*Math.PI*k)*(1-k); const sy = 1 - a; return {y:0, sx:1/sy, sy};
+}
+// interpola chaves [[t, ...valores]] com easeInOutCubic entre chaves consecutivas
+function chave(keys, t){
+  if (t <= keys[0][0]) return keys[0].slice(1);
+  for (let i = 0; i < keys.length - 1; i++){ const a = keys[i], b = keys[i+1];
+    if (t < b[0]){ const k = io(seg(t, a[0], b[0])); return a.slice(1).map((v,j) => lerp(v, b[j+1], k)); } }
+  return keys[keys.length-1].slice(1);
+}
+window.montar = function(cfg){
+  C = cfg;
+  $("rot").textContent = cfg.rotulo; $("titulo").innerHTML = cfg.titulo;
+  const palco = $("palco");
+  imgs = cfg.imgs.map(s => { const im = document.createElement("img"); im.src = s.src; if (s.clip) im.style.clipPath = s.clip; palco.appendChild(im); return {el: im, ...s}; });
+  grifos = (cfg.grifos || []).map(g => { const d = document.createElement("div"); d.className = "grifo"; palco.appendChild(d); return {el: d, ...g}; });
+  vistos = (cfg.vistos || []).map(v => { const ns = "http://www.w3.org/2000/svg", s = document.createElementNS(ns, "svg");
+    s.setAttribute("class","visto"); s.setAttribute("width","44"); s.setAttribute("height","44"); s.setAttribute("viewBox","0 0 44 44");
+    s.style.left = (v.x-22)+"px"; s.style.top = (v.y-22)+"px";
+    const p = document.createElementNS(ns,"path"); p.setAttribute("d","M8 23 L18 33 L37 11"); p.setAttribute("fill","none"); p.setAttribute("stroke", v.cor || "#2E7D52");
+    p.setAttribute("stroke-width","6"); p.setAttribute("stroke-linecap","square"); p.setAttribute("pathLength","1"); p.style.strokeDasharray = "1";
+    s.appendChild(p); palco.appendChild(s); return {el: s, p, ...v}; });
+  const nums = $("nums"); let y = cfg.numTopo || 996;
+  linhas = cfg.numeros.map(n => {
+    if (n.regua){ const r = document.createElement("div"); r.className = "regua"; r.style.top = (y + 2) + "px"; nums.appendChild(r); y += 22; return {...n, reguaEl: r}; }
+    const d = document.createElement("div"); d.className = "linha " + (n.cor || "m") + (n.acima ? " acima" : "");
+    d.style.top = y + "px";
+    d.innerHTML = n.acima ? `<span class="lab">${n.lab}</span><span class="num" style="font-size:${n.size}px">${n.txt}</span>`
+                          : `<span class="num" style="font-size:${n.size}px">${n.txt}</span><span class="lab">${n.lab||""}</span>`;
+    nums.appendChild(d);
+    const alto = n.size * 1.0 + (n.acima ? 40 : 0);
+    let sub = null;
+    if (n.sub){ sub = document.createElement("div"); sub.className = "sub"; sub.style.top = (y + alto + 6) + "px"; sub.style.width = n.sub.w + "px"; nums.appendChild(sub); }
+    const r = {...n, el: d, num: d.querySelector(".num"), subEl: sub}; y += alto + (n.gap ?? 32) + (n.sub ? 14 : 0); return r; });
+  if (cfg.semRodape) $("rodape").style.display = "none";
+  return Promise.all([document.fonts.ready, ...imgs.map(i => i.el.complete ? 1 : new Promise(r => i.el.onload = r))]);
+};
+window.seek = function(t){
+  const [cx, cy, w] = chave(C.cam, t), esc = JW / w, x0 = cx - w/2, y0 = cy - w/AR/2;
+  $("palco").style.transform = `translate(${-x0*esc}px,${-y0*esc}px) scale(${esc})`;
+  for (const im of imgs){
+    if (!im.entra){ im.el.style.transform = "none"; im.el.style.opacity = 1; continue; }
+    const k = oc(seg(t, im.entra[0], im.entra[1])); im.el.style.transform = `translateX(${(1-k)*(im.desde||0)}px)`;
+    im.el.style.opacity = t < im.entra[0] ? 0 : (im.fade ? k : 1);
+  }
+  // cursor
+  const cur = $("cursor"), cv = C.cursor;
+  if (cv){
+    const [px, py] = chave(cv.keys, t), vis = t >= cv.vis[0] && t < cv.vis[1];
+    const ap = Math.min(oc(seg(t, cv.vis[0], cv.vis[0] + .25)), 1 - seg(t, cv.vis[1] - .25, cv.vis[1]));
+    const cq = (cv.cliques || []).reduce((m, tc) => Math.max(m, 1 - Math.abs(t - tc)/.15), 0);
+    cur.style.left = ((px - x0)*esc - 22) + "px"; cur.style.top = ((py - y0)*esc - 22) + "px";
+    cur.style.opacity = vis ? ap : 0; cur.style.transform = `scale(${1 - .25*cl(cq)})`;
+  } else cur.style.opacity = 0;
+  for (const g of grifos){
+    const a = Math.min(oc(seg(t, g.t0, g.t0 + .25)), 1 - seg(t, g.t1 - .4, g.t1));
+    g.el.style.opacity = t >= g.t0 && t < g.t1 ? a : 0;
+    const [x,y,ww,hh] = g.r; g.el.style.left = (x-8)+"px"; g.el.style.top = (y-8)+"px"; g.el.style.width = (ww+16)+"px"; g.el.style.height = (hh+16)+"px";
+    g.el.style.borderWidth = (5/esc) + "px";
+  }
+  for (const v of vistos){
+    const k = io(seg(t, v.t, v.t + .3)) * (1 - io(seg(t, v.sai ?? 99, (v.sai ?? 99) + .3)));
+    v.p.style.strokeDashoffset = 1 - k; v.el.style.opacity = k > 0 ? 1 : 0;
+    const q = quique(t, v.t + .3, 0, 0, .18); v.el.style.transform = `scale(${q.sx},${q.sy})`;
+  }
+  for (const n of linhas){
+    if (n.regua){ const rg = n.refaz ? (t < n.refaz ? 1 : t < n.refaz + .25 ? 1 - io(seg(t, n.refaz, n.refaz + .25)) : io(seg(t, n.refaz + .25, n.refaz + .75))) : 1;
+      n.reguaEl.style.transform = `scaleX(${rg})`; continue; }
+    const q = n.t != null ? quique(t, n.t, n.alt ?? 12, .10, n.ach ?? .14) : {y:0,sx:1,sy:1};
+    n.num.style.transform = `translateY(${q.y}px) scale(${q.sx},${q.sy})`;
+    if (n.sub){ const s = n.sub; const k = t < s.t0 ? 0 : t < s.t0 + .5 ? io(seg(t, s.t0, s.t0 + .5)) : t < s.t1 ? 1 : 1 - io(seg(t, s.t1, s.t1 + .5)); n.subEl.style.transform = `scaleX(${k})`; }
+  }
+};
+</script></body></html>

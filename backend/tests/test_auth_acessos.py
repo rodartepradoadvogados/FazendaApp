@@ -90,3 +90,19 @@ def test_publico_expoe_eh_dono(client):
     token_outro = _login(c, "outro-admin")
     r = c.get("/auth/me", headers={"Authorization": f"Bearer {token_outro}"})
     assert r.json()["eh_dono"] is False
+
+
+def test_batimento_grava_atividade_e_atualiza_ultimo_acesso(client):
+    """POST /auth/atividade (heartbeat) com a dependência de ESCRITA: grava, deduplica e atualiza `ultimo_acesso`."""
+    from fazenda.models import AtividadeApp
+    c, engine = client
+    token = _login(c, "operador")
+    corpo = {"canal": "web", "evento": "aberto", "ocorrido_em": "2026-10-15T10:30:00.000Z"}
+    r = c.post("/auth/atividade", json=corpo, headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True and "deduplicado" not in r.json()
+    r2 = c.post("/auth/atividade", json=corpo, headers={"Authorization": f"Bearer {token}"})
+    assert r2.json().get("deduplicado") is True and r2.json()["id"] == r.json()["id"]
+    with Session(engine) as s:
+        assert len(s.exec(select(AtividadeApp)).all()) == 1
+        assert s.exec(select(Usuario).where(Usuario.username == "operador")).first().ultimo_acesso is not None

@@ -25,6 +25,7 @@ from fazenda.rules.iatf import (
     calcular_necessidade_hormonios,
     selecionar_candidatas_iatf,
 )
+from fazenda.rules.visita_reprodutiva import proxima_visita as _proxima_visita_reprodutiva
 from fazenda.rules.parametros import (
     dias_contas_a_pagar_agenda as _dias_contas_a_pagar_padrao,
     dias_reinseminacao_referencia as _dias_reinseminacao_referencia,
@@ -167,6 +168,9 @@ class AgendaEngine:
         eventos_manuais: list[dict],
         dias_contas_a_pagar: int | None = None,
         proxima_visita_bst_real: date | None = None,
+        # Data da próxima visita reprodutiva DEFINIDA pelo usuário (Parâmetros / Agenda / Agenda Reprodutiva).
+        # Tem prioridade sobre o cálculo (último serviço + intervalo) enquanto não passar — ver rules/visita_reprodutiva.py.
+        proxima_visita_definida: date | None = None,
         lotes: list[dict] | None = None,
         secagens: list[dict] | None = None,
         pedidos_documentos_vencendo: list[dict] | None = None,
@@ -379,10 +383,11 @@ class AgendaEngine:
         # visita reprodutiva — ele simplesmente não aparece (ver Agenda
         # Reprodutiva, que então oferece configurar via janela suspensa).
         datas_servico = [s["data_servico"] for s in servicos if s.get("data_servico")]
+        ultimo_servico_rebanho = max(datas_servico) if datas_servico else None
+        result.proxima_visita_iatf, _origem_visita = _proxima_visita_reprodutiva(
+            ultimo_servico_rebanho, intervalo_visita_reprodutiva, data_referencia, proxima_visita_definida)
         if datas_servico:
             ultimo_servico = max(datas_servico)
-            if intervalo_visita_reprodutiva > 0:
-                result.proxima_visita_iatf = ultimo_servico + timedelta(days=intervalo_visita_reprodutiva)
             result.proxima_visita_bst = ultimo_servico + timedelta(days=intervalo_bst)
         # A data real (última aplicação de BST + 12 dias, avançada até cair no
         # futuro) sempre tem prioridade sobre a estimativa acima — que é só um
@@ -402,7 +407,9 @@ class AgendaEngine:
             eventos.append(AgendaItem(
                 data=result.proxima_visita_iatf,
                 categoria="Reprodutivo",
-                descricao=f"Visita reprodutiva — dia de diagnóstico/IATF do rebanho (a cada {intervalo_visita_reprodutiva} dias)",
+                descricao=("Visita reprodutiva — dia de diagnóstico/IATF do rebanho (data definida por você)"
+                           if _origem_visita == "definida"
+                           else f"Visita reprodutiva — dia de diagnóstico/IATF do rebanho (a cada {intervalo_visita_reprodutiva} dias)"),
             ))
 
         # 1b. RETOQUE — diagnóstico positivo marcado para reconfirmar entra na
