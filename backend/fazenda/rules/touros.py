@@ -340,7 +340,9 @@ def aplicar_atualizacoes_confirmadas(
     linha confirmada com `mapear_para_touro` e delega o upsert (por NAAB,
     nunca apaga) para o MESMO núcleo usado por `importar_touros` — nenhuma
     lógica de upsert duplicada entre os dois caminhos."""
-    confirmados = {(n or "").strip().upper() for n in naabs_confirmados}
+    from fazenda.rules.naab_aiss import normalizar_naab
+
+    confirmados = {normalizar_naab(n) for n in naabs_confirmados}
     linhas_mapeadas: list[dict] = []
     for linha in linhas_aiss:
         mapa = mapear_para_touro(linha)

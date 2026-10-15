@@ -169,7 +169,11 @@ linhas reais do arquivo, validadas campo a campo contra as páginas públicas de
 - **Saídos**: touro cadastrado cujo NAAB **não** aparece mais no AISS baixado — item **só com NAAB
   e nome**, sem prova nenhuma (pedido explícito do dono). "Saiu" **nunca apaga** o touro: por
   decisão do dono (out/2026), quem "saiu" é marcado **INATIVO** (`Touro.ativo = False`, via
-  `naab_aiss.inativar_touros_saidos`) — o sêmen pode circular no mercado depois de a central parar
+  `naab_aiss.inativar_touros_saidos`) — **só** touro que veio do AISS (`fonte = "NAAB AISS"`) e
+  sumiu dele, porque o AISS lista apenas touro ativo nos EUA: touro de outra fonte (ex.: planilha da
+  Alta, vendido fora dos EUA) ausente do AISS vai para `fora_do_aiss`, informativo, e continua ativo.
+  Há trava de segurança (mais de 20% dos ativos do AISS de uma vez → recusa, para o caso de download
+  truncado) — o sêmen pode circular no mercado depois de a central parar
   de comercializar. Cada fazenda pode ativar um inativo para uso próprio (`TouroAtivadoFazenda`:
   comprar, aplicar, selecionar) e a listagem tem "Incluir inativos". Touro que volta ao AISS é
   reativado ao gravar (`reativados` no relatório). Se o dono já decidiu

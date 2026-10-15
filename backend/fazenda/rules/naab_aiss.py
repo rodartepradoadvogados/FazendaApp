@@ -363,6 +363,10 @@ def _extrair_rodada(nome_arquivo: str | None) -> str:
 # ---------------------------------------------------------------------------
 # Comparação semanal (SÓ LEITURA — nunca grava no banco)
 # ---------------------------------------------------------------------------
+# `Touro.fonte` dos touros gravados a partir do arquivo AISS.
+FONTE_AISS = "NAAB AISS"
+
+
 @dataclass
 class RelatorioNaab:
     """Resultado de `comparar_catalogo` — puramente informativo, para o
@@ -372,6 +376,10 @@ class RelatorioNaab:
     total_comparados: int
     alterados: list[dict] = field(default_factory=list)
     saidos: list[dict] = field(default_factory=list)
+    # Ausentes do AISS, mas que NÃO vieram do AISS (ex.: planilha da Alta, sêmen vendido fora dos
+    # EUA): só informativo — o AISS lista apenas touro ativo nos EUA, então ausência aqui não
+    # significa que o touro saiu do mercado. Nunca são inativados automaticamente.
+    fora_do_aiss: list[dict] = field(default_factory=list)
     novos: list[dict] = field(default_factory=list)
     # Touros hoje INATIVOS no banco que voltaram a aparecer no AISS.
     reativados: list[dict] = field(default_factory=list)
@@ -428,6 +436,7 @@ def comparar_catalogo(session: Session, linhas_aiss: list[dict], nome_arquivo: s
     alterados: list[dict] = []
     saidos: list[dict] = []
     reativados: list[dict] = []
+    fora_do_aiss: list[dict] = []
     for naab, touro in existentes_por_naab.items():
         mapa = mapeadas.get(naab)
         if mapa is not None:
@@ -439,6 +448,9 @@ def comparar_catalogo(session: Session, linhas_aiss: list[dict], nome_arquivo: s
         else:
             if MARCA_MANTIDO in (touro.observacao or "") or not getattr(touro, "ativo", True):
                 continue  # decisão já tomada, ou já está inativo — não repete toda semana
+            if touro.fonte != FONTE_AISS:
+                fora_do_aiss.append({"naab": naab, "nome": touro.nome})
+                continue
             saidos.append({"naab": naab, "nome": touro.nome})
 
     novos: list[dict] = [mapa for naab, mapa in mapeadas.items() if naab not in existentes_por_naab]
@@ -451,6 +463,7 @@ def comparar_catalogo(session: Session, linhas_aiss: list[dict], nome_arquivo: s
         saidos=saidos,
         novos=novos,
         reativados=reativados,
+        fora_do_aiss=fora_do_aiss,
     )
 
 
@@ -475,18 +488,37 @@ def marcar_mantido(session: Session, naab: str, motivo: str | None = None) -> No
     session.commit()
 
 
-def inativar_touros_saidos(session: Session, naabs: list[str]) -> dict:
+def inativar_touros_saidos(session: Session, naabs: list[str], forcar: bool = False) -> dict:
     """Marca como INATIVO (`Touro.ativo = False`) os touros que saíram do
     catálogo AISS — o sêmen deles ainda pode circular no mercado, então nada é
     apagado nem escondido das fazendas que o ativarem (`TouroAtivadoFazenda`).
-    Pula touro "mantido por decisão do dono" (`marcar_mantido`) e NAAB que não
-    existe no banco. Devolve `{"inativados": [...], "pulados": [...]}`."""
+
+    Só inativa touro que VEIO do AISS (`fonte == "NAAB AISS"`) e sumiu dele: o
+    AISS lista apenas touro ativo nos EUA, então a ausência de um touro da
+    planilha da Alta (vendido fora dos EUA) não quer dizer que saiu do mercado.
+    Pula também touro "mantido por decisão do dono" (`marcar_mantido`) e NAAB
+    que não existe no banco.
+
+    Trava de segurança: se a lista for maior que 20% dos touros ativos vindos
+    do AISS (mínimo de 50), levanta `ValueError` — um download truncado faria
+    centenas de touros sumirem de uma vez. `forcar=True` ignora a trava.
+
+    Devolve `{"inativados": [...], "pulados": [...]}`."""
+    base_ativos = len(session.exec(
+        select(Touro).where(Touro.fonte == FONTE_AISS, Touro.ativo == True)  # noqa: E712
+    ).all())
+    limite = max(50, int(base_ativos * 0.2))
+    if len(naabs) > limite and not forcar:
+        raise ValueError(
+            f"{len(naabs)} touros marcados para inativar excede a trava de segurança ({limite}). "
+            "Confira se o download do AISS veio completo antes de forçar."
+        )
     inativados: list[str] = []
     pulados: list[str] = []
     for naab in naabs:
         naab_norm = normalizar_naab(naab)
         touro = session.exec(select(Touro).where(Touro.naab == naab_norm)).first()
-        if touro is None or MARCA_MANTIDO in (touro.observacao or ""):
+        if touro is None or touro.fonte != FONTE_AISS or MARCA_MANTIDO in (touro.observacao or ""):
             pulados.append(naab_norm)
             continue
         if touro.ativo:

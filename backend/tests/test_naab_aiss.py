@@ -217,7 +217,7 @@ class TestCompararCatalogo:
         assert relatorio.alterados == []
 
     def test_touro_que_saiu_do_catalogo_aparece_so_com_naab_e_nome(self, session):
-        session.add(Touro(naab="000FORADOCATALOGO", nome="FORADOCATALOGO", tpi=2000))
+        session.add(Touro(naab="000FORADOCATALOGO", nome="FORADOCATALOGO", tpi=2000, fonte="NAAB AISS"))
         session.commit()
 
         relatorio = comparar_catalogo(session, ler_catalogo_aiss(LINHA_A))
@@ -227,7 +227,7 @@ class TestCompararCatalogo:
 
     def test_touro_marcado_como_mantido_nao_repete_em_saidos(self, session):
         session.add(Touro(
-            naab="000FORADOCATALOGO", nome="FORADOCATALOGO", tpi=2000,
+            naab="000FORADOCATALOGO", nome="FORADOCATALOGO", tpi=2000, fonte="NAAB AISS",
             observacao=f"{MARCA_MANTIDO} em 01/01/2026: decisão do dono",
         ))
         session.commit()
@@ -292,7 +292,7 @@ class TestMarcarMantido:
             marcar_mantido(session, "000NAOEXISTE")
 
     def test_depois_de_marcado_nao_aparece_mais_em_saidos(self, session):
-        session.add(Touro(naab="000FORADOCATALOGO", nome="FORADOCATALOGO"))
+        session.add(Touro(naab="000FORADOCATALOGO", nome="FORADOCATALOGO", fonte="NAAB AISS"))
         session.commit()
 
         # Antes de marcar: aparece em "saídos".
@@ -430,7 +430,7 @@ class TestTourosInativosNoCatalogo:
     def test_saido_vira_inativo_e_nao_e_apagado(self, session):
         from fazenda.rules.naab_aiss import inativar_touros_saidos
 
-        session.add(Touro(naab="011HO00001", nome="SAIU"))
+        session.add(Touro(naab="011HO00001", nome="SAIU", fonte="NAAB AISS"))
         session.commit()
         r = inativar_touros_saidos(session, ["11HO00001", "999HO99999"])
         assert r == {"inativados": ["011HO00001"], "pulados": ["999HO99999"]}
@@ -440,14 +440,14 @@ class TestTourosInativosNoCatalogo:
     def test_touro_mantido_pelo_dono_nao_e_inativado(self, session):
         from fazenda.rules.naab_aiss import inativar_touros_saidos
 
-        session.add(Touro(naab="011HO00002", nome="FICA"))
+        session.add(Touro(naab="011HO00002", nome="FICA", fonte="NAAB AISS"))
         session.commit()
         marcar_mantido(session, "011HO00002", motivo="genética boa")
         assert inativar_touros_saidos(session, ["011HO00002"])["inativados"] == []
         assert session.exec(select(Touro).where(Touro.naab == "011HO00002")).first().ativo is True
 
     def test_inativo_nao_reaparece_em_saidos_toda_semana(self, session):
-        session.add(Touro(naab="000FORADOCATALOGO", nome="FORA", ativo=False))
+        session.add(Touro(naab="000FORADOCATALOGO", nome="FORA", ativo=False, fonte="NAAB AISS"))
         session.commit()
         assert comparar_catalogo(session, ler_catalogo_aiss(LINHA_A)).saidos == []
 
@@ -461,3 +461,43 @@ class TestTourosInativosNoCatalogo:
         assert rel.reativados == [{"naab": "200HO13678", "nome": "TIMETRAVELER"}]
         aplicar_atualizacoes_confirmadas(session, ["200HO13678"], linhas, fonte="NAAB AISS", rodada="Ago/2026")
         assert session.exec(select(Touro).where(Touro.naab == "200HO13678")).first().ativo is True
+
+
+class TestForaDoAissNaoInativa:
+    """O AISS só lista touro ativo nos EUA: quem veio de outra fonte (ex.:
+    planilha da Alta, sêmen vendido fora dos EUA) e não está nele NÃO saiu do
+    mercado — fica ativo e só aparece como informação."""
+
+    def test_touro_de_outra_fonte_vai_para_fora_do_aiss_e_nao_para_saidos(self, session):
+        session.add(Touro(naab="011HO99999", nome="ALTA INTERNACIONAL", fonte="Alta Genetics"))
+        session.commit()
+        rel = comparar_catalogo(session, ler_catalogo_aiss(LINHA_A))
+        assert rel.saidos == []
+        assert rel.fora_do_aiss == [{"naab": "011HO99999", "nome": "ALTA INTERNACIONAL"}]
+
+    def test_inativar_pula_touro_de_outra_fonte(self, session):
+        from fazenda.rules.naab_aiss import inativar_touros_saidos
+
+        session.add(Touro(naab="011HO99999", nome="ALTA INTERNACIONAL", fonte="Alta Genetics"))
+        session.commit()
+        r = inativar_touros_saidos(session, ["011HO99999"])
+        assert r == {"inativados": [], "pulados": ["011HO99999"]}
+        assert session.exec(select(Touro).where(Touro.naab == "011HO99999")).first().ativo is True
+
+    def test_trava_de_seguranca_contra_download_truncado(self, session):
+        from fazenda.rules.naab_aiss import inativar_touros_saidos
+
+        for i in range(100):
+            session.add(Touro(naab=f"011HO{i:05d}", nome=f"T{i}", fonte="NAAB AISS"))
+        session.commit()
+        naabs = [f"011HO{i:05d}" for i in range(60)]  # 60 > máx(50, 20% de 100)
+        with pytest.raises(ValueError, match="trava de segurança"):
+            inativar_touros_saidos(session, naabs)
+        assert inativar_touros_saidos(session, naabs, forcar=True)["inativados"] == naabs
+
+    def test_aplicar_confirmados_normaliza_o_naab_informado(self, session):
+        from fazenda.rules.touros import aplicar_atualizacoes_confirmadas
+
+        linhas = ler_catalogo_aiss(LINHA_A)
+        r = aplicar_atualizacoes_confirmadas(session, ["200ho13678"], linhas, fonte="NAAB AISS", rodada="Ago/2026")
+        assert r["criados"] == 1
