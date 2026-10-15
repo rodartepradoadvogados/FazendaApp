@@ -266,6 +266,46 @@ def normalizar_naab(codigo: str) -> str:
     return f"{m.group(1).zfill(3)}{m.group(2)}{m.group(3).zfill(5)}"
 
 
+# Código ISO alfabético → numérico do país, para casar o registro da planilha da
+# Alta (`InterRegNumber`, ex.: HOCAN...) com o do AISS (`Country`, ex.: 124).
+_PAISES_ISO = {
+    "USA": "840", "CAN": "124", "AUS": "036", "CHN": "156", "BRA": "076", "DEU": "276", "NLD": "528",
+    "FRA": "250", "ITA": "380", "DNK": "208", "SWE": "752", "NOR": "578", "GBR": "826", "ESP": "724",
+    "CHE": "756", "NZL": "554", "IRL": "372", "POL": "616", "CZE": "203", "HUN": "348", "ISR": "376",
+    "JPN": "392", "KOR": "410", "MEX": "484", "ARG": "032", "COL": "170", "FIN": "246", "BEL": "056",
+    "AUT": "040", "ZAF": "710", "URY": "858", "CHL": "152", "PRT": "620", "RUS": "643", "UKR": "804",
+    "LTU": "440", "EST": "233", "LVA": "428", "SVK": "703", "SVN": "705", "HRV": "191",
+}
+
+
+def registro_aiss(linha: dict) -> str | None:
+    """Chave de registro do animal numa linha crua do AISS: raça + país + ID
+    (sem zeros à esquerda). É o que NÃO muda quando a central troca o código
+    NAAB do touro (ex.: 151HO04513 → 551HO04513)."""
+    raca = (linha.get("Breed") or "").strip().upper()
+    pais = (linha.get("Country") or "").strip().upper()
+    pais = _PAISES_ISO.get(pais, pais)  # o AISS mistura código numérico e alfabético
+    ident = (linha.get("ID Number") or "").strip().upper().lstrip("0")
+    return f"{raca}{pais}{ident}" if raca and pais and ident else None
+
+
+def registro_do_touro(touro: Touro) -> str | None:
+    """Mesma chave de registro, a partir do `InterRegNumber` guardado em
+    `dados_extra` (planilha da Alta). None se o touro não tiver."""
+    import json
+
+    if not touro.dados_extra:
+        return None
+    try:
+        bruto = dict(json.loads(touro.dados_extra)).get("InterRegNumber")
+    except (ValueError, TypeError):
+        return None
+    m = re.fullmatch(r"([A-Z]{2})(\d{3}|[A-Z]{3})[MF]?([A-Z0-9]+)", (bruto or "").strip().upper())
+    if not m:
+        return None
+    return f"{m.group(1)}{_PAISES_ISO.get(m.group(2), m.group(2))}{m.group(3).lstrip('0')}"
+
+
 def mapear_para_touro(linha: dict) -> dict:
     """Converte uma linha crua do catálogo AISS (chaves = `CAMPOS_AISS`,
     valores = string bruta) para os nomes de campo do modelo `Touro`, já
@@ -383,6 +423,28 @@ class RelatorioNaab:
     novos: list[dict] = field(default_factory=list)
     # Touros hoje INATIVOS no banco que voltaram a aparecer no AISS.
     reativados: list[dict] = field(default_factory=list)
+    # Mesmo animal (mesmo registro) cuja central trocou o código NAAB: {naab, naab_atual, nome}.
+    # Não entram em novos nem em saídos; a atualização vai para o registro que já existe.
+    renomeados: list[dict] = field(default_factory=list)
+
+
+def casar_renomeados(
+    existentes_por_naab: dict[str, Touro], mapas_por_naab: dict[str, dict], registro_por_naab: dict[str, str | None],
+) -> dict[str, str]:
+    """Touros do banco que NÃO estão no AISS pelo NAAB, mas cujo registro
+    (raça + país + ID) aparece no AISS sob OUTRO NAAB que o banco ainda não tem
+    — a central trocou o código do mesmo animal (ex.: 151HO04513 → 551HO04513).
+    Devolve `{naab_no_banco: naab_no_aiss}`."""
+    por_registro = {reg: naab for naab, reg in registro_por_naab.items() if reg}
+    renomeados: dict[str, str] = {}
+    for naab, touro in existentes_por_naab.items():
+        if naab in mapas_por_naab:
+            continue
+        reg = registro_do_touro(touro)
+        atual = por_registro.get(reg) if reg else None
+        if atual and atual not in existentes_por_naab:
+            renomeados[naab] = atual
+    return renomeados
 
 
 def _comparar_campos_curados(touro: Touro, mapa: dict) -> dict:
@@ -424,21 +486,28 @@ def comparar_catalogo(session: Session, linhas_aiss: list[dict], nome_arquivo: s
       lista grande; os dados aqui nunca são truncados.
     """
     mapeadas: dict[str, dict] = {}
+    registros: dict[str, str | None] = {}
     for linha in linhas_aiss:
         mapa = mapear_para_touro(linha)
         naab = mapa.get("naab")
         if naab:
             mapeadas[naab] = mapa
+            registros[naab] = registro_aiss(linha)
 
     existentes = session.exec(select(Touro)).all()
     existentes_por_naab = {t.naab: t for t in existentes}
+    renomeados_map = casar_renomeados(existentes_por_naab, mapeadas, registros)
 
     alterados: list[dict] = []
+    renomeados: list[dict] = []
     saidos: list[dict] = []
     reativados: list[dict] = []
     fora_do_aiss: list[dict] = []
     for naab, touro in existentes_por_naab.items():
         mapa = mapeadas.get(naab)
+        if mapa is None and naab in renomeados_map:
+            mapa = mapeadas[renomeados_map[naab]]
+            renomeados.append({"naab": naab, "naab_atual": renomeados_map[naab], "nome": touro.nome})
         if mapa is not None:
             if not getattr(touro, "ativo", True):
                 reativados.append({"naab": naab, "nome": touro.nome})
@@ -453,7 +522,10 @@ def comparar_catalogo(session: Session, linhas_aiss: list[dict], nome_arquivo: s
                 continue
             saidos.append({"naab": naab, "nome": touro.nome})
 
-    novos: list[dict] = [mapa for naab, mapa in mapeadas.items() if naab not in existentes_por_naab]
+    atuais_renomeados = set(renomeados_map.values())
+    novos: list[dict] = [
+        mapa for naab, mapa in mapeadas.items() if naab not in existentes_por_naab and naab not in atuais_renomeados
+    ]
 
     rodada = _extrair_rodada(nome_arquivo)
     return RelatorioNaab(
@@ -464,6 +536,7 @@ def comparar_catalogo(session: Session, linhas_aiss: list[dict], nome_arquivo: s
         novos=novos,
         reativados=reativados,
         fora_do_aiss=fora_do_aiss,
+        renomeados=renomeados,
     )
 
 

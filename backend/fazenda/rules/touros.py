@@ -340,15 +340,36 @@ def aplicar_atualizacoes_confirmadas(
     linha confirmada com `mapear_para_touro` e delega o upsert (por NAAB,
     nunca apaga) para o MESMO núcleo usado por `importar_touros` — nenhuma
     lógica de upsert duplicada entre os dois caminhos."""
-    from fazenda.rules.naab_aiss import normalizar_naab
+    from fazenda.rules.naab_aiss import casar_renomeados, normalizar_naab, registro_aiss
 
     confirmados = {normalizar_naab(n) for n in naabs_confirmados}
-    linhas_mapeadas: list[dict] = []
+    mapas: dict[str, dict] = {}
+    registros: dict[str, str | None] = {}
     for linha in linhas_aiss:
         mapa = mapear_para_touro(linha)
-        naab = mapa.get("naab")
-        if naab and naab in confirmados:
-            linhas_mapeadas.append(mapa)
+        if mapa.get("naab"):
+            mapas[mapa["naab"]] = mapa
+            registros[mapa["naab"]] = registro_aiss(linha)
+
+    # Mesmo animal com NAAB trocado pela central: a atualização vai para o
+    # registro que já existe (o código que está na palha), nunca cria duplicata.
+    existentes = {t.naab: t for t in session.exec(select(Touro)).all()}
+    renomeados = casar_renomeados(existentes, mapas, registros)
+    destino_por_atual = {atual: antigo for antigo, atual in renomeados.items()}
+
+    linhas_mapeadas: list[dict] = []
+    for naab, mapa in mapas.items():
+        destino = destino_por_atual.get(naab)
+        if naab not in confirmados and destino not in confirmados:
+            continue
+        if destino:
+            mapa = dict(mapa)
+            mapa["naab"] = destino
+            nota = f"NAAB atual (AISS): {naab} — mesmo animal; código antigo mantido por constar no estoque/palha."
+            obs = (existentes[destino].observacao or "").strip()
+            if nota not in obs:
+                mapa["observacao"] = f"{obs}\n{nota}".strip()
+        linhas_mapeadas.append(mapa)
 
     logger.info(
         "Aplicando atualizações NAAB confirmadas pelo dono: %d de %d touro(s) do catálogo AISS, fonte=%s, rodada=%s",

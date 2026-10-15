@@ -501,3 +501,51 @@ class TestForaDoAissNaoInativa:
         linhas = ler_catalogo_aiss(LINHA_A)
         r = aplicar_atualizacoes_confirmadas(session, ["200ho13678"], linhas, fonte="NAAB AISS", rodada="Ago/2026")
         assert r["criados"] == 1
+
+
+class TestMesmoAnimalComNaabTrocado:
+    """A central troca o código NAAB do mesmo animal (151HO… → 551HO…). O
+    registro (raça + país + ID) não muda: a checagem não pode tratar isso como
+    um touro novo mais um touro que saiu."""
+
+    @staticmethod
+    def _touro_antigo(session, linha, naab_antigo="100HO13678"):
+        import json
+        from fazenda.rules.naab_aiss import registro_aiss
+
+        assert registro_aiss(linha)
+        inter = f"{linha['Breed']}{linha['Country'].strip()}M{linha['ID Number'].strip()}"
+        t = Touro(
+            naab=naab_antigo, nome="TIMETRAVELER", fonte="Alta Genetics",
+            dados_extra=json.dumps([["InterRegNumber", inter]]),
+        )
+        session.add(t)
+        session.commit()
+        return t
+
+    def test_comparar_reconhece_o_renomeado_sem_criar_novo_nem_saido(self, session):
+        linha = ler_catalogo_aiss(LINHA_A)[0]
+        self._touro_antigo(session, linha)
+        rel = comparar_catalogo(session, [linha])
+        assert rel.renomeados == [{"naab": "100HO13678", "naab_atual": "200HO13678", "nome": "TIMETRAVELER"}]
+        assert rel.novos == [] and rel.saidos == [] and rel.fora_do_aiss == []
+        assert len(rel.alterados) == 1 and rel.alterados[0]["naab"] == "100HO13678"
+
+    def test_aplicar_atualiza_o_registro_existente_e_nao_duplica(self, session):
+        from fazenda.rules.touros import aplicar_atualizacoes_confirmadas
+
+        linha = ler_catalogo_aiss(LINHA_A)[0]
+        self._touro_antigo(session, linha)
+        aplicar_atualizacoes_confirmadas(session, ["200HO13678"], [linha], fonte="NAAB AISS", rodada="Ago/2026")
+        todos = session.exec(select(Touro)).all()
+        assert [t.naab for t in todos] == ["100HO13678"]
+        assert todos[0].tpi and todos[0].fonte == "NAAB AISS"
+        assert "NAAB atual (AISS): 200HO13678" in todos[0].observacao
+
+    def test_registro_da_planilha_com_pais_alfabetico(self):
+        import json
+        from fazenda.rules.naab_aiss import registro_do_touro
+
+        t = Touro(naab="011HO00001", dados_extra=json.dumps([["InterRegNumber", "HOCANM000015327904"]]))
+        assert registro_do_touro(t) == "HO12415327904"
+        assert registro_do_touro(Touro(naab="x")) is None
