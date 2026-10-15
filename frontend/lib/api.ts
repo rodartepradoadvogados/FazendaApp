@@ -9147,8 +9147,10 @@ export function formatDate(iso: string): string {
   return `${d}/${m}/${y}`;
 }
 
+/** Hoje no calendário LOCAL do usuário (AAAA-MM-DD). Antes era a data UTC: depois das 21h no Brasil já vinha o dia seguinte. */
 export function today(): string {
-  return new Date().toISOString().split("T")[0];
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 export function firstDayOfMonth(): string {

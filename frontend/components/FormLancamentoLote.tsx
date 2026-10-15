@@ -104,17 +104,19 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado, onFaturaAlterada
   const [plano, setPlano] = useState<ContaPlano[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [servicos, setServicos] = useState<string[]>([]);
+  // Só avisa "não cadastrado" depois que o cadastro CARREGOU: lista vazia por falha de rede não prova que o item não existe.
+  const [catalogoCarregado, setCatalogoCarregado] = useState({ produtos: false, servicos: false });
   const [opcoesProdutos, setOpcoesProdutos] = useState<string[]>([]);
   const temEstoque = useMemo(() => moduloContratado("estoque"), []);
   const embalagens = useEmbalagensEstoque();
   const { nomes: nomesPessoas } = usePessoasAtivas();
-  const carregarProdutos = () => fetchEstoqueAtivos().then((d) => setProdutos((d.itens || []).map((i: any) => ({
+  const carregarProdutos = () => fetchEstoqueAtivos().then((d) => { setProdutos((d.itens || []).map((i: any) => ({
     id: i.id ?? null, nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
     estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
     unidade_embalagem: i.unidade_embalagem ?? null, medida_embalagem: i.medida_embalagem ?? null, quantidade_embalagem: i.quantidade_embalagem ?? null,
     conta_gerencial_despesa_padrao: i.conta_gerencial_despesa_padrao ?? null,
-  })))).catch(() => {});
-  const carregarServicos = () => fetchServicosCadastro().then((l: { nome: string; ativo?: boolean }[]) => setServicos((l || []).filter((x) => x.ativo).map((x) => x.nome).sort((a, b) => a.localeCompare(b, "pt-BR")))).catch(() => {});
+  }))); setCatalogoCarregado((c) => ({ ...c, produtos: true })); }).catch(() => {});
+  const carregarServicos = () => fetchServicosCadastro().then((l: { nome: string; ativo?: boolean }[]) => { setServicos((l || []).filter((x) => x.ativo).map((x) => x.nome).sort((a, b) => a.localeCompare(b, "pt-BR"))); setCatalogoCarregado((c) => ({ ...c, servicos: true })); }).catch(() => {});
   useEffect(() => {
     Promise.all([fetchFornecedores().catch(() => []), fetchOpcoesFinanceiro().catch(() => ({} as any))]).then(([cad, op]: any[]) => {
       const nomes = new Set<string>([...(op.fornecedores || []), ...(cad || []).map((f: any) => f.nome)]);
@@ -190,8 +192,8 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado, onFaturaAlterada
   function naoCadastrado(i: Item): boolean {
     if (!i.doc || !i.produto.trim()) return false;
     const nome = i.produto.trim().toLowerCase();
-    if (i.tipoItem === "servico") return !servicos.some((x) => x.toLowerCase() === nome);
-    if (!temEstoque) return false;
+    if (i.tipoItem === "servico") return catalogoCarregado.servicos && !servicos.some((x) => x.toLowerCase() === nome);
+    if (!temEstoque || !catalogoCarregado.produtos) return false;
     return !produtos.some((p) => p.nome.toLowerCase() === nome);
   }
   const [adicionar, setAdicionar] = useState<{ nuid: number; iuid: number; modo: ModoAdicionar } | null>(null);
@@ -530,6 +532,8 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado, onFaturaAlterada
       }
       else if (e.status === 409 && d?.codigo === "duplicadas") setPendencia({ tipo: "duplicadas", mensagem: d.mensagem, itens: d.duplicadas });
       else setErro(e.message || (modoFatura ? "Erro ao lançar as notas." : "Erro ao lançar o lote. Nada foi gravado."));
+      // Falhou depois de confirmar o aviso de "não cadastrado": ao reenviar, o usuário pode ter mudado os itens — pergunta de novo.
+      if (!(e.status === 409)) confirmouNaoCadastrado.current = false;
     } finally { setSalvando(false); }
   }
 
@@ -658,7 +662,7 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado, onFaturaAlterada
                         <div key={it.uid} data-item={it.uid} style={{ marginBottom: "0.7rem" }}>
                           <div style={{ display: "grid", gridTemplateColumns: COLUNAS_ITEM, gap: "0.4rem", alignItems: "center" }}>
                             <select style={inputStyle} aria-label="Tipo do item" value={tipoSel}
-                              title="Do estoque: escolhe um produto cadastrado. Texto livre: qualquer compra, mesmo sem cadastro — não entra no estoque."
+                              title="Do estoque: escolhe um produto cadastrado. Texto livre: qualquer compra, mesmo sem cadastro; se o nome for igual ao de um item do estoque, a entrada é dada nele."
                               onChange={(e) => {
                                 const v = e.target.value as "estoque" | "livre" | "servico";
                                 if (v === "servico") setItem(n.uid, it.uid, { tipoItem: "servico", modo: "livre", produto: "", qtd: "1", apres: "" });
@@ -892,7 +896,7 @@ export function FormLancamentoLote({ onSujo, fatura, onLancado, onFaturaAlterada
                 <button type="button" className="btn-primary" disabled={salvando}
                   onClick={() => lancar({ ...(pendencia.tipo === "divergencia" ? { divergencia: true } : { duplicados: true, divergencia: true }), foraPeriodo: escolhaFora.current })}><Check size={14} /> Lançar mesmo assim</button>
               )}
-              <button type="button" className="btn-ghost" onClick={() => { escolhaFora.current = undefined; confirmouNaoCadastrado.current = false; setPendencia(null); }}><X size={14} /> {pendencia.tipo === "nao_cadastrado" ? "Voltar e cadastrar" : "Voltar e revisar"}</button>
+              <button type="button" className="btn-ghost" onClick={() => { escolhaFora.current = undefined; if (pendencia.tipo === "nao_cadastrado") confirmouNaoCadastrado.current = false; setPendencia(null); }}><X size={14} /> {pendencia.tipo === "nao_cadastrado" ? "Voltar e cadastrar" : "Voltar e revisar"}</button>
             </div>
           </div>
         </div>

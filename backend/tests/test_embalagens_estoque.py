@@ -211,3 +211,23 @@ class TestCustoDaCompraNoEstoque:
         self._lancar(c, {"produto": "Agrovet", "tipo_item": "produto", "quantidade": 100, "valor_total": 70.0})
         with Session(engine) as s:
             assert s.get(Estoque, item_id).valor_unitario == pytest.approx(0.7)
+
+    def test_item_com_embalagem_padrao_comprado_sem_escolher_embalagem_preserva_o_custo_cadastrado(self, client):
+        """Saca de 30 kg cadastrada, estoque em kg, compra de '30 sacas a R$ 120' sem escolher a embalagem: a linha pode estar
+        em sacas, então NÃO se grava R$ 120/kg (seria 30x o custo real) — fica o custo cadastrado."""
+        c, engine = client
+        item_id = _criar_item(c, nome="Ração", unidade="kg", unidade_embalagem="saca", medida_embalagem="kg/saca",
+                              quantidade_embalagem=30, valor_unitario=4.0)
+        self._lancar(c, {"produto": "Ração", "tipo_item": "produto", "quantidade": 30, "valor_unitario": 120.0, "valor_total": 3600.0})
+        with Session(engine) as s:
+            assert s.get(Estoque, item_id).valor_unitario == pytest.approx(4.0)
+
+    def test_compra_com_data_mais_antiga_nao_sobrescreve_o_custo_mais_novo(self, client):
+        c, engine = client
+        item_id = _criar_item(c)
+        nova = {"produto": "Agrovet", "tipo_item": "produto", "quantidade": 100, "valor_total": 70.0}
+        antiga = {"produto": "Agrovet", "tipo_item": "produto", "quantidade": 100, "valor_total": 50.0}
+        assert c.post("/financeiro/lancamentos", json={"tipo": "despesa", "itens": [nova], "data_emissao": "2026-09-20"}).status_code == 201
+        assert c.post("/financeiro/lancamentos", json={"tipo": "despesa", "itens": [antiga], "data_emissao": "2026-09-01"}).status_code == 201
+        with Session(engine) as s:
+            assert s.get(Estoque, item_id).valor_unitario == pytest.approx(0.7)  # a de 20/09 continua valendo

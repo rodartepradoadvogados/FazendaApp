@@ -201,6 +201,8 @@ export default function LancamentosPage() {
   // parecia um lançamento novo qualquer, sem relação com o pedido).
   const [pedidoGaveta, setPedidoGaveta] = useState<{ tipo: "despesa" | "receita"; prefill: PrefillPedido } | null>(null);
   const [pedidosRecarregar, setPedidosRecarregar] = useState(0);
+  // "Sujo" PRÓPRIO da gaveta: o formulário da página (embaixo) continua com o dele — compartilhar o mesmo estado fazia um apagar o aviso do outro.
+  const [sujoPedido, setSujoPedido] = useState(false);
   const [avisoPedido, setAvisoPedido] = useState<string | null>(null);
   useEffect(() => {
     setGavetaAberta(false);
@@ -223,13 +225,13 @@ export default function LancamentosPage() {
   const [modoDespesa, setModoDespesa] = useState<"generico" | "compra_semen" | "simplificado" | "lote" | "faturas">("generico");
   const [modoReceita, setModoReceita] = useState<"generico" | "simplificado">("generico");
   // "Finalizar pedido" (card "Pedidos em aberto"): abre a gaveta com o formulário genérico já preenchido pelo pedido.
-  const finalizarPedidoDespesa = useCallback((p: PrefillPedido) => { setAvisoPedido(null); setSujo(false); setPedidoGaveta({ tipo: "despesa", prefill: p }); }, []);
-  const finalizarPedidoReceita = useCallback((p: PrefillPedido) => { setAvisoPedido(null); setSujo(false); setPedidoGaveta({ tipo: "receita", prefill: p }); }, []);
+  const finalizarPedidoDespesa = useCallback((p: PrefillPedido) => { setAvisoPedido(null); setSujoPedido(false); setPedidoGaveta({ tipo: "despesa", prefill: p }); }, []);
+  const finalizarPedidoReceita = useCallback((p: PrefillPedido) => { setAvisoPedido(null); setSujoPedido(false); setPedidoGaveta({ tipo: "receita", prefill: p }); }, []);
   const fecharPedidoGaveta = useCallback(() => {
-    if (sujo && !window.confirm("Você tem certeza que quer sair dessa página? Os dados não salvos serão perdidos.")) return;
-    setSujo(false);
+    if (sujoPedido && !window.confirm("Você tem certeza que quer sair dessa página? Os dados não salvos serão perdidos.")) return;
+    setSujoPedido(false);
     setPedidoGaveta(null);
-  }, [sujo]);
+  }, [sujoPedido]);
   // Atalho vindo da Agenda (ex.: "Ir para Inseminação" de um lembrete D11 de protocolo IATF).
   useEffect(() => {
     const ir = new URLSearchParams(window.location.search).get("ir");
@@ -608,9 +610,9 @@ export default function LancamentosPage() {
         {pedidoGaveta && (
           <FormFinanceiro
             key={pedidoGaveta.prefill.id}
-            tipo={pedidoGaveta.tipo} responsaveis={nomesResponsaveis} onSujo={setSujo} prefillPedido={pedidoGaveta.prefill}
+            tipo={pedidoGaveta.tipo} responsaveis={nomesResponsaveis} onSujo={setSujoPedido} prefillPedido={pedidoGaveta.prefill}
             onSalvo={(mensagem) => {
-              setSujo(false);
+              setSujoPedido(false);
               setPedidoGaveta(null);
               setAvisoPedido(`${mensagem} Pedido ${pedidoGaveta.prefill.numeroPedido || ""} atualizado.`.replace(/\s+/g, " "));
               setPedidosRecarregar((n) => n + 1);

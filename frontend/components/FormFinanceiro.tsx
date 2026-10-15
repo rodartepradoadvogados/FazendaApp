@@ -669,8 +669,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   }
 
   // Estado mais recente para o que roda DEPOIS de um atraso (a sugestão): nunca sobrescreve o que o usuário digitou nesse meio-tempo.
-  const estadoAtual = useRef({ itens, centroCusto, classificacao, dataVencimento, dataEmissao, parcelado });
-  useEffect(() => { estadoAtual.current = { itens, centroCusto, classificacao, dataVencimento, dataEmissao, parcelado }; });
+  const estadoAtual = useRef({ itens, centroCusto, classificacao, dataVencimento, dataEmissao, parcelado, produtosEstoque, temEstoque, opcoes });
+  useEffect(() => { estadoAtual.current = { itens, centroCusto, classificacao, dataVencimento, dataEmissao, parcelado, produtosEstoque, temEstoque, opcoes }; });
   useEffect(() => {
     const nome = fornecedor.trim();
     if (!nome || prefillPedido) return; // pedido já traz fornecedor e itens
@@ -685,20 +685,20 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         const campos: CampoSugerido[] = [];
         const it0 = agora.itens[0];
         if (it0 && !it0.produto.trim() && !it0.nome_conta_gerencial && !it0.valor_total && s.produto) {
-          const noEstoque = s.tipoItem === "produto" && temEstoque && produtosEstoque.some((p) => p.nome === s.produto);
+          const noEstoque = s.tipoItem === "produto" && agora.temEstoque && agora.produtosEstoque.some((p) => p.nome === s.produto);
           const patch: Partial<Item> = { produto: s.produto, tipo_item: s.tipoItem, modoProduto: noEstoque ? "estoque" : "livre" };
           campos.push({ campo: "produto", rotulo: "produto", aplicado: s.produto });
           if (s.codigoConta && s.nomeConta) { patch.codigo_conta_gerencial = s.codigoConta; patch.nome_conta_gerencial = s.nomeConta; campos.push({ campo: "conta", rotulo: "conta gerencial", aplicado: s.codigoConta }); }
           atualizarItem(0, patch);
-          if (noEstoque) garantirEmbalagens(produtosEstoque.find((p) => p.nome === s.produto)?.id);
+          if (noEstoque) garantirEmbalagens(agora.produtosEstoque.find((p) => p.nome === s.produto)?.id);
         }
-        if (s.centroCusto && agora.centroCusto === CENTRO_CUSTO_PADRAO && s.centroCusto !== CENTRO_CUSTO_PADRAO && opcoes.centros_custo.includes(s.centroCusto)) {
+        if (s.centroCusto && agora.centroCusto === CENTRO_CUSTO_PADRAO && s.centroCusto !== CENTRO_CUSTO_PADRAO && agora.opcoes.centros_custo.includes(s.centroCusto)) {
           setCentroCusto(s.centroCusto); campos.push({ campo: "centro", rotulo: "centro de custo", aplicado: s.centroCusto });
         }
-        if (s.classificacao && !agora.classificacao && opcoes.classificacoes.includes(s.classificacao)) {
+        if (s.classificacao && !agora.classificacao && agora.opcoes.classificacoes.includes(s.classificacao)) {
           setClassificacao(s.classificacao); campos.push({ campo: "classificacao", rotulo: "classificação", aplicado: s.classificacao });
         }
-        if (s.prazoDias != null && !agora.parcelado && !agora.dataVencimento) {
+        if (s.prazoDias != null && s.prazoDias > 0 && !agora.parcelado && !agora.dataVencimento) {
           const venc = somarDias(agora.dataEmissao || today(), s.prazoDias);
           setDataVencimento(venc); campos.push({ campo: "vencimento", rotulo: `vencimento em ${s.prazoDias} dia${s.prazoDias === 1 ? "" : "s"}`, aplicado: venc });
         }
@@ -742,9 +742,12 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
 
   // O bloco "Mais detalhes" fica aberto sozinho enquanto centro de custo, classificação, natureza ou emissão tiverem valor
   // (leitura de documento, sugestão, rascunho) — esconder um valor já preenchido seria esconder o que vai ser gravado.
-  const detalhesNotaPreenchidos = !!(classificacao || naturezaFin || dataEmissao || centroCusto !== CENTRO_CUSTO_PADRAO);
+  const detalhesNotaPreenchidos = !!(classificacao || naturezaFin || dataEmissao || centroCusto !== CENTRO_CUSTO_PADRAO
+    || responsavel || tipoDocumento || numeroDocumento || numeroOsOrcamento || numeroBoleto || dataPrevistaEntrada || dataPedido
+    || Number(desconto) || Number(acrescimo) || pedidoId);
 
   function limpar() {
+    setSugestaoAplicada(null);
     setItens([itemVazio()]);
     setCentroCusto(CENTRO_CUSTO_PADRAO); setClassificacao(""); setNaturezaFin(""); setFornecedor(""); setResponsavel(""); setTipoDocumento("");
     setNumeroDocumento(""); setNumeroOsOrcamento(""); setNumeroBoleto("");
@@ -763,8 +766,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   // cadastro) e perdia tudo. Agora o formulário salva um rascunho sozinho
   // enquanto está preenchido e, ao voltar, oferece retomar ou descartar.
   const RASCUNHO_KEY = `rascunho_financeiro_${tipo}`;
+  // Formulário aberto a partir de um pedido (gaveta "Finalizar pedido") NÃO usa o rascunho: ele coexiste com o da página,
+  // que tem a mesma chave — senão um sobrescreveria/apagaria o outro.
   const [rascunhoPendente, setRascunhoPendente] = useState<any | null>(() => {
-    if (typeof window === "undefined") return null;
+    if (typeof window === "undefined" || prefillPedido) return null;
     try { const raw = localStorage.getItem(RASCUNHO_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
   });
 
@@ -804,6 +809,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   // Salva/limpa o rascunho e avisa o pai enquanto o formulário muda.
   useEffect(() => {
     onSujo?.(sujo);
+    if (prefillPedido) return;
     try {
       if (sujo) localStorage.setItem(RASCUNHO_KEY, JSON.stringify(montarRascunho()));
       else localStorage.removeItem(RASCUNHO_KEY);
@@ -823,6 +829,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   function retomarRascunho() { aplicarRascunho(rascunhoPendente); setRascunhoPendente(null); }
   function descartarRascunho() {
     setRascunhoPendente(null);
+    if (prefillPedido) return;
     try { localStorage.removeItem(RASCUNHO_KEY); } catch { /* ignore */ }
   }
 
@@ -1286,6 +1293,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           .then((candidatos) => setPopupVinculo({ numeroLancamento: r.numero_lancamento, candidatos }))
           .catch(() => {});
       }
+      extratoRef.current = null; // a próxima sugestão já enxerga este lançamento
       setSalvo({
         numero: r.numero_lancamento, idConta: Array.isArray(r.ids) && r.ids.length ? Number(r.ids[0]) : null,
         valor: valorLiquido, fornecedor, tipo, parcelas: numeroParcelasResumo, vencimento: primeiroVencimentoResumo,

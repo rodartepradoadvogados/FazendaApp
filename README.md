@@ -138,7 +138,7 @@ nasce `aguardando_aprovacao` e sem módulo até o dono da plataforma aprovar o c
 - **Estoque**: sem o módulo `estoque` contratado, nenhum efeito colateral (Pedidos, lançamentos do Financeiro) grava estoque (`rules/estoque_baixa.py`).
 - **Custo do estoque (15/10/2026)**: toda compra de produto estocável pelo Financeiro grava o **último custo por unidade de estoque** em
   `Estoque.valor_unitario` (valor unitário da linha ÷ tamanho da embalagem, quando a compra é por embalagem; ou valor total ÷ quantidade).
-  É esse campo que dá custo à aplicação de medicamento (`rules/aplicacao_preventiva.py`). `LoteEstoque.valor_unitario` guarda o preço de
+  É esse campo que dá custo à aplicação de medicamento (`rules/aplicacao_preventiva.py`). Só atualiza quando a unidade é segura e a compra é a mais recente (não mexe em item de sêmen, nem em item com embalagem padrão comprado sem escolher a embalagem, nem com data anterior à última compra). `LoteEstoque.valor_unitario` guarda o preço de
   **uma embalagem**, como digitado — nenhum relatório lê esse campo hoje. Política = último custo; média ponderada é decisão pendente.
 - **Lançamento financeiro (15/10/2026)**: despesa por **embalagem** (`apresentacao_id` por item, nº de embalagens × tamanho = unidade do estoque);
   fornecedor sugere o resto pelo último lançamento dele (só campos vazios); confirmação com **Desfazer** (usa o fluxo de Excluir lançamento) e

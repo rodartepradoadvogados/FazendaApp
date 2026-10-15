@@ -63,3 +63,14 @@ vencimento e pagamento não existem por nota — isso é regra da fatura, não p
 
 Leitor de tela real, Safari/iOS e teclado virtual; importação de **planilha** pela gaveta (só o caminho do XML foi exercitado);
 fatura **fechada/paga** (a gaveta só existe para fatura aberta); `next build` local.
+
+## 6. Revisão independente do código (agente que não construiu)
+
+Leu o diff das duas rodadas (só leitura). Achados **corrigidos**: emissão em branco usava a data **UTC** (às 22h do dia 30 gravava o dia 1º → competência do mês seguinte; `today()` agora é a data local);
+custo da compra sobrescrevia `Estoque.valor_unitario` em casos errados (item com embalagem padrão comprado sem escolher a embalagem, item espelho de sêmen, módulo Estoque ausente, compra com data anterior à última) — agora só atualiza quando a unidade é segura e a compra é a mais recente (testes novos);
+gaveta "Finalizar pedido" dividia rascunho (`localStorage`) e estado "sujo" com o formulário da página — agora tem os próprios; aviso de sugestão reaparecia depois de "Lançar outro igual" — `limpar()` zera; sugestão lia lista de estoque/centros do render antigo — lê o estado atual; prazo 0 não vira sugestão; confirmação de "não cadastrado" no lote não zerava em erro e avisava falso quando o cadastro não carregou; "Mais detalhes" agora abre sozinho para qualquer campo escondido que já tenha valor; tooltip do texto livre corrigido.
+
+**Em aberto (decisão/limite):**
+- A sugestão pelo fornecedor baixa o **extrato inteiro** (`GET /financeiro/lancamentos`, o mesmo do Controle Financeiro) na 1ª vez em cada formulário; um endpoint `ultimo-lancamento?fornecedor=` resolveria, mas o preview não alcança backend novo. O cache é descartado ao salvar.
+- **Desfazer / estorno / edição não revertem** o último custo do estoque (a compra desfeita continua definindo o custo). Política atual = último custo; média ponderada ou reversão são decisões pendentes.
+- `LoteEstoque.valor_unitario` fica sem preço quando o usuário digita só o valor total da linha (o item recebe o custo, o lote não).
