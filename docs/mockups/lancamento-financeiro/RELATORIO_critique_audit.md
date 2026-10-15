@@ -71,7 +71,28 @@ mas a **forma é a de um formulário de ERP** e **fala outro idioma** que as tel
    (litros × preço, retenção, conferência com o controle leiteiro).
 7. **Mês fechado**, **duplicado**, **vale acima de 40%**, **investimento sem bem** viram prevenção visível.
 
-## 6. Fora do escopo do mockup (precisa de decisão ou de código)
+## 6. Rodadas de crítica independente sobre o mockup
+
+Um crítico que **não participou da construção** e não viu este relatório testou o mockup no Chromium
+(1440, 1024, 430, moldura de celular, claro/escuro, 3 paletas, teclado, axe-core).
+
+| Versão | Nota geral | Nielsen | Situação |
+|---|---|---|---|
+| v1.1 | **5,5 / 10** | 25/40 | 5 P0 (conta e preço presos ao item errado, unitário que mente, quantidade implícita = 1, Enter que salva, mês fechado furado) e mais de 30 achados |
+| v2 | **7,5 / 10** | 31/40 | todos os P0 e quase todos os P1 corrigidos; axe 0 violações |
+| v2.1 (final) | corrigidos os 14 resíduos N1–N14 e confirmação ao desfazer nota com parcela paga | — | **não reavaliado pelo crítico**: verificado por 40+ testes automatizados de regressão e axe-core nos dois temas |
+
+**Verificação automatizada da v2.1** (scripts em `scratchpad`, não versionados): 40 asserções passam
+(troca de item, quantidade obrigatória, Enter, meses fechados em 7 campos, duplicado por documento e por mês de
+leite, pagamento agendado, baixa com janela, "lançar outro", fornecedor sem cadastro, parcelas, lote, foco após
+diálogos, alvos ≥44px no toque, barra Salvar acima da navegação); **0 erros de console**; **axe-core 0 violações**
+em 11 cenários × 2 temas e na janela de baixa; contraste medido: texto ≥ 6,2:1, borda de campo 3,1:1 (claro) / 4,5:1
+(escuro), botão ouro 4,9:1 / 6,9:1, placeholder 4,7:1.
+
+**Limites desta verificação:** leitor de tela real, Safari/iOS e teclado virtual **não foram testados**; a fonte
+Archivo não carregou no sandbox (as capturas usam a fonte de reserva); o número 7,5 é da v2, não da v2.1.
+
+## 7. Fora do escopo do mockup (precisa de decisão ou de código)
 
 - Os achados **P1-5/P2-2/P2-3/P2-4** (Campo órfão, overlays, rascunho, UTC) são **correções no código de
   produção** e valem independentemente do redesenho; ver `RELATORIO` do avaliador C na sessão.

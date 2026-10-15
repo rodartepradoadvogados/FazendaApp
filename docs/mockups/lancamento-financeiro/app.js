@@ -93,7 +93,7 @@ function validar(tipo, sub) {
       if (it.produto.trim() && !it.conta && !F.classificarDepois) add(`f-it${i}-conta`, `Escolha para onde o item ${n} vai (ou marque “classificar depois”).`);
       if (it.vale) {
         if (!it.valeFunc) add(`f-it${i}-func`, `Escolha o funcionário do vale (item ${n}).`);
-        else { const v = valeInfo(it); if (v.acima && !it.valeOk) add(`f-it${i}-vale`, `Este vale passa do limite de 40% do salário (${BRL(v.limite)}) de ${it.valeFunc}. Reduza para ${BRL(Math.max(0, v.limite - v.ja))} ou marque “lançar mesmo assim”.`); }
+        else { const v = valeInfo(it); if (v.acima && !it.valeOk) add(`f-it${i}-vale`, `Este vale passa do limite de 40% do salário (${BRL(v.limite)}) de ${it.valeFunc}. Reduza para ${BRL(Math.max(0, v.limite - v.ja))} ${S.perfil === "dono" ? "ou marque “lançar mesmo assim”" : "ou peça ao dono para autorizar"}.`); }
       }
     });
   }
@@ -107,6 +107,7 @@ function validar(tipo, sub) {
   if (c.desc > c.bruto + 0.005) add("f-desc", `O desconto (${BRL(c.desc)}) é maior que a soma dos itens (${BRL(c.bruto)}).`);
   if (c.liq > 1e9) add("f-forn", "Confira os valores: o total passa de R$ 1 bilhão.");
   if (fornPendente(tipo) && sub !== "semen") add("f-forn", `Confirme que “${F.fornecedor.trim()}” é ${tipo === "despesa" ? "um fornecedor novo" : "um cliente novo"} ou escolha um da lista.`);
+  if (tipo === "despesa" && F.criarBem && F.itens.some((i) => i.conta && naturezaAuto(i.conta) === "INVESTIMENTO") && !(parseInt(F.vidaUtil, 10) > 0 && /^\d+$/.test(String(F.vidaUtil).trim()))) add("f-vida", "Informe a vida útil do bem em anos (número inteiro maior que zero).");
   if (F.pago) {
     if (!F.pagoData) add("f-pagodata", `Informe a data do ${R.data}.`);
     else if (mesFechado(F.pagoData)) add("f-pagodata", `A data do ${R.data} (${fmtD(F.pagoData)}) cai em ${mesLong(mesFechado(F.pagoData))}, que está fechado.`);
@@ -167,7 +168,7 @@ function tplLancar() {
   <nav class="modtabs" aria-label="Tipos de lançamento">${MODULOS.map((m) => (m === "Financeiro" ? `<span class="on" aria-current="page">${m}</span>` : `<button type="button" aria-disabled="true" tabindex="-1">${m}</button>`)).join("")}</nav>
   <div class="crumb">Lançar › Financeiro › ${t === "despesa" ? "Despesa" : "Receita"}</div>
   <div class="page">
-    <div class="pagehead"><div><h1>Lançar no financeiro</h1>
+    <div class="pagehead"><div><h1 tabindex="-1">Lançar no financeiro</h1>
       <p>Para gravar basta ${t === "despesa" ? "o fornecedor, o item, o valor e o vencimento" : "o cliente, o item, o valor e o vencimento"}. O resto o sistema sugere pelo histórico — e você confere o efeito ao lado antes de salvar.</p></div></div>
     <div class="tabs" role="tablist" aria-label="Despesa ou receita" data-tabs="tipo">
       <button role="tab" id="tab-despesa" aria-selected="${t === "despesa"}" tabindex="${t === "despesa" ? 0 : -1}" data-act="tipo" data-v="despesa">Despesa<small>vira conta a pagar</small></button>
@@ -204,7 +205,7 @@ function tplTopMsg() {
         <button type="button" class="btn btn-ghost btn-sm" data-act="vincular" data-v="">Não se aplica</button></div></div></div>` : ""}
       ${v && v.estado === "feito" ? `<div class="note ok">${ic("check")}<div>${esc(v.texto)}</div></div>` : ""}
       <div class="row"><a class="btn btn-sec btn-sm" href="#${m.view}" data-nav="${m.view}" data-new="${esc(m.id)}" data-fconta="${m.fconta || "abertas"}">Ver em ${m.view === "pagar" ? "Contas a pagar" : "Contas a receber"}${m.fconta === "pagas" ? (m.view === "pagar" ? " › Pagas" : " › Recebidas") : ""} ${ic("arrow")}</a>
-        <button type="button" class="btn btn-sec btn-sm" data-act="igual">Lançar outro igual</button>
+        ${m.nao_igual ? "" : `<button type="button" class="btn btn-sec btn-sm" data-act="igual">Lançar outro igual</button>`}
         <button type="button" class="btn btn-ghost btn-sm" data-act="desfazer" data-v="${esc(m.id)}">${ic("undo")} Desfazer</button></div></div>`;
   }
   return "";
@@ -297,7 +298,7 @@ function tplMeta(i) {
     else if (!info) bits.push(tipo === "despesa" && estocavel(it.conta) ? `<span class="st warn">${ic("alert")} Fora do cadastro — grava sem baixa de estoque</span>` : `<span>Item avulso · não mexe no estoque</span>`);
   }
   let vale = "";
-  if (tipo === "despesa" && it.conta && it.conta.startsWith("3.07")) vale += `<label class="chk" style="flex-basis:100%"><input type="checkbox" data-act="criar-bem" ${F.criarBem ? "checked" : ""}><span><b>Cadastrar como bem no Patrimônio</b><span class="hint">Para depreciar mês a mês. Sem o bem, o valor sai do resultado e nunca depreciará.</span></span></label>${F.criarBem ? `<div class="g2" style="flex-basis:100%"><div class="fld"><label for="f-vida">Vida útil (anos)</label><input class="in r" id="f-vida" data-b="vidaUtil" inputmode="numeric" value="${esc(F.vidaUtil)}"></div><div class="fld"><label for="f-resid">Valor residual <span class="opt">(opcional)</span></label><div class="pre"><span aria-hidden="true">R$</span><input class="in r" id="f-resid" data-b="residual" data-m inputmode="decimal" value="${esc(F.residual)}"></div></div></div>` : ""}`;
+  if (tipo === "despesa" && it.conta && it.conta.startsWith("3.07")) vale += `<label class="chk" style="flex-basis:100%"><input type="checkbox" data-act="criar-bem" data-i="${i}" ${F.criarBem ? "checked" : ""}><span><b>Cadastrar como bem no Patrimônio</b><span class="hint">Para depreciar mês a mês. Sem o bem, o valor sai do resultado e nunca depreciará.</span></span></label>${F.criarBem ? `<div class="g2" style="flex-basis:100%"><div class="fld"><label for="f-vida">Vida útil (anos)</label><input class="in r" id="f-vida" data-b="vidaUtil" inputmode="numeric" value="${esc(F.vidaUtil)}"></div><div class="fld"><label for="f-resid">Valor residual <span class="opt">(opcional)</span></label><div class="pre"><span aria-hidden="true">R$</span><input class="in r" id="f-resid" data-b="residual" data-m inputmode="decimal" value="${esc(F.residual)}"></div></div></div>` : ""}`;
   if (tipo === "despesa" && it.conta && it.conta.startsWith("3.03.01")) {
     vale = `<label class="chk" style="flex-basis:100%"><input type="checkbox" data-act="vale" data-i="${i}" ${it.vale ? "checked" : ""}><span><b>É vale ou adiantamento de funcionário</b><span class="hint">Fica como vale a receber e não entra no resultado.</span></span></label>`;
     if (it.vale) {
@@ -336,7 +337,7 @@ function tplLeite() {
     </div>
     <div class="calc" aria-live="polite"><div class="l"><span>Bruto (${lt(litros)} L × ${BRL(preco)})</span><span class="num">${BRL(bruto)}</span></div>
       <div class="l"><label for="f-pct">Retenção Funrural/Senar</label><span class="row" style="gap:6px;flex-wrap:nowrap"><input class="in r" style="width:70px;min-height:36px" id="f-pct" data-b="leite.retPct" inputmode="decimal" aria-label="Percentual retido" value="${esc(L.retPct)}"><span aria-hidden="true">%</span><span class="pre"><span aria-hidden="true">R$</span><input class="in r" style="width:116px;min-height:36px" id="f-ret" data-b="ret" data-m inputmode="decimal" aria-label="Valor retido em reais" value="${F.retTocado ? esc(F.desc) : fmtNum(ret)}"></span></span></div>
-      ${F.retTocado ? `<div class="tiny">Retenção ajustada à mão (${lt(parseBR(F.desc) / (bruto || 1) * 100 * 10 / 10).replace(/\..*/, "")}% aprox.). <button type="button" class="link" data-act="ret-auto">Voltar ao ${esc(L.retPct)}% do padrão</button></div>` : `<div class="tiny">Percentual padrão da fazenda (Parâmetros financeiros). Edite se a nota trouxer outro.</div>`}
+      ${F.retTocado ? `<div class="tiny">Retenção ajustada à mão (${(parseBR(F.desc) / (bruto || 1) * 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%). <button type="button" class="link" data-act="ret-auto">Voltar ao ${esc(L.retPct)}% do padrão</button></div>` : `<div class="tiny">Percentual padrão da fazenda (Parâmetros financeiros). Edite se a nota trouxer outro.</div>`}
       <div class="l big"><span>A receber (líquido)</span><span class="num">${BRL(liq)}</span></div></div>
     ${litros ? (ctrl ? `<div class="note ${Math.abs(dif) <= 40 || parcial ? "ok" : "warn"}">${ic(Math.abs(dif) <= 40 || parcial ? "check" : "alert")}<div><b>Controle leiteiro: ${lt(ctrl)} L em ${mesLong(L.mes)}${parcial ? " (mês em andamento)" : ""}.</b> A nota diz ${lt(litros)} L (${dif > 0 ? "+" : ""}${lt(dif)} L).
       ${parcial ? "O mês ainda não fechou: a comparação vale no fim do mês." : Math.abs(dif) <= 40 ? "Dentro da tolerância de 40 L." : "Diferença acima de 40 L: confira a nota antes de salvar."}</div></div>` : "") : ""}</div>`;
@@ -526,7 +527,7 @@ function tplLote() {
       <section class="sec" aria-labelledby="h-ln"><h2 id="h-ln">Notas do lote <span class="tag tiny">${L.notas.length} ${L.notas.length === 1 ? "nota" : "notas"}</span></h2>
         <div id="lote-notas" tabindex="-1">${L.notas.map((n, i) => `<fieldset class="nota"><legend class="sr">Nota ${i + 1}</legend>
           <div class="fld c-doc"><label for="l-doc${i}">Nº do documento</label><input class="in" id="l-doc${i}" data-b="lote.notas.${i}.doc" value="${n.sem ? "" : esc(n.doc)}" placeholder="NF 0000" ${n.sem ? "disabled" : ""}>
-            <label class="chk" style="min-height:30px;padding:2px 0"><input type="checkbox" id="l-sem${i}" data-act="nota-sem" data-i="${i}" ${n.sem ? "checked" : ""}><span>sem número</span></label></div>
+            <label class="chk compact"><input type="checkbox" id="l-sem${i}" data-act="nota-sem" data-i="${i}" ${n.sem ? "checked" : ""}><span>sem número</span></label></div>
           <div class="fld c-emi"><label for="l-emi${i}">Emissão</label><input type="date" class="in" id="l-emi${i}" data-b="lote.notas.${i}.emissao" value="${n.emissao}"></div>
           <div class="fld c-item"><label for="l-item${i}">Item</label><input class="in" id="l-item${i}" data-b="lote.notas.${i}.item" value="${esc(n.item)}" placeholder="O que foi comprado"></div>
           <div class="fld c-conta"><label for="l-conta${i}">Para onde vai</label><select class="in" id="l-conta${i}" data-b="lote.notas.${i}.conta"><option value="">Escolha…</option>${agrupaOpts(CONTAS_DESP, n.conta)}</select></div>
@@ -623,7 +624,7 @@ function tplContas(tipo) {
   const grupos = ["Vencidas", "Até 7 dias", "De 8 a 14 dias", "Depois de 14 dias"], M = S.msgC;
   const linhaAberta = (l) => { const s = sit(l, tipo); return `<tr ${S.novoId === l.id ? 'data-new="1"' : ""}><td><span class="st ${s[0]}">${ic(s[2])} ${s[1]}</span></td><td class="num">${fmtD(l.venc)}</td><td>${esc(l.item)}${l.parcela ? ` <span class="tiny">(${l.parcela})</span>` : ""}<span class="sub"><span class="tag">${esc(l.centro)}</span> ${l.id}${l.doc ? " · " + esc(l.doc) : ""}</span></td><td>${esc(l.forn)}</td><td class="r"><b class="num">${BRL(l.valor)}</b></td><td><button type="button" class="btn btn-pri btn-sm" data-act="baixa" data-v="${l.id}|${l.venc}" aria-label="${tipo === "despesa" ? "Dar baixa" : "Receber"}: ${esc(l.forn)}, ${BRL(l.valor)}">${tipo === "despesa" ? "Dar baixa" : "Receber"}</button></td></tr>`; };
   return `<nav class="modtabs" aria-label="Controle financeiro"><span class="on" aria-current="page">Contas</span><button type="button" aria-disabled="true" tabindex="-1">Resumo</button><button type="button" aria-disabled="true" tabindex="-1">Consultas</button><button type="button" aria-disabled="true" tabindex="-1">Relatórios</button></nav>
-  <div class="page"><div class="pagehead"><div><h1>${R.conta}</h1><p>${tipo === "despesa" ? "Tudo que ainda não foi pago, do mais urgente ao mais distante." : "Tudo que ainda não foi recebido, do mais urgente ao mais distante."} Dê baixa sem sair da lista.</p></div>
+  <div class="page"><div class="pagehead"><div><h1 tabindex="-1">${R.conta}</h1><p>${tipo === "despesa" ? "Tudo que ainda não foi pago, do mais urgente ao mais distante." : "Tudo que ainda não foi recebido, do mais urgente ao mais distante."} Dê baixa sem sair da lista.</p></div>
     <button type="button" class="btn btn-pri" data-act="novo-da-lista" data-v="${tipo}">${ic("plus")} Novo lançamento</button></div>
     ${M ? `<div class="done" role="status" tabindex="-1" id="donecard"><h2>${ic("check")} ${esc(M.titulo)}</h2><p>${M.resumo}</p><div class="row"><button type="button" class="btn btn-ghost btn-sm" data-act="desfaz-baixa" data-v="${esc(M.key)}">${ic("undo")} Desfazer baixa</button></div></div>` : ""}
     <div class="tabs" role="tablist" aria-label="Contas"><button role="tab" aria-selected="${tipo === "despesa"}" data-nav="pagar" id="ct-p">Contas a pagar</button><button role="tab" aria-selected="${tipo === "receita"}" data-nav="receber" id="ct-r">Contas a receber</button></div>
@@ -667,7 +668,7 @@ function confirmarBaixa() {
 function desfazBaixa(key) {
   const [id, venc] = key.split("|"), l = LANC.find((x) => x.id === id && x.venc === venc); if (!l) return;
   if (l.pago) { BANCOS[l.pago.banco].saldo = r2(BANCOS[l.pago.banco].saldo - ROT[l.tipo].sinal * l.pago.valor); l.pago = undefined; } l.agendado = undefined;
-  S.msgC = null; render(); say("Baixa desfeita: a conta voltou para em aberto e o saldo foi restaurado.");
+  S.msgC = null; render(); say("Baixa desfeita: a conta voltou para em aberto e o saldo foi restaurado."); afterAction();
 }
 
 /* ───────────────────────── combobox ───────────────────────── */
@@ -728,7 +729,9 @@ function aplicarForn(nome, novo) {
   S.pedidoAberto = false; $$(".chip[data-act=pick-forn]").forEach((c) => c.setAttribute("aria-pressed", String(c.dataset.v === nome)));
   const ped = $("#pedidos"); if (ped) ped.innerHTML = tplPedidos(tipo);
   paintItens(); paintDatas(); paintPag(); paintRail(); paintFoot();
-  if (f && S.sub[tipo] !== "leite") { const q = $("#f-it0-qtd"); if (q) q.focus(); } else { const q = $(F.itens[0].produto ? "#f-it0-qtd" : "#f-it0-prod"); if (q) q.focus(); }
+  paintFornAviso(); revalidar();
+  if (S.sub[tipo] === "leite") { const q = $("#f-litros"); if (q) q.focus(); }
+  else if (f) { const q = $("#f-it0-qtd"); if (q) q.focus(); } else { const q = $(F.itens[0].produto ? "#f-it0-qtd" : "#f-it0-prod"); if (q) q.focus(); }
   say(f ? `${nome} escolhido. Sugerimos item, conta, prazo e forma pelo último lançamento.` : `${nome} escolhido.`);
 }
 function escolherProduto(i, o) {
@@ -766,13 +769,13 @@ function setPath(path, val) {
 }
 function afterChange(path) {
   const F = F_(), tipo = S.tipo;
-  if (path.startsWith("lote.")) { if (path.startsWith("lote.notas.") && path.endsWith(".valor")) {} paintLote(); return; }
-  if (path.startsWith("semen.")) { if (path === "semen.touro") { const t = TOUROS.find((x) => x.id === S.semen.touro); if (t && !S.semen.preco) S.semen.preco = fmtNum(t.dose); } paintSemen(); return; }
+  if (path.startsWith("lote.")) { paintLote(); revalidar(); return; }
+  if (path.startsWith("semen.")) { if (path === "semen.touro") { const t = TOUROS.find((x) => x.id === S.semen.touro); if (t && !S.semen.preco) S.semen.preco = fmtNum(t.dose); } paintSemen(); revalidar(); return; }
   const m = path.match(/^itens\.(\d+)\.(\w+)$/);
-  if (m) { const i = +m[1], k = m[2]; const it = F.itens[i]; if (k === "unit") it.edit = "unit"; if (k === "total") it.edit = "total"; if (k === "valeFunc") { if (!F.fornecedor.trim() && it.valeFunc) { F.fornecedor = it.valeFunc; F.novoForn = true; const fe = $("#f-forn"); if (fe) fe.value = it.valeFunc; } paintMeta(i); } recalcLinha(i); }
+  if (m) { const i = +m[1], k = m[2]; const it = F.itens[i]; if (k === "unit") it.edit = "unit"; if (k === "total") it.edit = "total"; if (k === "valeFunc") { if (!F.fornecedor.trim() && it.valeFunc) { F.fornecedor = it.valeFunc; F.novoForn = true; const fe = $("#f-forn"); if (fe) fe.value = it.valeFunc; } paintMeta(i); } recalcLinha(i); if (k === "valeFunc") { const sf = $(`#f-it${i}-func`); if (sf) sf.focus(); } }
   if (path === "emissao") { if (!F.vencTocado && FORN[F.fornecedor] && !F.pago) { F.venc = addDays(F.emissao, (fornDe(tipo)[F.fornecedor] || {}).prazo || 30); } if (F.parc && !F.parcEdit) { gerarParcelas(F); const pp = $("#parcs"); if (pp) pp.innerHTML = tplParcelas(); } const h = $("#h-comp"); if (h) h.innerHTML = compHint(); const ve = $("#f-venc"); if (ve && document.activeElement !== ve) ve.value = F.venc; F.lido.emissao = false; paintVencHint(); paintCompField(); }
   if (path === "venc") { F.vencTocado = true; F.sug.venc = ""; paintVencHint(); if (F.parc && !F.parcEdit) { gerarParcelas(F); const p = $("#parcs"); if (p) p.innerHTML = tplParcelas(); } }
-  if (path === "nParc") { const n = Math.max(2, Math.min(36, +F.nParc || 2)); if (+F.nParc === n) { F.parcEdit = false; gerarParcelas(F); const p = $("#parcs"); if (p) p.innerHTML = tplParcelas(); } }
+  if (path === "nParc") { const n = Math.max(2, Math.min(36, Math.round(+F.nParc) || 2)); F.parcEdit = false; F.nParc = n; gerarParcelas(F); const p = $("#parcs"); if (p) p.innerHTML = tplParcelas(); $$(".chip[data-act=nparc]").forEach((c) => c.setAttribute("aria-pressed", String(+c.dataset.v === n))); }
   if (path.startsWith("parcelas.") && false) { F.parcEdit = true; const p = $("#parcs"); const act = document.activeElement; if (path.endsWith(".valor")) { const soma = r2(F.parcelas.reduce((s, x) => s + parseBR(x.valor), 0)); const ft = p && $("tfoot td.r", p); if (ft) { ft.textContent = BRL(soma); ft.style.color = Math.abs(soma - calc(F).liq) > 0.01 ? "var(--bad)" : "inherit"; $("tfoot td:last-child", p).textContent = Math.abs(soma - calc(F).liq) > 0.01 ? "Difere de " + BRL(calc(F).liq) : "Confere com a nota"; } } }
   { const mp = path.match(/^parcelas\.(\d+)\.valor$/); if (mp) { F.parcEdit = true; const i = +mp[1], n = F.parcelas.length; if (i < n - 1) { const outras = F.parcelas.slice(0, n - 1).reduce((s, p) => s + parseBR(p.valor), 0), ult = r2(calc(F).liq - outras); if (ult > 0) { F.parcelas[n - 1].valor = ult; const e = $(`#f-par${n - 1}-valor`); if (e && document.activeElement !== e) e.value = fmtNum(ult); } } paintPfoot(); } else if (path.startsWith("parcelas.")) F.parcEdit = true; }
   if (path === "valorPago") { F.valorPagoTocado = true; paintDif(); }
@@ -819,13 +822,15 @@ function mostrarErros(E) {
 function salvar(modo) {
   const tipo = S.tipo, sub = S.sub[tipo], F = F_();
   if (sub === "leite") syncLeiteSilent();
+  { const cn = fornCanonico(tipo, F.fornecedor); if (cn && cn !== F.fornecedor) { F.fornecedor = cn; const fe = $("#f-forn"); if (fe) fe.value = cn; } }
   const E = validar(tipo, sub);
   if (E.length) { mostrarErros(E); return; }
   const dup = achaDuplicado(F, tipo, sub);
   if (dup && !F.dupOk) { abrirDup(dup, () => { F.dupOk = true; salvar(modo); }, sub); return; }
   gravar(tipo, sub, modo);
 }
-function fornPendente(tipo) { const F = S.F[tipo], n = F.fornecedor.trim(); return !!n && !fornDe(tipo)[n] && !F.novoForn; }
+function fornCanonico(tipo, n) { return Object.keys(fornDe(tipo)).find((k) => norm(k) === norm(n.trim())) || null; }
+function fornPendente(tipo) { const F = S.F[tipo], n = F.fornecedor.trim(); return !!n && !fornCanonico(tipo, n) && !F.novoForn; }
 function paintFornAviso() {
   const e = $("#forn-aviso"); if (!e) return; const tipo = S.tipo, F = F_();
   if (S.sub[tipo] === "lote" || !fornPendente(tipo)) { e.innerHTML = ""; return; }
@@ -857,7 +862,7 @@ function gravar(tipo, sub, modo) {
   S.msg = { kind: "done", id, view: R.view, fconta: F.pago && !agendado ? "pagas" : "abertas", titulo: `Lançamento ${id} gravado`, resumo: `<b>${esc(F.fornecedor)}</b> · ${esc(nomeItem)} · <b class="num">${BRL(c.liq)}</b> · ${quando}.`, avisos, vinculo: ehSan ? { estado: "aberto" } : null };
   S.sessao.unshift({ id, hora: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }), forn: F.fornecedor, item: nomeItem, valor: c.liq, novo: true });
   S.novoId = id; S.ultimo = JSON.parse(JSON.stringify(F)); LS.del(draftKey(tipo));
-  const manter = modo === "outro" ? { centro: F.centro, forma: F.forma, banco: F.banco, sug: { forma: F.sug.forma, banco: F.sug.banco } } : null;
+  const manter = modo === "outro" ? { centro: F.centro, forma: F.forma, banco: F.banco, sug: { forma: F.sug.forma, banco: F.sug.banco }, leite: { ...novoForm(tipo).leite, mes: F.leite.mes, retPct: F.leite.retPct, preco: F.leite.preco } } : null;
   S.F[tipo] = novoForm(tipo); if (manter) Object.assign(S.F[tipo], manter);
   render(); say(`Lançamento ${id} gravado. ${nomeForn}, ${BRL(c.liq)}.`);
   if (modo === "outro") { aplicarForn(nomeForn); window.scrollTo({ top: 0 }); const m = $("#main"); if (m) m.scrollTop = 0; }
@@ -871,7 +876,7 @@ function desfazer(id) {
   const L = LANC.filter((l) => l.id === id), n = L.length; L.forEach(estornaLinha);
   for (let i = LANC.length - 1; i >= 0; i--) if (LANC[i].id === id) LANC.splice(i, 1);
   S.sessao = S.sessao.filter((s) => s.id !== id); if (S.msg && S.msg.id === id) S.msg = null;
-  render(); say(`Lançamento ${id} desfeito: ${n} ${n === 1 ? "conta removida" : "contas removidas"} e saldos restaurados.`);
+  render(); say(`Lançamento ${id} desfeito: ${n} ${n === 1 ? "conta removida" : "contas removidas"} e saldos restaurados.`); afterAction();
 }
 function sitSimples(id) {
   const L = LANC.filter((l) => l.id === id); if (!L.length) return ["mute", "—"]; const tipo = L[0].tipo, ab = L.filter((l) => !l.pago);
@@ -925,17 +930,19 @@ function lerDocumento(nome) {
 }
 
 /* ───────────────────────── eventos ───────────────────────── */
+function afterAction() { requestAnimationFrame(() => { const c = $("#donecard") || $(".pagehead h1"); if (c) { c.setAttribute("tabindex", "-1"); c.focus({ preventScroll: true }); } }); }
 const doc = document;
 doc.addEventListener("toggle", (e) => { if (e.target.matches && e.target.matches("details[data-pedidos]")) S.pedidoAberto = e.target.open; }, true);
 doc.addEventListener("click", (e) => {
   const t = e.target;
   const ci = t.closest(".combo input"); if (ci) { if (ci.getAttribute("aria-expanded") !== "true") { ci.dataset.q = "0"; openCombo(ci); } return; }
   const nav = t.closest("[data-nav]"); if (nav) { e.preventDefault(); if (nav.dataset.new) S.novoId = nav.dataset.new; S.fcontas = nav.dataset.fconta || "abertas"; S.msgC = null; go(nav.dataset.nav); return; }
-  const fo = t.closest("[data-focus]"); if (fo) { e.preventDefault(); const el = $("#" + fo.dataset.focus); if (el) { el.scrollIntoView({ block: "center" }); el.focus(); } return; }
+  const fo = t.closest("[data-focus]"); if (fo) { e.preventDefault(); const el = $("#" + fo.dataset.focus); if (el) { const dt = el.closest("details"); if (dt) dt.open = true; el.scrollIntoView({ block: "center" }); el.focus(); } return; }
   const dl = t.closest("[data-dlg]"); if (dl) {
     const a = dl.dataset.dlg;
-    if (a === "baixa-ok") { if (confirmarBaixa()) fechaDlg(); return; }
-    if (a === "juntar-ok") { const f = window._fat; $$(".fat-c:checked").forEach((c) => { const [id, venc] = c.value.split("|"), l = LANC.find((x) => x.id === id && x.venc === venc); if (l) { l.fatura = f.id; f.n += 1; f.v = r2(f.v + l.valor); } }); fechaDlg(); $("#body").innerHTML = tplFaturas(); say("Notas juntadas à fatura."); return; }
+    if (a === "baixa-ok") { if (confirmarBaixa()) { fechaDlg(); afterAction(); } return; }
+    if (a === "desfazer-ok") { fechaDlg(); desfazer(dl.dataset.v); afterAction(); return; }
+    if (a === "juntar-ok") { const f = window._fat; $$(".fat-c:checked").forEach((c) => { const [id, venc] = c.value.split("|"), l = LANC.find((x) => x.id === id && x.venc === venc); if (l) { l.fatura = f.id; f.n += 1; f.v = r2(f.v + l.valor); } }); fechaDlg(); $("#body").innerHTML = tplFaturas(); say("Notas juntadas à fatura."); afterAction(); return; }
     fechaDlg();
     if (a === "salvar-mesmo" && window._dupOk) window._dupOk(); if (a === "abrir") { S.novoId = dl.dataset.v; go("pagar"); } return;
   }
@@ -971,7 +978,7 @@ doc.addEventListener("click", (e) => {
     case "retomar": { const d = JSON.parse(LS.get(draftKey(tipo)) || "{}"); if (d.F) { S.F[tipo] = { ...novoForm(tipo), ...d.F }; } S.msg = null; render(); say("Rascunho retomado."); break; }
     case "descartar": LS.del(draftKey(tipo)); S.msg = null; paintTop(); say("Rascunho descartado."); break;
     case "igual": { const U = S.ultimo; if (U) { S.F[tipo] = { ...novoForm(tipo), ...JSON.parse(JSON.stringify(U)), emissao: TODAY, doc: "", anexos: [], lido: {}, dupOk: true, pago: false, venc: addDays(TODAY, (fornDe(tipo)[U.fornecedor] || {}).prazo || 30) }; S.msg = null; render(); $("#f-it0-qtd")?.focus(); say("Cópia do último lançamento pronta: ajuste o que mudou."); } break; }
-    case "desfazer": desfazer(v); break;
+    case "desfazer": { const L = LANC.filter((l) => l.id === v), pagas = L.filter((l) => l.pago); if (pagas.length) { dlg(`<div class="dh"><h2 id="dlg-t">${ic("alert")} Desfazer ${esc(v)}?</h2></div><div class="db"><p>${pagas.length === 1 ? "Há 1 parcela já " + (L[0].tipo === "despesa" ? "paga" : "recebida") : "Há " + pagas.length + " parcelas já " + (L[0].tipo === "despesa" ? "pagas" : "recebidas")}, no total de <b class="num">${BRL(pagas.reduce((s, l) => s + l.pago.valor, 0))}</b>. Ao desfazer, a nota inteira some e o saldo do banco volta ao que era antes.</p></div><div class="df"><button type="button" class="btn btn-pri" data-dlg="revisar" autofocus>Manter o lançamento</button><button type="button" class="btn btn-sec" data-dlg="desfazer-ok" data-v="${esc(v)}">Desfazer mesmo assim</button></div>`); } else desfazer(v); break; }
     case "vincular": if (S.msg && S.msg.vinculo) { S.msg.vinculo = { estado: "feito", texto: v ? `Vinculado a: ${v}.` : "Sem vínculo. Você pode vincular depois, em Sanidade." }; paintTop(); say(v ? "Vinculado." : "Sem vínculo."); } break;
     case "pedido": { const p = PEDIDOS.despesa.find((x) => x.id === v); const FF = S.F.despesa; FF.itens[0] = { ...novoItem(), produto: p.item, qtd: String(p.qtd), unit: fmtNum(p.unit), conta: itemInfo("despesa", p.item).conta, sug: "vinda do pedido " + p.id }; FF.pedido = p.id; S.tipo = "despesa"; aplicarForn(p.forn); F_().itens[0].edit = "unit"; recalcLinha(0); paintAdv(); say(`Pedido ${p.id} carregado.`); break; }
     case "cadastrar-item": dlg(`<div class="dh"><h2 id="dlg-t">Cadastrar “${esc(v)}” no estoque</h2></div><div class="db"><p>No produto, abre o cadastro de estoque com o nome já preenchido. Os próximos lançamentos passam a dar entrada no saldo.</p></div><div class="df"><button type="button" class="btn btn-pri" data-dlg="revisar" autofocus>Entendi</button></div>`); break;
@@ -987,14 +994,14 @@ doc.addEventListener("click", (e) => {
     case "forn-novo": F.novoForn = true; paintFornAviso(); paintRail(); revalidar(); break;
     case "nota-sem": { S.lote.notas[i].sem = b.checked; if (b.checked) S.lote.notas[i].doc = ""; $("#body").innerHTML = tplLote(); paintLote(); $(`#l-sem${i}`)?.focus(); break; }
     case "fatura-juntar": abrirJuntar(v); break;
-    case "fatura-fechar": { const f = S.faturas.find((x) => x.id === v); f.st = "Fechada"; S.msg = { kind: "done", id: f.id, view: "pagar", fconta: "abertas", titulo: `${f.id} fechada`, resumo: `${esc(f.forn)} · ${f.n} notas · <b class="num">${BRL(f.v)}</b> · vence ${fmtD(f.venc)}. Ela não aceita mais notas.`, avisos: [], vinculo: null }; $("#body").innerHTML = tplFaturas(); say(`${f.id} fechada.`); break; }
+    case "fatura-fechar": { const f = S.faturas.find((x) => x.id === v); f.st = "Fechada"; S.msg = { kind: "done", id: f.id, view: "pagar", fconta: "abertas", titulo: `${f.id} fechada`, resumo: `${esc(f.forn)} · ${f.n} notas · <b class="num">${BRL(f.v)}</b> · vence ${fmtD(f.venc)}. Ela não aceita mais notas.`, avisos: [], vinculo: null, nao_igual: true }; $("#body").innerHTML = tplFaturas(); say(`${f.id} fechada.`); afterAction(); break; }
     case "ret-auto": F.retTocado = false; syncLeite(); paintRail(); paintFoot(); break;
     case "redistribuir": F.parcEdit = false; gerarParcelas(F); { const p = $("#parcs"); if (p) p.innerHTML = tplParcelas(); } paintRail(); paintFoot(); say("Parcelas redistribuídas igualmente."); break;
   }
 });
 doc.addEventListener("input", (e) => {
   const t = e.target;
-  if (t.matches(".combo input")) { t.dataset.q = "1"; openCombo(t); if (t.closest("[data-combo=forn]") && S.view === "lancar") { if (S.sub[S.tipo] === "lote") S.lote.forn = t.value; else { F_().fornecedor = t.value; F_().novoForn = false; F_().lido.fornecedor = false; const av = $("#forn-aviso"); if (av) av.innerHTML = ""; paintFoot(); paintRail(); revalidar(); } } if (t.closest("[data-combo=prod]")) { const i = +t.closest(".combo").dataset.i; F_().itens[i].produto = t.value; paintMeta(i); paintFoot(); saveDraft(); } return; }
+  if (t.matches(".combo input")) { t.dataset.q = "1"; openCombo(t); if (t.closest("[data-combo=forn]") && S.view === "lancar") { if (S.sub[S.tipo] === "lote") S.lote.forn = t.value; else { F_().fornecedor = t.value; F_().novoForn = false; F_().lido.fornecedor = false; const av = $("#forn-aviso"); if (av) av.innerHTML = ""; paintFoot(); paintRail(); revalidar(); } } if (t.closest("[data-combo=prod]")) { const i = +t.closest(".combo").dataset.i, it = F_().itens[i]; it.produto = t.value; if (it.sug && !itemInfo(S.tipo, t.value)) { it.conta = null; it.sug = ""; if (it.edit !== "total") { it.unit = ""; it.total = ""; } recalcLinha(i); } paintMeta(i); paintFoot(); paintRail(); saveDraft(); revalidar(); } return; }
   if (t.id === "bx-valor" || t.id === "bx-data") { updBaixa(); return; }
   const p = t.dataset.b; if (!p) return;
   let val = t.type === "checkbox" ? t.checked : t.value; if (t.hasAttribute("data-num")) val = +val;
@@ -1011,7 +1018,9 @@ doc.addEventListener("change", (e) => {
 });
 doc.addEventListener("focusout", (e) => {
   const t = e.target;
-  if (t.matches(".combo input")) setTimeout(() => { if (comboCur && comboCur.inp === t) { closeCombo(); } const F = F_(); if (S.view === "lancar" && t.closest("[data-combo=forn]")) paintFornAviso(); t.dataset.q = "0"; }, 140);
+  if (t.matches(".combo input")) setTimeout(() => { if (comboCur && comboCur.inp === t) { closeCombo(); } const F = F_(); if (S.view === "lancar" && t.closest("[data-combo=forn]")) paintFornAviso();
+    if (S.view === "lancar" && t.closest("[data-combo=prod]")) { const i = +t.closest(".combo").dataset.i, it = F_().itens[i], info = it && itemInfo(S.tipo, it.produto); if (info && !it.conta) escolherProduto(i, { v: info.nome }); }
+    t.dataset.q = "0"; }, 140);
   if (t.hasAttribute && t.hasAttribute("data-m0")) { const v = parseBR(t.value); t.value = v ? v.toLocaleString("pt-BR") : ""; try { setPath(t.dataset.b, t.value); } catch (_) {} }
   if (t.hasAttribute && t.hasAttribute("data-m")) { const v = parseBR(t.value); t.value = v ? fmtNum(v) : ""; const p = t.dataset.b; if (p) { try { setPath(p, t.value); } catch (_) {} } }
   if (t.dataset && t.dataset.b === "itens.0.unit") {}
@@ -1024,7 +1033,7 @@ function focusNext(t) {
 }
 doc.addEventListener("keydown", (e) => {
   const t = e.target;
-  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && $("#frm")) { e.preventDefault(); closeCombo(); const sub = S.sub[S.tipo]; if (S.tipo === "despesa" && sub === "lote") salvarLote(); else if (S.tipo === "despesa" && sub === "semen") salvarSemen(); else salvar("fim"); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && $("#frm") && !$("#dlg").open) { e.preventDefault(); closeCombo(); const sub = S.sub[S.tipo]; if (S.tipo === "despesa" && sub === "lote") salvarLote(); else if (S.tipo === "despesa" && sub === "semen") salvarSemen(); else salvar("fim"); return; }
   if (t.matches && t.matches(".combo input")) {
     if (!comboCur && e.key === "ArrowDown") { e.preventDefault(); t.dataset.q = "0"; openCombo(t); moveCombo(1); return; }
     if (comboCur) {
@@ -1076,7 +1085,7 @@ function salvarLote() {
     S.sessao.unshift({ id, hora: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }), forn: L.forn, item: n.item || CONTA_NOME[n.conta], valor: v, novo: true });
   });
   if (L.modo === "pago") BANCOS[L.banco].saldo = r2(BANCOS[L.banco].saldo - tot);
-  S.msg = { kind: "done", id: ids[0], view: "pagar", fconta: L.modo === "pago" ? "pagas" : "abertas", titulo: `Lote gravado: ${ids.length} ${ids.length === 1 ? "nota" : "notas"}`, resumo: `<b>${esc(L.forn)}</b> · ${ids[0]}${ids.length > 1 ? " a " + ids[ids.length - 1] : ""} · <b class="num">${BRL(tot)}</b> numa fatura fechada.`, avisos: [], vinculo: null };
+  S.msg = { kind: "done", id: ids[0], view: "pagar", fconta: L.modo === "pago" ? "pagas" : "abertas", titulo: `Lote gravado: ${ids.length} ${ids.length === 1 ? "nota" : "notas"}`, resumo: `<b>${esc(L.forn)}</b> · ${ids[0]}${ids.length > 1 ? " a " + ids[ids.length - 1] : ""} · <b class="num">${BRL(tot)}</b> numa fatura fechada.`, avisos: [], vinculo: null, nao_igual: true };
   S.novoId = ids[0]; S.lote = novoLote(); render(); say(`Lote gravado com ${ids.length} notas.`); const d = $("#donecard"); if (d) d.focus({ preventScroll: true }); window.scrollTo(0, 0);
 }
 function validarSemen() {
@@ -1093,14 +1102,15 @@ function salvarSemen() {
   const X = S.semen, t = TOUROS.find((x) => x.id === X.touro), tot = r2(parseBR(X.doses) * parseBR(X.preco)), id = proxNumero();
   LANC.push({ id, tipo: "despesa", forn: X.forn, item: `Sêmen — ${t.nome}`, valor: tot, emissao: X.emissao, venc: X.venc, doc: X.doc || "", conta: "3.01.03.01", centro: "Pecuária Leiteira" });
   S.sessao.unshift({ id, hora: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }), forn: X.forn, item: `Sêmen — ${t.nome}`, valor: tot, novo: true });
-  S.msg = { kind: "done", id, view: "pagar", fconta: "abertas", titulo: `Compra ${id} gravada`, resumo: `<b>${esc(X.forn)}</b> · ${parseBR(X.doses)} doses de ${esc(t.nome)} · <b class="num">${BRL(tot)}</b> · vence ${fmtD(X.venc)}.`, avisos: [], vinculo: null };
+  S.msg = { kind: "done", id, view: "pagar", fconta: "abertas", titulo: `Compra ${id} gravada`, resumo: `<b>${esc(X.forn)}</b> · ${parseBR(X.doses)} doses de ${esc(t.nome)} · <b class="num">${BRL(tot)}</b> · vence ${fmtD(X.venc)}.`, avisos: [], vinculo: null, nao_igual: true };
   S.novoId = id; S.semen = novoSemen(); render(); say("Compra de sêmen gravada. As doses entraram no estoque."); const d = $("#donecard"); if (d) d.focus({ preventScroll: true });
 }
 
 /* ───────────────────────── barra do mockup ───────────────────────── */
+function setTema(t) { document.documentElement.dataset.tema = t; document.documentElement.style.colorScheme = t === "escuro" ? "dark" : "light"; setAttrBtns(".mockbar [data-tema]", "tema", t); }
 function setAttrBtns(sel, attr, val) { $$(sel).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset[attr] === val))); }
 $$(".mockbar [data-dev]").forEach((b) => b.addEventListener("click", () => { document.body.dataset.device = b.dataset.dev; setAttrBtns(".mockbar [data-dev]", "dev", b.dataset.dev); }));
-$$(".mockbar [data-theme]").forEach((b) => b.addEventListener("click", () => { document.documentElement.dataset.theme = b.dataset.theme; setAttrBtns(".mockbar [data-theme]", "theme", b.dataset.theme); }));
+$$(".mockbar [data-tema]").forEach((b) => b.addEventListener("click", () => setTema(b.dataset.tema)));
 $$(".mockbar [data-perfil]").forEach((b) => b.addEventListener("click", () => { S.perfil = b.dataset.perfil; setAttrBtns(".mockbar [data-perfil]", "perfil", S.perfil); if (S.view === "lancar") { const F = F_(); F.itens.forEach((_, i) => paintMeta(i)); revalidar(); } }));
 $$(".mockbar [data-pal]").forEach((b) => b.addEventListener("click", () => { document.documentElement.dataset.pal = b.dataset.pal; setAttrBtns(".mockbar [data-pal]", "pal", b.dataset.pal); }));
 if (innerWidth <= 520) { document.body.dataset.device = "mobile"; setAttrBtns(".mockbar [data-dev]", "dev", "mobile"); document.body.classList.add("real-phone"); }
@@ -1141,3 +1151,11 @@ if (location.hash === "#pagar") go("pagar", { noFocus: true });
 
 /* altura real da barra do mockup (ela pode quebrar em duas linhas) */
 (function () { const mb = $(".mockbar"); const set = () => document.documentElement.style.setProperty("--mbh", mb.offsetHeight + "px"); set(); if (window.ResizeObserver) new ResizeObserver(set).observe(mb); })();
+
+/* tema: segue o visualizador (data-theme="dark|light") ou o sistema; os botões do mockup podem sobrescrever */
+(function () {
+  const root = document.documentElement, qual = () => (root.dataset.theme === "dark" || (!root.dataset.theme && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches)) ? "escuro" : "claro";
+  setTema(qual());
+  if (window.MutationObserver) new MutationObserver(() => setTema(qual())).observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+  if (window.matchMedia) { const m = matchMedia("(prefers-color-scheme: dark)"); (m.addEventListener ? m.addEventListener.bind(m, "change") : m.addListener.bind(m))(() => { if (!root.dataset.theme) setTema(qual()); }); }
+})();
