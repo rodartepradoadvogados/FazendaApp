@@ -985,6 +985,16 @@ html, body { max-width: 100%; overflow-x: hidden; }
 /* Cartões com tabela larga ganham rolagem horizontal própria. */
 .card { overflow-x: auto; }
 
+/* Lançamento financeiro (despesa/receita): duas colunas, cada uma com a PRÓPRIA barra de rolagem.
+   A altura acompanha a janela (a coluna cabe na tela quando a página está rolada até ela) e só vale onde
+   há de fato duas colunas (lg+); em tela estreita a coluna é uma só e quem rola é a página. Dentro de
+   modal e de gaveta sobra menos altura (cabeçalho, aviso, barra de salvar). */
+@media (min-width: 1024px) {
+  .fin-coluna { max-height: calc(100vh - 11rem); overflow-y: auto; padding-right: 0.4rem; scrollbar-gutter: stable; }
+  [role="dialog"] .fin-coluna { max-height: calc(85vh - 11rem); }
+  .gaveta-lancamento-corpo .fin-coluna { max-height: calc(100vh - 17rem); }
+}
+
 @media (max-width: 767px) {
   /* Menos respiro nas bordas no celular. */
   main .p-6 { padding: 1rem; }

@@ -3918,6 +3918,20 @@ export async function fetchTransferenciaLoteAutomatica(): Promise<boolean> {
   return (await res.json()).automatica === true;
 }
 
+/**
+ * Data da próxima visita reprodutiva DEFINIDA pelo usuário (`null` = remove a definição e volta o cálculo automático:
+ * último serviço + intervalo). É a data única que a Agenda (comunicado), a Agenda Reprodutiva (projeção), as candidatas
+ * projetadas de IATF e Configurações > Parâmetros leem — ver backend rules/visita_reprodutiva.py.
+ */
+export type VisitaReprodutivaResposta = { ok: boolean; proxima_visita_reprodutiva: string | null; origem_visita_reprodutiva: "definida" | "calculada" | null; definida: string | null };
+export async function definirVisitaReprodutiva(data: string | null): Promise<VisitaReprodutivaResposta> {
+  const res = await authFetch(`${API}/reproducao/visita-reprodutiva`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao definir a data da visita reprodutiva"); }
+  return res.json();
+}
+
 export async function atualizarParametro(chave: string, valor: number | string | boolean) {
   const res = await authFetch(`${API}/parametros/${chave}`, {
     method: "PUT",

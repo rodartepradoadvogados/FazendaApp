@@ -1390,8 +1390,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           lançamento (editável) + contexto/histórico do fornecedor (só
           leitura); direita = produtos/serviços, pagamento e anexos — mesmo
           padrão já usado em Alimentação > Nova dieta. */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+      <div className="fin-coluna">
 
       {/* Dados da nota (uma vez por lançamento) */}
       <div className="card" style={{ background: "var(--fin-nota-bg)" }}>
@@ -1682,7 +1682,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       )}
 
       </div>
-      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
+      <div className="fin-coluna">
 
       {/* Anexo e leitura automática — UM local só pra qualquer documento
           deste lançamento (nota, boleto, orçamento, comprovante de

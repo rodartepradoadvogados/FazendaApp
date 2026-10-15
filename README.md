@@ -113,6 +113,7 @@ Acesse: http://localhost:3000
 | POST | `/upload/{tipo}` | Upload CSV (geral/reprodutivo/estoque/conta_gerencial) |
 | GET | `/agenda/` | Agenda preditiva (param: `?data=YYYY-MM-DD`) |
 | POST | `/agenda/manual` | Adicionar evento manual |
+| PUT | `/reproducao/visita-reprodutiva` | Define (ou limpa, com `{"data": null}`) a data da próxima visita reprodutiva; `data` < hoje → 400 |
 | GET | `/financeiro/dre` | DRE por período e regime |
 | GET | `/financeiro/contas-a-pagar` | Contas próximas |
 
@@ -145,6 +146,12 @@ nasce `aguardando_aprovacao` e sem módulo até o dono da plataforma aprovar o c
   "Lançar outro igual". **Faturas › Lançar notas** e **Pedidos em aberto › Finalizar pedido** abrem em **gaveta de 75% da tela**;
   `responsavel` opcional em `LoteIn`/`NotasNaFaturaIn`/`NotasAvulsasIn` (devolvido por nota). Detalhes: `docs/auditoria-faturas-lancar-notas.md`
   e `docs/mockups/lancamento-financeiro/COMPARACAO_tela_real.md`.
+- **Lançamento financeiro — colunas (15/10/2026)**: as duas colunas de despesa/receita têm **rolagem própria** (classe `.fin-coluna` em `globals.css`; só a partir de `lg`, altura = janela − cabeçalho/barra de salvar; dentro de modal e gaveta sobra menos).
+- **Visita reprodutiva (15/10/2026)**: UMA regra (`rules/visita_reprodutiva.py`) para a data da próxima visita: **data definida por você** (parâmetro `proxima_visita_reprodutiva_data`, enquanto não passou) > último serviço do rebanho + `intervalo_visita_reprodutiva` > nenhuma.
+  Quem lê: motor da Agenda, **comunicado da Agenda** ("Amanhã: visita reprodutiva" na véspera, "Visita reprodutiva" no dia — vem em `GET /agenda/` e `/agenda/painel` (`comunicados`) e, no Dia a dia, em `GET /agenda/dia` (`comunicados_dia`); `data` = dia do aviso, `data_visita` = a visita),
+  a projeção da **Insights › Listas › Agenda Reprodutiva** (nota "Cenário projetado para …" tem a data clicável) e as candidatas de IATF. Dois lugares mudam a data com o mesmo diálogo
+  (`components/reproducao/DefinirDataVisitaModal.tsx` → `PUT /reproducao/visita-reprodutiva`): o comunicado da Agenda ("Definir nova data da visita") e a nota do cenário projetado; também dá para editar em Configurações › Parâmetros.
+  O comunicado leva a `/relatorios?sub=vet` (a página aplica `?sub=vet` depois de ler a permissão `vet`) e, no app do celular, a `/app/menu#agenda-reprodutiva`. Data definida que já passou volta sozinha ao cálculo automático.
 - **Fazenda só-financeiro**: sem Capa/indicadores, a página inicial é a Agenda (`lib/modulos.ts::rotaInicial`). A visibilidade de menu/rotas vem de uma tabela única em `frontend/lib/modulos.ts`.
 - **Preparar financeiro**: `POST /fazendas/{id}/financeiro/preparar` (dono, idempotente) carrega um *rascunho* de plano de contas (validar com o contador) e liga as regras v2 só se a fazenda não tem lançamentos.
 - Detalhes e decisões: `docs/planos-plano-financeiro/` (`PLANO_v2.md`, `CONTRATO_API.md`).

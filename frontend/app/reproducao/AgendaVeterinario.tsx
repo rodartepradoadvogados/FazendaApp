@@ -1,9 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, ChevronRight, Stethoscope, AlertTriangle, Check, X, Mail, CalendarPlus, Download, ClipboardEdit, ArrowRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Stethoscope, AlertTriangle, Check, X, Mail, CalendarPlus, Download, ClipboardEdit, ArrowRight, Pencil } from "lucide-react";
 import { fetchAgendaVeterinario, enviarDiagnosticoEmail, atualizarParametro } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
+import { DefinirDataVisitaModal } from "@/components/reproducao/DefinirDataVisitaModal";
 import { exportarFichaPDF, exportarMultiExcel, type ColunaExport } from "@/lib/export";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { useCardsAgendaReprodutivaConfiguraveis, GradeCardsConfiguraveis, TabelasCardsConfiguraveis } from "@/components/CardsAgendaReprodutivaConfiguraveis";
@@ -154,6 +155,8 @@ function PopupLancarPendente({ numero, temServico, onFechar }: { numero: string;
 type DadosAgendaVet = {
   listas: Listas; totais: Record<string, number>; data_referencia: string; projetado?: boolean;
   ultimo_servico?: string | null; proxima_visita_reprodutiva?: string | null; intervalo_visita_reprodutiva?: number;
+  // "definida" = data escolhida por você; "calculada" = último serviço + intervalo (Parâmetros); null = sem visita.
+  origem_visita_reprodutiva?: "definida" | "calculada" | null;
 };
 
 export default function AgendaVeterinarioPage() {
@@ -171,6 +174,8 @@ export default function AgendaVeterinarioPage() {
   // quando o modo "projeção" não tem para onde projetar (parâmetro em 0/vazio
   // ou nenhum serviço lançado ainda).
   const [passoAgendar, setPassoAgendar] = useState<null | "confirmar" | "definir">(null);
+  // Diálogo "Definir nova data da visita" aberto a partir da nota "Cenário projetado" (mesmo da Agenda).
+  const [definindoVisita, setDefinindoVisita] = useState(false);
   const [novaData, setNovaData] = useState("");
   const [salvandoParam, setSalvandoParam] = useState(false);
   const [avisoParam, setAvisoParam] = useState<string | null>(null);
@@ -281,7 +286,7 @@ export default function AgendaVeterinarioPage() {
             <input type="radio" name="modoAgendaRepro" checked={modo === "atual"} onChange={() => setModo("atual")} /> Data atual
           </label>
           <label style={{ fontSize: "0.8rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
-            <input type="radio" name="modoAgendaRepro" checked={modo === "projecao"} onChange={() => setModo("projecao")} /> Projeção — próxima visita reprodutiva agendada
+            <input type="radio" name="modoAgendaRepro" checked={modo === "projecao"} onChange={() => setModo("projecao")} /> Projeção — próxima visita reprodutiva agendada{dados.proxima_visita_reprodutiva ? ` (${fmtDia(dados.proxima_visita_reprodutiva)})` : ""}
           </label>
           <button onClick={abrirPainelExportar} disabled={categoriasComDados.length === 0}
             title="Exportar a lista completa, escolhendo quais categorias incluir"
@@ -348,13 +353,28 @@ export default function AgendaVeterinarioPage() {
       )}
 
       {dados.projetado && (
-        <div className="mb-3 flex items-center gap-2" style={{ background: "rgba(212,160,23,0.15)", border: "1px solid var(--dourado)", borderRadius: "var(--r-sm)", padding: "0.6rem 1rem", color: "var(--dourado-light)", fontSize: "0.85rem" }}>
+        <div className="mb-3 flex items-center gap-2" data-testid="nota-cenario-projetado" style={{ background: "rgba(212,160,23,0.15)", border: "1px solid var(--dourado)", borderRadius: "var(--r-sm)", padding: "0.6rem 1rem", color: "var(--dourado-light)", fontSize: "0.85rem", flexWrap: "wrap" }}>
           <AlertTriangle size={16} />
           <span>
-            Cenário projetado para {fmtDia(dados.data_referencia)} — classificação simulada com os dados já lançados
+            Cenário projetado para{" "}
+            <button type="button" onClick={() => setDefinindoVisita(true)} data-testid="alterar-data-visita"
+              title="Clique para mudar a data da próxima visita reprodutiva — tudo é recalculado"
+              style={{ background: "transparent", border: 0, borderBottom: "1px dashed currentColor", color: "inherit", font: "inherit", fontWeight: 700, cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
+              {fmtDia(dados.data_referencia)} <Pencil size={12} aria-hidden />
+            </button>
+            {dados.origem_visita_reprodutiva === "definida" ? " (data definida por você)" : ""}
+            {" "}— classificação simulada com os dados já lançados
             hoje, como se aquela fosse a data da visita reprodutiva; novos lançamentos até lá podem mudar o resultado.
           </span>
         </div>
+      )}
+      {definindoVisita && (
+        <DefinirDataVisitaModal dataAtual={dados.proxima_visita_reprodutiva ?? null} origem={dados.origem_visita_reprodutiva ?? null}
+          intervalo={dados.intervalo_visita_reprodutiva ?? null} onClose={() => setDefinindoVisita(false)}
+          onSalvo={(proxima) => {
+            setSucesso(proxima ? `Próxima visita reprodutiva em ${fmtDia(proxima)}. A projeção foi recalculada.` : "Sem próxima visita reprodutiva agendada.");
+            if (proxima) { if (proxima === dataRef) carregar(); else setDataRef(proxima); } else { setModo("atual"); carregar(); }
+          }} />
       )}
 
       {sucesso && (

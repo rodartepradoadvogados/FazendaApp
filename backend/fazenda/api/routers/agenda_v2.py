@@ -5,7 +5,8 @@ do repasse.
   GET  /agenda/dia        Dia a dia: tarefas atrasadas, de hoje e dos próximos
                           dias (lista/semana/mês). Sem cards, sem candidatas,
                           sem lista de espera (R1: animal na janela NUNCA é
-                          tarefa).
+                          tarefa). Único comunicado que vem aqui: a visita
+                          reprodutiva (`comunicados_dia`).
   GET  /agenda/painel     Painel: tudo o que estava nos cards da Agenda antiga
                           (candidatas IATF, BST, pendências, estoque, contas a
                           pagar, comunicados) + atalho da lista de espera + o
@@ -126,11 +127,13 @@ def agenda_dia(
             "atrasadas": sum(1 for e in tarefas if e["data"] < iso_hoje),
             "hoje_total": sum(1 for e in tarefas if e["data"] == iso_hoje),
             "proximos_7d": sum(1 for e in tarefas if iso_hoje < e["data"] <= sete),
-            "avisos": sum(1 for e in base["eventos"] if _eh_comunicado(e)),
+            # A visita reprodutiva (véspera/dia) aparece no próprio Dia a dia (`comunicados_dia`); os demais avisos ficam no Painel.
+            "avisos": sum(1 for e in base["eventos"] if _eh_comunicado(e) and e.get("tipo") != "visita_reprodutiva"),
             # selo da sub-aba Painel (estoque negativo/abaixo do mínimo) sem pedir o Painel inteiro
             "alertas_estoque": len(base["estoque_negativo"]) + len(base["estoque_abaixo_minimo"]),
         },
         "eventos": tarefas,
+        "comunicados_dia": [e for e in base["eventos"] if _eh_comunicado(e) and e.get("tipo") == "visita_reprodutiva"],
         "hormonios_check": base["hormonios_check"],
         "proxima_visita_iatf": base["proxima_visita_iatf"],
         "proxima_visita_bst": base["proxima_visita_bst"],

@@ -595,13 +595,13 @@ def agenda_veterinario(
     # é sugerida (agendamento automático "desligado") — o front então oferece
     # a janela suspensa para o usuário configurar o intervalo.
     from fazenda.rules.parametros import intervalo_visita_reprodutiva as _intervalo_visita_reprodutiva
+    from fazenda.rules.visita_reprodutiva import data_definida as _visita_definida, proxima_visita as _proxima_visita
 
     datas_servico = [s["data_servico"] for s in servico_por_animal.values() if s.get("data_servico")]
     ultimo_servico = max(datas_servico) if datas_servico else None
     intervalo = _intervalo_visita_reprodutiva()
-    proxima_visita_reprodutiva = (
-        ultimo_servico + timedelta(days=intervalo) if (ultimo_servico and intervalo > 0) else None
-    )
+    # A data DEFINIDA pelo usuário (Parâmetros / Agenda / nota "Cenário projetado") tem prioridade sobre o cálculo.
+    proxima_visita_reprodutiva, origem_visita = _proxima_visita(ultimo_servico, intervalo, hoje_real, _visita_definida(hoje_real))
 
     return {
         "data_referencia": hoje.isoformat(),
@@ -611,6 +611,40 @@ def agenda_veterinario(
         "ultimo_servico": ultimo_servico.isoformat() if ultimo_servico else None,
         "proxima_visita_reprodutiva": proxima_visita_reprodutiva.isoformat() if proxima_visita_reprodutiva else None,
         "intervalo_visita_reprodutiva": intervalo,
+        # "definida" = escolhida pelo usuário; "calculada" = último serviço + intervalo; None = sem visita.
+        "origem_visita_reprodutiva": origem_visita,
+    }
+
+
+class VisitaReprodutivaIn(BaseModel):
+    """Data da próxima visita reprodutiva definida pelo usuário; `data` nula REMOVE a definição (volta o cálculo)."""
+
+    data: date | None = None
+
+
+@router.put("/visita-reprodutiva")
+def definir_visita_reprodutiva(
+    dados: VisitaReprodutivaIn, session: Session = Depends(get_session),
+    _: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Define (ou limpa) a data da próxima visita reprodutiva — o parâmetro `proxima_visita_reprodutiva_data`, lido pela Agenda
+    (comunicado e item), pela projeção da Agenda Reprodutiva, pelas candidatas projetadas de IATF e pela tela de Parâmetros
+    (ver rules/visita_reprodutiva.py). Não pode ser no passado. Qualquer usuário com acesso de escrita à fazenda pode
+    definir — é uma decisão operacional da rotina, não uma configuração da fazenda."""
+    from fazenda.rules.parametros import intervalo_visita_reprodutiva as _intervalo
+    from fazenda.rules.visita_reprodutiva import gravar_data_definida, proxima_visita as _proxima_visita
+
+    hoje = date.today()
+    if dados.data is not None and dados.data < hoje:
+        raise HTTPException(status_code=400, detail="A data da visita reprodutiva não pode ser anterior a hoje.")
+    gravar_data_definida(session, fazenda_id, dados.data)
+    session.commit()
+    query_servicos = select(Servico.data_servico).where(Servico.fazenda_id == fazenda_id)
+    datas = [d for d in session.exec(query_servicos).all() if d]
+    proxima, origem = _proxima_visita(max(datas) if datas else None, _intervalo(), hoje, dados.data)
+    return {
+        "ok": True, "proxima_visita_reprodutiva": proxima.isoformat() if proxima else None,
+        "origem_visita_reprodutiva": origem, "definida": dados.data.isoformat() if dados.data else None,
     }
 
 
@@ -2366,9 +2400,11 @@ def candidatas_iatf_projetadas(
     for a in session.exec(query_sit).all():
         sit_rep_por_animal[a.numero] = a.sit_rep
 
+    from fazenda.rules.visita_reprodutiva import data_definida as _visita_definida, proxima_visita as _proxima_visita_repro
+
     datas_servico = [s.data_servico for s in todos_servicos if s.data_servico]
     intervalo = intervalo_visita_reprodutiva()
-    proxima_visita = (max(datas_servico) + timedelta(days=intervalo)) if (datas_servico and intervalo > 0) else None
+    proxima_visita, _ = _proxima_visita_repro(max(datas_servico) if datas_servico else None, intervalo, hoje, _visita_definida(hoje))
     pev = int(get_param("pev_dias", 45) or 45)
     kwargs_estado = {
         "pev_dias": pev,

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ClipboardList, Combine, Stethoscope, Activity } from "lucide-react";
 import { podeModulo } from "@/lib/api";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
@@ -22,7 +22,15 @@ export default function RelatoriosPage() {
   const [temVet, setTemVet] = useState(false);
   // Cada usuário logado tem suas próprias permissões — reavalia sempre que a
   // página monta (evita mostrar abas de uma sessão anterior de outro usuário).
-  useEffect(() => { setTemVet(podeModulo("vet")); }, []);
+  // "?sub=vet" (atalho da Agenda › "Ver agenda reprodutiva"): a aba "vet" só entra na árvore depois que a
+  // permissão é lida aqui, então o ?sub= que o hook de sub-navegação lê ao montar ainda não a encontra.
+  // Guarda o pedido na 1ª renderização do cliente (antes de a sincronia reescrever a URL) e aplica junto da permissão.
+  const subPedido = useRef<string | null>(typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("sub"));
+  useEffect(() => {
+    const vet = podeModulo("vet");
+    setTemVet(vet);
+    if (vet && subPedido.current === "vet") setAba("vet");
+  }, []);
 
   const ABAS = useMemo(() => [
     { id: "trabalho" as const, label: "Listas de trabalho", icon: ClipboardList },

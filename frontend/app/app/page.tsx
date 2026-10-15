@@ -10,6 +10,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ChevronRight, ChevronLeft, Check } from "lucide-react";
+import { DefinirDataVisitaModal } from "@/components/reproducao/DefinirDataVisitaModal";
 import { MobCard, MobTitulo, MobCheck, MobAviso, RotuloCategoria, IconeCategoria, corCategoria, MobBarraProgresso } from "@/components/mobile/ui";
 import { fetchAgenda, fetchApresentacaoDieta, fetchPrincipiosAtivos, fetchEventosSanitarios, fetchLotes, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, today, type ApresentacaoDieta } from "@/lib/api";
 import { fetchComCache, cacheEm, enviarOuEnfileirar, useOnline } from "@/lib/offline";
@@ -251,6 +252,8 @@ export default function AgendaMovel() {
   // para permitir desfazer, já que o backend some com ele no próximo reload.
   const [feitos, setFeitos] = useState<Set<string>>(new Set());
   const [aviso, setAviso] = useState<{ tipo: "ok" | "offline" | "erro"; msg: string } | null>(null);
+  // "Definir nova data da visita" (comunicado da visita reprodutiva).
+  const [definindoVisita, setDefinindoVisita] = useState<{ data: string | null; origem: "definida" | "calculada" | null; intervalo: number | null } | null>(null);
   // Protocolo IATF: cartões expansíveis. Primeiro pergunta LOTE ou INDIVIDUAL;
   // em lote confirma todas de uma vez, individual é vaca por vaca (Sim/Não).
   const [iatfAberto, setIatfAberto] = useState<Set<string>>(new Set());
@@ -826,7 +829,8 @@ export default function AgendaMovel() {
     .filter((e) => e.data <= hoje)
     .sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0));
 
-  const pendentes = eventos.filter((e) => !feitos.has(e.id)).length;
+  // O comunicado da visita reprodutiva só informa (não tem "concluir"): não conta como tarefa pendente.
+  const pendentes = eventos.filter((e) => e.tipo !== "visita_reprodutiva" && !feitos.has(e.id)).length;
 
   async function alternar(e: Evento) {
     const jaFeito = feitos.has(e.id);
@@ -1424,6 +1428,31 @@ export default function AgendaMovel() {
 
     // Alerta de nova dieta: cartão expansível que abre a apresentação para o
     // funcionário conferir o vagão (produtos, por cabeça, total/dia e /trato).
+    // Comunicado da visita reprodutiva (véspera e dia): só informa — sem "concluir" — e leva à Agenda Reprodutiva do app
+    // ou deixa definir a nova data (a mesma que a Agenda do site e a projeção usam).
+    if (e.tipo === "visita_reprodutiva") {
+      const x = e as unknown as { data_visita?: string; origem_visita?: "definida" | "calculada"; intervalo_visita?: number };
+      return (
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+          <a href="/app/menu#agenda-reprodutiva" style={{ display: "flex", alignItems: "center", gap: "0.6rem", color: "inherit", textDecoration: "none" }}>
+            <IconeCategoria chave={chave} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <RotuloCategoria chave={chave} rotulo={rotulo} />
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: "var(--mob-text)" }}>{e.descricao}</div>
+              {e.observacao && <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>{e.observacao}</div>}
+            </div>
+          </a>
+          <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.7rem", flexWrap: "wrap" }}>
+            <a href="/app/menu#agenda-reprodutiva" className="mob-btn" style={{ flex: 1, textAlign: "center", textDecoration: "none" }}>Ver agenda reprodutiva</a>
+            <button type="button" className="mob-btn mob-btn-sec" style={{ flex: 1 }}
+              onClick={() => setDefinindoVisita({ data: x.data_visita ?? e.data, origem: x.origem_visita ?? null, intervalo: x.intervalo_visita ?? null })}>
+              Definir nova data da visita
+            </button>
+          </div>
+        </MobCard>
+      );
+    }
+
     if (e.tipo === "nova_dieta") {
       const aberto = dietaAberta.has(e.id);
       const a = dietaApres[e.id];
@@ -1766,6 +1795,11 @@ export default function AgendaMovel() {
       )}
 
       {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
+
+      {definindoVisita && (
+        <DefinirDataVisitaModal dataAtual={definindoVisita.data} origem={definindoVisita.origem} intervalo={definindoVisita.intervalo}
+          onClose={() => setDefinindoVisita(null)} onSalvo={() => { carregar(); }} />
+      )}
 
       {/* Reagente de exame: aviso persistente (com o registro da notificação) também no app */}
       <AvisoReagentesMobile />
