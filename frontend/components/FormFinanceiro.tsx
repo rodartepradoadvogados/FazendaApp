@@ -9,6 +9,7 @@ import {
   fetchCandidatosVinculoSanitarioReprodutivo, vincularEventoSanitarioReprodutivo, type CandidatoVinculoSanitarioReprodutivo,
   type PatrimonioPayload, fetchUltimoPrecoProduto, type UltimoPrecoProduto, today,
   fetchFaturasParaSelecao, type FaturaSelectorItem,
+  fetchEmbalagensEstoque, type ApresentacaoEmbalagemEstoque,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
@@ -83,8 +84,20 @@ type Item = {
   // compra que nunca vai virar item de estoque (ex.: "Supermercado") — a
   // inconsistência real é só quando o sistema "adivinhou" um nome sozinho.
   veioDeDocumento?: boolean;
+  // Embalagem cadastrada (ApresentacaoEmbalagemEstoque) em que o produto foi
+  // comprado — "" = direto na unidade do estoque. Com embalagem, `quantidade`
+  // é o Nº DE EMBALAGENS e `valor_unitario` o preço de UMA embalagem; o
+  // backend converte para a unidade do estoque e abre o lote.
+  apresentacao_id: string;
+};
+// "frasco" → "frascos", "galão" → "galões", sem nome cadastrado → "embalagens".
+const pluralEmbalagem = (nome?: string | null) => {
+  const n = (nome || "").trim();
+  if (!n) return "embalagens";
+  return /ão$/i.test(n) ? n.replace(/ão$/i, "ões") : /[sz]$/i.test(n) ? n : n + "s";
 };
 const itemVazio = (): Item => ({
+  apresentacao_id: "",
   codigo_conta_gerencial: "", nome_conta_gerencial: "", centro_custo: "", tipo_item: "produto", produto: "", descricao: "",
   quantidade: "", valor_unitario: "", valor_total: "", modoValor: "unitario",
   // Sem o módulo Estoque (fazenda só-financeiro) o produto nasce em texto livre: o picker do estoque
@@ -197,13 +210,35 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   })[]>([]);
   const [temEstoque] = useState(() => moduloContratado("estoque"));
   const carregarEstoque = () => !moduloContratado("estoque") ? Promise.resolve() : fetchEstoqueAtivos().then((d) => setProdutosEstoque((d.itens || []).map((i: any) => ({
-    nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
+    id: i.id ?? null, nome: i.nome, categoria: i.categoria ?? null, quantidade: i.quantidade ?? null, unidade: i.unidade ?? null,
     estocavel: i.estocavel ?? null, finalidade: i.finalidade ?? null,
+    unidade_embalagem: i.unidade_embalagem ?? null, medida_embalagem: i.medida_embalagem ?? null,
+    quantidade_embalagem: i.quantidade_embalagem ?? null,
     fornecedor_nome: i.fornecedor_nome ?? null,
     conta_gerencial_despesa_padrao: i.conta_gerencial_despesa_padrao ?? null,
     conta_gerencial_receita_padrao: i.conta_gerencial_receita_padrao ?? null,
   })))).catch(() => {});
   useEffect(() => { carregarEstoque(); }, []);
+  // Embalagens cadastradas por item de estoque (id do estoque → lista), buscadas
+  // sob demanda ao escolher o produto — só entram as ativas.
+  const [embalagensPorEstoque, setEmbalagensPorEstoque] = useState<Record<number, ApresentacaoEmbalagemEstoque[]>>({});
+  // Estoque + embalagens + embalagem escolhida do item da linha (null = não é produto do estoque).
+  function infoEmbalagem(it: Item) {
+    if (tipo !== "despesa" || it.tipo_item !== "produto" || it.modoProduto !== "estoque") return null;
+    const est = produtosEstoque.find((p) => p.nome === it.produto);
+    if (!est) return null;
+    const embs = est.id ? (embalagensPorEstoque[est.id] || []) : [];
+    const emb = embs.find((e) => String(e.id) === it.apresentacao_id) || null;
+    return { est, embs, emb };
+  }
+  const embalagensBuscadas = useRef<Set<number>>(new Set());
+  function garantirEmbalagens(estoqueId: number | null | undefined) {
+    if (!estoqueId || embalagensBuscadas.current.has(estoqueId)) return;
+    embalagensBuscadas.current.add(estoqueId);
+    fetchEmbalagensEstoque(estoqueId)
+      .then((l) => setEmbalagensPorEstoque((m) => ({ ...m, [estoqueId]: (l || []).filter((e) => e.ativa !== false).sort((a, b) => a.quantidade - b.quantidade) })))
+      .catch(() => { embalagensBuscadas.current.delete(estoqueId); });
+  }
   const [fornecedoresCadastro, setFornecedoresCadastro] = useState<string[]>([]);
   const [fornecedoresPorId, setFornecedoresPorId] = useState<Map<number, string>>(new Map());
   useEffect(() => {
@@ -522,6 +557,13 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const [sugestoesCadastro, setSugestoesCadastro] = useState<SugestoesCadastro | null>(null);
   const [sugestoesEscolhidas, setSugestoesEscolhidas] = useState<Record<string, boolean>>({});
 
+  useEffect(() => {
+    itens.forEach((it) => {
+      if (it.tipo_item === "produto" && it.modoProduto === "estoque" && it.produto) {
+        garantirEmbalagens(produtosEstoque.find((p) => p.nome === it.produto)?.id);
+      }
+    });
+  }, [itens, produtosEstoque]);
   function atualizarItem(idx: number, patch: Partial<Item>) {
     setItens((arr) => arr.map((it, i) => {
       if (i !== idx) return it;
@@ -1048,6 +1090,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           quantidade: i.quantidade ? Number(i.quantidade) : null,
           valor_unitario: i.valor_unitario ? Number(i.valor_unitario) : null,
           valor_total: Number(i.valor_total) || 0,
+          apresentacao_id: tipo === "despesa" && i.tipo_item === "produto" && i.modoProduto === "estoque" && i.apresentacao_id
+            ? Number(i.apresentacao_id) : null,
           // Só os campos do contrato (ValeItemNovoIn) — pessoa_nome/origem_label
           // são de UI (ver checkbox acima e ValeItemModal), não vão no payload.
           vale: i.vale ? {
@@ -1611,7 +1655,9 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                           aparecer igual a um estocável. */}
                       <EstoquePicker itens={produtosEstoque} value={it.produto} todasFinalidades incluirNaoEstocaveis onChange={(nomeProduto) => {
                         const match = produtosEstoque.find((p) => p.nome === nomeProduto);
-                        const patch: Partial<Item> = { produto: nomeProduto };
+                        // Trocar de produto zera a embalagem: ela pertence ao produto anterior.
+                        const patch: Partial<Item> = { produto: nomeProduto, apresentacao_id: "" };
+                        garantirEmbalagens(match?.id);
                         const conta = contaGerencialPadrao(tipo === "despesa" ? match?.conta_gerencial_despesa_padrao : match?.conta_gerencial_receita_padrao);
                         if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
                         atualizarItem(idx, patch);
@@ -1674,6 +1720,46 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                 </button>
               </div>
             )}
+            {(() => {
+              // Unidade de compra: direto na unidade do estoque (ml, kg, saca…) ou
+              // numa embalagem cadastrada (frasco de 50/100 ml, saca de 30 kg…).
+              const info = infoEmbalagem(it);
+              if (!info) return null;
+              const { est, embs, emb } = info;
+              const unidEst = est.unidade || "unidade do estoque";
+              const nomeEmb = est.unidade_embalagem || "embalagem";
+              const medida = (est.medida_embalagem || "").split("/")[0] || unidEst;
+              const q = Number(it.quantidade) || 0;
+              const entra = emb ? q * emb.quantidade : q;
+              const saldo = Number(est.quantidade) || 0;
+              const totalItem = Number(it.valor_total) || 0;
+              return (
+                <div data-testid={`unidade-compra-${idx}`} style={{ marginTop: "0.75rem", padding: "0.6rem 0.75rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)" }}>
+                  <Campo label="Comprado em (unidade do produto)">
+                    <select style={inputStyle} value={it.apresentacao_id} onChange={(e) => atualizarItem(idx, { apresentacao_id: e.target.value })}
+                      title="Escolha em que embalagem você comprou. Com embalagem, a quantidade é o número de embalagens e o sistema converte para a unidade do estoque.">
+                      <option value="">Direto em {unidEst}</option>
+                      {embs.map((e) => <option key={e.id} value={e.id}>{nomeEmb} de {e.quantidade} {medida}</option>)}
+                    </select>
+                  </Campo>
+                  <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: "0.35rem 0 0" }}>
+                    Estoque deste produto em <b>{unidEst}</b> · saldo atual {saldo.toLocaleString("pt-BR")} {unidEst}
+                    {!embs.length && est.unidade_embalagem && est.quantidade_embalagem
+                      ? <> · embalagem padrão: {nomeEmb} de {est.quantidade_embalagem} {medida} (nenhum tamanho cadastrado para compra — cadastre em Estoque)</>
+                      : null}
+                  </p>
+                  {q > 0 && (
+                    <p style={{ fontSize: "0.78rem", margin: "0.25rem 0 0" }}>
+                      {emb
+                        ? <>{q.toLocaleString("pt-BR")} {nomeEmb}(s) × {emb.quantidade} {medida} = <b>{entra.toLocaleString("pt-BR")} {unidEst}</b> entram no estoque</>
+                        : <><b>{entra.toLocaleString("pt-BR")} {unidEst}</b> entram no estoque</>}
+                      {" "}· saldo vai de {saldo.toLocaleString("pt-BR")} para <b>{(saldo + entra).toLocaleString("pt-BR")} {unidEst}</b>
+                      {entra > 0 && totalItem > 0 ? <> · custo {formatBRL(totalItem / entra)}/{unidEst}</> : null}
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
             <div className="flex items-center gap-2 mt-3 mb-1" style={{ flexWrap: "wrap" }}>
               {(["unitario", "total"] as const).map((m) => (
                 <button key={m} type="button"
@@ -1688,8 +1774,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
               ))}
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-1">
-              <Campo label="Quantidade"><input type="number" inputMode="decimal" style={inputStyle} value={it.quantidade} onChange={(e) => atualizarItem(idx, { quantidade: e.target.value })} /></Campo>
-              <Campo label={it.modoValor === "unitario" ? "Valor unitário (R$)" : "Valor unitário (R$) — calculado"}>
+              <Campo label={infoEmbalagem(it)?.emb ? `Quantidade (nº de ${pluralEmbalagem(infoEmbalagem(it)!.est.unidade_embalagem)})` : "Quantidade"}><input type="number" inputMode="decimal" style={inputStyle} value={it.quantidade} onChange={(e) => atualizarItem(idx, { quantidade: e.target.value })} /></Campo>
+              <Campo label={(infoEmbalagem(it)?.emb ? `Valor por ${infoEmbalagem(it)!.est.unidade_embalagem || "embalagem"} (R$)` : "Valor unitário (R$)") + (it.modoValor === "unitario" ? "" : " — calculado")}>
                 <CampoMoeda
                   style={it.modoValor === "unitario" ? inputStyle : { ...inputStyle, opacity: 0.55, cursor: "not-allowed" }}
                   value={Number(it.valor_unitario) || 0} disabled={it.modoValor === "total"}

@@ -4,7 +4,11 @@ import { Search, X, ChevronDown } from "lucide-react";
 import { useOrdenacao, ThOrdenavel } from "./Ordenavel";
 import { casaBusca } from "@/lib/busca";
 
-export type EstoqueItemPicker = { nome: string; categoria?: string | null; quantidade?: number | null; unidade?: string | null; estocavel?: boolean | null; finalidade?: string | null; alimento_id?: number | null; estoque_semen_id?: number | null };
+export type EstoqueItemPicker = {
+  nome: string; categoria?: string | null; quantidade?: number | null; unidade?: string | null; estocavel?: boolean | null; finalidade?: string | null; alimento_id?: number | null; estoque_semen_id?: number | null;
+  // Embalagem de compra do item (frasco, saca, galão…) — só o lançamento financeiro usa.
+  id?: number | null; unidade_embalagem?: string | null; medida_embalagem?: string | null; quantidade_embalagem?: number | null;
+};
 
 /**
  * Seletor de produto do estoque: mesma tabela estilizada (vermelha) usada
