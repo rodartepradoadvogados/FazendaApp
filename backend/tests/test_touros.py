@@ -462,9 +462,11 @@ class TestTourosInativos:
     def cat(self, client):
         c, engine = client
         import main
-        from fazenda.auth import get_fazenda_atual_id
+        from fazenda.auth import get_fazenda_atual_id, get_suporte_do_token
 
         main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 1
+        # Contrato/módulo da fazenda não é o assunto destes testes — passa a trava do tenant.
+        main.app.dependency_overrides[get_suporte_do_token] = lambda: {"ativo": True, "sessao_id": None, "nivel_sigilo": None}
         with Session(engine) as s:
             s.add(Touro(naab="007HO00001", nome="ATIVO", tpi=3000))
             s.add(Touro(naab="007HO00002", nome="INATIVO", tpi=2900, ativo=False))
@@ -499,7 +501,8 @@ class TestTourosInativos:
         # idempotente
         assert c.post(f"/cadastro/touros/{tid}/ativar-na-fazenda").status_code == 200
         assert c.delete(f"/cadastro/touros/{tid}/ativar-na-fazenda").status_code == 200
-        assert [t["naab"] for t in c.get("/cadastro/touros").json()] == ["007HO00001"]
+        r0 = c.get("/cadastro/touros"); print("DBG", r0.status_code, r0.text[:200])
+        assert [t["naab"] for t in r0.json()] == ["007HO00001"]
 
     def test_ativacao_de_uma_fazenda_nao_vale_para_outra(self, cat):
         c, engine = cat
@@ -509,7 +512,8 @@ class TestTourosInativos:
         tid = self._id(engine, "007HO00002")
         c.post(f"/cadastro/touros/{tid}/ativar-na-fazenda")
         main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 2
-        assert [t["naab"] for t in c.get("/cadastro/touros").json()] == ["007HO00001"]
+        r0 = c.get("/cadastro/touros"); print("DBG", r0.status_code, r0.text[:200])
+        assert [t["naab"] for t in r0.json()] == ["007HO00001"]
 
     def test_recarregar_catalogo_nao_existe_mais(self, client):
         c, _ = client
