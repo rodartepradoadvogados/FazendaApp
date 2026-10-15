@@ -67,6 +67,8 @@ class LoteIn(BaseModel):
     pagamento: PagamentoLoteIn | None = None
     total_fornecedor: float | None = None
     rotulo: str | None = None
+    # Quem responde por estas notas (a tela deixa escolher). None = o usuário logado, como sempre foi.
+    responsavel: str | None = None
     # O usuário já viu e aceitou o aviso correspondente (a tela reenvia com a marca).
     confirmar_divergencia: bool = False
     confirmar_duplicados: bool = False
@@ -205,11 +207,11 @@ def _exigir_confirmacao_duplicadas(session: Session, fornecedor: str, notas: lis
 def _gravar_notas(
     session: Session, user: Usuario, fazenda_id: int, *, fornecedor: str, centro_custo: str | None,
     conta_bancaria: str | None, notas: list[NotaLoteIn], modo: str, data_vencimento: date | None = None,
-    vencimentos: list[date] | None = None, pagamento: PagamentoLoteIn | None = None,
+    vencimentos: list[date] | None = None, pagamento: PagamentoLoteIn | None = None, responsavel: str | None = None,
 ) -> tuple[list[dict], list[int]]:
     """Grava as notas pela MESMA função do Lançamento normal, sem comitar (quem chama comita ou
     desfaz tudo). `modo`: venc (um vencimento), parc (N parcelas em `vencimentos`) ou pago."""
-    responsavel = (getattr(user, "nome", None) or getattr(user, "username", None) or "").strip() or None
+    responsavel = (responsavel or "").strip() or (getattr(user, "nome", None) or getattr(user, "username", None) or "").strip() or None
     sessao = _SessaoSemCommit(session)
     criadas: list[dict] = []
     ids: list[int] = []
@@ -242,6 +244,8 @@ def _gravar_notas(
         criadas.append({
             "nota": i, "numero_lancamento": r["numero_lancamento"], "valor_liquido": r["valor_liquido"],
             "ids": r["ids"], "avisos_estoque": r.get("avisos_estoque", []),
+            # Quem ficou como responsável de fato — a tela confere com o que o usuário escolheu.
+            "responsavel": responsavel,
         })
     return criadas, ids
 
@@ -350,6 +354,7 @@ def criar_lote(
             session, user, fazenda_id, fornecedor=dados.fornecedor, centro_custo=dados.centro_custo,
             conta_bancaria=dados.conta_bancaria, notas=dados.notas, modo=dados.modo,
             data_vencimento=dados.data_vencimento, vencimentos=vencs, pagamento=dados.pagamento,
+            responsavel=dados.responsavel,
         )
         emissoes = [n.data_emissao for n in dados.notas]
         primeiro_venc = dados.data_vencimento or (vencs[0] if vencs else None) or (dados.pagamento.data_pagamento if dados.pagamento else None)
@@ -457,6 +462,7 @@ def editar_fatura(
 
 class NotasNaFaturaIn(BaseModel):
     notas: list[NotaLoteIn]
+    responsavel: str | None = None  # None = o usuário logado
     confirmar_duplicados: bool = False
     confirmar_fora_periodo: bool = False
 
@@ -496,6 +502,7 @@ def lancar_notas_na_fatura(
         criadas, ids = _gravar_notas(
             session, user, fazenda_id, fornecedor=f.fornecedor, centro_custo=f.centro_custo, conta_bancaria=f.conta_bancaria,
             notas=dados.notas, modo="parc" if len(vencs) > 1 else "venc", data_vencimento=vencs[0], vencimentos=vencs,
+            responsavel=dados.responsavel,
         )
         for conta in session.exec(select(ContaGerencial).where(ContaGerencial.id.in_(ids))).all():
             conta.fatura_id = f.id
@@ -515,6 +522,7 @@ class NotasAvulsasIn(BaseModel):
     centro_custo: str | None = None
     notas: list[NotaLoteIn]
     data_vencimento: date
+    responsavel: str | None = None  # None = o usuário logado
     confirmar_duplicados: bool = False
 
 
@@ -532,6 +540,7 @@ def lancar_notas_avulsas(
         criadas, ids = _gravar_notas(
             session, user, fazenda_id, fornecedor=dados.fornecedor, centro_custo=dados.centro_custo,
             conta_bancaria=dados.conta_bancaria, notas=dados.notas, modo="venc", data_vencimento=dados.data_vencimento,
+            responsavel=dados.responsavel,
         )
         session.commit()
     except Exception:

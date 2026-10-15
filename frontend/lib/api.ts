@@ -10480,6 +10480,8 @@ export async function fetchExtratosCaixa(p: { mes: string; pessoaIds?: number[];
 export type LoteItemIn = {
   codigo_conta_gerencial: string | null; nome_conta_gerencial: string | null; produto: string;
   tipo_item: "produto" | "servico"; quantidade: number | null; valor_unitario: number | null; valor_total: number;
+  // Mesmos campos do lançamento normal (ItemIn no backend): detalhe do item, centro só deste item e embalagem de compra.
+  descricao?: string | null; centro_custo?: string | null; apresentacao_id?: number | null;
 };
 export type LoteNotaIn = {
   tipo_documento: string; numero_documento: string | null; sem_numero: boolean; data_emissao: string;
@@ -10491,10 +10493,13 @@ export type LoteIn = {
   parcelamento: { n: number; primeiro_vencimento: string; intervalo: "mensal" | "30dias" } | null;
   pagamento: { data_pagamento: string; forma_pagamento: string; conta_bancaria: string | null; numero_documento_pagamento: string | null } | null;
   total_fornecedor: number | null; rotulo?: string | null; confirmar_divergencia?: boolean; confirmar_duplicados?: boolean;
+  /** Quem responde pelas notas; ausente/null = o usuário logado. */
+  responsavel?: string | null;
 };
 export type LoteResultado = {
   fatura_id: number; rotulo: string; status: string; valor_total: number; ids_contas: number[];
-  notas: { nota: number; numero_lancamento: string; valor_liquido: number; ids: number[]; avisos_estoque: string[] }[];
+  // `responsavel`: quem ficou como responsável de fato (ausente em servidor antigo, que ignora a escolha).
+  notas: { nota: number; numero_lancamento: string; valor_liquido: number; ids: number[]; avisos_estoque: string[]; responsavel?: string | null }[];
 };
 export async function criarLoteFatura(dados: LoteIn): Promise<LoteResultado> {
   const chave = gerarChaveIdempotencia();  // mesma chave nas retentativas: nunca grava o lote duas vezes
@@ -10565,14 +10570,14 @@ export const fetchFaturasParaSelecao = (apenasAbertas: boolean = true): Promise<
 export const fetchFatura = (id: number): Promise<FaturaDetalhe> => _fj(`/${id}`, { cache: "no-store" }, "Erro ao carregar a fatura");
 export const abrirFatura = (d: FaturaCadastroIn): Promise<FaturaDetalhe> => _fj("", _fbody("POST", d), "Erro ao abrir a fatura");
 export const editarFatura = (id: number, d: FaturaCadastroIn): Promise<FaturaDetalhe> => _fj(`/${id}`, _fbody("PUT", d), "Erro ao salvar a fatura");
-export async function lancarNotasNaFatura(id: number, d: { notas: LoteNotaIn[]; confirmar_duplicados?: boolean; confirmar_fora_periodo?: boolean }): Promise<{ fatura_id: number; notas: LoteResultado["notas"]; ids_contas: number[]; valor: number }> {
+export async function lancarNotasNaFatura(id: number, d: { notas: LoteNotaIn[]; responsavel?: string | null; confirmar_duplicados?: boolean; confirmar_fora_periodo?: boolean }): Promise<{ fatura_id: number; notas: LoteResultado["notas"]; ids_contas: number[]; valor: number }> {
   const chave = gerarChaveIdempotencia();
   const res = await fetchComRetry(() => authFetch(`${API}/financeiro/faturas/${id}/notas`, {
     method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": chave }, body: JSON.stringify(d),
   }));
   return faturaJson(res, "Erro ao lançar as notas na fatura");
 }
-export const lancarNotasAvulsas = (d: { fornecedor: string; conta_bancaria: string | null; centro_custo: string | null; notas: LoteNotaIn[]; data_vencimento: string; confirmar_duplicados?: boolean }): Promise<{ notas: LoteResultado["notas"]; ids_contas: number[] }> =>
+export const lancarNotasAvulsas = (d: { fornecedor: string; conta_bancaria: string | null; centro_custo: string | null; notas: LoteNotaIn[]; data_vencimento: string; responsavel?: string | null; confirmar_duplicados?: boolean }): Promise<{ notas: LoteResultado["notas"]; ids_contas: number[] }> =>
   _fj("/notas-avulsas", _fbody("POST", d), "Erro ao lançar as notas");
 export const fecharFatura = (id: number, d: { total_fornecedor?: number | null; confirmar_divergencia?: boolean; modo: "vista" | "parcelar"; parcelamento?: FaturaCadastroIn["parcelamento"]; data_vencimento?: string | null }): Promise<FaturaDetalhe> =>
   _fj(`/${id}/fechar`, _fbody("POST", d), "Erro ao fechar a fatura");

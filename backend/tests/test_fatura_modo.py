@@ -140,6 +140,18 @@ class TestNotasNaFatura:
         d = c.get(f"/financeiro/faturas/{f['id']}").json()
         assert d["valor_total"] == 150.0 and d["notas"] == 2 and d["status"] == "aberta"
 
+    def test_responsavel_escolhido_vai_para_a_nota_e_volta_na_resposta(self, ambiente):
+        """Ida e volta: a tela envia `responsavel`, o servidor grava e devolve o que gravou; sem escolha, é o usuário logado."""
+        c, engine = ambiente
+        f = _abrir(c)
+        r = _notas(c, f["id"], _nota("1"), responsavel="Maria da Silva")
+        assert r.status_code == 201, r.text
+        assert r.json()["notas"][0]["responsavel"] == "Maria da Silva"
+        r2 = _notas(c, f["id"], _nota("2"))
+        assert r2.json()["notas"][0]["responsavel"] == "Jairo Teste"
+        gravado = {x.numero_lancamento: x.responsavel for x in _linhas(engine)}
+        assert gravado == {r.json()["notas"][0]["numero_lancamento"]: "Maria da Silva", r2.json()["notas"][0]["numero_lancamento"]: "Jairo Teste"}
+
     def test_nota_com_parcelamento_do_cadastro_nasce_parcelada(self, ambiente):
         c, engine = ambiente
         f = _abrir(c, data_vencimento=None, parcelamento={"n": 3, "primeiro_vencimento": "2026-11-30", "intervalo": "mensal"})

@@ -9,19 +9,17 @@ import {
   fetchCandidatosVinculoSanitarioReprodutivo, vincularEventoSanitarioReprodutivo, type CandidatoVinculoSanitarioReprodutivo,
   type PatrimonioPayload, fetchUltimoPrecoProduto, type UltimoPrecoProduto, today,
   fetchFaturasParaSelecao, type FaturaSelectorItem,
-  fetchEmbalagensEstoque, type ApresentacaoEmbalagemEstoque,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import ValeItemModal, { type ValeItemDados } from "@/components/ValeItemModal";
 import { CampoMoeda } from "@/components/CampoMoeda";
-import NovoItemEstoque from "@/components/NovoItemEstoque";
 import { moduloContratado } from "@/lib/modulos";
-import NovaContaGerencial from "@/components/NovaContaGerencial";
-import NovoServicoRapido from "@/components/NovoServicoRapido";
 import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
 import { ServicoPicker } from "@/components/ServicoPicker";
+import { SeletorUnidadeCompra, infoUnidadeCompra, pluralEmbalagem, useEmbalagensEstoque } from "@/components/financeiro/UnidadeCompra";
+import { ModalAdicionarCadastro, ModalAssociarExistente } from "@/components/financeiro/CadastroRapidoModais";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { NATUREZAS_FIN } from "@/lib/naturezaFin";
 import { onPedidoLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
@@ -99,12 +97,6 @@ type Item = {
   // backend converte para a unidade do estoque e abre o lote.
   apresentacao_id: string;
 };
-// "frasco" → "frascos", "galão" → "galões", sem nome cadastrado → "embalagens".
-const pluralEmbalagem = (nome?: string | null) => {
-  const n = (nome || "").trim();
-  if (!n) return "embalagens";
-  return /ão$/i.test(n) ? n.replace(/ão$/i, "ões") : /[sz]$/i.test(n) ? n : n + "s";
-};
 const itemVazio = (): Item => ({
   apresentacao_id: "",
   codigo_conta_gerencial: "", nome_conta_gerencial: "", centro_custo: "", tipo_item: "produto", produto: "", descricao: "",
@@ -178,6 +170,8 @@ function dividirParcelas(valorTotal: number, qtd: number, primeiraData: string):
  */
 export type PrefillPedido = {
   id: number;
+  /** Só para rotular a gaveta "Finalizar pedido" (Lançamentos); o formulário em si não usa. */
+  numeroPedido?: string;
   fornecedorCliente?: string | null;
   itens: {
     produto: string; tipo_item: "produto" | "servico"; quantidade?: number | null;
@@ -228,25 +222,12 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
     conta_gerencial_receita_padrao: i.conta_gerencial_receita_padrao ?? null,
   })))).catch(() => {});
   useEffect(() => { carregarEstoque(); }, []);
-  // Embalagens cadastradas por item de estoque (id do estoque → lista), buscadas
-  // sob demanda ao escolher o produto — só entram as ativas.
-  const [embalagensPorEstoque, setEmbalagensPorEstoque] = useState<Record<number, ApresentacaoEmbalagemEstoque[]>>({});
+  // Embalagens cadastradas por item de estoque, buscadas sob demanda ao escolher o produto (só as ativas).
+  const { porEstoque: embalagensPorEstoque, garantir: garantirEmbalagens } = useEmbalagensEstoque();
   // Estoque + embalagens + embalagem escolhida do item da linha (null = não é produto do estoque).
   function infoEmbalagem(it: Item) {
     if (tipo !== "despesa" || it.tipo_item !== "produto" || it.modoProduto !== "estoque") return null;
-    const est = produtosEstoque.find((p) => p.nome === it.produto);
-    if (!est) return null;
-    const embs = est.id ? (embalagensPorEstoque[est.id] || []) : [];
-    const emb = embs.find((e) => String(e.id) === it.apresentacao_id) || null;
-    return { est, embs, emb };
-  }
-  const embalagensBuscadas = useRef<Set<number>>(new Set());
-  function garantirEmbalagens(estoqueId: number | null | undefined) {
-    if (!estoqueId || embalagensBuscadas.current.has(estoqueId)) return;
-    embalagensBuscadas.current.add(estoqueId);
-    fetchEmbalagensEstoque(estoqueId)
-      .then((l) => setEmbalagensPorEstoque((m) => ({ ...m, [estoqueId]: (l || []).filter((e) => e.ativa !== false).sort((a, b) => a.quantidade - b.quantidade) })))
-      .catch(() => { embalagensBuscadas.current.delete(estoqueId); });
+    return infoUnidadeCompra(produtosEstoque.find((p) => p.nome === it.produto), embalagensPorEstoque, it.apresentacao_id);
   }
   const [fornecedoresCadastro, setFornecedoresCadastro] = useState<string[]>([]);
   const [fornecedoresPorId, setFornecedoresPorId] = useState<Map<number, string>>(new Map());
@@ -1781,42 +1762,13 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
               </div>
             )}
             {(() => {
-              // Unidade de compra: direto na unidade do estoque (ml, kg, saca…) ou
-              // numa embalagem cadastrada (frasco de 50/100 ml, saca de 30 kg…).
               const info = infoEmbalagem(it);
               if (!info) return null;
-              const { est, embs, emb } = info;
-              const unidEst = est.unidade || "unidade do estoque";
-              const nomeEmb = est.unidade_embalagem || "embalagem";
-              const medida = (est.medida_embalagem || "").split("/")[0] || unidEst;
-              const q = Number(it.quantidade) || 0;
-              const entra = emb ? q * emb.quantidade : q;
-              const saldo = Number(est.quantidade) || 0;
-              const totalItem = Number(it.valor_total) || 0;
               return (
-                <div data-testid={`unidade-compra-${idx}`} style={{ marginTop: "0.75rem", padding: "0.6rem 0.75rem", border: "1px solid var(--border)", borderRadius: "var(--r-sm)" }}>
-                  <Campo label="Comprado em (unidade do produto)">
-                    <select style={inputStyle} value={it.apresentacao_id} onChange={(e) => atualizarItem(idx, { apresentacao_id: e.target.value })}
-                      title="Escolha em que embalagem você comprou. Com embalagem, a quantidade é o número de embalagens e o sistema converte para a unidade do estoque.">
-                      <option value="">Direto em {unidEst}</option>
-                      {embs.map((e) => <option key={e.id} value={e.id}>{nomeEmb} de {e.quantidade} {medida}</option>)}
-                    </select>
-                  </Campo>
-                  <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: "0.35rem 0 0" }}>
-                    Estoque deste produto em <b>{unidEst}</b> · saldo atual {saldo.toLocaleString("pt-BR")} {unidEst}
-                    {!embs.length && est.unidade_embalagem && est.quantidade_embalagem
-                      ? <> · embalagem padrão: {nomeEmb} de {est.quantidade_embalagem} {medida} (nenhum tamanho cadastrado para compra — cadastre em Estoque)</>
-                      : null}
-                  </p>
-                  {q > 0 && (
-                    <p style={{ fontSize: "0.78rem", margin: "0.25rem 0 0" }}>
-                      {emb
-                        ? <>{q.toLocaleString("pt-BR")} {nomeEmb}(s) × {emb.quantidade} {medida} = <b>{entra.toLocaleString("pt-BR")} {unidEst}</b> entram no estoque</>
-                        : <><b>{entra.toLocaleString("pt-BR")} {unidEst}</b> entram no estoque</>}
-                      {" "}· saldo vai de {saldo.toLocaleString("pt-BR")} para <b>{(saldo + entra).toLocaleString("pt-BR")} {unidEst}</b>
-                      {entra > 0 && totalItem > 0 ? <> · custo {formatBRL(totalItem / entra)}/{unidEst}</> : null}
-                    </p>
-                  )}
+                <div style={{ marginTop: "0.75rem" }}>
+                  <SeletorUnidadeCompra info={info} apresentacaoId={it.apresentacao_id} testId={`unidade-compra-${idx}`}
+                    onChange={(v) => atualizarItem(idx, { apresentacao_id: v })}
+                    quantidade={Number(it.quantidade) || 0} valorTotal={Number(it.valor_total) || 0} />
                 </div>
               );
             })()}
@@ -2209,100 +2161,47 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       )}
 
       {adicionarPara !== null && (
-        <Modal title="Adicionar produto, serviço ou conta gerencial" onClose={() => setAdicionarPara(null)} width="900px">
-          <div className="flex items-center gap-2 mb-3">
-            {temEstoque && <button type="button" title="Cadastrar um novo produto de estoque" onClick={() => setModoAdicionar("produto")}
-              style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
-                border: "1px solid " + (modoAdicionar === "produto" ? "var(--dourado)" : "var(--border)"),
-                background: modoAdicionar === "produto" ? "rgba(94,26,46,0.4)" : "transparent",
-                color: modoAdicionar === "produto" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionar === "produto" ? 700 : 500 }}>
-              Novo produto (estoque)
-            </button>}
-            <button type="button" title="Cadastrar um novo serviço" onClick={() => setModoAdicionar("servico")}
-              style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
-                border: "1px solid " + (modoAdicionar === "servico" ? "var(--dourado)" : "var(--border)"),
-                background: modoAdicionar === "servico" ? "rgba(94,26,46,0.4)" : "transparent",
-                color: modoAdicionar === "servico" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionar === "servico" ? 700 : 500 }}>
-              Novo serviço
-            </button>
-            <button type="button" title="Cadastrar uma nova conta gerencial" onClick={() => setModoAdicionar("conta")}
-              style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
-                border: "1px solid " + (modoAdicionar === "conta" ? "var(--dourado)" : "var(--border)"),
-                background: modoAdicionar === "conta" ? "rgba(94,26,46,0.4)" : "transparent",
-                color: modoAdicionar === "conta" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionar === "conta" ? 700 : 500 }}>
-              Nova conta gerencial
-            </button>
-          </div>
-          {modoAdicionar === "produto" && temEstoque ? (
-            <NovoItemEstoque
-              // Pré-preenche com o nome já lançado (ex.: veio do XML/OCR e não
-              // batia com nada do estoque) — cadastrar com o MESMO texto é o
-              // que faz esse item "virar" reconhecido: o resto do sistema
-              // reconhece por igualdade de nome, não por vínculo.
-              prefill={adicionarPara !== null && itens[adicionarPara]?.produto.trim() ? { nome: itens[adicionarPara].produto.trim() } : undefined}
-              onCriado={(item) => {
-                if (item?.nome && adicionarPara !== null) {
-                  const patch: Partial<Item> = { produto: item.nome };
-                  const conta = contaGerencialPadrao(tipo === "despesa" ? item.conta_gerencial_despesa_padrao : item.conta_gerencial_receita_padrao);
-                  if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
-                  atualizarItem(adicionarPara, patch);
-                  const nomeFornecedor = item.fornecedor_id ? fornecedoresPorId.get(item.fornecedor_id) : null;
-                  if (nomeFornecedor) setFornecedor(nomeFornecedor);
-                }
-                carregarEstoque();
-                setAdicionarPara(null);
-              }}
-              onCancelar={() => setAdicionarPara(null)}
-            />
-          ) : modoAdicionar === "servico" ? (
-            <NovoServicoRapido
-              prefillNome={adicionarPara !== null ? itens[adicionarPara]?.produto.trim() : undefined}
-              onCriado={(servico) => {
-                if (servico?.nome && adicionarPara !== null) atualizarItem(adicionarPara, { produto: servico.nome });
-                carregarServicos();
-                setAdicionarPara(null);
-              }}
-              onCancelar={() => setAdicionarPara(null)}
-            />
-          ) : (
-            <NovaContaGerencial
-              tipoSugerido={tipo}
-              onCriado={(conta) => {
-                if (adicionarPara !== null) atualizarItem(adicionarPara, { codigo_conta_gerencial: conta.codigo, nome_conta_gerencial: conta.nome });
-                carregarOpcoes();
-                setAdicionarPara(null);
-              }}
-              onCancelar={() => setAdicionarPara(null)}
-            />
-          )}
-        </Modal>
+        <ModalAdicionarCadastro tipo={tipo} temEstoque={temEstoque} modoInicial={modoAdicionar}
+          nomeSugerido={itens[adicionarPara]?.produto} onClose={() => setAdicionarPara(null)}
+          onProduto={(item) => {
+            if (item?.nome && adicionarPara !== null) {
+              const patch: Partial<Item> = { produto: item.nome, apresentacao_id: "" };
+              const conta = contaGerencialPadrao(tipo === "despesa" ? item.conta_gerencial_despesa_padrao : item.conta_gerencial_receita_padrao);
+              if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
+              atualizarItem(adicionarPara, patch);
+              const nomeFornecedor = item.fornecedor_id ? fornecedoresPorId.get(item.fornecedor_id) : null;
+              if (nomeFornecedor) setFornecedor(nomeFornecedor);
+            }
+            carregarEstoque();
+            setAdicionarPara(null);
+          }}
+          onServico={(servico) => {
+            if (servico?.nome && adicionarPara !== null) atualizarItem(adicionarPara, { produto: servico.nome });
+            carregarServicos();
+            setAdicionarPara(null);
+          }}
+          onConta={(conta) => {
+            if (adicionarPara !== null) atualizarItem(adicionarPara, { codigo_conta_gerencial: conta.codigo, nome_conta_gerencial: conta.nome });
+            carregarOpcoes();
+            setAdicionarPara(null);
+          }} />
       )}
 
       {associarPara !== null && (
-        <Modal title={`Associar a ${itens[associarPara]?.tipo_item === "servico" ? "serviço" : "produto"} já existente`} onClose={() => setAssociarPara(null)} width="600px">
-          {itens[associarPara]?.tipo_item === "servico" ? (
-            <ServicoPicker servicos={sugestoesServico.map((nome) => ({ nome }))}
-              value="" onChange={(nomeEscolhido) => {
-                if (!nomeEscolhido) return;
-                atualizarItem(associarPara, { produto: nomeEscolhido });
-                setAssociarPara(null);
-              }} />
-          ) : (
-            <EstoquePicker itens={produtosEstoque} value="" todasFinalidades incluirNaoEstocaveis
-              onChange={(nomeProduto) => {
-                if (!nomeProduto) return;
-                const match = produtosEstoque.find((p) => p.nome === nomeProduto);
-                const patch: Partial<Item> = { produto: nomeProduto };
-                const conta = contaGerencialPadrao(tipo === "despesa" ? match?.conta_gerencial_despesa_padrao : match?.conta_gerencial_receita_padrao);
-                if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
-                atualizarItem(associarPara, patch);
-                setAssociarPara(null);
-              }} />
-          )}
-          <div className="flex justify-end mt-3">
-            <button type="button" className="btn-ghost" onClick={() => setAssociarPara(null)}>Cancelar</button>
-          </div>
-        </Modal>
+        <ModalAssociarExistente tipoItem={itens[associarPara]?.tipo_item === "servico" ? "servico" : "produto"}
+          produtos={produtosEstoque} servicos={sugestoesServico} onClose={() => setAssociarPara(null)}
+          onEscolher={(nome) => {
+            const patch: Partial<Item> = { produto: nome };
+            if (itens[associarPara]?.tipo_item !== "servico") {
+              const match = produtosEstoque.find((p) => p.nome === nome);
+              const conta = contaGerencialPadrao(tipo === "despesa" ? match?.conta_gerencial_despesa_padrao : match?.conta_gerencial_receita_padrao);
+              if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
+              patch.apresentacao_id = "";
+              garantirEmbalagens(match?.id);
+            }
+            atualizarItem(associarPara, patch);
+            setAssociarPara(null);
+          }} />
       )}
 
       {abrirNovoFornecedor && (

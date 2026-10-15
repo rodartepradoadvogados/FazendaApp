@@ -1942,3 +1942,15 @@ tr.st-row-sel td{background:var(--sel-row)}
   .exc-busca-linha{flex-wrap:wrap}
   .exc-busca-linha .btn-primary{flex:1}
 }
+
+
+/* Valor de linha-resumo que vira campo ao passar o mouse/focar (CampoInline em FormLancamentoLote.tsx).
+   É um <select> nativo "vestido" de texto: sem hover parece texto em negrito com um lápis discreto;
+   com hover/foco ganha borda e fundo de campo. Sem hover (celular) o pontilhado já indica que dá para tocar. */
+.inline-edit { position: relative; display: inline-flex; align-items: center; border: 1px solid transparent; border-bottom: 1px dotted var(--border); border-radius: var(--r-sm); padding: 0.1rem 1.5rem 0.1rem 0.35rem; transition: background 0.12s, border-color 0.12s; }
+.inline-edit:hover, .inline-edit:focus-within { background: var(--surface-2); border-color: var(--border); }
+.inline-edit:focus-within { outline: 2px solid var(--dourado); outline-offset: 1px; }
+.inline-edit select { appearance: none; -webkit-appearance: none; background: transparent; border: 0; outline: 0; font: inherit; font-weight: 700; color: var(--text); cursor: pointer; max-width: 58ch; text-overflow: ellipsis; padding: 0; }
+.inline-edit select:disabled { opacity: 0.6; cursor: progress; }
+.inline-edit .inline-edit-ic { position: absolute; right: 0.4rem; pointer-events: none; color: var(--text-muted); opacity: 0.55; transition: opacity 0.12s; }
+.inline-edit:hover .inline-edit-ic, .inline-edit:focus-within .inline-edit-ic { opacity: 1; }

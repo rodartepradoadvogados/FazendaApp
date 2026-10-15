@@ -7,6 +7,9 @@ export const TETO_DOBRO_PX = 1120;
 /** Largura-padrão da gaveta de lançamento (Lançamentos › … › abrir lançamento). */
 export const LARGURA_GAVETA_PADRAO = "min(80vw, 1320px)";
 
+/** Gaveta que ocupa 75% da tela (lançar notas na fatura, finalizar pedido): formulário largo, com o fundo ainda à vista. */
+export const LARGURA_GAVETA_75 = "min(75vw, 100vw)";
+
 /**
  * Largura da gaveta "Dar baixa" (Contas a pagar / a receber): o DOBRO dos 560 px
  * que o painel lateral antigo tinha. Em celular vira a tela inteira.
