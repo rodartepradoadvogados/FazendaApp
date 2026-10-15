@@ -82,6 +82,7 @@ class TouroIn(BaseModel):
     fertilidade_filhas: Optional[float] = None
     facilidade_parto: Optional[float] = None
     fonte: Optional[str] = None
+    ativo: Optional[bool] = None  # None = não mexe no status do catálogo
     rodada_prova: Optional[str] = None
     observacao: Optional[str] = None
     dados_extra: Optional[list[list[str]]] = None  # [[rótulo, valor], ...]
@@ -123,6 +124,8 @@ def criar_touro_painel(dados: TouroIn, session: Session = Depends(get_session), 
     from fazenda.rules.naab import central_por_codigo_naab
 
     campos = dados.model_dump(exclude={"naab", "dados_extra"})
+    if campos.get("ativo") is None:
+        campos.pop("ativo", None)
     touro = Touro(naab=naab, **campos)
     if not touro.central:
         touro.central = central_por_codigo_naab(naab)
@@ -150,6 +153,8 @@ def atualizar_touro_painel(
     if outro and outro.id != touro_id:
         raise HTTPException(status_code=400, detail=f"Já existe outro touro cadastrado com o NAAB {naab}")
     for campo, valor in dados.model_dump(exclude={"dados_extra"}).items():
+        if campo == "ativo" and valor is None:
+            continue  # não mexe no status do catálogo
         setattr(t, campo, valor)
     t.naab = naab
     if dados.dados_extra is not None:
@@ -169,20 +174,6 @@ def excluir_touro_painel(touro_id: int, session: Session = Depends(get_session),
     session.delete(t)
     session.commit()
     return {"excluido": True}
-
-
-@router.post("/recarregar-catalogo")
-def recarregar_catalogo_touros_painel(session: Session = Depends(get_session), _: Usuario = _dep_edicao) -> dict:
-    """Reimporta o catálogo NAAB completo empacotado no servidor (upsert por
-    NAAB — nunca apaga touros existentes). Serve de botão de autoatendimento
-    caso a carga automática na inicialização não tenha rodado por algum
-    motivo (ex.: banco criado antes deste recurso existir)."""
-    from fazenda.rules.touros import bootstrap_touros_naab
-
-    antes = len(session.exec(select(Touro)).all())
-    bootstrap_touros_naab(session, forcar=True)
-    depois = len(session.exec(select(Touro)).all())
-    return {"touros_antes": antes, "touros_depois": depois}
 
 
 @router.post("/importar")

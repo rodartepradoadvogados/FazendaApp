@@ -217,7 +217,7 @@ class TestCompararCatalogo:
         assert relatorio.alterados == []
 
     def test_touro_que_saiu_do_catalogo_aparece_so_com_naab_e_nome(self, session):
-        session.add(Touro(naab="000FORADOCATALOGO", nome="FORADOCATALOGO", tpi=2000))
+        session.add(Touro(naab="000FORADOCATALOGO", nome="FORADOCATALOGO", tpi=2000, fonte="NAAB AISS"))
         session.commit()
 
         relatorio = comparar_catalogo(session, ler_catalogo_aiss(LINHA_A))
@@ -227,7 +227,7 @@ class TestCompararCatalogo:
 
     def test_touro_marcado_como_mantido_nao_repete_em_saidos(self, session):
         session.add(Touro(
-            naab="000FORADOCATALOGO", nome="FORADOCATALOGO", tpi=2000,
+            naab="000FORADOCATALOGO", nome="FORADOCATALOGO", tpi=2000, fonte="NAAB AISS",
             observacao=f"{MARCA_MANTIDO} em 01/01/2026: decisão do dono",
         ))
         session.commit()
@@ -292,7 +292,7 @@ class TestMarcarMantido:
             marcar_mantido(session, "000NAOEXISTE")
 
     def test_depois_de_marcado_nao_aparece_mais_em_saidos(self, session):
-        session.add(Touro(naab="000FORADOCATALOGO", nome="FORADOCATALOGO"))
+        session.add(Touro(naab="000FORADOCATALOGO", nome="FORADOCATALOGO", fonte="NAAB AISS"))
         session.commit()
 
         # Antes de marcar: aparece em "saídos".
@@ -410,3 +410,142 @@ class TestBaixarCatalogoAiss:
         monkeypatch.setattr(httpx, "get", fake_get)
         with pytest.raises(RuntimeError, match="Falha ao baixar"):
             baixar_catalogo_aiss()
+
+
+class TestNormalizarNaab:
+    """O banco guarda o NAAB como prefixo(3) + raça(2) + número(5)."""
+
+    def test_completa_zeros_a_esquerda(self):
+        assert naab_aiss.normalizar_naab("9AY156") == "009AY00156"
+        assert naab_aiss.normalizar_naab("  11ho15872 ") == "011HO15872"
+
+    def test_codigo_ja_canonico_nao_muda(self):
+        assert naab_aiss.normalizar_naab("200HO13678") == "200HO13678"
+
+    def test_codigo_fora_do_padrao_so_e_limpo(self):
+        assert naab_aiss.normalizar_naab(" xyz ") == "XYZ"
+
+
+class TestTourosInativosNoCatalogo:
+    def test_saido_vira_inativo_e_nao_e_apagado(self, session):
+        from fazenda.rules.naab_aiss import inativar_touros_saidos
+
+        session.add(Touro(naab="011HO00001", nome="SAIU", fonte="NAAB AISS"))
+        session.commit()
+        r = inativar_touros_saidos(session, ["11HO00001", "999HO99999"])
+        assert r == {"inativados": ["011HO00001"], "pulados": ["999HO99999"]}
+        t = session.exec(select(Touro).where(Touro.naab == "011HO00001")).first()
+        assert t is not None and t.ativo is False
+
+    def test_touro_mantido_pelo_dono_nao_e_inativado(self, session):
+        from fazenda.rules.naab_aiss import inativar_touros_saidos
+
+        session.add(Touro(naab="011HO00002", nome="FICA", fonte="NAAB AISS"))
+        session.commit()
+        marcar_mantido(session, "011HO00002", motivo="genética boa")
+        assert inativar_touros_saidos(session, ["011HO00002"])["inativados"] == []
+        assert session.exec(select(Touro).where(Touro.naab == "011HO00002")).first().ativo is True
+
+    def test_inativo_nao_reaparece_em_saidos_toda_semana(self, session):
+        session.add(Touro(naab="000FORADOCATALOGO", nome="FORA", ativo=False, fonte="NAAB AISS"))
+        session.commit()
+        assert comparar_catalogo(session, ler_catalogo_aiss(LINHA_A)).saidos == []
+
+    def test_inativo_que_volta_ao_catalogo_e_reativado_ao_gravar(self, session):
+        from fazenda.rules.touros import aplicar_atualizacoes_confirmadas
+
+        session.add(Touro(naab="200HO13678", nome="TIMETRAVELER", ativo=False))
+        session.commit()
+        linhas = ler_catalogo_aiss(LINHA_A)
+        rel = comparar_catalogo(session, linhas)
+        assert rel.reativados == [{"naab": "200HO13678", "nome": "TIMETRAVELER"}]
+        aplicar_atualizacoes_confirmadas(session, ["200HO13678"], linhas, fonte="NAAB AISS", rodada="Ago/2026")
+        assert session.exec(select(Touro).where(Touro.naab == "200HO13678")).first().ativo is True
+
+
+class TestForaDoAissNaoInativa:
+    """O AISS só lista touro ativo nos EUA: quem veio de outra fonte (ex.:
+    planilha da Alta, sêmen vendido fora dos EUA) e não está nele NÃO saiu do
+    mercado — fica ativo e só aparece como informação."""
+
+    def test_touro_de_outra_fonte_vai_para_fora_do_aiss_e_nao_para_saidos(self, session):
+        session.add(Touro(naab="011HO99999", nome="ALTA INTERNACIONAL", fonte="Alta Genetics"))
+        session.commit()
+        rel = comparar_catalogo(session, ler_catalogo_aiss(LINHA_A))
+        assert rel.saidos == []
+        assert rel.fora_do_aiss == [{"naab": "011HO99999", "nome": "ALTA INTERNACIONAL"}]
+
+    def test_inativar_pula_touro_de_outra_fonte(self, session):
+        from fazenda.rules.naab_aiss import inativar_touros_saidos
+
+        session.add(Touro(naab="011HO99999", nome="ALTA INTERNACIONAL", fonte="Alta Genetics"))
+        session.commit()
+        r = inativar_touros_saidos(session, ["011HO99999"])
+        assert r == {"inativados": [], "pulados": ["011HO99999"]}
+        assert session.exec(select(Touro).where(Touro.naab == "011HO99999")).first().ativo is True
+
+    def test_trava_de_seguranca_contra_download_truncado(self, session):
+        from fazenda.rules.naab_aiss import inativar_touros_saidos
+
+        for i in range(100):
+            session.add(Touro(naab=f"011HO{i:05d}", nome=f"T{i}", fonte="NAAB AISS"))
+        session.commit()
+        naabs = [f"011HO{i:05d}" for i in range(60)]  # 60 > máx(50, 20% de 100)
+        with pytest.raises(ValueError, match="trava de segurança"):
+            inativar_touros_saidos(session, naabs)
+        assert inativar_touros_saidos(session, naabs, forcar=True)["inativados"] == naabs
+
+    def test_aplicar_confirmados_normaliza_o_naab_informado(self, session):
+        from fazenda.rules.touros import aplicar_atualizacoes_confirmadas
+
+        linhas = ler_catalogo_aiss(LINHA_A)
+        r = aplicar_atualizacoes_confirmadas(session, ["200ho13678"], linhas, fonte="NAAB AISS", rodada="Ago/2026")
+        assert r["criados"] == 1
+
+
+class TestMesmoAnimalComNaabTrocado:
+    """A central troca o código NAAB do mesmo animal (151HO… → 551HO…). O
+    registro (raça + país + ID) não muda: a checagem não pode tratar isso como
+    um touro novo mais um touro que saiu."""
+
+    @staticmethod
+    def _touro_antigo(session, linha, naab_antigo="100HO13678"):
+        import json
+        from fazenda.rules.naab_aiss import registro_aiss
+
+        assert registro_aiss(linha)
+        inter = f"{linha['Breed']}{linha['Country'].strip()}M{linha['ID Number'].strip()}"
+        t = Touro(
+            naab=naab_antigo, nome="TIMETRAVELER", fonte="Alta Genetics",
+            dados_extra=json.dumps([["InterRegNumber", inter]]),
+        )
+        session.add(t)
+        session.commit()
+        return t
+
+    def test_comparar_reconhece_o_renomeado_sem_criar_novo_nem_saido(self, session):
+        linha = ler_catalogo_aiss(LINHA_A)[0]
+        self._touro_antigo(session, linha)
+        rel = comparar_catalogo(session, [linha])
+        assert rel.renomeados == [{"naab": "100HO13678", "naab_atual": "200HO13678", "nome": "TIMETRAVELER"}]
+        assert rel.novos == [] and rel.saidos == [] and rel.fora_do_aiss == []
+        assert len(rel.alterados) == 1 and rel.alterados[0]["naab"] == "100HO13678"
+
+    def test_aplicar_atualiza_o_registro_existente_e_nao_duplica(self, session):
+        from fazenda.rules.touros import aplicar_atualizacoes_confirmadas
+
+        linha = ler_catalogo_aiss(LINHA_A)[0]
+        self._touro_antigo(session, linha)
+        aplicar_atualizacoes_confirmadas(session, ["200HO13678"], [linha], fonte="NAAB AISS", rodada="Ago/2026")
+        todos = session.exec(select(Touro)).all()
+        assert [t.naab for t in todos] == ["100HO13678"]
+        assert todos[0].tpi and todos[0].fonte == "NAAB AISS"
+        assert "NAAB atual (AISS): 200HO13678" in todos[0].observacao
+
+    def test_registro_da_planilha_com_pais_alfabetico(self):
+        import json
+        from fazenda.rules.naab_aiss import registro_do_touro
+
+        t = Touro(naab="011HO00001", dados_extra=json.dumps([["InterRegNumber", "HOCANM000015327904"]]))
+        assert registro_do_touro(t) == "HO12415327904"
+        assert registro_do_touro(Touro(naab="x")) is None

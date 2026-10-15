@@ -130,11 +130,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }, [router]);
 
   // Bolinha no ícone do app instalado (Badging API) com a quantidade de
-  // eventos da agenda de hoje — mesma contagem do push "Agenda do dia"
-  // (backend/fazenda/api/routers/push.py:despachar_agenda_do_dia), mas
-  // recalculada aqui a cada 5 min (e ao abrir o app) para o badge continuar
-  // certo mesmo sem depender de push (ex.: navegador sem suporte a Web Push,
-  // ou eventos marcados como realizados desde o último push do dia).
+  // eventos da agenda de hoje, recalculada aqui a cada 5 min (e ao abrir o
+  // app) — não depende de push (o push da manhã "Agenda do dia" deixou de
+  // existir: à noite sai UM resumo dos compromissos de amanhã, ver
+  // backend/fazenda/api/routers/push.py:despachar_resumo_da_noite).
   useEffect(() => {
     if (typeof navigator === "undefined" || !("setAppBadge" in navigator)) return;
     let cancelado = false;

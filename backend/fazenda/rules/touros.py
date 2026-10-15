@@ -244,7 +244,9 @@ def importar_touros_planilha_rica(session: Session, content: bytes, fonte: str |
     return {"criados": criados, "atualizados": atualizados, "erros": erros}
 
 
-def _upsert_touros_por_naab(session: Session, linhas_mapeadas: list[dict], fonte: str | None, rodada: str | None) -> dict:
+def _upsert_touros_por_naab(
+    session: Session, linhas_mapeadas: list[dict], fonte: str | None, rodada: str | None, reativar: bool = False,
+) -> dict:
     """Núcleo do upsert por código NAAB, comum a `importar_touros` (que
     mapeia colunas de planilha por apelido ANTES de chegar aqui) e a
     `aplicar_atualizacoes_confirmadas` (catálogo AISS da NAAB, já mapeado por
@@ -252,7 +254,8 @@ def _upsert_touros_por_naab(session: Session, linhas_mapeadas: list[dict], fonte
     `linhas_mapeadas` já usa os NOMES DE CAMPO do modelo `Touro` como chave
     (ex.: `{"naab": "007HO123", "leite_kg": 30.5, ...}`) — nada de apelido de
     planilha aqui. Atualiza só os campos presentes (valor vazio/None é
-    ignorado, nunca zera); nunca apaga touro existente."""
+    ignorado, nunca zera); nunca apaga touro existente. `reativar=True` marca
+    como ATIVO o touro que está na remessa (voltou à lista da NAAB)."""
     from datetime import datetime
 
     existentes: dict[str, Touro] = {t.naab: t for t in session.exec(select(Touro)).all()}
@@ -274,6 +277,8 @@ def _upsert_touros_por_naab(session: Session, linhas_mapeadas: list[dict], fonte
         # Central: usa a da remessa; se faltar, deriva do código NAAB.
         if not touro.central:
             touro.central = central_por_codigo_naab(naab)
+        if reativar:
+            touro.ativo = True
         if fonte:
             touro.fonte = fonte
         if rodada:
@@ -335,19 +340,42 @@ def aplicar_atualizacoes_confirmadas(
     linha confirmada com `mapear_para_touro` e delega o upsert (por NAAB,
     nunca apaga) para o MESMO núcleo usado por `importar_touros` — nenhuma
     lógica de upsert duplicada entre os dois caminhos."""
-    confirmados = {(n or "").strip().upper() for n in naabs_confirmados}
-    linhas_mapeadas: list[dict] = []
+    from fazenda.rules.naab_aiss import casar_renomeados, normalizar_naab, registro_aiss
+
+    confirmados = {normalizar_naab(n) for n in naabs_confirmados}
+    mapas: dict[str, dict] = {}
+    registros: dict[str, str | None] = {}
     for linha in linhas_aiss:
         mapa = mapear_para_touro(linha)
-        naab = mapa.get("naab")
-        if naab and naab in confirmados:
-            linhas_mapeadas.append(mapa)
+        if mapa.get("naab"):
+            mapas[mapa["naab"]] = mapa
+            registros[mapa["naab"]] = registro_aiss(linha)
+
+    # Mesmo animal com NAAB trocado pela central: a atualização vai para o
+    # registro que já existe (o código que está na palha), nunca cria duplicata.
+    existentes = {t.naab: t for t in session.exec(select(Touro)).all()}
+    renomeados = casar_renomeados(existentes, mapas, registros)
+    destino_por_atual = {atual: antigo for antigo, atual in renomeados.items()}
+
+    linhas_mapeadas: list[dict] = []
+    for naab, mapa in mapas.items():
+        destino = destino_por_atual.get(naab)
+        if naab not in confirmados and destino not in confirmados:
+            continue
+        if destino:
+            mapa = dict(mapa)
+            mapa["naab"] = destino
+            nota = f"NAAB atual (AISS): {naab} — mesmo animal; código antigo mantido por constar no estoque/palha."
+            obs = (existentes[destino].observacao or "").strip()
+            if nota not in obs:
+                mapa["observacao"] = f"{obs}\n{nota}".strip()
+        linhas_mapeadas.append(mapa)
 
     logger.info(
         "Aplicando atualizações NAAB confirmadas pelo dono: %d de %d touro(s) do catálogo AISS, fonte=%s, rodada=%s",
         len(linhas_mapeadas), len(confirmados), fonte, rodada,
     )
-    return _upsert_touros_por_naab(session, linhas_mapeadas, fonte, rodada)
+    return _upsert_touros_por_naab(session, linhas_mapeadas, fonte, rodada, reativar=True)
 
 
 def bootstrap_touros_naab(session: Session, forcar: bool = False) -> None:

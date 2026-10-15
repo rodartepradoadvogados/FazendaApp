@@ -18,10 +18,47 @@ from fazenda.api.routers.push import notificar_push_para_itens
 from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import AlertaIndicador, PortalMensagem, SolicitacaoExclusao, Usuario
+from fazenda.rules.datas import hoje_local
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/notificacoes", tags=["notificacoes"])
+
+
+def _item_de_evento(e: dict) -> dict:
+    """Um evento da Agenda no formato de item do sino/push (mesmos campos de sempre + `data`/`data_visita`, que
+    dão ao push a data a que o evento se refere — ver push.py::_chave_evento/_data_efetiva)."""
+    return {
+        "tipo": "agenda",
+        "categoria": e["categoria"],
+        "descricao": e["descricao"],
+        "numero_animal": e["numero_animal"],
+        "cor": e["cor"],
+        # nº do lançamento (ex.: conta a pagar) — quando presente, o sino
+        # leva direto pra ele em vez de só abrir a tela genérica do módulo
+        # (mesmo "ref" que a Agenda já usa no link "Ir para Financeiro").
+        "ref": e.get("ref"),
+        # id/tipo do evento de agenda por trás deste item — "tipo" acima
+        # fica fixo em "agenda" de propósito (título do push por canal,
+        # ver push.py::_categoria_push); estes dois campos são o que
+        # permite ao sino/push abrir a AÇÃO certa (ex.: a janela de
+        # "Ver sugestão" de mudança de lote), em vez de só cair na tela
+        # genérica do módulo sem achar o item — ver #sugestão-de-lote-presa.
+        "evento_id": e.get("id"),
+        "evento_tipo": e.get("tipo"),
+        "data": e.get("data"),
+        "data_visita": e.get("data_visita"),
+    }
+
+
+def itens_da_agenda(user: Usuario, session: Session, fazenda_id: int | None, dia: date) -> list[dict]:
+    """Compromissos que caem em `dia` (já filtrados pela permissão do usuário em calcular_agenda). Usado pelo
+    resumo da noite (dia = amanhã). O aviso da visita reprodutiva vale pelo dia da VISITA, não pelo dia do aviso."""
+    agenda = calcular_agenda(data=dia, dias=0, session=session, usuario=user, fazenda_id=fazenda_id)
+    return [
+        _item_de_evento(e) for e in agenda["eventos"]
+        if (e.get("data_visita") or e["data"]) == dia.isoformat()
+    ]
 
 
 def montar_itens_notificacoes(user: Usuario, session: Session, fazenda_id: int | None = None) -> list[dict]:
@@ -38,7 +75,7 @@ def montar_itens_notificacoes(user: Usuario, session: Session, fazenda_id: int |
     de propósito, ele fica com o próprio marcador Depends(...) como "valor",
     que fazenda_id_seguro() trata como None (sem filtro), misturando dados de
     TODAS as fazendas no sino/push (bug real encontrado em produção)."""
-    hoje = date.today()
+    hoje = hoje_local()
     itens: list[dict] = []
 
     # calcular_agenda já filtra os eventos pela permissão do usuário (ver
@@ -47,25 +84,7 @@ def montar_itens_notificacoes(user: Usuario, session: Session, fazenda_id: int |
     for e in agenda["eventos"]:
         if e["data"] != hoje.isoformat():
             continue
-        itens.append({
-            "tipo": "agenda",
-            "categoria": e["categoria"],
-            "descricao": e["descricao"],
-            "numero_animal": e["numero_animal"],
-            "cor": e["cor"],
-            # nº do lançamento (ex.: conta a pagar) — quando presente, o sino
-            # leva direto pra ele em vez de só abrir a tela genérica do módulo
-            # (mesmo "ref" que a Agenda já usa no link "Ir para Financeiro").
-            "ref": e.get("ref"),
-            # id/tipo do evento de agenda por trás deste item — "tipo" acima
-            # fica fixo em "agenda" de propósito (título do push por canal,
-            # ver push.py::_categoria_push); estes dois campos são o que
-            # permite ao sino/push abrir a AÇÃO certa (ex.: a janela de
-            # "Ver sugestão" de mudança de lote), em vez de só cair na tela
-            # genérica do módulo sem achar o item — ver #sugestão-de-lote-presa.
-            "evento_id": e.get("id"),
-            "evento_tipo": e.get("tipo"),
-        })
+        itens.append(_item_de_evento(e))
 
     if user.papel == "admin":
         query_pendentes = select(SolicitacaoExclusao).where(SolicitacaoExclusao.status == "pendente")
@@ -79,6 +98,7 @@ def montar_itens_notificacoes(user: Usuario, session: Session, fazenda_id: int |
                 "descricao": f"Exclusão de {p.titulo or f'{p.tipo} #{p.id_alvo}'} — solicitada por {p.solicitado_por or '—'}",
                 "numero_animal": None,
                 "cor": "var(--amber)",
+                "solicitacao_id": p.id,
             })
 
     # Portal > Comunicação: mensagens/tarefas recebidas que ainda não
@@ -149,6 +169,7 @@ def montar_itens_notificacoes(user: Usuario, session: Session, fazenda_id: int |
             "descricao": descricao_alerta(alerta, valor),
             "numero_animal": None,
             "cor": "var(--amber)",
+            "alerta_id": alerta.id,
         })
 
     return itens

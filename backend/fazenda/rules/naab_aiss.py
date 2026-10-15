@@ -37,7 +37,7 @@ import logging
 import re
 import zipfile
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from urllib.parse import urljoin
 
 import httpx
@@ -252,6 +252,60 @@ def ler_catalogo_aiss(texto: str) -> list[dict]:
     return linhas
 
 
+def normalizar_naab(codigo: str) -> str:
+    """Leva o código NAAB ao formato canônico do banco: prefixo da central
+    com 3 dígitos, raça com 2 letras e número do touro com 5 dígitos
+    (ex.: `9AY156` → `009AY00156`). Sem isso, a comparação semanal marcava
+    como "saído" e "novo" o mesmo touro por diferença só de zeros à
+    esquerda. Código fora desse padrão volta só limpo (maiúsculas, sem
+    espaços)."""
+    limpo = (codigo or "").strip().upper()
+    m = re.fullmatch(r"(\d{1,3})([A-Z]{2})(\d{1,5})", limpo)
+    if not m:
+        return limpo
+    return f"{m.group(1).zfill(3)}{m.group(2)}{m.group(3).zfill(5)}"
+
+
+# Código ISO alfabético → numérico do país, para casar o registro da planilha da
+# Alta (`InterRegNumber`, ex.: HOCAN...) com o do AISS (`Country`, ex.: 124).
+_PAISES_ISO = {
+    "USA": "840", "CAN": "124", "AUS": "036", "CHN": "156", "BRA": "076", "DEU": "276", "NLD": "528",
+    "FRA": "250", "ITA": "380", "DNK": "208", "SWE": "752", "NOR": "578", "GBR": "826", "ESP": "724",
+    "CHE": "756", "NZL": "554", "IRL": "372", "POL": "616", "CZE": "203", "HUN": "348", "ISR": "376",
+    "JPN": "392", "KOR": "410", "MEX": "484", "ARG": "032", "COL": "170", "FIN": "246", "BEL": "056",
+    "AUT": "040", "ZAF": "710", "URY": "858", "CHL": "152", "PRT": "620", "RUS": "643", "UKR": "804",
+    "LTU": "440", "EST": "233", "LVA": "428", "SVK": "703", "SVN": "705", "HRV": "191",
+}
+
+
+def registro_aiss(linha: dict) -> str | None:
+    """Chave de registro do animal numa linha crua do AISS: raça + país + ID
+    (sem zeros à esquerda). É o que NÃO muda quando a central troca o código
+    NAAB do touro (ex.: 151HO04513 → 551HO04513)."""
+    raca = (linha.get("Breed") or "").strip().upper()
+    pais = (linha.get("Country") or "").strip().upper()
+    pais = _PAISES_ISO.get(pais, pais)  # o AISS mistura código numérico e alfabético
+    ident = (linha.get("ID Number") or "").strip().upper().lstrip("0")
+    return f"{raca}{pais}{ident}" if raca and pais and ident else None
+
+
+def registro_do_touro(touro: Touro) -> str | None:
+    """Mesma chave de registro, a partir do `InterRegNumber` guardado em
+    `dados_extra` (planilha da Alta). None se o touro não tiver."""
+    import json
+
+    if not touro.dados_extra:
+        return None
+    try:
+        bruto = dict(json.loads(touro.dados_extra)).get("InterRegNumber")
+    except (ValueError, TypeError):
+        return None
+    m = re.fullmatch(r"([A-Z]{2})(\d{3}|[A-Z]{3})[MF]?([A-Z0-9]+)", (bruto or "").strip().upper())
+    if not m:
+        return None
+    return f"{m.group(1)}{_PAISES_ISO.get(m.group(2), m.group(2))}{m.group(3).lstrip('0')}"
+
+
 def mapear_para_touro(linha: dict) -> dict:
     """Converte uma linha crua do catálogo AISS (chaves = `CAMPOS_AISS`,
     valores = string bruta) para os nomes de campo do modelo `Touro`, já
@@ -268,7 +322,7 @@ def mapear_para_touro(linha: dict) -> dict:
 
     saida: dict = {}
 
-    naab = _texto("Full NAAB Code").upper()
+    naab = normalizar_naab(_texto("Full NAAB Code"))
     if naab:
         saida["naab"] = naab
     nome = _texto("Short Name")
@@ -349,6 +403,10 @@ def _extrair_rodada(nome_arquivo: str | None) -> str:
 # ---------------------------------------------------------------------------
 # Comparação semanal (SÓ LEITURA — nunca grava no banco)
 # ---------------------------------------------------------------------------
+# `Touro.fonte` dos touros gravados a partir do arquivo AISS.
+FONTE_AISS = "NAAB AISS"
+
+
 @dataclass
 class RelatorioNaab:
     """Resultado de `comparar_catalogo` — puramente informativo, para o
@@ -358,7 +416,35 @@ class RelatorioNaab:
     total_comparados: int
     alterados: list[dict] = field(default_factory=list)
     saidos: list[dict] = field(default_factory=list)
+    # Ausentes do AISS, mas que NÃO vieram do AISS (ex.: planilha da Alta, sêmen vendido fora dos
+    # EUA): só informativo — o AISS lista apenas touro ativo nos EUA, então ausência aqui não
+    # significa que o touro saiu do mercado. Nunca são inativados automaticamente.
+    fora_do_aiss: list[dict] = field(default_factory=list)
     novos: list[dict] = field(default_factory=list)
+    # Touros hoje INATIVOS no banco que voltaram a aparecer no AISS.
+    reativados: list[dict] = field(default_factory=list)
+    # Mesmo animal (mesmo registro) cuja central trocou o código NAAB: {naab, naab_atual, nome}.
+    # Não entram em novos nem em saídos; a atualização vai para o registro que já existe.
+    renomeados: list[dict] = field(default_factory=list)
+
+
+def casar_renomeados(
+    existentes_por_naab: dict[str, Touro], mapas_por_naab: dict[str, dict], registro_por_naab: dict[str, str | None],
+) -> dict[str, str]:
+    """Touros do banco que NÃO estão no AISS pelo NAAB, mas cujo registro
+    (raça + país + ID) aparece no AISS sob OUTRO NAAB que o banco ainda não tem
+    — a central trocou o código do mesmo animal (ex.: 151HO04513 → 551HO04513).
+    Devolve `{naab_no_banco: naab_no_aiss}`."""
+    por_registro = {reg: naab for naab, reg in registro_por_naab.items() if reg}
+    renomeados: dict[str, str] = {}
+    for naab, touro in existentes_por_naab.items():
+        if naab in mapas_por_naab:
+            continue
+        reg = registro_do_touro(touro)
+        atual = por_registro.get(reg) if reg else None
+        if atual and atual not in existentes_por_naab:
+            renomeados[naab] = atual
+    return renomeados
 
 
 def _comparar_campos_curados(touro: Touro, mapa: dict) -> dict:
@@ -400,29 +486,46 @@ def comparar_catalogo(session: Session, linhas_aiss: list[dict], nome_arquivo: s
       lista grande; os dados aqui nunca são truncados.
     """
     mapeadas: dict[str, dict] = {}
+    registros: dict[str, str | None] = {}
     for linha in linhas_aiss:
         mapa = mapear_para_touro(linha)
         naab = mapa.get("naab")
         if naab:
             mapeadas[naab] = mapa
+            registros[naab] = registro_aiss(linha)
 
     existentes = session.exec(select(Touro)).all()
     existentes_por_naab = {t.naab: t for t in existentes}
+    renomeados_map = casar_renomeados(existentes_por_naab, mapeadas, registros)
 
     alterados: list[dict] = []
+    renomeados: list[dict] = []
     saidos: list[dict] = []
+    reativados: list[dict] = []
+    fora_do_aiss: list[dict] = []
     for naab, touro in existentes_por_naab.items():
         mapa = mapeadas.get(naab)
+        if mapa is None and naab in renomeados_map:
+            mapa = mapeadas[renomeados_map[naab]]
+            renomeados.append({"naab": naab, "naab_atual": renomeados_map[naab], "nome": touro.nome})
         if mapa is not None:
+            if not getattr(touro, "ativo", True):
+                reativados.append({"naab": naab, "nome": touro.nome})
             mudancas = _comparar_campos_curados(touro, mapa)
             if mudancas:
                 alterados.append({"naab": naab, "nome": touro.nome, "mudancas": mudancas})
         else:
-            if MARCA_MANTIDO in (touro.observacao or ""):
+            if MARCA_MANTIDO in (touro.observacao or "") or not getattr(touro, "ativo", True):
+                continue  # decisão já tomada, ou já está inativo — não repete toda semana
+            if touro.fonte != FONTE_AISS:
+                fora_do_aiss.append({"naab": naab, "nome": touro.nome})
                 continue
             saidos.append({"naab": naab, "nome": touro.nome})
 
-    novos: list[dict] = [mapa for naab, mapa in mapeadas.items() if naab not in existentes_por_naab]
+    atuais_renomeados = set(renomeados_map.values())
+    novos: list[dict] = [
+        mapa for naab, mapa in mapeadas.items() if naab not in existentes_por_naab and naab not in atuais_renomeados
+    ]
 
     rodada = _extrair_rodada(nome_arquivo)
     return RelatorioNaab(
@@ -431,6 +534,9 @@ def comparar_catalogo(session: Session, linhas_aiss: list[dict], nome_arquivo: s
         alterados=alterados,
         saidos=saidos,
         novos=novos,
+        reativados=reativados,
+        fora_do_aiss=fora_do_aiss,
+        renomeados=renomeados,
     )
 
 
@@ -453,3 +559,45 @@ def marcar_mantido(session: Session, naab: str, motivo: str | None = None) -> No
     touro.observacao = f"{obs_atual}\n{linha_nova}" if obs_atual else linha_nova
     session.add(touro)
     session.commit()
+
+
+def inativar_touros_saidos(session: Session, naabs: list[str], forcar: bool = False) -> dict:
+    """Marca como INATIVO (`Touro.ativo = False`) os touros que saíram do
+    catálogo AISS — o sêmen deles ainda pode circular no mercado, então nada é
+    apagado nem escondido das fazendas que o ativarem (`TouroAtivadoFazenda`).
+
+    Só inativa touro que VEIO do AISS (`fonte == "NAAB AISS"`) e sumiu dele: o
+    AISS lista apenas touro ativo nos EUA, então a ausência de um touro da
+    planilha da Alta (vendido fora dos EUA) não quer dizer que saiu do mercado.
+    Pula também touro "mantido por decisão do dono" (`marcar_mantido`) e NAAB
+    que não existe no banco.
+
+    Trava de segurança: se a lista for maior que 20% dos touros ativos vindos
+    do AISS (mínimo de 50), levanta `ValueError` — um download truncado faria
+    centenas de touros sumirem de uma vez. `forcar=True` ignora a trava.
+
+    Devolve `{"inativados": [...], "pulados": [...]}`."""
+    base_ativos = len(session.exec(
+        select(Touro).where(Touro.fonte == FONTE_AISS, Touro.ativo == True)  # noqa: E712
+    ).all())
+    limite = max(50, int(base_ativos * 0.2))
+    if len(naabs) > limite and not forcar:
+        raise ValueError(
+            f"{len(naabs)} touros marcados para inativar excede a trava de segurança ({limite}). "
+            "Confira se o download do AISS veio completo antes de forçar."
+        )
+    inativados: list[str] = []
+    pulados: list[str] = []
+    for naab in naabs:
+        naab_norm = normalizar_naab(naab)
+        touro = session.exec(select(Touro).where(Touro.naab == naab_norm)).first()
+        if touro is None or touro.fonte != FONTE_AISS or MARCA_MANTIDO in (touro.observacao or ""):
+            pulados.append(naab_norm)
+            continue
+        if touro.ativo:
+            touro.ativo = False
+            touro.atualizado_em = datetime.utcnow()
+            session.add(touro)
+        inativados.append(naab_norm)
+    session.commit()
+    return {"inativados": inativados, "pulados": pulados}

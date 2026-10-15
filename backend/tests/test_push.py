@@ -567,86 +567,286 @@ class TestCategoriaPush:
 
 
 # ---------------------------------------------------------------------------
-# Agenda do dia (#542): 1 push-resumo por usuário por dia, não 1 por item.
+# Regra do dono (15/10/2026): à NOITE um resumo com os compromissos de amanhã; depois só o que for NOVO,
+# UMA vez por evento. Nada de repetir todo dia nem de um push por item.
 # ---------------------------------------------------------------------------
-class TestDespacharAgendaDoDia:
-    def _usuario_admin(self, session) -> Usuario:
-        usuario = Usuario(username="admin_teste", senha_hash="x", papel="admin", ativo=True)
-        session.add(usuario)
-        session.commit()
-        session.refresh(usuario)
-        return usuario
+from datetime import datetime, timedelta, timezone  # noqa: E402
 
-    def _mock_calcular_agenda(self, monkeypatch, n_eventos_hoje: int) -> None:
-        # despachar_agenda_do_dia reaproveita calcular_agenda (import local,
-        # resolvido a cada chamada) só para CONTAR os eventos de hoje — mocka
-        # aqui para o teste não depender de dados de seed/parametros (ex.:
-        # alerta padrão de estoque de sêmen abaixo do mínimo) nem duplicar a
-        # lógica de agenda.
-        import fazenda.api.routers.agenda as agenda_module
+HOJE = date.today()
+AMANHA = HOJE + timedelta(days=1)
 
-        eventos = [
-            {"data": date.today().isoformat(), "categoria": "Atividades", "descricao": f"Evento {i}"}
-            for i in range(n_eventos_hoje)
-        ]
-        monkeypatch.setattr(agenda_module, "calcular_agenda", lambda **kwargs: {"eventos": eventos})
 
-    def test_envia_um_resumo_com_a_contagem_de_hoje(self, engine, monkeypatch):
+def _relogio(monkeypatch, hora: int, dia: date = HOJE) -> None:
+    fixo = datetime(dia.year, dia.month, dia.day, hora, 0, tzinfo=timezone(timedelta(hours=-3)))
+    monkeypatch.setattr(push_module, "agora_local", lambda *a, **k: fixo)
+    monkeypatch.setattr(push_module, "hoje_local", lambda *a, **k: dia)
+
+
+def _item(descricao: str, dia: date | None = HOJE, **extra) -> dict:
+    return {"tipo": "agenda", "categoria": "Atividades", "descricao": descricao, "numero_animal": None,
+            "data": dia.isoformat() if dia else None, **extra}
+
+
+def _com_canal(session, usuario_id: int = 1) -> None:
+    session.add(PushSubscription(usuario_id=usuario_id, endpoint=f"https://push.exemplo/{usuario_id}", p256dh="p", auth="a"))
+    session.commit()
+
+
+class TestResumoDaNoite:
+    def _preparar(self, engine, monkeypatch, eventos_amanha: list[dict]):
         chamadas = []
         monkeypatch.setattr(push_module, "enviar_push", lambda **kwargs: chamadas.append(kwargs))
-        self._mock_calcular_agenda(monkeypatch, 3)
-
+        import fazenda.api.routers.notificacoes as notif
+        monkeypatch.setattr(notif, "calcular_agenda", lambda **kw: {"eventos": eventos_amanha})
         with Session(engine) as session:
-            usuario = self._usuario_admin(session)
-            session.add(PushSubscription(usuario_id=usuario.id, endpoint="https://push.exemplo/1", p256dh="p1", auth="a1"))
+            usuario = Usuario(username="admin_teste", senha_hash="x", papel="admin", ativo=True)
+            session.add(usuario)
             session.commit()
+            session.refresh(usuario)
+            _com_canal(session, usuario.id)
+            return chamadas, usuario.id
 
-            push_module.despachar_agenda_do_dia(session)
+    @staticmethod
+    def _evento(i: int, dia: date = AMANHA) -> dict:
+        return {"data": dia.isoformat(), "categoria": "Atividades", "descricao": f"Compromisso {i}",
+                "numero_animal": None, "cor": "x", "id": f"ev{i}"}
 
-        assert len(chamadas) == 1
-        assert chamadas[0]["titulo"] == "Agenda do dia"
-        assert chamadas[0]["url"] == "/agenda"
-        assert chamadas[0]["corpo"] == "Você tem 3 atividades na agenda hoje"
-        # count viaja no payload para o service worker atualizar o badge do
-        # ícone do app (Badging API) — ver push_module.enviar_push/sw.js.
-        assert chamadas[0]["count"] == 3
-
-    def test_nao_envia_de_novo_no_mesmo_dia(self, engine, monkeypatch):
-        chamadas = []
-        monkeypatch.setattr(push_module, "enviar_push", lambda **kwargs: chamadas.append(kwargs))
-        self._mock_calcular_agenda(monkeypatch, 1)
-
+    def test_antes_das_18h_nao_envia(self, engine, monkeypatch):
+        chamadas, _ = self._preparar(engine, monkeypatch, [self._evento(1)])
+        _relogio(monkeypatch, 10)
         with Session(engine) as session:
-            usuario = self._usuario_admin(session)
-            session.add(PushSubscription(usuario_id=usuario.id, endpoint="https://push.exemplo/1", p256dh="p1", auth="a1"))
-            session.commit()
-
-            # Simula duas voltas do loop periódico de 30 min.
-            push_module.despachar_agenda_do_dia(session)
-            push_module.despachar_agenda_do_dia(session)
-
-        assert len(chamadas) == 1
-        assert chamadas[0]["corpo"] == "Você tem 1 atividade na agenda hoje"
-
-        with Session(engine) as session:
-            registros = session.exec(
-                select(PushNotificacaoEnviada).where(PushNotificacaoEnviada.chave == "agenda_do_dia")
-            ).all()
-            assert len(registros) == 1
-
-    def test_nao_envia_push_vazio_quando_nao_ha_itens_hoje(self, engine, monkeypatch):
-        chamadas = []
-        monkeypatch.setattr(push_module, "enviar_push", lambda **kwargs: chamadas.append(kwargs))
-        self._mock_calcular_agenda(monkeypatch, 0)
-
-        with Session(engine) as session:
-            usuario = self._usuario_admin(session)
-            session.add(PushSubscription(usuario_id=usuario.id, endpoint="https://push.exemplo/1", p256dh="p1", auth="a1"))
-            session.commit()
-
-            push_module.despachar_agenda_do_dia(session)
-
+            push_module.despachar_resumo_da_noite(session)
         assert chamadas == []
+
+    def test_a_noite_envia_um_resumo_com_os_compromissos_de_amanha(self, engine, monkeypatch):
+        chamadas, _ = self._preparar(engine, monkeypatch, [self._evento(i) for i in range(1, 6)])
+        _relogio(monkeypatch, 19)
+        with Session(engine) as session:
+            push_module.despachar_resumo_da_noite(session)
+        assert len(chamadas) == 1
+        assert chamadas[0]["titulo"] == "Compromissos de amanhã"
+        assert chamadas[0]["corpo"].startswith("Amanhã: 5 compromissos")
+        assert "e mais 2" in chamadas[0]["corpo"]
+        assert chamadas[0]["url"] == "/agenda"
+
+    def test_nao_reenvia_o_resumo_nas_voltas_seguintes_da_noite(self, engine, monkeypatch):
+        chamadas, _ = self._preparar(engine, monkeypatch, [self._evento(1)])
+        _relogio(monkeypatch, 19)
+        with Session(engine) as session:
+            push_module.despachar_resumo_da_noite(session)
+            push_module.despachar_resumo_da_noite(session)
+        _relogio(monkeypatch, 22)
+        with Session(engine) as session:
+            push_module.despachar_resumo_da_noite(session)
+        assert len(chamadas) == 1
+
+    def test_sem_compromissos_nao_manda_push_vazio(self, engine, monkeypatch):
+        chamadas, _ = self._preparar(engine, monkeypatch, [])
+        _relogio(monkeypatch, 19)
+        with Session(engine) as session:
+            push_module.despachar_resumo_da_noite(session)
+        assert chamadas == []
+
+    def test_o_que_entrou_no_resumo_nao_volta_como_push_individual_nem_de_manha(self, engine, monkeypatch):
+        import fazenda.api.routers.notificacoes as notif
+        eventos = [self._evento(1), self._evento(2)]
+        chamadas, uid = self._preparar(engine, monkeypatch, eventos)
+        _relogio(monkeypatch, 19)
+        with Session(engine) as session:
+            push_module.despachar_resumo_da_noite(session)
+            assert len(chamadas) == 1
+            # mesma noite, depois do resumo: a varredura enxerga amanhã e NÃO avisa de novo
+            itens_amanha = [notif._item_de_evento(e) for e in eventos]
+            push_module.notificar_push_para_itens(uid, itens_amanha, session, incluir_amanha=True, reabrir=True)
+        assert len(chamadas) == 1
+        # na manhã seguinte os mesmos eventos são "hoje": continuam em silêncio
+        _relogio(monkeypatch, 7, AMANHA)
+        hoje_itens = [notif._item_de_evento(self._evento(i, AMANHA)) for i in (1, 2)]
+        with Session(engine) as session:
+            push_module.notificar_push_para_itens(uid, hoje_itens, session, reabrir=True)
+        assert len(chamadas) == 1
+
+    def test_evento_novo_depois_do_resumo_avisa_uma_unica_vez(self, engine, monkeypatch):
+        import fazenda.api.routers.notificacoes as notif
+        eventos = [self._evento(1)]
+        chamadas, uid = self._preparar(engine, monkeypatch, eventos)
+        _relogio(monkeypatch, 19)
+        with Session(engine) as session:
+            push_module.despachar_resumo_da_noite(session)
+            nova = notif._item_de_evento(self._evento(9))
+            itens = [notif._item_de_evento(e) for e in eventos] + [nova]
+            for _ in range(3):  # três voltas da varredura
+                push_module.notificar_push_para_itens(uid, itens, session, incluir_amanha=True, reabrir=True)
+        assert len(chamadas) == 2  # o resumo + só o evento novo
+        assert chamadas[1]["corpo"] == "Compromisso 9"
+
+
+class TestUmaVezPorEvento:
+    def test_alerta_que_a_agenda_recria_todo_dia_avisa_so_na_primeira_vez(self, engine, monkeypatch):
+        chamadas = []
+        monkeypatch.setattr(push_module, "enviar_push", lambda **kwargs: chamadas.append(kwargs))
+        with Session(engine) as session:
+            _com_canal(session)
+            for offset in range(4):  # 4 dias seguidos, o mesmo alerta com a data de cada dia
+                dia = HOJE + timedelta(days=offset)
+                _relogio(monkeypatch, 9, dia)
+                push_module.notificar_push_para_itens(
+                    1, [_item("Estoque de sêmen sexado abaixo do mínimo: 0 de 5 doses", dia)], session, reabrir=True)
+        assert len(chamadas) == 1
+
+    def test_problema_resolvido_que_volta_e_um_evento_novo(self, engine, monkeypatch):
+        chamadas = []
+        monkeypatch.setattr(push_module, "enviar_push", lambda **kwargs: chamadas.append(kwargs))
+        _relogio(monkeypatch, 9)
+        item = _item("Estoque abaixo do mínimo")
+        with Session(engine) as session:
+            _com_canal(session)
+            push_module.notificar_push_para_itens(1, [item], session, reabrir=True)
+            push_module.notificar_push_para_itens(1, [], session, reabrir=True)      # resolveu: some da lista
+            push_module.notificar_push_para_itens(1, [item], session, reabrir=True)  # voltou
+        assert len(chamadas) == 2
+
+    def test_sino_sem_reabrir_nao_apaga_marcas(self, engine, monkeypatch):
+        chamadas = []
+        monkeypatch.setattr(push_module, "enviar_push", lambda **kwargs: chamadas.append(kwargs))
+        _relogio(monkeypatch, 9)
+        with Session(engine) as session:
+            _com_canal(session)
+            push_module.notificar_push_para_itens(1, [_item("A")], session)
+            push_module.notificar_push_para_itens(1, [_item("B")], session)  # lista parcial do sino
+            push_module.notificar_push_para_itens(1, [_item("A")], session)
+        assert len(chamadas) == 2
+
+    def test_aviso_de_amanha_durante_o_dia_fica_para_o_resumo_da_noite(self, engine, monkeypatch):
+        chamadas = []
+        monkeypatch.setattr(push_module, "enviar_push", lambda **kwargs: chamadas.append(kwargs))
+        _relogio(monkeypatch, 10)
+        veterana = {"tipo": "agenda", "categoria": "Reprodutivo", "descricao": "Amanhã: visita reprodutiva", "numero_animal": None,
+                    "evento_tipo": "visita_reprodutiva", "data": HOJE.isoformat(), "data_visita": AMANHA.isoformat()}
+        with Session(engine) as session:
+            _com_canal(session)
+            push_module.notificar_push_para_itens(1, [veterana], session, reabrir=True)
+        assert chamadas == []
+
+    def test_visita_reprodutiva_e_um_evento_so_na_vespera_e_no_dia(self, engine, monkeypatch):
+        chamadas = []
+        monkeypatch.setattr(push_module, "enviar_push", lambda **kwargs: chamadas.append(kwargs))
+        vespera = {"tipo": "agenda", "categoria": "Reprodutivo", "descricao": "Amanhã: visita reprodutiva", "numero_animal": None,
+                   "evento_tipo": "visita_reprodutiva", "data": HOJE.isoformat(), "data_visita": AMANHA.isoformat()}
+        no_dia = {**vespera, "descricao": "Visita reprodutiva", "data": AMANHA.isoformat()}
+        with Session(engine) as session:
+            _com_canal(session)
+            _relogio(monkeypatch, 19)
+            push_module.notificar_push_para_itens(1, [vespera], session, incluir_amanha=True, reabrir=True)
+            _relogio(monkeypatch, 7, AMANHA)
+            push_module.notificar_push_para_itens(1, [no_dia], session, reabrir=True)
+        assert len(chamadas) == 1
+
+    def test_muitas_novidades_viram_um_unico_push(self, engine, monkeypatch):
+        chamadas = []
+        monkeypatch.setattr(push_module, "enviar_push", lambda **kwargs: chamadas.append(kwargs))
+        _relogio(monkeypatch, 9)
+        with Session(engine) as session:
+            _com_canal(session)
+            push_module.notificar_push_para_itens(1, [_item(f"Tarefa {i}") for i in range(7)], session, reabrir=True)
+        assert len(chamadas) == 1
+        assert chamadas[0]["corpo"].startswith("7 novidades")
+
+    def test_marca_antiga_do_dia_nao_reavisa_e_e_migrada(self, engine, monkeypatch):
+        chamadas = []
+        monkeypatch.setattr(push_module, "enviar_push", lambda **kwargs: chamadas.append(kwargs))
+        _relogio(monkeypatch, 9)
+        item = _item("Conta a pagar: Luz")
+        with Session(engine) as session:
+            _com_canal(session)
+            session.add(PushNotificacaoEnviada(usuario_id=1, chave=push_module._chave_item(item), data_referencia=HOJE))
+            session.commit()
+            push_module.notificar_push_para_itens(1, [item], session, reabrir=True)
+            assert chamadas == []
+            novas = session.exec(select(PushNotificacaoEnviada).where(
+                PushNotificacaoEnviada.chave == push_module._chave_evento(item))).all()
+            assert len(novas) == 1
+
+    def test_mensagem_do_portal_avisa_uma_vez_enquanto_nao_for_resolvida(self, engine, monkeypatch):
+        chamadas = []
+        monkeypatch.setattr(push_module, "enviar_push", lambda **kwargs: chamadas.append(kwargs))
+        msg = {"tipo": "portal_mensagem", "categoria": "Portal", "descricao": "Tarefa de Ana: conferir o cocho",
+               "numero_animal": None, "portal_mensagem_id": 42}
+        with Session(engine) as session:
+            _com_canal(session)
+            for dia in (HOJE, HOJE + timedelta(days=1), HOJE + timedelta(days=2)):
+                _relogio(monkeypatch, 9, dia)
+                push_module.notificar_push_para_itens(1, [msg], session, reabrir=True)
+        assert len(chamadas) == 1
+
+
+class TestUmDiaInteiroDePonta:
+    """Ponta a ponta com a Agenda de verdade: manhã, resumo da noite, novidade depois e manhã seguinte."""
+
+    def test_dia_completo(self, engine, monkeypatch):
+        from fazenda.models import AgendaManual
+        import fazenda.api.routers.notificacoes as notif
+
+        chamadas = []
+        monkeypatch.setattr(push_module, "enviar_push", lambda **kwargs: chamadas.append(kwargs))
+        monkeypatch.setattr(notif, "hoje_local", lambda *a, **k: push_module.hoje_local())
+
+        def manual(dia: date, nome: str):
+            with Session(engine) as session:
+                session.add(AgendaManual(data_evento=dia, descricao=nome, categoria="Atividades"))
+                session.commit()
+
+        with Session(engine) as session:
+            usuario = Usuario(username="admin_dia", senha_hash="x", papel="admin", ativo=True)
+            session.add(usuario)
+            session.commit()
+            session.refresh(usuario)
+            _com_canal(session, usuario.id)
+
+        def volta(hora: int, dia: date = HOJE):
+            _relogio(monkeypatch, hora, dia)
+            with Session(engine) as session:
+                push_module.despachar_push_pendentes(session)
+                push_module.despachar_resumo_da_noite(session)
+
+        manual(HOJE, "Vacinar lote 2")
+        manual(AMANHA, "Pesar bezerros")
+        manual(AMANHA, "Visita do veterinário")
+
+        # A Agenda real traz, por si, o alerta de seed "Estoque de sêmen abaixo do mínimo" (recriado todo dia):
+        # é justamente o tipo de aviso que NÃO pode repetir — então fica na conta em vez de ser escondido.
+        def individuais():
+            return [c["corpo"] for c in chamadas if c["titulo"] != "Compromissos de amanhã"]
+
+        def resumos():
+            return [c for c in chamadas if c["titulo"] == "Compromissos de amanhã"]
+
+        volta(9)                       # manhã: só o que é de hoje (nada de amanhã)
+        assert "Vacinar lote 2" in individuais()
+        assert not any("Pesar bezerros" in c for c in individuais())
+        antes = len(chamadas)
+        volta(9)
+        volta(13)                      # repetir a varredura não repete aviso
+        assert len(chamadas) == antes
+
+        volta(19)                      # noite: UM resumo com os compromissos de amanhã
+        assert len(resumos()) == 1
+        assert "Pesar bezerros" in resumos()[0]["corpo"] or "e mais" in resumos()[0]["corpo"]
+        depois_resumo = len(chamadas)
+        volta(19)
+        volta(22)
+        assert len(chamadas) == depois_resumo   # nada de reavisar o que já está no resumo
+
+        manual(AMANHA, "Coleta de sangue")   # demanda NOVA, entrou depois do resumo
+        volta(22)
+        volta(23)
+        assert len(chamadas) == depois_resumo + 1 and chamadas[-1]["corpo"] == "Coleta de sangue"
+
+        volta(7, AMANHA)               # manhã seguinte: os mesmos compromissos, agora "hoje", em silêncio
+        volta(12, AMANHA)
+        assert len(chamadas) == depois_resumo + 1
+        assert individuais().count("Vacinar lote 2") == 1
+        assert len([c for c in individuais() if c.startswith("Estoque de sêmen")]) <= 2  # 1 por alerta, nunca 1 por dia
 
 
 class TestUrlDestino:

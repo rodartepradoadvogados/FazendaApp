@@ -269,7 +269,6 @@ def test_touros_nao_edita_sem_permissao(ambiente):
         ("post", "/painel-cowdata/touros", {"naab": "007HO22222", "nome": "Intruso"}),
         ("put", f"/painel-cowdata/touros/{ids['touro']}", {"naab": "007HO11111", "nome": "Renomeado"}),
         ("delete", f"/painel-cowdata/touros/{ids['touro']}", None),
-        ("post", "/painel-cowdata/touros/recarregar-catalogo", None),
     ]
     for metodo, rota, corpo in tentativas:
         r = getattr(c, metodo)(rota, headers=_cab_membro(), **({"json": corpo} if corpo else {}))

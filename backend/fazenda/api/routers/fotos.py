@@ -66,9 +66,8 @@ def _resumo_assunto(foto: FotoCampo) -> str:
 
 
 def _corpo_aviso(foto: FotoCampo, descricao: str | None) -> str:
-    # Hora obrigatória no corpo: push.py::_chave_item deduplica por
-    # sha256(tipo|categoria|descricao) no dia — sem ela, duas fotos sem
-    # descrição no mesmo dia colidiriam na mesma chave e a 2ª não notificaria.
+    # Hora no corpo: o push deduplica o aviso do portal pelo id da mensagem (push.py::_chave_evento), então duas
+    # fotos iguais já não colidem; a hora segue no texto porque ajuda quem lê a notificação a distinguir uma da outra.
     hora = foto.data_captura.strftime("%H:%M")
     resumo = _resumo_assunto(foto)
     base = f"{hora} — {resumo}" if resumo else f"{hora} — Foto do campo"
