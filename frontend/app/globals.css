@@ -126,16 +126,17 @@
   --pill-active-fg: var(--dourado-light);
   --pill-active-border: var(--dourado);
   --accent-icon: var(--dourado-light);
-  /* Seções do lançamento financeiro (ver FormFinanceiro.tsx) — um tom translúcido
+  /* Seções do lançamento financeiro (ver FormFinanceiro.tsx). Agora todas na
+     superfície neutra (DESIGN.md: cor só com semântica) — antes, um tom translúcido
      fixo por seção (produtos/nota/parcelamento/pagamento), só para diferenciar
      visualmente os balões da tela. Fixos (não seguem --vinho/--dourado da
      paleta) para as 4 cores continuarem distintas entre si mesmo na paleta
      verde. Opacidade mais alta aqui no escuro para ficar perceptível sobre o
      fundo escuro do --surface-2. */
-  --fin-produtos-bg: rgba(122, 35, 64, 0.18);
-  --fin-nota-bg: rgba(212, 160, 23, 0.16);
-  --fin-parcelamento-bg: rgba(30, 111, 168, 0.18);
-  --fin-pagamento-bg: rgba(46, 125, 82, 0.20);
+  --fin-produtos-bg: var(--surface);
+  --fin-nota-bg: var(--surface);
+  --fin-parcelamento-bg: var(--surface);
+  --fin-pagamento-bg: var(--surface);
 }
 
 /* ── Tema CLARO — branco neutro (sem viés bege/creme), painéis brancos ──
@@ -188,10 +189,10 @@
   --login-watermark-blend: multiply;
   --login-watermark-opacity: 0.12;
   /* Seções do lançamento financeiro — tons mais claros aqui (fundo já branco). */
-  --fin-produtos-bg: rgba(94, 26, 46, 0.07);
-  --fin-nota-bg: rgba(212, 160, 23, 0.14);
-  --fin-parcelamento-bg: rgba(30, 111, 168, 0.08);
-  --fin-pagamento-bg: rgba(46, 125, 82, 0.10);
+  --fin-produtos-bg: var(--surface);
+  --fin-nota-bg: var(--surface);
+  --fin-parcelamento-bg: var(--surface);
+  --fin-pagamento-bg: var(--surface);
 }
 
 /* ── Tema MISTO — conteúdo claro, barra lateral vinho sólido ── */
@@ -242,10 +243,10 @@
   --login-watermark-opacity: 0.12;
   /* Seções do lançamento financeiro — mesmos tons claros do tema claro (o
      conteúdo do misto também é sobre fundo branco). */
-  --fin-produtos-bg: rgba(94, 26, 46, 0.07);
-  --fin-nota-bg: rgba(212, 160, 23, 0.14);
-  --fin-parcelamento-bg: rgba(30, 111, 168, 0.08);
-  --fin-pagamento-bg: rgba(46, 125, 82, 0.10);
+  --fin-produtos-bg: var(--surface);
+  --fin-nota-bg: var(--surface);
+  --fin-parcelamento-bg: var(--surface);
+  --fin-pagamento-bg: var(--surface);
 }
 
 /* ── PALETA "Verde" — dimensão independente do tema, escolhida em

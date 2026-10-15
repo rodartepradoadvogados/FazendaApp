@@ -1,5 +1,7 @@
 # Mockup navegável — Lançar no financeiro
 
+> **Adaptação na tela real (15/10/2026):** ver `COMPARACAO_tela_real.md` (campo a campo, antes/depois, o que falta) e `capturas/`.
+
 HTML/CSS/JS puros, **sem build e sem dependências**. Abra `index.html` no navegador (funciona por `file://`).
 Dados **fictícios** da Fazenda Vale Verde (os mesmos do ambiente de demonstração), "hoje" = **15/10/2026**.
 Nada aqui grava no produto: é uma simulação para decidir direção, copy e fluxo.

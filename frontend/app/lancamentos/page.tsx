@@ -418,7 +418,7 @@ export default function LancamentosPage() {
         <Info size={16} style={{ color: "var(--dourado-light)", marginTop: "0.15rem", flexShrink: 0 }} />
         <p style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
           {sel === "financeiro_despesa" || sel === "financeiro_receita" ? (
-            <><strong style={{ color: "var(--text)" }}>Financeiro já grava de verdade.</strong> Os lançamentos aqui vão para o banco permanente e aparecem nas 5 abas de contas do menu Financeiro.</>
+            <>Cada lançamento aparece nas contas a pagar/receber do menu Financeiro e no resultado do mês.</>
           ) : sel === "controle" ? (
             <><strong style={{ color: "var(--text)" }}>Controle leiteiro já grava de verdade.</strong> As pesagens lançadas aqui vão para o banco permanente.</>
           ) : sel === "pesagem" ? (

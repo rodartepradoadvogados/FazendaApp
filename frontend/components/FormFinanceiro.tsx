@@ -1,5 +1,5 @@
 "use client";
-import { Fragment, cloneElement, isValidElement, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2, Camera, ChevronDown, ChevronRight } from "lucide-react";
 import {
   fetchOpcoesFinanceiro, fetchEstoqueAtivos, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
@@ -34,13 +34,22 @@ const inputStyle: React.CSSProperties = {
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 
 function Campo({ label, children, full }: { label: string; children: React.ReactNode; full?: boolean }) {
-  const idGerado = useId();
-  const id = isValidElement(children) ? ((children.props as any).id ?? idGerado) : undefined;
-  const conteudo = isValidElement(children) && id ? cloneElement(children as React.ReactElement<any>, { id }) : children;
+  // Liga o rótulo ao primeiro controle real que estiver dentro do campo, mesmo
+  // aninhado em <div>/fragmento (antes só funcionava quando o filho era UM
+  // elemento direto — fornecedor, datas e outros ficavam sem nome acessível).
+  const idBase = useId();
+  const raiz = useRef<HTMLDivElement>(null);
+  const rotulo = useRef<HTMLLabelElement>(null);
+  useLayoutEffect(() => {
+    const alvo = raiz.current?.querySelector<HTMLElement>("input:not([type=hidden]), select, textarea");
+    if (!alvo || !rotulo.current) return;
+    if (!alvo.id) alvo.id = idBase;
+    rotulo.current.htmlFor = alvo.id;
+  });
   return (
-    <div style={{ gridColumn: full ? "1 / -1" : undefined }}>
-      <label htmlFor={id} style={lbl}>{label}</label>
-      {conteudo}
+    <div ref={raiz} style={{ gridColumn: full ? "1 / -1" : undefined }}>
+      <label ref={rotulo} style={lbl}>{label}</label>
+      {children}
     </div>
   );
 }
@@ -1351,7 +1360,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         )}
         <div>
           <label style={lbl}>Valor líquido da nota</label>
-          <div style={{ ...inputStyle, fontWeight: 700, color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</div>
+          <div style={{ ...inputStyle, fontWeight: 700 }}>{formatBRL(valorLiquido)}</div>
         </div>
       </div>
 
@@ -1427,6 +1436,57 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
         </p>
       )}
       </div>
+
+      {/* O que muda ao salvar — só leitura, mesma conta que a barra fixa de
+          baixo já usa (nenhuma regra nova): em qual lista a conta vai aparecer,
+          em que linha do resultado cai e o que acontece no caixa e no estoque.
+          Fica na primeira coluna, que sobrava vazia, pra o dono ver o efeito
+          do lançamento enquanto preenche. */}
+      {(() => {
+        const rotuloConta = tipo === "despesa" ? "Contas a pagar" : "Contas a receber";
+        const quitado = parcelado ? parcelas.length > 0 && parcelas.every((p) => p.pago) : jaPago;
+        let situacao = "informe o vencimento";
+        if (quitado) situacao = tipo === "despesa" ? "Paga" : "Recebida";
+        else if (primeiroVencimentoResumo) {
+          const dias = Math.round((new Date(primeiroVencimentoResumo + "T00:00:00").getTime() - new Date(today() + "T00:00:00").getTime()) / 86400000);
+          situacao = dias < 0 ? `Vencida há ${-dias} dia${dias === -1 ? "" : "s"}` : dias === 0 ? "Vence hoje" : `Vence em ${dias} dia${dias === 1 ? "" : "s"}`;
+        }
+        const itemConta = itens.find((i) => i.codigo_conta_gerencial);
+        const conta = itemConta ? planoContas.find((c) => c.codigo === itemConta.codigo_conta_gerencial) : null;
+        const grupo = conta?.rmca_custo_alimentacao ? "Comida" : conta?.rmca_receita_leite ? "Receita do leite" : null;
+        const entradasEstoque = tipo === "despesa"
+          ? itens.flatMap((it) => {
+              const info = infoEmbalagem(it);
+              const q = Number(it.quantidade) || 0;
+              if (!info || info.est.estocavel === false || q <= 0) return [];
+              const entra = info.emb ? q * info.emb.quantidade : q;
+              return [`${it.produto}: +${entra.toLocaleString("pt-BR")} ${info.est.unidade || ""}`.trim()];
+            })
+          : [];
+        const linhas: [string, React.ReactNode][] = [
+          ["Vai aparecer em", <>{rotuloConta} › <b>{situacao}</b></>],
+          ["Valor", <>{formatBRL(valorLiquido)}{numeroParcelasResumo > 1 ? ` em ${numeroParcelasResumo}x` : ""}</>],
+          ["Cai no resultado", <>{centroCusto || "—"}{classificacao ? ` · ${classificacao}` : ""}
+            {itemConta
+              ? <><br />{grupo ? <b>{grupo} · </b> : null}{itemConta.nome_conta_gerencial || conta?.nome} <span style={{ color: "var(--text-muted)" }}>{itemConta.codigo_conta_gerencial}</span></>
+              : <><br /><span style={{ color: "var(--text-muted)" }}>conta gerencial ainda não escolhida</span></>}</>],
+          ["Caixa", quitado
+            ? (tipo === "despesa" ? "Sai do caixa na data do pagamento informado" : "Entra no caixa na data do recebimento informado")
+            : (tipo === "despesa" ? "Não mexe no caixa até dar baixa no pagamento" : "Não mexe no caixa até dar baixa no recebimento")],
+        ];
+        if (entradasEstoque.length) linhas.push(["Estoque", <>{entradasEstoque.map((t) => <span key={t} style={{ display: "block" }}>{t}</span>)}</>]);
+        if (pedidoVinculadoResumo) linhas.push(["Pedido", pedidoVinculadoResumo.numero_pedido]);
+        return (
+          <div className="card mt-3" style={{ background: "var(--surface-2)" }} data-testid="o-que-muda">
+            <p style={{ fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+              O que muda ao salvar
+            </p>
+            <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "max-content 1fr", gap: "0.35rem 0.9rem", fontSize: "0.82rem" }}>
+              {linhas.map(([k, v]) => (<Fragment key={k}><dt style={{ color: "var(--text-muted)" }}>{k}</dt><dd style={{ margin: 0 }}>{v}</dd></Fragment>))}
+            </dl>
+          </div>
+        );
+      })()}
 
       {/* Contexto do fornecedor/cliente — só leitura, histórico pra decidir
           antes de lançar (em aberto, último lançamento, últimos
@@ -1617,7 +1677,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                 <Trash2 size={13} />
               </button>
             )}
-            <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.5rem" }}>Produto/serviço {idx + 1}</p>
+            <p style={{ fontSize: "0.8rem", fontWeight: 700, marginBottom: "0.5rem" }}>Produto/serviço {idx + 1}</p>
             <div className="flex items-center gap-2 mb-3">
               {(["produto", "servico"] as const).map((t) => (
                 <button key={t} type="button" title={t === "produto" ? (temEstoque ? "Este item é um produto de estoque" : "Este item é um produto") : "Este item é um serviço"} onClick={() => atualizarItem(idx, { tipo_item: t, produto: "" })}
@@ -1641,7 +1701,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                   <div className="flex items-center justify-between" style={{ marginBottom: "0.25rem" }}>
                     <label style={lbl}>Produto</label>
                     {temEstoque && <select style={{ background: "transparent", color: "var(--text-muted)", border: "none", fontSize: "0.68rem", cursor: "pointer" }}
-                      value={it.modoProduto} onChange={(e) => atualizarItem(idx, { modoProduto: e.target.value as "estoque" | "livre" })}
+                      aria-label="De onde vem o produto" value={it.modoProduto} onChange={(e) => atualizarItem(idx, { modoProduto: e.target.value as "estoque" | "livre" })}
                       title="Do estoque: escolhe um item já cadastrado. Texto livre: qualquer compra, mesmo sem cadastro — não entra automaticamente no estoque.">
                       <option value="estoque">do estoque</option>
                       <option value="livre">texto livre</option>
@@ -1848,7 +1908,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
                     {p.pago && (
                       <tr>
                         <td colSpan={5} style={{ padding: 0, border: 0 }}>
-                          <div style={{ padding: "0.6rem", background: "var(--fin-pagamento-bg)", borderRadius: "var(--r-sm)", margin: "0.2rem 0 0.5rem" }}>
+                          <div style={{ padding: "0.6rem", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", margin: "0.2rem 0 0.5rem" }}>
                             <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
                               <Campo label="Data de pagamento">
                                 <input type="date" style={inputStyle} value={p.data_pagamento || ""}
@@ -1964,12 +2024,12 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
       <div className="card" style={{
         position: "sticky", bottom: 0, marginTop: "1rem", zIndex: 5,
         display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap",
-        boxShadow: "0 -2px 10px rgba(20,30,45,0.16)",
+        boxShadow: "none", borderTop: "2px solid var(--border)",
       }}>
         <div className="flex items-center gap-4" style={{ flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total do lançamento</div>
-            <div style={{ fontWeight: 800, fontSize: "1.05rem", color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</div>
+            <div style={{ fontWeight: 800, fontSize: "1.05rem" }}>{formatBRL(valorLiquido)}</div>
           </div>
           <div>
             <div style={{ fontSize: "0.66rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Parcelas</div>
