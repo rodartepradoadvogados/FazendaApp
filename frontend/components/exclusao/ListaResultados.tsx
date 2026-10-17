@@ -27,7 +27,8 @@ export function ListaResultados({ tipo, titulo, aoImpacto, aoErro }: {
 
   const escolherAlvo = async (cand: Candidato) => {
     setCarregando(true);
-    try { aoImpacto((await impactoExclusao(tipo, cand.id)) as ImpactoExclusao); }
+    // Em "Todos os lançamentos" cada item carrega o tipo de ORIGEM (`tipo_real`): é com ele que o servidor calcula o impacto.
+    try { aoImpacto((await impactoExclusao(cand.tipo_real || tipo, cand.id)) as ImpactoExclusao); }
     catch (e: any) { aoErro(e.message); }
     finally { setCarregando(false); }
   };
@@ -45,7 +46,7 @@ export function ListaResultados({ tipo, titulo, aoImpacto, aoErro }: {
       {resultados.length === 0 && !buscando && <p className="muted">Nada encontrado.</p>}
       <ul className="exc-resultados">
         {resultados.map((r) => (
-          <li key={r.id}>
+          <li key={`${r.tipo_real ?? tipo}:${r.id}`}>
             <button className="exc-resultado" onClick={() => escolherAlvo(r)}>
               <span className="exc-resultado-titulo">{r.titulo}</span>
               <span className="muted">{r.subtitulo}</span>
