@@ -6,7 +6,7 @@
 //  · POST /producao/entrega-leite é UPSERT por mês: salvar um mês que já existe SUBSTITUI o valor — a tela avisa e o botão diz "Substituir".
 //  · Editar = PUT /producao/entrega-leite/{id}. Excluir = SEMPRE confirmarExclusao("entrega_leite", id): admin exclui na hora,
 //    operador SOLICITA e aguarda aprovação de um administrador.
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Pencil, Trash2, X } from "lucide-react";
 import {
   criarEntregaLeiteMensal, fetchEntregaLeiteMensal, atualizarEntregaLeite, confirmarExclusao, ehAdmin, fetchRelatorioControleEntrega,
@@ -14,7 +14,7 @@ import {
 import { Modal } from "@/components/Modal";
 import { Ajuda, Aviso, BarraAcao, BotaoOuro, Campo, Faixa, Passo, Pilulas } from "@/components/gerencial/kit";
 import { CSS_RAIZ } from "@/components/gerencial/producaoCss";
-import { lerNumero, nb, hojeLocal } from "@/lib/producaoGerencial";
+import { lerNumero, nb, hojeLocal, mensagemDe } from "@/lib/producaoGerencial";
 import {
   KG_POR_L, balancoDoMes, casasDe, ehUnidade, emKg, intervaloDoMes, mesBR, montarPayloadEntrega, ordenarEntregas, textoQtd,
   type DadosEntrega, type RegistroEntrega, type UnidadeEntrega,
@@ -146,25 +146,25 @@ export function FormEntregaLeite({ salvarEntrega = criarEntregaLeiteMensal }: { 
   const pedidoBalanco = useRef(0);
 
   const carregarRegistros = useCallback(() => {
-    setEstado((e) => (e === "ok" ? e : "carregando"));
     fetchEntregaLeiteMensal()
       .then((d) => { setLista(ordenarEntregas<RegistroEntrega>(d.registros ?? [])); setEstado("ok"); })
       .catch(() => setEstado("erro"));
   }, []);
   useEffect(carregarRegistros, [carregarRegistros]);
+  const tentarDeNovo = () => { setEstado("carregando"); carregarRegistros(); };
 
   // Controle leiteiro e receita do mês escolhido (relatório Controle × Entregue do período = mês inteiro). Falhou/sem dado: "—", nunca 0.
+  const periodoDoMes = useMemo(() => intervaloDoMes(mes), [mes]);
   useEffect(() => {
-    const periodo = intervaloDoMes(mes);
     const n = ++pedidoBalanco.current;
-    if (!periodo) { setBalanco(null); return; }
-    fetchRelatorioControleEntrega(periodo.inicio, periodo.fim)
+    if (!periodoDoMes) return;
+    fetchRelatorioControleEntrega(periodoDoMes.inicio, periodoDoMes.fim)
       .then((d) => {
         if (n !== pedidoBalanco.current) return;
         setBalanco({ controle: d.controle_projetado_kg ?? null, receita: d.receita_projetada ?? null, precoKg: d.preco_medio_kg ?? null });
       })
       .catch(() => { if (n === pedidoBalanco.current) setBalanco(null); });
-  }, [mes, lista]);
+  }, [periodoDoMes, lista]);
 
   const q = lerNumero(qtd);
   const qtdValida = q !== null && !Number.isNaN(q) && q > 0;
@@ -175,8 +175,9 @@ export function FormEntregaLeite({ salvarEntrega = criarEntregaLeiteMensal }: { 
 
   // Faixa de números do mês escolhido: o que se digita (ou o já lançado) × o controle leiteiro × a receita.
   const entregueKg = qtdValida ? emKg(q as number, un) : jaExiste ? emKg(jaExiste.quantidade_litros, ehUnidade(jaExiste.unidade)) : null;
-  const controle = balanco?.controle ?? null;
-  const receita = balanco?.receita ?? null;
+  const doMes = periodoDoMes ? balanco : null;
+  const controle = doMes?.controle ?? null;
+  const receita = doMes?.receita ?? null;
   const bal = balancoDoMes(entregueKg, controle);
   const faixa = [
     { rotulo: `Entregue em ${mes ? mesBR(mes) : "—"} · kg`, valor: entregueKg !== null ? nb(entregueKg, entregueKg % 1 ? 1 : 0) : "—" },
@@ -186,7 +187,7 @@ export function FormEntregaLeite({ salvarEntrega = criarEntregaLeiteMensal }: { 
       valor: bal ? `${nb(Math.abs(bal.dif), Math.abs(bal.dif) % 1 ? 1 : 0)} kg · ${nb(Math.abs(bal.pct), 1)}%` : "—",
       tom: bal && bal.dif < 0 ? ("alerta" as const) : undefined,
     },
-    { rotulo: `Receita recebida${receita !== null && balanco?.precoKg ? ` · ${brl2(balanco.precoKg)}/kg` : ""}`, valor: receita !== null ? brl(receita) : "—" },
+    { rotulo: `Receita recebida${receita !== null && doMes?.precoKg ? ` · ${brl2(doMes.precoKg)}/kg` : ""}`, valor: receita !== null ? brl(receita) : "—" },
   ];
 
   const resumo = faltaMes ? "Falta escolher o mês" : qtdValida
@@ -212,8 +213,8 @@ export function FormEntregaLeite({ salvarEntrega = criarEntregaLeiteMensal }: { 
         setRetorno({ tipo: "ok", texto: `Entrega de ${mesBR(p.dados.competencia)} ${jaExiste ? "substituída" : "lançada"} — ${textoQtd(p.dados.quantidade_litros, p.dados.unidade)} · já está na tabela abaixo.` });
         carregarRegistros(); // só recarrega quando enviou de fato — offline apagaria a lista já carregada
       }
-    } catch (e: any) {
-      setRetorno({ tipo: "erro", texto: e.message || "Erro ao lançar entrega mensal do leite" });
+    } catch (e) {
+      setRetorno({ tipo: "erro", texto: mensagemDe(e, "Erro ao lançar entrega mensal do leite") });
     } finally {
       setSalvando(false);
     }
@@ -232,7 +233,7 @@ export function FormEntregaLeite({ salvarEntrega = criarEntregaLeiteMensal }: { 
       await atualizarEntregaLeite(r.id, { competencia: p.dados.competencia, quantidade_litros: p.dados.quantidade_litros, unidade: p.dados.unidade, observacao: p.dados.observacao ?? null });
       setEditId(null);
       carregarRegistros();
-    } catch (e: any) { setErroLista(e.message || "Erro ao editar entrega de leite"); }
+    } catch (e) { setErroLista(mensagemDe(e, "Erro ao editar entrega de leite")); }
     finally { setOcupado(null); }
   }
 
@@ -248,7 +249,7 @@ export function FormEntregaLeite({ salvarEntrega = criarEntregaLeiteMensal }: { 
       } else {
         setAvisoExclusao("Solicitação de exclusão enviada — aguardando aprovação de um administrador.");
       }
-    } catch (e: any) { setErroLista(e.message || "Erro ao excluir"); }
+    } catch (e) { setErroLista(mensagemDe(e, "Erro ao excluir")); }
     finally { setOcupado(null); setConfirmar(null); }
   }
 
@@ -305,7 +306,7 @@ export function FormEntregaLeite({ salvarEntrega = criarEntregaLeiteMensal }: { 
           <div className="gp-vazio" role="alert">
             <b>Não foi possível carregar as entregas</b>
             <span>Confira a conexão e tente de novo — as entregas já lançadas continuam guardadas.</span>
-            <button type="button" className="btn-ghost" onClick={carregarRegistros}>Tentar de novo</button>
+            <button type="button" className="btn-ghost" onClick={tentarDeNovo}>Tentar de novo</button>
           </div>
         ) : vazio ? (
           <div className="gp-vazio"><b>Nenhuma entrega lançada ainda</b><span>Lance a primeira no passo 1: uma entrega por mês.</span></div>

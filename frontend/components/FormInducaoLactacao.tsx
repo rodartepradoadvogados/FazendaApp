@@ -14,7 +14,7 @@ import { casaBusca } from "@/lib/busca";
 import { AnimalRow } from "@/components/AnimalModal";
 import { Ajuda, Aviso, BarraAcao, BotaoOuro, Campo, Faixa, Passo, Pilulas, Selo } from "@/components/gerencial/kit";
 import { CSS_RAIZ } from "@/components/gerencial/producaoCss";
-import { dataBR, diasEntre, hojeLocal, nb, plural, somarDias } from "@/lib/producaoGerencial";
+import { dataBR, diasEntre, hojeLocal, mensagemDe, nb, plural, somarDias } from "@/lib/producaoGerencial";
 import {
   avisosElegibilidade, celulaCronograma, diaInicioOrdenha, eventosNaAgenda, faixaDias, formatarIdade, indexarAtivosPorAnimal,
   linhasDoCronograma, linhasEmAndamento, montarPayloadInducao, nomeCurto, proximaOrdenha, resumoDoProtocolo, rotuloD,
@@ -179,8 +179,9 @@ export function FormInducaoLactacao({ animais, salvarInducao = lancarInducaoLact
   const { porNumero, rotuloDe } = useEstadosReprodutivos();
 
   const carregarAtivos = useCallback(() => {
-    setErroAtivos(false);
-    fetchInducaoLactacaoAtivos().then((d) => setAtivos(Array.isArray(d) ? d : [])).catch(() => { setAtivos((a) => a ?? []); setErroAtivos(true); });
+    fetchInducaoLactacaoAtivos()
+      .then((d) => { setAtivos(Array.isArray(d) ? d : []); setErroAtivos(false); })
+      .catch(() => { setAtivos((a) => a ?? []); setErroAtivos(true); });
   }, []);
   useEffect(() => {
     fetchProtocolosInducaoLactacao().then((d) => setProtocolos(Array.isArray(d) ? d : [])).catch(() => setProtocolos([])).finally(() => setProtocolosCarregados(true));
@@ -252,8 +253,8 @@ export function FormInducaoLactacao({ animais, salvarInducao = lancarInducaoLact
       else setRetorno({ tipo: "ok", texto: `Protocolo “${protocolo ? nomeCurto(protocolo.nome) : ""}” lançado para ${r.animais ?? p.dados.animais.length} ${plural(r.animais ?? p.dados.animais.length, "animal", "animais")} — ${r.eventos_criados ?? 0} ${plural(r.eventos_criados ?? 0, "evento", "eventos")} na Agenda.` });
       setSel(new Set()); setLotes(new Set());
       if (r.enviado !== false) carregarAtivos();
-    } catch (e: any) {
-      setRetorno({ tipo: "erro", texto: e.message || "Erro ao lançar indução de lactação" });
+    } catch (e) {
+      setRetorno({ tipo: "erro", texto: mensagemDe(e, "Erro ao lançar indução de lactação") });
     } finally {
       setSalvando(false);
     }

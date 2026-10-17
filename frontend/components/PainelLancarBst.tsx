@@ -8,11 +8,11 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import type { ColunaExport } from "@/lib/export";
 import { Aviso, BotaoOuro, Passo, Selo } from "@/components/gerencial/kit";
 import { CSS_RAIZ } from "@/components/gerencial/producaoCss";
-import { dataBR, diasEntre, hojeLocal, plural } from "@/lib/producaoGerencial";
+import { dataBR, diasEntre, hojeLocal, mensagemDe, plural } from "@/lib/producaoGerencial";
 import {
   SEGMENTOS, alvoDaAcao, doseTotal, filtrarAnimais, interpretarRetornoAplicar, montarPayloadAplicar, ordenarAnimais, preverEstoque,
   reanalisadasMarcadas, segmentosDaAgenda, textoPrevisao, textoRetornoMarcar,
-  type AnimalBst, type DadosAplicarBst, type ItemEstoque, type Marcadas, type Ordem, type ParamsAplicacao, type Seg,
+  type AgendaBst, type AnimalBst, type DadosAplicarBst, type ItemEstoque, type Marcadas, type Ordem, type ParamsAplicacao, type Seg,
 } from "@/lib/bstLote";
 
 // Mesmo padrão de nome usado no backend para reconhecer um item de estoque
@@ -281,8 +281,8 @@ function PainelAjuste({ proxima, intervalo, onFechar, onAjustado }: {
     try {
       const r = await ajustarProximaAplicacaoBst(nova, modo);
       onAjustado(modo === "intervalo" ? `Pronto — o intervalo entre aplicações agora é de ${r.novo_intervalo} dias.` : `Pronto — a contagem passa a valer a partir de ${br(nova)}.`);
-    } catch (e: any) {
-      setErro(e.message || "Não foi possível ajustar a próxima aplicação.");
+    } catch (e) {
+      setErro(mensagemDe(e, "Não foi possível ajustar a próxima aplicação."));
     } finally {
       setOcupado(false);
     }
@@ -552,6 +552,8 @@ function BarraBst({ seg, n, nAptas, nIncluir, nRe, ocultas, p, previsao, paramsA
 export function PainelLancarBst({
   agenda, onAtualizado, aplicarBst = aplicarBstLote, marcarInapta: marcarInaptaFn = marcarInaptaBst,
 }: {
+  // Payload cru de fetchAgenda() (cada chamador tem seu próprio tipo de agenda); a tela só lê as listas bst_* e as datas.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   agenda: any; onAtualizado: () => void;
   aplicarBst?: (dados: DadosAplicarBst) => Promise<unknown>;
   marcarInapta?: (dados: DadosMarcarInaptaBst) => Promise<unknown>;
@@ -569,7 +571,7 @@ export function PainelLancarBst({
   const [conf, setConf] = useState<ConfirmacaoBst | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [retorno, setRetorno] = useState<RetornoBst | null>(null);
-  const [estoqueItens, setEstoqueItens] = useState<any[]>([]);
+  const [estoqueItens, setEstoqueItens] = useState<{ nome?: string; unidade?: string | null; quantidade?: number | null }[]>([]);
   const { pessoas: pessoasAtivas } = usePessoasAtivas();
   const admin = ehAdmin();
 
@@ -581,16 +583,17 @@ export function PainelLancarBst({
   // Itens de estoque reconhecidos como BST (mesmo critério do backend) — Lactotropin/Boostin aparecem aqui só se já cadastrados,
   // mas qualquer outro produto com nome batendo no padrão também entra (ex.: genérico cadastrado em Configurações › Cadastro › Estoque).
   const itensBst: ItemEstoque[] = useMemo(
-    () => estoqueItens.filter((i) => MARCADORES_BST.test(i.nome || "")).map((i) => ({ nome: i.nome, unidade: i.unidade, quantidade: i.quantidade })),
+    () => estoqueItens.filter((i) => MARCADORES_BST.test(i.nome || "")).map((i) => ({ nome: i.nome as string, unidade: i.unidade, quantidade: i.quantidade })),
     [estoqueItens],
   );
   const produtos = useMemo(() => Array.from(new Set([...itensBst.map((i) => i.nome), params.produto])), [itensBst, params.produto]);
   const responsaveis = useMemo(() => pessoasAtivas.map((p) => p.nome).filter(Boolean), [pessoasAtivas]);
 
-  const segs = useMemo(() => segmentosDaAgenda(agenda), [agenda]);
-  const carregando = agenda == null;
-  const proxima: string | null = agenda?.proxima_visita_bst ?? null;
-  const intervalo: number | null = typeof agenda?.intervalo_bst === "number" ? agenda.intervalo_bst : null;
+  const agendaBst: AgendaBst = agenda;
+  const segs = useMemo(() => segmentosDaAgenda(agendaBst), [agendaBst]);
+  const carregando = agendaBst == null;
+  const proxima: string | null = agendaBst?.proxima_visita_bst ?? null;
+  const intervalo: number | null = typeof agendaBst?.intervalo_bst === "number" ? agendaBst.intervalo_bst : null;
 
   const visiveis = useMemo(() => ordenarAnimais(filtrarAnimais(segs[seg], lotes, busca), ordem), [segs, seg, lotes, busca, ordem]);
   const contagemLote = useMemo(() => {
@@ -653,8 +656,8 @@ export function PainelLancarBst({
       });
       setRetorno(novo); setConf(null);
       onAtualizado();
-    } catch (e: any) {
-      setRetorno({ tipo: "erro", texto: `${e?.message || "Falha ao enviar"} Nada foi gravado — a seleção continua marcada.`, tentar: c });
+    } catch (e) {
+      setRetorno({ tipo: "erro", texto: `${mensagemDe(e, "Falha ao enviar.")} Nada foi gravado — a seleção continua marcada.`, tentar: c });
       setConf(null);
     } finally {
       setOcupado(false);

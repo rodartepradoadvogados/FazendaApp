@@ -10,7 +10,7 @@ import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { Aviso, Ajuda, BarraAcao, BotaoOuro, Campo, Faixa, Passo, Pilulas } from "@/components/gerencial/kit";
 import { CSS_RAIZ } from "@/components/gerencial/producaoCss";
-import { dataBR, diasEntre, hojeLocal, lerNumero, nb, plural } from "@/lib/producaoGerencial";
+import { dataBR, diasEntre, hojeLocal, lerNumero, mensagemDe, nb, plural } from "@/lib/producaoGerencial";
 import {
   INDICES, classificar, descreverFaixasLaticinio, faixasAtivasDoIndice, montarPayloadQualidade, ultimaColeta,
   type AlvoQualidade, type ChaveIndice, type DadosQualidadeLeite, type FaixaBonificacao, type Indice, type RegistroQualidade,
@@ -25,6 +25,7 @@ const ALVOS: { id: AlvoQualidade; nome: string; titulo: string; ajuda: string }[
   { id: "planilha", nome: "Planilha", titulo: "Lançar várias coletas de uma vez, a partir de uma planilha (Excel ou CSV)", ajuda: "Várias coletas de uma vez, a partir de uma planilha (Excel ou CSV)." },
 ];
 
+const SEM_FAIXAS: FaixaBonificacao[] = [];
 const VAZIOS: Record<ChaveIndice, string> = { ccs: "", cbt: "", gordura: "", proteina: "", st: "", esd: "", lactose: "", nul: "" };
 
 const CSS = `
@@ -108,7 +109,7 @@ export function FormQualidadeLeite({ animais, salvarQualidade = criarQualidadeLe
 
   const alvoColeta: "tanque" | "vaca" = alvo === "vaca" ? "vaca" : "tanque";
   // As faixas do laticínio valem para a coleta do TANQUE (é o que ele paga); numa vaca só a faixa sugerida.
-  const faixasDoAlvo = alvo === "tanque" ? faixas : [];
+  const faixasDoAlvo = alvo === "tanque" ? faixas : SEM_FAIXAS;
   const ultimo = useMemo(() => (registros ? ultimaColeta(registros, alvoColeta, vaca) : null), [registros, alvoColeta, vaca]);
   const ultimoTanque = useMemo(() => (registros ? ultimaColeta(registros, "tanque", "") : null), [registros]);
 
@@ -158,8 +159,8 @@ export function FormQualidadeLeite({ animais, salvarQualidade = criarQualidadeLe
       });
       setVaca(""); setValores(VAZIOS); setObservacao("");
       if (r?.enviado !== false) carregarRegistros(); // offline apagaria a lista já carregada
-    } catch (e: any) {
-      setRetorno({ tipo: "erro", texto: e.message || "Erro ao lançar qualidade do leite" });
+    } catch (e) {
+      setRetorno({ tipo: "erro", texto: mensagemDe(e, "Erro ao lançar qualidade do leite") });
     } finally {
       setSalvando(false);
     }
@@ -172,8 +173,8 @@ export function FormQualidadeLeite({ animais, salvarQualidade = criarQualidadeLe
       const r = await importarQualidadeLeitePlanilha(arquivo);
       setResultado(r); setArquivo(null);
       if (r.criados > 0) carregarRegistros();
-    } catch (e: any) {
-      setErroPlanilha(e.message || "Erro ao importar planilha");
+    } catch (e) {
+      setErroPlanilha(mensagemDe(e, "Erro ao importar planilha"));
     } finally {
       setImportando(false);
     }

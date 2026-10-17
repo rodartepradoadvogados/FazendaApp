@@ -181,7 +181,7 @@ export function FormSecagem({
   const trocarLote = (id: string) => { setLotesSel((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id])); setSelLote(new Set()); };
 
   const [infoFallback, setInfoFallback] = useState<{ numero: string; info: Info | null } | null>(null);
-  const [prefeitoPara, setPrefeitoPara] = useState(numeroInicial ?? "");
+  const [prefeitoPara, setPrefeitoPara] = useState("");
   const [dataSecagem, setDataSecagem] = useState(hoje);
   const [motivo, setMotivo] = useState("");
   const [ecc, setEcc] = useState("");
