@@ -855,7 +855,7 @@ def agenda_reprodutiva_cards(
     corpo: CardsAgendaReprodutivaIn,
     data: date | None = None,
     session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    fazenda_id: int | None = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Vários cards configuráveis de uma vez: o estado reprodutivo de todos os animais é calculado UMA vez e cada
     card só filtra. Antes a tela disparava um POST por card (8 recálculos completos por abertura)."""
