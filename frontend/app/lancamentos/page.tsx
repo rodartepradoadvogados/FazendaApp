@@ -5,7 +5,7 @@ import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
   Trash2, Droplet, CalendarClock, Wheat, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Dna, Gauge, Zap,
 } from "lucide-react";
-import { fetchAnimais, fetchEstoqueAtivos, fetchServicosAnalise, fetchSanidade, fetchParametros, fetchLotes } from "@/lib/api";
+import { fetchAnimais, fetchEstoqueAtivos, fetchSanidade, fetchParametros, fetchLotes } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { LARGURA_GAVETA_75 } from "@/lib/janelas";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -204,12 +204,23 @@ export default function LancamentosPage() {
   // "Sujo" PRÓPRIO da gaveta: o formulário da página (embaixo) continua com o dele — compartilhar o mesmo estado fazia um apagar o aviso do outro.
   const [sujoPedido, setSujoPedido] = useState(false);
   const [avisoPedido, setAvisoPedido] = useState<string | null>(null);
+  // Diagnóstico Negativo → "Lançar inseminação para estas N vacas": troca de aba e deixa a gaveta aberta, já com os
+  // animais marcados. É a única troca de aba que NÃO fecha a gaveta (as demais sempre fecham, ver acima).
+  const [numerosParaInseminar, setNumerosParaInseminar] = useState<string[] | null>(null);
+  const manterGavetaNaTroca = useRef(false);
   useEffect(() => {
-    setGavetaAberta(false);
+    setGavetaAberta(manterGavetaNaTroca.current);
+    manterGavetaNaTroca.current = false;
     setMensagemSalva(null);
     setPedidoGaveta(null);
     setAvisoPedido(null);
   }, [sel]);
+  const irParaInseminacao = useCallback((numeros: string[]) => {
+    setSujo(false);
+    setNumerosParaInseminar(numeros);
+    manterGavetaNaTroca.current = true;
+    setSel("inseminacao");
+  }, []);
   const fecharGaveta = useCallback(() => {
     if (sujo && !window.confirm("Você tem certeza que quer sair dessa página? Os dados não salvos serão perdidos.")) return;
     setSujo(false);
@@ -329,13 +340,11 @@ export default function LancamentosPage() {
 
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
-  const [servicos, setServicos] = useState<any[]>([]);
   const [produtosSanidade, setProdutosSanidade] = useState<string[]>([]);
   const [lotesCadastro, setLotesCadastro] = useState<{ codigo: string; rotulo: string; status_lactacao: string }[]>([]);
   const recarregarListasBase = useCallback(() => {
     fetchAnimais().then(setAnimais).catch(() => {});
     fetchEstoqueAtivos().then((d) => setEstoque(d.itens || [])).catch(() => {});
-    fetchServicosAnalise().then((d) => setServicos(d.servicos || [])).catch(() => {});
     fetchSanidade().then((d) => setProdutosSanidade(Array.from(new Set((d.aplicacoes || d.registros || []).map((r: any) => r.produto).filter(Boolean))).sort() as string[])).catch(() => {});
     fetchLotes().then(setLotesCadastro).catch(() => {});
   }, []);
@@ -358,13 +367,6 @@ export default function LancamentosPage() {
     setSujo(false);
     setGavetaAberta(false);
   }, []);
-
-  // Última IA/cobertura por matriz (para o diagnóstico puxar automático).
-  const ultServico = useMemo(() => {
-    const m: Record<string, string> = {};
-    servicos.forEach((s) => { if (s.numero && s.data && (!m[s.numero] || s.data > m[s.numero])) m[s.numero] = s.data; });
-    return m;
-  }, [servicos]);
 
   // Lotes: remove duplicados que diferem só por maiúscula/minúscula (ex.: "03 - Média"
   // e "03 - MÉDIA"), mantendo a versão em caixa-alta.
@@ -633,8 +635,8 @@ export default function LancamentosPage() {
         {ehGaveta && gavetaAberta && (
           <div ref={cardRef} onChange={verificarSujo}>
             {sel === "protocolo_iatf" && <FormProtocoloIatf key={formKey} animais={animais} motivosInaptidao={motivosInaptidao} idadeMinServico={idadeMinServico} onSalvo={aoSalvarNaGaveta} />}
-            {sel === "inseminacao" && <FormInseminacao key={formKey} animais={animais} motivosInaptidao={motivosInaptidao} idadeMinServico={idadeMinServico} onSalvo={aoSalvarNaGaveta} />}
-            {sel === "diagnostico" && <FormDiagnostico key={formKey} animais={animais} ultServico={ultServico} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "inseminacao" && <FormInseminacao key={formKey} animais={animais} motivosInaptidao={motivosInaptidao} idadeMinServico={idadeMinServico} prefill={numerosParaInseminar ? { numeros: numerosParaInseminar } : undefined} onSalvo={aoSalvarNaGaveta} />}
+            {sel === "diagnostico" && <FormDiagnostico key={formKey} onSalvo={aoSalvarNaGaveta} onIrParaInseminacao={irParaInseminacao} />}
             {sel === "parto" && <FormParto key={formKey} animais={animais} lotes={lotes} onSalvo={aoSalvarNaGaveta} />}
             {sel === "inducao_cio" && <FormInducaoCio key={formKey} animais={animais} estoque={estoque} motivosInaptidao={motivosInaptidao} onSalvo={aoSalvarNaGaveta} />}
             {sel === "controle" && <FormControle key={formKey} animais={animais} lotesLact={lotesLact} onSalvo={aoSalvarNaGaveta} />}

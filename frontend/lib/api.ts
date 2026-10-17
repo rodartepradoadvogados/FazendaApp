@@ -2225,12 +2225,29 @@ export async function excluirEstoqueSemen(id: number) {
 }
 
 export async function salvarDiagnostico(dados: {
-  numero_matriz: string; data_diagnostico: string; resultado: "retoque" | "reconfirmada" | "negativo" | "indefinido"; metodo?: string;
+  numero_matriz: string; data_diagnostico: string; resultado: "retoque" | "reconfirmada" | "negativo" | "indefinido" | "aborto"; metodo?: string;
 }) {
   const res = await authFetch(`${API}/reproducao/diagnostico`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao registrar diagnóstico"); }
+  return res.json();
+}
+
+export type CandidatasDiagnostico = {
+  data_referencia: string;
+  parametros: ParametrosToque;
+  /** A fazenda usa adesivo (Parâmetros): só então o método "Cio de repasse" existe. */
+  usa_adesivo: boolean;
+  situacoes: Record<FaseToque, ItemCardAgendaReprodutiva[]>;
+  totais: Record<FaseToque, number>;
+};
+
+/** Quem pode entrar no lançamento do diagnóstico, já separado em a tocar / a reconfirmar / reconfirmadas. */
+export async function fetchCandidatasDiagnostico(data?: string): Promise<CandidatasDiagnostico> {
+  const qs = data ? `?data=${encodeURIComponent(data)}` : "";
+  const res = await authFetch(`${API}/reproducao/diagnostico/candidatas${qs}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao carregar os animais do diagnóstico"); }
   return res.json();
 }
 

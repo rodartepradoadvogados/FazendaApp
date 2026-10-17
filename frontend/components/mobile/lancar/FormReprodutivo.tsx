@@ -6,11 +6,11 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Syringe, Stethoscope, Baby, CalendarClock } from "lucide-react";
 import { MobCampo, MobAviso, MobVoltar, MobConfirmModal } from "@/components/mobile/ui";
 import {
-  fetchSemenDisponivel, fetchTouros, fetchAgendaVeterinario, sugestaoLoteEvento, criarMovimentacao,
-  LISTAS_AGENDA_VETERINARIO, type SemenDisponivel, type Touro, type AgendaVetResposta,
+  fetchSemenDisponivel, fetchTouros, sugestaoLoteEvento, criarMovimentacao, type SemenDisponivel, type Touro,
 } from "@/lib/api";
 import { enviarOuEnfileirar, fetchComCache } from "@/lib/offline";
 import { TouroPicker, type TouroPickerItem } from "@/components/TouroPicker";
+import { DiagnosticoGestacao } from "./DiagnosticoGestacao";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 import {
   type Animal, useCache, useEnvio, useRascunho, hoje, rotuloAnimal,
@@ -35,6 +35,8 @@ const ETAPAS_IATF: { dia: number; hormonios: string }[] = [
 
 export function FormReprodutivo({ animais, animalFixado, restringirA }: { animais: Animal[]; animalFixado: string | null; restringirA?: Aba[] }) {
   const [aba, setAba] = useState<Aba | null>(null);
+  // Diagnóstico Negativo → "Salvar e lançar inseminação": abre a Inseminação com estes animais já escolhidos.
+  const [paraInseminar, setParaInseminar] = useState<string[] | null>(null);
 
   if (!aba) {
     // `restringirA` (opcional): usado pelo Modo Curral para mostrar só
@@ -51,9 +53,9 @@ export function FormReprodutivo({ animais, animalFixado, restringirA }: { animai
 
   return (
     <>
-      <MobVoltar titulo={TITULOS_ABA[aba]} onVoltar={() => setAba(null)} />
-      {aba === "inseminacao" && <Inseminacao animais={animais} animalFixado={animalFixado} />}
-      {aba === "diagnostico" && <Diagnostico animais={animais} animalFixado={animalFixado} />}
+      <MobVoltar titulo={TITULOS_ABA[aba]} onVoltar={() => { setAba(null); setParaInseminar(null); }} />
+      {aba === "inseminacao" && <Inseminacao animais={animais} animalFixado={animalFixado} matrizesIniciais={paraInseminar ?? undefined} />}
+      {aba === "diagnostico" && <DiagnosticoGestacao animalFixado={animalFixado} onIrParaInseminacao={(n) => { setParaInseminar(n); setAba("inseminacao"); }} />}
       {aba === "parto" && <Parto animais={animais} animalFixado={animalFixado} />}
       {aba === "iatf" && <ProtocoloIatf animais={animais} animalFixado={animalFixado} />}
     </>
@@ -66,8 +68,8 @@ export function FormReprodutivo({ animais, animalFixado, restringirA }: { animai
 // tratamento à parte porque muda o que é enviado como tipo_servico: sem essa
 // opção, toda cobertura lançada pelo app virava "IA" e debitava dose de sêmen
 // que nunca foi usada de verdade (ver reproducao.py::registrar_servico).
-function Inseminacao({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
-  const { aviso, enviar, enviando, erroValidacao } = useEnvio();
+function Inseminacao({ animais, animalFixado, matrizesIniciais }: { animais: Animal[]; animalFixado: string | null; matrizesIniciais?: string[] }) {
+  const { aviso, setAviso, enviar, enviando, erroValidacao } = useEnvio();
   const semen = useCache<SemenDisponivel | null>("semen_disponivel", () => fetchSemenDisponivel(), null);
   // Rascunho da matriz escolhida — o passo mais trabalhoso (buscar/tocar o
   // animal certo); se o app for interrompido no meio, não se perde ao voltar
@@ -75,14 +77,51 @@ function Inseminacao({ animais, animalFixado }: { animais: Animal[]; animalFixad
   const rascunho = useRascunho<string>("inseminacao_matriz", animalFixado || "");
   const matriz = rascunho.valor;
   const setMatriz = rascunho.setValor;
+  // Vários animais vindos do diagnóstico Negativo: lista própria (sem rascunho), um lançamento por animal. Com um só
+  // animal vindo de lá, ele entra como a matriz escolhida de sempre.
+  const [lote, setLote] = useState<string[]>(matrizesIniciais && matrizesIniciais.length > 1 ? matrizesIniciais : []);
+  useEffect(() => {
+    if (matrizesIniciais?.length === 1) setMatriz(matrizesIniciais[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [data, setData] = useState(hoje());
   const [categoria, setCategoria] = useState<"convencional" | "sexado" | "fazenda">("convencional");
   const [touro, setTouro] = useState("");
   const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
   const [catalogoTouros, setCatalogoTouros] = useState<Touro[]>([]);
+  const [salvandoLote, setSalvandoLote] = useState(false);
   const ehFazenda = categoria === "fazenda";
 
+  async function salvarLote() {
+    if (!data) return erroValidacao("Informe a data da inseminação.");
+    setSalvandoLote(true);
+    setAviso(null);
+    let salvos = 0, guardados = 0;
+    const falhas: string[] = [];
+    for (const numero of lote) {
+      try {
+        const { enviado } = await enviarOuEnfileirar(
+          "/reproducao/servico",
+          { numero_matriz: numero, data_servico: data, tipo_servico: ehFazenda ? "Monta natural" : "IA", reprodutor: touro || undefined, tipo_semen: ehFazenda ? undefined : categoria },
+          `${ehFazenda ? "Monta natural" : "Inseminação"} — matriz ${numero}${touro ? ` (${touro})` : ""}`,
+        );
+        if (enviado) salvos++; else guardados++;
+      } catch { falhas.push(numero); }
+    }
+    setSalvandoLote(false);
+    if (falhas.length) {
+      setLote(falhas);
+      setAviso({ tipo: "erro", msg: `${salvos + guardados ? `Salvos: ${salvos + guardados}. ` : ""}Falharam: ${falhas.join(", ")} — tente novamente só esses.` });
+      return;
+    }
+    setLote([]); setTouro("");
+    setAviso(guardados
+      ? { tipo: "offline", msg: `${guardados} sem internet — guardado${guardados > 1 ? "s" : ""}, será enviado ao conectar.${salvos ? ` Salvos agora: ${salvos}.` : ""}` }
+      : { tipo: "ok", msg: `Inseminação salva para ${salvos} ${salvos === 1 ? "animal" : "animais"}.` });
+  }
+
   function salvar() {
+    if (lote.length) return salvarLote();
     if (!matriz) return erroValidacao("Selecione a matriz.");
     if (!data) return erroValidacao("Informe a data da inseminação.");
     enviar(
@@ -104,9 +143,23 @@ function Inseminacao({ animais, animalFixado }: { animais: Animal[]; animalFixad
   return (
     <>
       <RascunhoAviso mostrar={rascunho.salvo} />
-      <MobCampo label="Matriz (nº / nome)">
-        <SeletorAnimal animais={animais} valor={matriz} onChange={setMatriz} placeholder="Buscar matriz…" />
-      </MobCampo>
+      {lote.length > 0 ? (
+        <MobCampo label={`Matrizes vindas do diagnóstico (${lote.length})`}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+            {lote.map((n) => (
+              <span key={n} style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", padding: "0.4rem 0.5rem 0.4rem 0.7rem", borderRadius: 999, background: "var(--mob-vinho)", color: "#FFFFFF", fontSize: "0.85rem", fontWeight: 700 }}>
+                {n}
+                <button type="button" onClick={() => setLote((p) => p.filter((x) => x !== n))} aria-label={`Remover ${n}`}
+                  style={{ width: 32, height: 32, margin: "-4px -6px -4px 0", borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.2)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1rem", lineHeight: 1, flexShrink: 0 }}>×</button>
+              </span>
+            ))}
+          </div>
+        </MobCampo>
+      ) : (
+        <MobCampo label="Matriz (nº / nome)">
+          <SeletorAnimal animais={animais} valor={matriz} onChange={setMatriz} placeholder="Buscar matriz…" />
+        </MobCampo>
+      )}
       <MobCampo label="Data da inseminação/cobertura">
         <input type="date" className="mob-input" value={data} onChange={(e) => setData(e.target.value)} />
       </MobCampo>
@@ -145,217 +198,8 @@ function Inseminacao({ animais, animalFixado }: { animais: Animal[]; animalFixad
           </label>
         )}
       </MobCampo>
-      <button className="mob-btn" onClick={salvar} disabled={enviando}>{enviando ? "Salvando…" : "Salvar"}</button>
-      {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
-    </>
-  );
-}
-
-// ── Diagnóstico → POST /reproducao/diagnostico (1 chamada por matriz) ───────
-// Positivo/Negativo em dois botões. Positivo grava "retoque": no manejo da
-// fazenda o 1º toque positivo agenda a reconfirmação (2º exame) na data certa
-// — mesmo comportamento do lançamento pelo site. Negativo grava "negativo".
-// Seleção por animal (avulso, pode escolher vários), lote(s) ou pela própria
-// Agenda do veterinário — mesmas 3 formas do site, para ajudar a organizar o
-// manejo no curral.
-function Diagnostico({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
-  const { aviso, setAviso, enviando, erroValidacao } = useEnvio();
-  const { porNumero, rotuloDe } = useEstadosReprodutivos();
-  // Servidas (inseminadas ou prenhes a reconfirmar) — estado ao vivo. Enquanto
-  // ele não chegou (ou a requisição falhou) cai no texto do CSV: melhor um
-  // filtro desatualizado do que um formulário sem nenhum animal.
-  const servidas = useMemo(() => {
-    if (!porNumero.size) return animais.filter((a) => a.sit_rep === "Ins." || a.sit_rep === "Ges.");
-    return animais.filter((a) => {
-      const estado = porNumero.get(a.numero)?.estado;
-      return estado === "inseminada" || estado === "gestante";
-    });
-  }, [animais, porNumero]);
-
-  const [vinculo, setVinculo] = useState<"animal" | "lote" | "agenda">("animal");
-  // Rascunho da lista de matrizes — construir essa lista (buscar/tocar cada
-  // animal, ou marcar lote/categoria) é o passo mais trabalhoso daqui; se o
-  // app for interrompido, não se perde ao voltar
-  // (docs/agents/design-implementation.md §5, acabamento-de-campo.html).
-  const rascunho = useRascunho<string[]>("diagnostico_matrizes", animalFixado ? [animalFixado] : []);
-  const matrizes = rascunho.valor;
-  const setMatrizes = rascunho.setValor;
-  function adicionar(numero: string) {
-    setMatrizes((atual) => (atual.includes(numero) ? atual : [...atual, numero]));
-  }
-  function remover(numero: string) {
-    setMatrizes((atual) => atual.filter((n) => n !== numero));
-  }
-
-  // Lote(s): pílulas com os lotes das servidas — ao (des)marcar, resseeda a
-  // lista de matrizes com a união dos animais dos lotes marcados (removível
-  // depois, animal a animal, nas pílulas abaixo).
-  const [lotesSelecionados, setLotesSelecionados] = useState<string[]>([]);
-  const lotesServidas = useMemo(
-    () => Array.from(new Set(servidas.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort(),
-    [servidas]
-  );
-  const numerosDoLote = useMemo(() => {
-    const s = new Set(lotesSelecionados);
-    return servidas.filter((a) => a.grupo_primario && s.has(a.grupo_primario)).map((a) => a.numero);
-  }, [servidas, lotesSelecionados]);
-  useEffect(() => {
-    if (vinculo === "lote") setMatrizes(numerosDoLote);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [numerosDoLote.join("|")]);
-
-  // Agenda do veterinário: busca sob demanda e resseeda a lista de matrizes
-  // com a união das categorias marcadas — mesma classificação do roteiro do dia.
-  const [agendaVet, setAgendaVet] = useState<AgendaVetResposta | null>(null);
-  const [agendaCarregando, setAgendaCarregando] = useState(false);
-  const [categoriasAgenda, setCategoriasAgenda] = useState<string[]>([]);
-  useEffect(() => {
-    if (vinculo === "agenda" && !agendaVet && !agendaCarregando) {
-      setAgendaCarregando(true);
-      fetchComCache<AgendaVetResposta>("reproducao_agenda_vet_diagnostico", () => fetchAgendaVeterinario())
-        .then(({ dados }) => { if (dados) setAgendaVet(dados); })
-        .finally(() => setAgendaCarregando(false));
-    }
-  }, [vinculo, agendaVet, agendaCarregando]);
-  const numerosDaAgenda = useMemo(() => {
-    if (!agendaVet) return [] as string[];
-    const s = new Set<string>();
-    categoriasAgenda.forEach((cat) => (agendaVet.listas[cat] || []).forEach((item) => s.add(item.numero_matriz)));
-    return Array.from(s);
-  }, [agendaVet, categoriasAgenda]);
-  useEffect(() => {
-    if (vinculo === "agenda") setMatrizes(numerosDaAgenda);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [numerosDaAgenda.join("|")]);
-
-  function trocarVinculo(v: "animal" | "lote" | "agenda") {
-    setVinculo(v);
-    setMatrizes(v === "animal" ? (animalFixado ? [animalFixado] : []) : []);
-    setLotesSelecionados([]);
-    setCategoriasAgenda([]);
-  }
-
-  const [data, setData] = useState(hoje());
-  const [resultado, setResultado] = useState<"positivo" | "negativo" | "">("");
-  const [salvando, setSalvando] = useState(false);
-
-  async function salvar() {
-    if (matrizes.length === 0) return erroValidacao("Selecione ao menos uma matriz.");
-    if (!data) return erroValidacao("Informe a data do diagnóstico.");
-    if (!resultado) return erroValidacao("Toque em Positivo ou Negativo.");
-    const resultadoApi = resultado === "positivo" ? "retoque" : "negativo";
-    setSalvando(true);
-    setAviso(null);
-    let salvos = 0;
-    const falhados: string[] = [];
-    for (const numero of matrizes) {
-      try {
-        const { enviado } = await enviarOuEnfileirar(
-          "/reproducao/diagnostico",
-          { numero_matriz: numero, data_diagnostico: data, resultado: resultadoApi },
-          `Diagnóstico ${resultado} — matriz ${numero}`,
-        );
-        if (enviado) salvos++;
-      } catch {
-        falhados.push(numero);
-      }
-    }
-    if (falhados.length) {
-      setMatrizes(falhados);
-      setAviso({ tipo: "erro", msg: salvos ? `Salvos: ${salvos}. Falharam: ${falhados.join(", ")} — tente novamente só esses.` : `Nenhum diagnóstico salvo. Falharam: ${falhados.join(", ")}.` });
-    } else {
-      setAviso({ tipo: "ok", msg: `Diagnóstico salvo para ${salvos} matriz(es).` });
-      setResultado("");
-      if (vinculo === "animal") rascunho.limpar();
-    }
-    setSalvando(false);
-  }
-
-  return (
-    <>
-      <RascunhoAviso mostrar={rascunho.salvo} />
-      <MobCampo label="Seleção">
-        <BotoesEscolha
-          opcoes={[
-            { valor: "animal", label: "Animal(is)" },
-            { valor: "lote", label: "Lote(s)" },
-            { valor: "agenda", label: "Agenda do vet." },
-          ]}
-          valor={vinculo} onChange={trocarVinculo}
-        />
-      </MobCampo>
-
-      {vinculo === "animal" && (
-        <MobCampo label="Matriz(es) (nº / nome) — pode escolher várias">
-          <SeletorAnimal animais={animais} valor="" onChange={adicionar} placeholder="Buscar matriz e tocar para adicionar…" />
-        </MobCampo>
-      )}
-
-      {vinculo === "lote" && (
-        <MobCampo label="Lote(s) — servidas de cada lote marcado">
-          <LinhaPills>
-            {lotesServidas.map((l) => (
-              <MobPill key={l} ativa={lotesSelecionados.includes(l)}
-                onClick={() => setLotesSelecionados((p) => p.includes(l) ? p.filter((x) => x !== l) : [...p, l])}>
-                {l}
-              </MobPill>
-            ))}
-            {!lotesServidas.length && <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem" }}>Nenhum lote com matriz servida.</p>}
-          </LinhaPills>
-        </MobCampo>
-      )}
-
-      {vinculo === "agenda" && (
-        <MobCampo label="Categoria(s) da Agenda do veterinário">
-          {agendaCarregando && <p style={{ fontSize: "0.85rem", color: "var(--mob-muted)" }}>Carregando agenda…</p>}
-          {agendaVet && (
-            <LinhaPills>
-              {LISTAS_AGENDA_VETERINARIO.filter((l) => (agendaVet.totais[l.chave] || 0) > 0).map((l) => (
-                <MobPill key={l.chave} ativa={categoriasAgenda.includes(l.chave)}
-                  onClick={() => setCategoriasAgenda((p) => p.includes(l.chave) ? p.filter((x) => x !== l.chave) : [...p, l.chave])}>
-                  {l.rotulo} ({agendaVet.totais[l.chave]})
-                </MobPill>
-              ))}
-            </LinhaPills>
-          )}
-        </MobCampo>
-      )}
-
-      {matrizes.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "0.9rem" }}>
-          {matrizes.map((n) => {
-            const a = animais.find((x) => x.numero === n);
-            return (
-              <span key={n} style={{
-                display: "inline-flex", alignItems: "center", gap: "0.4rem",
-                padding: "0.4rem 0.5rem 0.4rem 0.7rem", borderRadius: 999,
-                background: "var(--mob-vinho)", color: "#FFFFFF", fontSize: "0.85rem", fontWeight: 700,
-              }} title={a ? rotuloAnimal(a, rotuloDe) : undefined}>
-                {n}
-                <button type="button" onClick={() => remover(n)} aria-label={`Remover ${n}`}
-                  style={{ width: 32, height: 32, margin: "-4px -6px -4px 0", borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.2)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1rem", lineHeight: 1, flexShrink: 0 }}>
-                  ×
-                </button>
-              </span>
-            );
-          })}
-        </div>
-      )}
-
-      <MobCampo label="Data do diagnóstico">
-        <input type="date" className="mob-input" value={data} onChange={(e) => setData(e.target.value)} />
-      </MobCampo>
-      <MobCampo label="Resultado">
-        <BotoesEscolha
-          opcoes={[
-            { valor: "positivo", label: "Positivo", cor: "var(--mob-verde)" },
-            { valor: "negativo", label: "Negativo", cor: "var(--mob-vermelho)" },
-          ]}
-          valor={resultado} onChange={setResultado}
-        />
-      </MobCampo>
-      <button className="mob-btn" onClick={salvar} disabled={salvando || enviando}>
-        {salvando ? "Salvando…" : `Salvar${matrizes.length ? ` (${matrizes.length})` : ""}`}
+      <button className="mob-btn" onClick={salvar} disabled={enviando || salvandoLote}>
+        {enviando || salvandoLote ? "Salvando…" : `Salvar${lote.length > 1 ? ` (${lote.length})` : ""}`}
       </button>
       {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
     </>

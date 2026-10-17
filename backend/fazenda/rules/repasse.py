@@ -97,10 +97,11 @@ def ler_config(session: Session, fazenda_id: int | None) -> dict:
     return cfg
 
 
-def usa_adesivo_vigente() -> bool:
+def usa_adesivo_vigente(session: Session | None = None) -> bool:
     """O adesivo está em uso na fazenda do pedido atual? Quem decide é a configuração de repasse salva (chave mestra
     de Parâmetros); sem ela, o parâmetro `usa_adesivo_deteccao_cio` (padrão NÃO). Lê pelo contexto da requisição
-    (como `get_param`), então serve para as regras que não recebem sessão."""
+    (como `get_param`), então serve para as regras que não recebem sessão; quem já tem a sessão da requisição a
+    passa para não abrir outra."""
     from sqlalchemy.exc import OperationalError, ProgrammingError
 
     import fazenda.database as database
@@ -108,11 +109,14 @@ def usa_adesivo_vigente() -> bool:
 
     fid = fazenda_atual.get()
     try:
-        with Session(database.engine) as session:
-            session.info["fazenda_id"] = fid
+        if session is not None:
             linha = _linha(session, fid)
-            if linha is not None:
-                return bool(linha.usar)
+        else:
+            with Session(database.engine) as propria:
+                propria.info["fazenda_id"] = fid
+                linha = _linha(propria, fid)
+        if linha is not None:
+            return bool(linha.usar)
     except (OperationalError, ProgrammingError):
         pass  # tabela ainda não existe (regra "pura" sem startup): cai no parâmetro
     return get_param_bool("usa_adesivo_deteccao_cio", False)
