@@ -396,10 +396,8 @@ export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico =
                 </div>
               </div>
               {!molde && (
-                <div className="rp-bloco">
-                  <div className="rp-bloco-t">Hormônios por dia (opcional) — dão baixa no estoque quando você confirma o dia na Agenda</div>
-                  <EditorHormoniosIatf onChange={setHormonios} />
-                </div>
+                // O editor já traz o próprio cartão e o título "Medicamentos por dia…": sem moldura/título duplicados aqui.
+                <EditorHormoniosIatf onChange={setHormonios} />
               )}
             </>
           ) : (
