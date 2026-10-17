@@ -691,30 +691,10 @@ class CardAgendaReprodutivaIn(BaseModel):
     exceto_atrasadas: bool = False
 
 
-@router.post("/agenda-reprodutiva/card")
-def agenda_reprodutiva_card(
-    config: CardAgendaReprodutivaIn,
-    data: date | None = None,
-    session: Session = Depends(get_session),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
-) -> dict:
-    """Resultado de UM card configurável da Agenda Reprodutiva (ver proposta:
-    substitui os cards fixos de `/agenda-veterinario`, exceto "Vazias por
-    diagnóstico" e "Pendentes de classificação", que não são situação
-    reprodutiva e continuam só naquele endpoint).
-
-    Mesmo padrão de coleta de dados de `/agenda-veterinario` acima —
-    `aplicacoes_iatf=[]` porque este endpoint não carrega
-    ProtocoloIatfAplicacao: um animal em protocolo aparece como PEV/APTA/
-    ATRASADA conforme o resto dos dados, mesma limitação aceita de
-    `recria._contexto_categoria` (ver o comentário lá)."""
-    if config.situacao not in SITUACOES:
-        raise HTTPException(status_code=422, detail=f"situacao inválida: {config.situacao}")
-    if config.categoria not in ("todas", "vaca", "novilha"):
-        raise HTTPException(status_code=422, detail=f"categoria inválida: {config.categoria}")
-    fazenda_id = fazenda_id_seguro(fazenda_id)
-    hoje = data or date.today()
-
+def _estados_da_agenda(session: Session, fazenda_id: int | None, hoje: date) -> tuple[list[dict], dict[str, dict]]:
+    """Animais ativos (fêmeas) e o estado reprodutivo AO VIVO de cada um, calculados UMA vez — é o que os cards
+    configuráveis consomem, no endpoint de um card e no de vários (`/agenda-reprodutiva/cards`).
+    `aplicacoes_iatf=[]` porque aqui não se carrega ProtocoloIatfAplicacao (ver o docstring do endpoint)."""
     query_animais = select(Animal).where(Animal.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
@@ -779,16 +759,33 @@ def agenda_reprodutiva_card(
         inicio_lactacao_por_animal=inicio_lactacao_por_animal,
     )
 
+    return animais, estados
+
+
+def _parametros_toque() -> dict:
+    """Prazos de Parâmetros › Manejo reprodutivo que definem o AINDA NÃO (nunca o intervalo entre visitas)."""
+    return {
+        "dias_toque": int(get_param("dias_toque", 30) or 30),
+        "dias_reconfirmacao": int(get_param("dias_reconfirmacao", 30) or 30),
+    }
+
+
+_CAMPOS_ITEM_CARD = (
+    "diagnostico", "data_diagnostico", "diagnostico_reconfirmacao", "data_reconfirmacao", "retoque",
+    "fase", "ainda_nao", "dias_para_prazo", "prazo_tipo",
+)
+
+
+def _resposta_card(config: "CardAgendaReprodutivaIn", animais: list[dict], estados: dict[str, dict], params: dict) -> dict:
     itens = avaliar_card(
         categoria=config.categoria, lotes=config.lotes, situacao=config.situacao,
         periodos=[tuple(p) for p in config.periodos],
         somente_atrasadas=config.somente_atrasadas, exceto_atrasadas=config.exceto_atrasadas,
         animais=animais, estados=estados,
+        dias_toque=params["dias_toque"], dias_reconfirmacao=params["dias_reconfirmacao"],
     )
     itens.sort(key=lambda it: chave_numero(it.get("numero")))
-
     return {
-        "data_referencia": hoje.isoformat(),
         "total": len(itens),
         "itens": [
             {
@@ -801,10 +798,76 @@ def agenda_reprodutiva_card(
                 "dias_desde_servico": it.get("dias_desde_servico"),
                 "data_servico": it.get("data_servico"),
                 "parto_previsto": it.get("parto_previsto"),
+                **{campo: it.get(campo) for campo in _CAMPOS_ITEM_CARD},
             }
             for it in itens
         ],
     }
+
+
+def _validar_card(config: "CardAgendaReprodutivaIn") -> None:
+    if config.situacao not in SITUACOES:
+        raise HTTPException(status_code=422, detail=f"situacao inválida: {config.situacao}")
+    if config.categoria not in ("todas", "vaca", "novilha"):
+        raise HTTPException(status_code=422, detail=f"categoria inválida: {config.categoria}")
+
+
+@router.post("/agenda-reprodutiva/card")
+def agenda_reprodutiva_card(
+    config: CardAgendaReprodutivaIn,
+    data: date | None = None,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Resultado de UM card configurável da Agenda Reprodutiva (ver proposta:
+    substitui os cards fixos de `/agenda-veterinario`, exceto "Vazias por
+    diagnóstico" e "Pendentes de classificação", que não são situação
+    reprodutiva e continuam só naquele endpoint).
+
+    Mesmo padrão de coleta de dados de `/agenda-veterinario` acima —
+    `aplicacoes_iatf=[]` porque este endpoint não carrega
+    ProtocoloIatfAplicacao: um animal em protocolo aparece como PEV/APTA/
+    ATRASADA conforme o resto dos dados, mesma limitação aceita de
+    `recria._contexto_categoria` (ver o comentário lá)."""
+    _validar_card(config)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    hoje = data or date.today()
+    animais, estados = _estados_da_agenda(session, fazenda_id, hoje)
+    params = _parametros_toque()
+    return {"data_referencia": hoje.isoformat(), "parametros": params, **_resposta_card(config, animais, estados, params)}
+
+
+class CardComIdIn(BaseModel):
+    id: str
+    config: CardAgendaReprodutivaIn
+
+
+class CardsAgendaReprodutivaIn(BaseModel):
+    cards: list[CardComIdIn]
+
+
+@router.post("/agenda-reprodutiva/cards")
+def agenda_reprodutiva_cards(
+    corpo: CardsAgendaReprodutivaIn,
+    data: date | None = None,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Vários cards configuráveis de uma vez: o estado reprodutivo de todos os animais é calculado UMA vez e cada
+    card só filtra. Antes a tela disparava um POST por card (8 recálculos completos por abertura)."""
+    if len(corpo.cards) > 40:
+        raise HTTPException(status_code=422, detail="Cards demais numa chamada (máximo 40)")
+    for c in corpo.cards:
+        _validar_card(c.config)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    hoje = data or date.today()
+    animais, estados = _estados_da_agenda(session, fazenda_id, hoje)
+    params = _parametros_toque()
+    return {
+        "data_referencia": hoje.isoformat(), "parametros": params,
+        "resultados": {c.id: _resposta_card(c.config, animais, estados, params) for c in corpo.cards},
+    }
+
 
 
 def _ultimo_servico(session: Session, numero_matriz: str, fazenda_id: int | None = None) -> Servico | None:

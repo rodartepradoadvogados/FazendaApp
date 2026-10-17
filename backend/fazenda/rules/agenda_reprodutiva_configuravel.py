@@ -33,6 +33,7 @@ from __future__ import annotations
 from typing import Any
 
 from fazenda.rules.estado_reprodutivo import APTA, ATRASADA, GESTANTE, INSEMINADA, PEV
+from fazenda.rules.fase_toque import classificar_fase
 
 SITUACOES = ("pev", "inseminada", "gestante", "vazia", "vazia_atrasada", "a_descartar")
 
@@ -102,11 +103,16 @@ def avaliar_card(
     exceto_atrasadas: bool,
     animais: list[dict],
     estados: dict[str, dict],
+    dias_toque: int | None = None,
+    dias_reconfirmacao: int | None = None,
 ) -> list[dict]:
     """Devolve os animais (dict original + o estado ao vivo anexado) que
     atendem à combinação dos 4 eixos. `animais` traz pelo menos `numero`,
     `categoria_abrev`/`categoria_completa`, `grupo_primario` (lote atual) e
-    `a_descartar`. `estados` é `estado_reprodutivo.estados_ao_vivo(...)`."""
+    `a_descartar`. `estados` é `estado_reprodutivo.estados_ao_vivo(...)`.
+
+    Com `dias_toque` e `dias_reconfirmacao` (Parâmetros), cada item sai também com a fase do ciclo de diagnóstico
+    (a tocar / a reconfirmar / reconfirmada) e o prazo AINDA NÃO — ver `fase_toque`."""
     lotes_normalizados = {loc.strip().lower() for loc in lotes if loc and loc.strip()}
     resultado: list[dict] = []
     for animal in animais:
@@ -143,5 +149,9 @@ def avaliar_card(
             situacao, estado, periodos, somente_atrasadas, exceto_atrasadas,
         ):
             continue
-        resultado.append({**animal, **estado, "categoria_normalizada": cat})
+        item = {**animal, **estado, "categoria_normalizada": cat}
+        if dias_toque is not None and dias_reconfirmacao is not None:
+            item.update(classificar_fase(
+                estado, eh_vaca=cat == "vaca", dias_toque=dias_toque, dias_reconfirmacao=dias_reconfirmacao))
+        resultado.append(item)
     return resultado

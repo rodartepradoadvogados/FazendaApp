@@ -228,6 +228,13 @@ def classificar_animal(
         "tipo_servico": None,
         "protocolo": None,
         "dias_desde_servico": None,
+        # Diagnóstico do serviço vigente — alimenta `fase_toque` e as colunas Toque/Retoque das telas.
+        "diagnostico": None,
+        "data_diagnostico": None,
+        "diagnostico_reconfirmacao": None,
+        "data_reconfirmacao": None,
+        "retoque": None,
+        "data_perda_prenhez": None,
     }
 
     if ultimo_servico is not None:
@@ -266,6 +273,13 @@ def classificar_animal(
             candidatos_diagnostico.append((data_reconfirmacao or date.min, diagnostico_reconfirmacao))
         diagnostico_efetivo = max(candidatos_diagnostico, key=lambda c: c[0])[1] if candidatos_diagnostico else ""
         perdeu = _d(_get(ultimo_servico, "data_perda_prenhez")) is not None
+        base["diagnostico"] = diagnostico or None
+        base["data_diagnostico"] = data_diagnostico.isoformat() if data_diagnostico else None
+        base["diagnostico_reconfirmacao"] = diagnostico_reconfirmacao or None
+        base["data_reconfirmacao"] = data_reconfirmacao.isoformat() if data_reconfirmacao else None
+        base["retoque"] = _get(ultimo_servico, "retoque")
+        perda = _d(_get(ultimo_servico, "data_perda_prenhez"))
+        base["data_perda_prenhez"] = perda.isoformat() if perda else None
 
         # 1. GESTANTE — prenhez confirmada (1º toque ou reconfirmação) e ainda de pé.
         if diagnostico_efetivo == _POSITIVO and not perdeu:

@@ -25,6 +25,8 @@ import type { CardAgendaReprodutivaConfig, ItemCardAgendaReprodutiva, SituacaoCa
 import { MobGaveta, MobCampo } from "@/components/mobile/ui";
 import { NumAnimal } from "@/components/mobile/menu/comum";
 import { GrupoLotePicker } from "@/components/GrupoLotePicker";
+import { CelulaExame, ChipFase, LegendaToque, SeloAindaNao } from "@/components/reproducao/FaseToque";
+import { FASES, ROTULO_FASE_PLURAL, seloBreve } from "@/lib/fasesToque";
 
 // Mesmas opções/rótulos do site (ver CardsAgendaReprodutivaConfiguraveis.tsx
 // e FiltroAgendaReprodutiva.tsx) — duplicado de propósito, seguindo o mesmo
@@ -198,7 +200,13 @@ function GavetaEdicao({
 
 export function CardsAgendaReprodutivaMobile({ onFichaAberta }: { onFichaAberta: (numero: string) => void }) {
   const estado: CardsAgendaReprodutivaConfiguraveisState = useCardsAgendaReprodutivaConfiguraveis();
-  const { cards, opcoesLote, contagens, abertos, itensAbertos, editando, erro, setEditando, toggle, salvarCard, removerCard, cardEditando } = estado;
+  const {
+    cards, opcoesLote, contagens, abertos, itensAbertos, editando, erro, parametros,
+    fases, filtroAtivo, contagensFase, alternarFase, limparFases, setEditando, toggle, salvarCard, removerCard, cardEditando,
+  } = estado;
+  const remover = (id: string, nome: string) => {
+    if (window.confirm(`Remover o card "${nome}"?`)) removerCard(id);
+  };
 
   return (
     <div className="mb-2">
@@ -210,13 +218,26 @@ export function CardsAgendaReprodutivaMobile({ onFichaAberta }: { onFichaAberta:
       </div>
       {erro && <p style={{ fontSize: "0.8rem", color: "var(--mob-vermelho)", marginBottom: "0.5rem" }}>{erro}</p>}
 
+      <div role="group" aria-label="Filtrar por situação do diagnóstico" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.4rem", marginBottom: "0.4rem" }}>
+        {FASES.map((f) => (
+          <button key={f} type="button" className="ft-botao-mob" aria-pressed={fases.has(f)} onClick={() => alternarFase(f)}>
+            <b>{contagensFase[f]}</b>{ROTULO_FASE_PLURAL[f]}
+          </button>
+        ))}
+      </div>
+      {filtroAtivo && (
+        <button type="button" onClick={limparFases} className="mob-btn-2" style={{ minHeight: 44, marginBottom: "0.6rem" }}>Limpar filtro</button>
+      )}
+
       {cards.map((c) => {
         const n = contagens[c.id];
         const aberto = abertos.has(c.id);
         const itens = itensAbertos[c.id] ?? [];
         const cor = COR_SITUACAO[c.config.situacao];
+        const comExames = c.config.situacao === "inseminada" || c.config.situacao === "gestante";
+        const vazioNoFiltro = filtroAtivo && n === 0;
         return (
-          <details key={c.id} className="mob-card mob-tint" style={{ ["--tint-cor" as any]: cor, padding: "0.4rem 0.9rem", marginBottom: "0.6rem" }}
+          <details key={c.id} className="mob-card mob-tint" style={{ ["--tint-cor" as any]: cor, padding: "0.4rem 0.9rem", marginBottom: "0.6rem", opacity: vazioNoFiltro ? 0.5 : 1 }}
             open={aberto} onToggle={(e) => { if ((e.target as HTMLDetailsElement).open !== aberto) toggle(c.id); }}>
             <summary style={{ display: "flex", alignItems: "center", gap: "0.6rem", cursor: "pointer", padding: "0.55rem 0", listStyle: "none" }}>
               <span style={{ flex: 1, minWidth: 0, fontWeight: 700, fontSize: "0.95rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -228,33 +249,50 @@ export function CardsAgendaReprodutivaMobile({ onFichaAberta }: { onFichaAberta:
                 </span>
                 {c.nome}
               </span>
-              <button type="button" title="Editar card" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditando(c.id); }}
-                style={{ background: "transparent", border: "none", color: "var(--mob-muted)", cursor: "pointer", padding: "0.3rem" }}>
-                <Settings size={17} />
+              <button type="button" title="Editar card" aria-label={`Editar card ${c.nome}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditando(c.id); }}
+                style={{ background: "transparent", border: "none", color: "var(--mob-muted)", cursor: "pointer", minWidth: 44, minHeight: 44, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                <Settings size={18} aria-hidden="true" />
               </button>
-              <button type="button" title="Remover card" onClick={(e) => { e.preventDefault(); e.stopPropagation(); removerCard(c.id); }}
-                style={{ background: "transparent", border: "none", color: "var(--mob-muted)", cursor: "pointer", padding: "0.3rem" }}>
-                <Trash2 size={17} />
+              <button type="button" title="Remover card" aria-label={`Remover card ${c.nome}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); remover(c.id, c.nome); }}
+                style={{ background: "transparent", border: "none", color: "var(--mob-muted)", cursor: "pointer", minWidth: 44, minHeight: 44, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                <Trash2 size={18} aria-hidden="true" />
               </button>
             </summary>
             <div style={{ borderTop: "1px solid var(--mob-border)", paddingTop: "0.4rem" }}>
               {itens.length === 0 ? (
                 <p style={{ fontSize: "0.85rem", color: "var(--mob-muted)", padding: "0.5rem 0" }}>Nenhum animal nesta combinação.</p>
               ) : (
-                itens.map((it) => (
-                  <button key={it.numero_matriz} type="button" onClick={() => onFichaAberta(it.numero_matriz)} style={linhaEstilo}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <NumAnimal>Nº {it.numero_matriz}</NumAnimal>
-                      <div style={{ fontSize: "0.8rem", color: "var(--mob-muted)", marginTop: "0.1rem" }}>{detalheItem(c.config.situacao, it)}</div>
-                    </div>
-                    <ChevronRight size={18} style={{ color: "var(--mob-muted)", flexShrink: 0 }} />
-                  </button>
-                ))
+                <>
+                  {itens.map((it) => (
+                    <button key={it.numero_matriz} type="button" onClick={() => onFichaAberta(it.numero_matriz)}
+                      className={it.ainda_nao ? `ft-cartao-ainda${seloBreve(it.dias_para_prazo) ? " ft-cartao-breve" : ""}` : undefined}
+                      style={{ ...linhaEstilo, minHeight: 56, ...(it.ainda_nao ? { padding: "0.5rem 0.6rem", margin: "0.2rem 0" } : {}) }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <NumAnimal>Nº {it.numero_matriz}</NumAnimal>
+                        <div style={{ fontSize: "0.8rem", color: "var(--mob-muted)", marginTop: "0.1rem" }}>{detalheItem(c.config.situacao, it)}</div>
+                        {comExames && (
+                          <div style={{ fontSize: "0.85rem", marginTop: "0.3rem", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.2rem 0.9rem" }}>
+                            <span>Toque <CelulaExame data={it.data_diagnostico} diagnostico={it.diagnostico} /></span>
+                            <span>Retoque <CelulaExame data={it.data_reconfirmacao} diagnostico={it.diagnostico_reconfirmacao} /></span>
+                          </div>
+                        )}
+                        {comExames && (
+                          <div style={{ marginTop: "0.35rem", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.3rem" }}>
+                            <ChipFase fase={it.fase} />{it.ainda_nao && <SeloAindaNao dias={it.dias_para_prazo} prazoTipo={it.prazo_tipo} />}
+                          </div>
+                        )}
+                      </div>
+                      <ChevronRight size={18} style={{ color: "var(--mob-muted)", flexShrink: 0 }} />
+                    </button>
+                  ))}
+                </>
               )}
             </div>
           </details>
         );
       })}
+
+      {cards.some((c) => abertos.has(c.id) && (c.config.situacao === "inseminada" || c.config.situacao === "gestante")) && <LegendaToque parametros={parametros} />}
 
       <GavetaEdicao
         aberto={editando !== null}

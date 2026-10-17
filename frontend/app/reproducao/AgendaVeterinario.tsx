@@ -8,7 +8,7 @@ import { DefinirDataVisitaModal } from "@/components/reproducao/DefinirDataVisit
 import { CamposVisitaReprodutiva } from "@/components/reproducao/CamposVisitaReprodutiva";
 import { exportarFichaPDF, exportarMultiExcel, type ColunaExport } from "@/lib/export";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import { useCardsAgendaReprodutivaConfiguraveis, GradeCardsConfiguraveis, TabelasCardsConfiguraveis } from "@/components/CardsAgendaReprodutivaConfiguraveis";
+import { useCardsAgendaReprodutivaConfiguraveis, GradeCardsConfiguraveis, TabelasCardsConfiguraveis, FiltroSituacaoDiagnostico } from "@/components/CardsAgendaReprodutivaConfiguraveis";
 
 type Item = {
   numero_matriz: string; categoria: string; peso: number | null;
@@ -28,7 +28,7 @@ type Listas = Record<string, Item[]>;
 const fmtDia = (iso: string | null | undefined) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
 // Resultado de toque/reconfirmação em uma letra — P(renha)/V(azia)/I(ndefinido).
 const badgeTexto = (v: string | null | undefined) => (v === "POSITIVO" ? "P" : v === "NEGATIVO" ? "V" : v === "INDEFINIDO" ? "I" : "—");
-const corBadge = (v: string | null | undefined) => (v === "POSITIVO" ? "var(--green-light)" : v === "NEGATIVO" ? "var(--red)" : v === "INDEFINIDO" ? "var(--dourado-light)" : "var(--text-muted)");
+const corBadge = (v: string | null | undefined) => (v === "POSITIVO" ? "var(--ft-verde)" : v === "NEGATIVO" ? "var(--ft-verm)" : v === "INDEFINIDO" ? "var(--ft-ambar)" : "var(--text-muted)");
 function BadgeDiag({ v }: { v: string | null | undefined }) {
   return <span style={{ fontWeight: 700, color: corBadge(v) }}>{badgeTexto(v)}</span>;
 }
@@ -40,7 +40,7 @@ const LISTAS: {
   // resultado de diagnóstico, a outra é dado faltante), então não têm
   // equivalente nos cards configuráveis acima — ver
   // fazenda.rules.agenda_reprodutiva_configuravel.
-  { key: "vazias_por_diagnostico", label: "Vazias por diagnóstico (negativo/perda) — novo serviço", color: "var(--red)", extra: "motivo", vazia: true },
+  { key: "vazias_por_diagnostico", label: "Vazias por diagnóstico (negativo/aborto/perda de prenhez) — novo serviço", color: "var(--red)", extra: "motivo", vazia: true },
   { key: "pendentes_classificacao", label: "Pendentes de classificação (dado faltante)", color: "var(--text-muted)", extra: "motivo", lancar: true },
 ];
 
@@ -294,8 +294,8 @@ export default function AgendaVeterinarioPage() {
           <button onClick={abrirPainelExportar} disabled={categoriasComDados.length === 0}
             title="Exportar a lista completa, escolhendo quais categorias incluir"
             style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem", padding: "0.35rem 0.7rem", borderRadius: "var(--r-sm)",
-              border: "1px solid var(--dourado)", background: painelExportar ? "rgba(212,160,23,0.15)" : "transparent",
-              color: "var(--dourado-light)", cursor: categoriasComDados.length === 0 ? "not-allowed" : "pointer", opacity: categoriasComDados.length === 0 ? 0.5 : 1 }}>
+              border: "1px solid var(--dourado)", background: painelExportar ? "var(--ft-ouro-tint)" : "transparent",
+              color: "var(--ft-ouro-txt)", cursor: categoriasComDados.length === 0 ? "not-allowed" : "pointer", opacity: categoriasComDados.length === 0 ? 0.5 : 1 }}>
             <Download size={14} /> Exportar lista completa
           </button>
         </div>
@@ -373,7 +373,7 @@ export default function AgendaVeterinarioPage() {
       )}
 
       {dados.projetado && (
-        <div className="mb-3 flex items-center gap-2" data-testid="nota-cenario-projetado" style={{ background: "rgba(212,160,23,0.15)", border: "1px solid var(--dourado)", borderRadius: "var(--r-sm)", padding: "0.6rem 1rem", color: "var(--dourado-light)", fontSize: "0.85rem", flexWrap: "wrap" }}>
+        <div className="mb-3 flex items-center gap-2" data-testid="nota-cenario-projetado" style={{ background: "var(--ft-ouro-tint)", border: "1px solid var(--dourado)", borderRadius: "var(--r-sm)", padding: "0.6rem 1rem", color: "var(--ft-ouro-txt)", fontSize: "0.85rem", flexWrap: "wrap" }}>
           <AlertTriangle size={16} />
           <span>
             Cenário projetado para{" "}
@@ -405,6 +405,7 @@ export default function AgendaVeterinarioPage() {
       )}
 
       <GradeCardsConfiguraveis estado={cardsConfiguraveis} />
+      <FiltroSituacaoDiagnostico estado={cardsConfiguraveis} />
 
       <p style={{ fontWeight: 700, fontSize: "0.95rem", marginBottom: "0.25rem" }}>Outras pendências</p>
       <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", marginBottom: "0.5rem" }}>
@@ -412,23 +413,27 @@ export default function AgendaVeterinarioPage() {
       </p>
       <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
         {LISTAS.map((l) => {
-          const n = dados.totais[l.key] ?? 0;
+          const total = dados.totais[l.key] ?? 0;
           const ativa = abertas.has(l.key);
-          if (n === 0) return null;
+          if (total === 0) return null;
+          // Estas listas não são a tocar / a reconfirmar / reconfirmadas: com o filtro de situação ligado ficam
+          // esmaecidas, com 0, em vez de sumirem da tela.
+          const fora = cardsConfiguraveis.filtroAtivo;
+          const n = fora ? 0 : total;
           return (
-            <button key={l.key} onClick={() => toggle(l.key)}
+            <button key={l.key} onClick={() => toggle(l.key)} aria-expanded={ativa} title={fora ? "Sem animais nesta situação" : undefined}
               style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
-                border: "1px solid " + (ativa ? l.color : "var(--border)"),
-                background: ativa ? "rgba(94,26,46,0.25)" : "transparent",
+                border: "1px " + (fora ? "dashed " : "solid ") + (ativa ? l.color : "var(--border)"), opacity: fora ? 0.5 : 1,
+                background: ativa ? "var(--ft-ouro-tint)" : "transparent",
                 color: ativa ? l.color : "var(--text-muted)", fontWeight: ativa ? 700 : 500 }}>
-              {ativa ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              {ativa ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
               {l.label} ({n})
             </button>
           );
         })}
       </div>
 
-      {LISTAS.filter((l) => abertas.has(l.key) && (dados.totais[l.key] ?? 0) > 0).map((l) => (
+      {!cardsConfiguraveis.filtroAtivo && LISTAS.filter((l) => abertas.has(l.key) && (dados.totais[l.key] ?? 0) > 0).map((l) => (
         <ListaTabela key={l.key} cfg={l} itens={dados.listas[l.key] ?? []}
           enviandoDg={enviandoDg} setEnviandoDg={setEnviandoDg}
           onDgEnviado={(numero) => { setEnviandoDg(null); setSucesso(`Diagnóstico enviado por e-mail (matriz ${numero}).`); }}
@@ -485,7 +490,7 @@ export default function AgendaVeterinarioPage() {
                     style={{ display: "block", marginTop: "0.3rem", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.4rem 0.6rem", fontSize: "0.85rem" }} />
                 </label>
                 {intervaloImplicito != null && intervaloImplicito > 0 && (
-                  <div className="mb-3" style={{ background: "rgba(212,160,23,0.15)", border: "1px solid var(--dourado)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem", color: "var(--dourado-light)", fontSize: "0.8rem" }}>
+                  <div className="mb-3" style={{ background: "var(--ft-ouro-tint)", border: "1px solid var(--dourado)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem", color: "var(--ft-ouro-txt)", fontSize: "0.8rem" }}>
                     Essa data considerará <strong>{intervaloImplicito} dia(s)</strong> de intervalo entre o último serviço
                     ({fmtDia(dados.ultimo_servico)}) e o serviço lançado. Deseja colocar esse intervalo como parâmetro?
                   </div>
@@ -575,7 +580,7 @@ function ListaTabela({ cfg, itens, enviandoDg, setEnviandoDg, onDgEnviado, onLan
               {cfg.vazia && (
                 <td>
                   <Link href={`/lancamentos?ir=inseminacao&numero_matriz=${encodeURIComponent(it.numero_matriz)}`}
-                    style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado-light)", cursor: "pointer", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }}>
+                    style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", background: "transparent", color: "var(--ft-ouro-txt)", cursor: "pointer", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }}>
                     Novo Serviço
                   </Link>
                   <div style={{ color: "var(--text-muted)", fontSize: "0.68rem", marginTop: "0.2rem", whiteSpace: "nowrap" }}>
@@ -586,7 +591,7 @@ function ListaTabela({ cfg, itens, enviandoDg, setEnviandoDg, onDgEnviado, onLan
               {cfg.lancar && (
                 <td>
                   <button onClick={() => onLancar(it)} title="Lançar IA/cobertura ou toque/retoque para esta matriz"
-                    style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado-light)", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+                    style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", background: "transparent", color: "var(--ft-ouro-txt)", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
                     <ClipboardEdit size={13} /> Lançar
                   </button>
                 </td>

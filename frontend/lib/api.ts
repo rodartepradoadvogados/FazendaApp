@@ -2286,11 +2286,19 @@ export type CardAgendaReprodutivaConfig = {
   exceto_atrasadas: boolean;
 };
 
+import type { FaseToque } from "./fasesToque.ts";
+export type { FaseToque };
 export type ItemCardAgendaReprodutiva = {
   numero_matriz: string; categoria: string | null; lote_atual: string | null;
   estado: string | null; del_dias: number | null; dias_gestacao: number | null;
   dias_desde_servico: number | null; data_servico: string | null; parto_previsto: string | null;
+  // Diagnóstico do serviço vigente e fase do ciclo (backend rules/fase_toque.py). `ainda_nao` = dentro do prazo de
+  // Parâmetros (Dias para toque / reconfirmação); `dias_para_prazo` = quantos dias faltam, só quando ainda_nao.
+  diagnostico?: string | null; data_diagnostico?: string | null;
+  diagnostico_reconfirmacao?: string | null; data_reconfirmacao?: string | null; retoque?: boolean | null;
+  fase?: FaseToque | null; ainda_nao?: boolean; dias_para_prazo?: number | null; prazo_tipo?: "toque" | "reconfirmacao" | null;
 };
+export type ParametrosToque = { dias_toque: number; dias_reconfirmacao: number };
 
 export async function fetchAgendaReprodutivaCard(
   config: CardAgendaReprodutivaConfig, data?: string,
@@ -2303,6 +2311,17 @@ export async function fetchAgendaReprodutivaCard(
   return res.json();
 }
 
+/** Vários cards numa chamada só: o servidor calcula o estado do rebanho uma vez (antes eram N chamadas completas). */
+export async function fetchAgendaReprodutivaCards(
+  cards: { id: string; config: CardAgendaReprodutivaConfig }[], data?: string,
+): Promise<{ data_referencia: string; parametros: ParametrosToque; resultados: Record<string, { total: number; itens: ItemCardAgendaReprodutiva[] }> }> {
+  const qs = data ? `?data=${encodeURIComponent(data)}` : "";
+  const res = await authFetch(`${API}/reproducao/agenda-reprodutiva/cards${qs}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cards }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao montar os cards"); }
+  return res.json();
+}
 
 export async function registrarReconfirmacao(dados: {
   numero_matriz: string; data_reconfirmacao: string; resultado: "positivo" | "negativo";
