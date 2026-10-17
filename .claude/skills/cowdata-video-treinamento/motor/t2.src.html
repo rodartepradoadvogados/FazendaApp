@@ -50,7 +50,7 @@ svg.l{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-l
 .cartao{position:absolute;left:96px;top:1190px;width:888px;padding:34px 40px 34px 40px;background:#FBF6E8;box-shadow:0 14px 30px rgba(50,32,8,.3);z-index:41;font:800 50px/1.12 Archivo;color:#1A2638}
 .cartao small{display:block;margin-top:14px;font:600 34px/1.25 Inter,Archivo,sans-serif;color:#4b4034}
 .cartao .fx{position:absolute;left:300px;top:-34px;width:290px;height:62px;background:rgba(238,226,190,.95);box-shadow:0 2px 5px rgba(60,40,10,.25);transform:rotate(-2deg);clip-path:polygon(2% 0,98% 6%,100% 50%,97% 100%,3% 94%,0 50%)}
-#carimbo{position:absolute;left:540px;top:945px;width:max-content;margin-left:0;z-index:60;display:none;transform-origin:50% 50%}
+#carimbo{position:absolute;left:540px;top:284px;width:max-content;margin-left:0;z-index:60;display:none;transform-origin:50% 50%}
 #capa{position:absolute;inset:0;z-index:70;background:url(assets/kraft.png)}
 </style></head><body><div id="palco"><div id="cena">
  <svg width="0" height="0" style="position:absolute"><defs><filter id="tinta" x="-5%" y="-5%" width="110%" height="110%"><feTurbulence type="fractalNoise" baseFrequency=".055" numOctaves="3" seed="7" result="r"/><feColorMatrix in="r" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -5.5 4.2" result="m"/><feComposite in="SourceGraphic" in2="m" operator="in" result="c"/><feTurbulence type="turbulence" baseFrequency=".9" numOctaves="1" seed="3" result="g"/><feDisplacementMap in="c" in2="g" scale="2"/></filter></defs></svg>
@@ -156,7 +156,7 @@ function titulos(t){const Q=EP.titulos;let i=0;while(i+1<Q.length&&t>=Q[i+1][0])
   const prev=Q[i-1];const ps=iq(lin(t,t0,t0+0.35));const tb=K['tit'+b];
   if(prev&&ps<1){X(tb,prev[1].replace(/<m>(.*?)<\/m>/g,'<m><i></i>$1</m>'));const wb=tb.scrollWidth;tb.style.display='block';tb.style.transform=`translateY(${-ps*130}px) scale(${Math.min(1,900/wb)})`;for(const m of tb.querySelectorAll('m i'))m.style.width='calc(100% + 20px)';}else tb.style.display='none';
   // o diagrama De → Para ocupa o lugar do título enquanto durar
-  const D=EP.diag;const dv=t>=D[0]&&t<D[1];
+  const D=EP.diag;const dv=(t>=D[0]&&t<D[1])||(EP.oculta||[]).some(o=>t>=o[0]&&t<o[1]);
   K.titm=K.titm||document.querySelector('.titm');K.titm.style.display=(dv?'none':'block');}
 function legenda(t){let f=null;for(const fr of EP.leg)if(t>=fr[0]-0.1&&t<fr[1]+0.35)f=fr;
   if(!f||t>=EP.fimLeg){K.legbox.style.display='none';return;}K.legbox.style.display='block';X(K.leg,f[2]);const q=mola(t-f[0]+0.1,14,.55);K.leg.style.transform=`scale(${L(.92,1,cl(q,0,1.05))}) rotate(${(1-cl(q,0,1))*-1.5}deg)`;K.leg.style.opacity=cl(q*2.5);}

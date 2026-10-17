@@ -35,8 +35,8 @@ EP.toques=[
 // ---- câmera: [t de chegada, duração, cx, cy, zoom] (coords da tela do celular com +30) ----
 EP.cam=[[0,0,195,235,1.0],[a('noApp')+0.5,1.0,150,690,1.25],[a('depois')-0.9,1.0,195,560,1.0],[a('depois')+0.5,0.9,110,640,1.3],
  [a('primeiro')+0.2,1.0,195,330,1.1],[a('toqueLotes')-0.2,0.8,195,320,1.25],[tLotes+0.7,0.8,195,500,1.0],[a('marque')-0.2,0.9,195,450,1.05],
- [a('barra')-0.4,0.9,205,620,1.1],[a('agora')-0.3,1.0,195,520,1.0],[a('conta2')-0.3,0.9,260,500,1.3],
- [a('quadro')+0.2,1.0,195,470,1.1],[a('motivo')-0.1,0.9,195,330,1.25],[a('toqueMov')-0.3,0.9,195,660,1.2],
+ [a('barra')-0.4,0.9,205,620,1.1],[a('agora')-0.3,1.0,195,520,1.0],[a('conta2')-0.3,0.9,195,500,1.0],
+ [a('quadro')+0.2,1.0,195,470,1.0],[a('motivo')-0.1,0.9,195,330,1.25],[a('toqueMov')-0.3,0.9,195,660,1.2],
  [tBtn+0.9,1.0,195,450,1.0],[tVer-0.2,0.7,195,640,1.1],[tVer+0.4,0.5,195,350,1.15],[tCmp+0.6,0.9,195,400,1.1],[a('semInternet')+0.2,1.0,195,480,1.0]];
 // ---- anotações: [t0,t1,tipo,x,y,w,h,{c,scr}] — somem exatamente no quadro da troca de tela seguinte (regra do motor) ----
 const V='#2E7D52',Z='#1E6FA8',D='#E0A63C';
@@ -66,7 +66,7 @@ EP.anot=[
  [a('toqueMov')+0.05,cT.res,'caixa',...(()=>{const b=bn('s11_p2_motivo_ok','cta');return[b.x,b.y,b.w,b.h,{c:D}];})()],
  [tCmp+0.15,a('semInternet')-0.1,'caixa',...bx('s14_composicao_lista','n39',{c:V})],[tCmp+0.45,a('semInternet')-0.1,'caixa',...bx('s14_composicao_lista','n41',{c:Z})]
 ].map(e=>e);
-EP.fitas=[[a('troca')-0.1,a('noApp')+0.1,'Troca de <b>Lotes</b>',120,640,-3]];
+EP.fitas=[[a('troca')-0.1,a('noApp')+0.1,'Troca de <b>Lotes</b>',150,298,-2]];
 EP.titulos=[[0,'Os <m>Lançamentos</m>'],[a('noApp')-0.1,'Toque em <m>Lançar</m>'],[a('depois')-0.1,'Depois, <m>Movimentar</m>'],[a('primeiro')-0.1,'Passo 1: <m>quem</m> sai'],
  [a('marque')-0.1,'<m>Marque</m> as vacas'],[a('barra')-0.25,'A barra <m>conta</m>'],[a('agora')-0.1,'Passo 2: <m>para onde</m>'],[a('motivo')-0.15,'<m>Motivo</m> e data'],
  [a('toqueMov')-0.2,'<m>Movimentar</m> 3 animais'],[a('pronto')-0.1,'Feito: <m>lançado</m>'],[a('lotesMudam')-0.15,'Os lotes <m>mudaram</m>'],[a('semInternet')-0.1,'Sem <m>internet</m>?']];
@@ -80,7 +80,7 @@ EP.leg=[[F[0][1],F[0][2],F[0][0]],[F[1][1],F[1][2],F[1][0]],[F[2][1],F[2][2],F[2
  [F[8][1],F[8][2],F[8][0]],[F[9][1],F[9][2],F[9][0]],[F[10][1],F[10][2],F[10][0]]];
 const tCapa=a('proximo')-0.15;EP.fimLeg=tCapa;EP.shake=a('lancado');
 EP.entrada=t=>{const p=mola(t-0.3,8,.55);return{dx:0,dy:(1-cl(p,0,1.2))*1500,rot:(1-cl(p,0,1))*-4};};
-const tCart=a('semInternet')-0.05,tCartFim=tCapa-0.2,tCar=a('lancado'),tCarFim=tVer-0.15;
+EP.oculta=[[a('lancado'),tVer-0.15],[a('troca')-0.1,a('noApp')+0.4]];const tCart=a('semInternet')-0.05,tCartFim=tCapa-0.2,tCar=a('lancado'),tCarFim=tVer-0.15;
 const IN='#1A2638';
 EP.estado=(t,{K,io,oc,lin,mola,L,cl,ob,ic,cow,X,iq})=>{
   K.dymo.style.transform=`translateX(${(1-cl(mola(t-0.55,9,.55),0,1.15))*-1000}px) rotate(-1.6deg)`;
@@ -102,8 +102,8 @@ EP.estado=(t,{K,io,oc,lin,mola,L,cl,ob,ic,cow,X,iq})=>{
     K.cartao.style.display='block';K.cartao.style.transform=`translateY(${(1-q)*700+s*900}px) rotate(${L(6,-2.5,cl(q,0,1))}deg)`;}else K.cartao.style.display='none';
   // carimbo de borracha: bate no "lançado", com 3 quadros de tremida (cena inteira, ver shake no motor)
   if(t>=tCar&&t<tCarFim){const q=oc(lin(t,tCar,tCar+0.1)),s=lin(t,tCarFim-0.2,tCarFim);
-    X(K.carimbo,`<div style="display:flex;align-items:center;justify-content:center;gap:22px;border:9px solid #1B4D33;outline:3px solid #1B4D33;outline-offset:6px;border-radius:16px;padding:26px 30px;color:#14452B;font:800 44px/1 Archivo;letter-spacing:.04em;white-space:nowrap;background:rgba(251,246,232,.72);filter:url(#tinta)"><svg width="62" height="62" viewBox="0 0 24 24" fill="none" stroke="#1B4D33" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>LANÇADO NO REBANHO</div>`);
-    K.carimbo.style.display='block';K.carimbo.style.opacity=(0.93*(1-s)*cl(q*4)).toFixed(3);K.carimbo.style.transform=`translateX(-50%) rotate(-7deg) scale(${L(1.7,1,q)})`;}else K.carimbo.style.display='none';
+    X(K.carimbo,`<div style="display:flex;align-items:center;justify-content:center;gap:22px;border:10px solid #14452B;outline:3px solid #14452B;outline-offset:7px;border-radius:18px;padding:22px 34px;color:#14452B;font:800 54px/1 Archivo;letter-spacing:.03em;white-space:nowrap;background:rgba(251,246,232,.55);filter:url(#tinta)"><svg width="70" height="70" viewBox="0 0 24 24" fill="none" stroke="#14452B" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>LANÇADO NO REBANHO</div>`);
+    K.carimbo.style.display='block';K.carimbo.style.opacity=(0.93*(1-s)*cl(q*4)).toFixed(3);K.carimbo.style.transform=`translateX(-50%) rotate(-4deg) scale(${L(1.7,1,q)})`;}else K.carimbo.style.display='none';
 };
 EP.capa=(t,el)=>{const p=io(lin(t,tCapa,tCapa+0.7));if(p<=0){el.style.display='none';return;}el.style.display='block';el.style.clipPath=`inset(${(1-p)*100}% 0 0 0)`;
   const q=mola(t-tCapa-0.45,10,.5),r=mola(t-tCapa-0.95,12,.5),s=oc(lin(t,tCapa+1.7,tCapa+2.3)),u=mola(t-tCapa-2.5,12,.5);
