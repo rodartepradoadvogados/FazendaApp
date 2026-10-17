@@ -103,6 +103,16 @@ def ctx(monkeypatch):
     fazenda_atual.set(None)
 
 
+def _adesivo_param(engine, ligado: bool) -> None:
+    """Parâmetro antigo `usa_adesivo_deteccao_cio` (a chave mestra de quem ainda não salvou a configuração de repasse)."""
+    from fazenda.models import ParametroFazenda
+
+    with Session(engine) as s:
+        s.add(ParametroFazenda(chave="usa_adesivo_deteccao_cio", fazenda_id=None, grupo="reinseminacao_cio",
+                               label="Utiliza adesivos para detecção de cio de repasse?", valor="true" if ligado else "false", tipo="bool"))
+        s.commit()
+
+
 def _item(s: Session, nome: str, categoria: str | None = CAT, fazenda_id: int = 1, **kw) -> int:
     e = Estoque(nome=nome, categoria=categoria, fazenda_id=fazenda_id, quantidade=kw.pop("quantidade", 10), unidade="un", **kw)
     s.add(e)
@@ -126,12 +136,21 @@ def _descricoes_repasse(c) -> list[tuple[str, str]]:
 
 
 class TestEndpointsConfig:
-    def test_sem_configuracao_devolve_o_padrao(self, ctx):
+    def test_sem_configuracao_e_sem_o_parametro_antigo_o_adesivo_fica_desligado(self, ctx):
         c, _ = ctx
         r = c.get("/agenda/repasse/config")
         assert r.status_code == 200
         b = r.json()
-        assert b["configurado"] is False and b["usar"] is True and b["dias_apos_servico"] == 14
+        assert b["configurado"] is False and b["usar"] is False and b["avisar_apos_dias"] is None
+        assert b["estoque_ids"] == [] and b["produtos"] == []
+
+    def test_sem_configuracao_com_o_parametro_antigo_ligado_vale_o_padrao_de_14_dias(self, ctx):
+        c, engine = ctx
+        _adesivo_param(engine, True)
+        r = c.get("/agenda/repasse/config")
+        assert r.status_code == 200
+        b = r.json()
+        assert b["configurado"] is False and b["usar"] is True and b["dias_apos_servico"] == 14 and b["avisar_apos_dias"] == 14
         assert b["categoria_produto"] == CAT and b["ciclo_sugerido"] == [18, 24]
         assert {o["valor"] for o in b["quem_entra_opcoes"]} == {"todas", "iatf", "monta_natural"}
 
@@ -165,24 +184,27 @@ class TestEndpointsConfig:
             errado = _item(s, "Ivermectina", categoria="Medicamentos e produtos veterinários")
             de_outra = _item(s, "Adesivo alheio", fazenda_id=2)
         for corpo, trecho in [
-            ({"dias_apos_servico": 0}, "Dias após o serviço"),
-            ({"dias_apos_servico": 61}, "Dias após o serviço"),
+            ({"dias_apos_servico": 0}, "Avisar na agenda após"),
+            ({"dias_apos_servico": 61}, "Avisar na agenda após"),
+            ({"avisar_apos_dias": 0}, "Avisar na agenda após"),
+            ({"avisar_apos_dias": 90}, "Avisar na agenda após"),
             ({"repetir_cada_dias": 3}, "Repetir a cada"),
             ({"repeticoes": 9}, "repetições"),
             ({"quem_entra": "vacas_bonitas"}, "quem entra"),
-            ({"estoque_id": errado}, "categoria"),
             ({"estoque_id": de_outra}, "não encontrado"),
+            ({"estoque_ids": [de_outra]}, "não encontrado"),
             ({"estoque_id": 99999}, "não encontrado"),
         ]:
             r = c.put("/agenda/repasse/config", json=corpo)
             assert r.status_code == 422, (corpo, r.text)
             assert trecho.lower() in r.json()["detail"].lower(), (corpo, r.json())
 
-    def test_aviso_fora_do_ciclo_sugerido_e_sem_produto(self, ctx):
+    def test_aviso_fora_do_ciclo_sugerido_e_sem_produto_nao_e_mais_aviso(self, ctx):
         c, _ = ctx
         r = c.put("/agenda/repasse/config", json={"repetir": True, "repetir_cada_dias": 30})
         avisos = " ".join(r.json()["avisos"])
-        assert "18 a 24" in avisos and "Sem produto vinculado" in avisos
+        assert "18 a 24" in avisos
+        assert "Sem produto vinculado" not in avisos  # sem produto vinculado = escolha livre no estoque, por decisão
 
     def test_isolamento_por_fazenda(self, ctx):
         c, engine = ctx
@@ -235,8 +257,16 @@ class TestProdutos:
 
 
 class TestMotorDaAgenda:
+    def test_sem_configuracao_e_sem_adesivo_nao_cai_tarefa_na_agenda(self, ctx):
+        """O relato do produtor: o aviso de aplicar adesivo caía sozinho aos 14 dias mesmo sem a fazenda usar adesivo."""
+        c, engine = ctx
+        with Session(engine) as s:
+            _vaca_servico(s, "101", dias_atras=4)
+        assert _descricoes_repasse(c) == []
+
     def test_sem_configuracao_mantem_o_texto_e_os_14_dias(self, ctx):
         c, engine = ctx
+        _adesivo_param(engine, True)
         with Session(engine) as s:
             _vaca_servico(s, "101", dias_atras=4)
         assert _descricoes_repasse(c) == [
@@ -286,9 +316,100 @@ class TestMotorDaAgenda:
 
     def test_config_de_uma_fazenda_nao_muda_a_outra(self, ctx):
         c, engine = ctx
+        _adesivo_param(engine, True)  # parâmetro global ligado: a fazenda 2, sem configuração salva, segue no padrão
         with Session(engine) as s:
             _vaca_servico(s, "101", dias_atras=4, fazenda_id=1)
             _vaca_servico(s, "901", dias_atras=4, fazenda_id=2)
         c.put("/agenda/repasse/config", json={"usar": False})           # fazenda 1 desliga
         c.estado["fazenda"] = 2
-        assert len(_descricoes_repasse(c)) == 1                          # fazenda 2 segue no legado
+        assert len(_descricoes_repasse(c)) == 1                          # fazenda 2 segue no padrão de 14 dias
+
+
+class TestParametrosDoAdesivo:
+    """Parâmetros › Reinseminação e observação de cio: chave mestra, avisar após X dias (vazio = não avisar) e vários produtos."""
+
+    def test_avisar_apos_dias_vazio_desliga_so_o_aviso_e_numero_liga(self, ctx):
+        c, engine = ctx
+        with Session(engine) as s:
+            _vaca_servico(s, "101", dias_atras=4)
+        r = c.put("/agenda/repasse/config", json={"usar": True, "avisar_apos_dias": None})
+        assert r.status_code == 200 and r.json()["avisar_apos_dias"] is None and r.json()["usar"] is True
+        assert _descricoes_repasse(c) == []
+        r = c.put("/agenda/repasse/config", json={"usar": True, "avisar_apos_dias": 20})
+        assert r.json()["avisar_apos_dias"] == 20 and r.json()["dias_apos_servico"] == 20 and r.json()["mostrar_na_agenda"] is True
+        (data, _), = _descricoes_repasse(c)
+        assert data == (HOJE + timedelta(days=16)).isoformat()
+
+    def test_vazio_guarda_os_dias_anteriores_para_quando_voltar_a_avisar(self, ctx):
+        c, _ = ctx
+        c.put("/agenda/repasse/config", json={"usar": True, "avisar_apos_dias": 21})
+        c.put("/agenda/repasse/config", json={"usar": True, "avisar_apos_dias": None})
+        b = c.get("/agenda/repasse/config").json()
+        assert b["avisar_apos_dias"] is None and b["dias_apos_servico"] == 21 and b["mostrar_na_agenda"] is False
+
+    def test_varios_produtos_ida_e_volta_qualquer_categoria_e_texto_com_todos(self, ctx):
+        c, engine = ctx
+        with Session(engine) as s:
+            a = _item(s, "Scratch Heatmark")
+            b = _item(s, "Detector Kamar", categoria="Outros")  # sem a categoria de repasse: vale mesmo assim
+            _vaca_servico(s, "101", dias_atras=4)
+        r = c.put("/agenda/repasse/config", json={"usar": True, "estoque_ids": [a, b, a]})  # repetido é ignorado
+        assert r.status_code == 200, r.text
+        corpo = r.json()
+        assert corpo["estoque_ids"] == [a, b] and corpo["estoque_id"] == a
+        assert [p["nome"] for p in corpo["produtos"]] == ["Scratch Heatmark", "Detector Kamar"]
+        lido = c.get("/agenda/repasse/config").json()
+        assert lido["estoque_ids"] == [a, b] and [p["nome"] for p in lido["produtos"]] == ["Scratch Heatmark", "Detector Kamar"]
+        (_, desc), = _descricoes_repasse(c)
+        assert "Scratch Heatmark ou Detector Kamar" in desc
+
+    def test_produto_apagado_ou_inativo_sai_da_selecao_sem_travar_nada(self, ctx):
+        c, engine = ctx
+        with Session(engine) as s:
+            a = _item(s, "Scratch Heatmark")
+            b = _item(s, "Detector Kamar")
+        c.put("/agenda/repasse/config", json={"usar": True, "estoque_ids": [a, b]})
+        with Session(engine) as s:
+            item = s.get(Estoque, b)
+            item.ativo = False
+            s.add(item)
+            s.commit()
+        lido = c.get("/agenda/repasse/config")
+        assert lido.status_code == 200
+        assert [p["nome"] for p in lido.json()["produtos"]] == ["Scratch Heatmark"]
+        with Session(engine) as s:
+            s.delete(s.get(Estoque, a))
+            s.commit()
+        assert c.get("/agenda/repasse/config").json()["produtos"] == []
+
+    def test_corpo_antigo_com_um_produto_continua_valendo(self, ctx):
+        c, engine = ctx
+        with Session(engine) as s:
+            pid = _item(s, "Adesivo Estrus")
+        r = c.put("/agenda/repasse/config", json={"usar": True, "estoque_id": pid, "dias_apos_servico": 18})
+        assert r.json()["estoque_ids"] == [pid] and r.json()["avisar_apos_dias"] == 18
+        r = c.put("/agenda/repasse/config", json={"usar": True, "estoque_id": None, "estoque_ids": []})
+        assert r.json()["estoque_ids"] == [] and r.json()["estoque_id"] is None
+
+    def test_a_configuracao_salva_manda_na_chave_mestra_e_o_parametro_antigo_so_vale_sem_ela(self, ctx):
+        from fazenda.rules.parametros import usa_adesivo_deteccao_cio
+
+        c, engine = ctx
+        assert usa_adesivo_deteccao_cio() is False
+        _adesivo_param(engine, True)
+        fazenda_atual.set(1)
+        assert usa_adesivo_deteccao_cio() is True          # sem configuração: vale o parâmetro
+        c.put("/agenda/repasse/config", json={"usar": False})
+        assert usa_adesivo_deteccao_cio() is False         # configuração salva manda, mesmo com o parâmetro ligado
+        c.put("/agenda/repasse/config", json={"usar": True})
+        assert usa_adesivo_deteccao_cio() is True
+        fazenda_atual.set(2)
+        assert usa_adesivo_deteccao_cio() is True          # a fazenda 2 não salvou nada: segue o parâmetro
+
+    def test_chave_mestra_desligada_esconde_a_lista_observacao_de_cio(self, ctx):
+        from fazenda.rules.parametros import usa_adesivo_deteccao_cio
+
+        c, engine = ctx
+        c.put("/agenda/repasse/config", json={"usar": False})
+        fazenda_atual.set(1)
+        assert usa_adesivo_deteccao_cio() is False  # a lista só é montada quando isto é True (agenda_veterinario)

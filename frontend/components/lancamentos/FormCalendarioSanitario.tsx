@@ -379,9 +379,9 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
       id: "tipo", titulo: "Tipo",
       // Vermífugo = categoria_preventiva "tratamento" (é o Vermífugo do seed do
       // calendário fixo, antiparasitário aplicado por peso). Repasse não é uma
-      // regra do calendário: é uma configuração única da fazenda, gravada pelo
-      // CartaoRepasse (PUT /agenda/repasse/config).
-      validar: (f) => (f.tipoRepasse ? "A detecção de cio de repasse é uma configuração da fazenda: preencha e salve no cartão abaixo. Para cadastrar Vacina, Exame ou Vermífugo, escolha outro tipo." : null),
+      // regra do calendário: é uma configuração única da fazenda, editada só em
+      // Parâmetros › Reinseminação e observação de cio (o CartaoRepasse mostra o resumo).
+      validar: (f) => (f.tipoRepasse ? "A detecção de cio de repasse é uma configuração da fazenda: edite em Parâmetros › Reinseminação e observação de cio (o resumo está no cartão abaixo). Para cadastrar Vacina, Exame ou Vermífugo, escolha outro tipo." : null),
       render: ({ form: f, setForm: sf }) => {
         const opcoes: { id: "vacina" | "exame" | "vermifugo" | "repasse"; label: string; desc: string }[] = [
           { id: "vacina", label: "Vacina", desc: "Produto aplicado por dose, em uma janela de aplicação." },

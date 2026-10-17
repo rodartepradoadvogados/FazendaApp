@@ -740,10 +740,12 @@ def calcular_agenda(
         while proxima_visita_bst_real < data:
             proxima_visita_bst_real += timedelta(days=intervalo_bst_dias)
 
-    # Detecção de cio de repasse: fazenda sem configuração salva segue o legado
-    # (repasse=None); com configuração, o motor usa dias/quem entra/aviso dela.
+    # Detecção de cio de repasse: o motor usa dias/quem entra/aviso da regra da fazenda.
+    # (Desde 17/10/2026, sem configuração salva, `ler_config` já devolve o padrão da fazenda — ligado só se o
+    # parâmetro `usa_adesivo_deteccao_cio` estiver ligado —, então o motor sempre recebe uma regra explícita e o aviso
+    # de 14 dias não cai mais sozinho para quem não usa adesivo.)
     cfg_repasse = _repasse_rules.ler_config(session, fazenda_id)
-    prod_repasse = _repasse_rules.produto_da_config(session, cfg_repasse) if cfg_repasse["configurado"] else None
+    nomes_repasse = _repasse_rules.nomes_dos_produtos(session, cfg_repasse)
     engine = AgendaEngine()
     result = engine.calcular(
         data_referencia=data,
@@ -769,8 +771,8 @@ def calcular_agenda(
         peso_por_animal=peso_por_animal,
         inicio_lactacao_por_animal=inicio_lactacao_por_animal,
         servicos_historico=servicos_todos,
-        repasse=cfg_repasse if cfg_repasse["configurado"] else None,
-        repasse_produto=(prod_repasse or {}).get("nome"),
+        repasse=cfg_repasse,
+        repasse_produto=nomes_repasse,
     )
 
     # Candidatas aptas que NUNCA receberam nenhuma aplicação de BST — vaca que

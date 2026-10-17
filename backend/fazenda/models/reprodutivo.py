@@ -349,6 +349,8 @@ class RepasseConfig(SQLModel, table=True):
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     usar: bool = True
     estoque_id: Optional[int] = Field(default=None, foreign_key="estoque.id")
+    # Todos os produtos vinculados (JSON: lista de ids de estoque). `estoque_id` guarda só o primeiro, por compatibilidade.
+    estoque_ids_json: Optional[str] = None
     # 1ª checagem: quantos dias após o serviço (padrão 14; validos 1..60).
     dias_apos_servico: int = 14
     # Repetição das checagens seguintes (ciclo estral: 18 a 24 dias sugerido).

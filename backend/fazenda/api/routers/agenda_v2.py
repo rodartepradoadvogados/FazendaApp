@@ -288,6 +288,7 @@ def agenda_projecao(
         calc = _checagens_repasse(session, q, cfg, hoje, ate)
         repasse_calc = calc
         produto = repasse_rules.produto_da_config(session, cfg)
+        nomes_produtos = repasse_rules.nomes_dos_produtos(session, cfg)
         demanda = calc["resumo"]["checagens"]
         cards["repasse"] = {
             "usar": cfg["usar"], "configurado": cfg["configurado"], "mostrar_na_agenda": cfg["mostrar_na_agenda"],
@@ -296,7 +297,8 @@ def agenda_projecao(
             **calc["resumo"],
             "por_semana": _por_semana([(d, 1) for d in calc["datas"]] + [(d, 1) for d in calc["estimadas"]], semanas),
             "produto": ({**produto, "demanda": demanda, "falta": max(0, demanda - (produto["quantidade"] or 0))} if produto else None),
-            "link": "/protocolos",
+            "produtos_nomes": nomes_produtos,
+            "link": "/parametros",
         }
 
         # BST ──────────────────────────────────────────────────────────────
@@ -423,7 +425,7 @@ def agenda_projecao(
         por_data: dict[date, int] = defaultdict(int)
         for d in repasse_calc["datas"] + repasse_calc["estimadas"]:
             por_data[d] += 1
-        nome_prod = ((cards.get("repasse") or {}).get("produto") or {}).get("nome")
+        nome_prod = (cards.get("repasse") or {}).get("produtos_nomes")
         for d, n in por_data.items():
             linhas.append({
                 "data": d.isoformat(), "grupo": "repasse", "n": n, "lote": None,
@@ -445,8 +447,14 @@ def agenda_projecao(
 
 # ── Detecção de cio de repasse: configuração por fazenda ─────────────────────
 class RepasseConfigIn(BaseModel):
+    """`usar` é a chave mestra do adesivo (Parâmetros › Reinseminação e observação de cio). `avisar_apos_dias`, quando
+    enviado, manda no aviso da Agenda: `null` = não avisar. `estoque_ids` = produtos vinculados (vazio = escolha livre);
+    `estoque_id` fica só para corpos antigos de um produto."""
+
     usar: bool = True
     estoque_id: int | None = None
+    estoque_ids: list[int] | None = None
+    avisar_apos_dias: int | None = None
     dias_apos_servico: int = repasse_rules.DIAS_PADRAO
     repetir: bool = False
     repetir_cada_dias: int = 21
@@ -469,7 +477,7 @@ def ler_repasse_config(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     cfg = repasse_rules.ler_config(session, fazenda_id)
     return {
-        **cfg, "produto": repasse_rules.produto_da_config(session, cfg),
+        **cfg, "produto": repasse_rules.produto_da_config(session, cfg), "produtos": repasse_rules.produtos_da_config(session, cfg),
         "categoria_produto": repasse_rules.CATEGORIA_PRODUTO_REPASSE,
         "ciclo_sugerido": list(repasse_rules.CICLO_SUGERIDO),
         "quem_entra_opcoes": [{"valor": k, "rotulo": v} for k, v in repasse_rules.ROTULO_QUEM.items()],
@@ -482,11 +490,12 @@ def salvar_repasse_config(
     fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     _exigir_pode_configurar(usuario)
+    corpo = dados.model_dump(exclude_unset=True)  # só o que veio no corpo muda; o resto fica como está
     try:
-        cfg, avisos = repasse_rules.salvar_config(session, fazenda_id, dados.model_dump(), usuario_id_seguro(usuario.id))
+        cfg, avisos = repasse_rules.salvar_config(session, fazenda_id, corpo, usuario_id_seguro(usuario.id))
     except repasse_rules.RepasseError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    return {**cfg, "produto": repasse_rules.produto_da_config(session, cfg), "avisos": avisos}
+    return {**cfg, "produto": repasse_rules.produto_da_config(session, cfg), "produtos": repasse_rules.produtos_da_config(session, cfg), "avisos": avisos}
 
 
 @router.get("/repasse/produtos")

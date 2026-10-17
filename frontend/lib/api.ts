@@ -1579,15 +1579,21 @@ export async function materializarAgendaComIntervalo(data: string): Promise<bool
 }
 
 // Detecção de cio de repasse — configuração por fazenda.
+export type RepasseProduto = { id: number; nome: string; quantidade: number | null; unidade: string | null };
 export type RepasseConfig = {
   configurado: boolean; usar: boolean; estoque_id: number | null; dias_apos_servico: number; repetir: boolean;
   repetir_cada_dias: number; repeticoes: number; mostrar_na_agenda: boolean; quem_entra: "todas" | "iatf" | "monta_natural";
-  produto?: { id: number; nome: string; quantidade: number | null; unidade: string | null } | null;
+  /** Produtos vinculados (itens de estoque ativos); vazio = escolha livre no estoque. Apagado/inativo sai sozinho. */
+  estoque_ids: number[]; produtos?: RepasseProduto[];
+  /** Avisar na agenda após N dias do serviço; `null` = não avisar (a chave mestra `usar` continua valendo). */
+  avisar_apos_dias: number | null;
+  produto?: RepasseProduto | null;
   categoria_produto?: string; ciclo_sugerido?: [number, number];
   quem_entra_opcoes?: { valor: string; rotulo: string }[]; avisos?: string[];
 };
 export async function fetchRepasseConfig(): Promise<RepasseConfig> { return getAgendaV2("repasse/config", {}); }
-export async function salvarRepasseConfig(dados: Omit<RepasseConfig, "configurado" | "produto" | "categoria_produto" | "ciclo_sugerido" | "quem_entra_opcoes" | "avisos">): Promise<RepasseConfig> {
+/** Atualização parcial: só o que vier em `dados` muda. */
+export async function salvarRepasseConfig(dados: Partial<Omit<RepasseConfig, "configurado" | "produto" | "produtos" | "categoria_produto" | "ciclo_sugerido" | "quem_entra_opcoes" | "avisos">>): Promise<RepasseConfig> {
   const res = await authFetch(`${API}/agenda/repasse/config`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });

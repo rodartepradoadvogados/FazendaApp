@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Pencil, Check, Loader2 } from "lucide-react";
 import { atualizarParametro, ehAdmin, fetchParametros } from "@/lib/api";
+import { PainelAdesivoCio, ehParametroDoPainelAdesivo } from "@/components/PainelAdesivoCio";
 
 type Item = { chave: string; label: string; valor: number | string | boolean | null; unidade: string | null; tipo?: string; opcoes?: { valor: string; label: string }[] };
 type Grupo = { titulo: string; itens: Item[] };
@@ -55,7 +56,9 @@ export function GruposParametrosCards({ filtro }: { filtro: (idGrupo: string) =>
   const entradas = Object.entries(grupos).filter(([id]) => filtro(id));
   if (!entradas.length) return null;
 
+  const painelAdesivo = entradas.find(([id]) => id === "reinseminacao_cio");
   return (
+    <>
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       {entradas.map(([id, g]) => {
         const edit = editando.has(id);
@@ -76,7 +79,7 @@ export function GruposParametrosCards({ filtro }: { filtro: (idGrupo: string) =>
           </div>
           <table className="fazenda-table">
             <tbody>
-              {g.itens.map((it) => {
+              {g.itens.filter((it) => !ehParametroDoPainelAdesivo(it.chave)).map((it) => {
                 const valorAtual = valores[it.chave] ?? it.valor;
                 return (
                 <tr key={it.chave}>
@@ -126,5 +129,8 @@ export function GruposParametrosCards({ filtro }: { filtro: (idGrupo: string) =>
         );
       })}
     </div>
+    {/* O adesivo de detecção de cio tem painel próprio (chave mestra, aviso, produtos do estoque): fica logo abaixo da grade. */}
+    {painelAdesivo && <div className="mt-4"><PainelAdesivoCio itens={painelAdesivo[1].itens} /></div>}
+    </>
   );
 }
