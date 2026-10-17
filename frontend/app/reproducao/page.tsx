@@ -1,13 +1,15 @@
 "use client";
 import { useMemo, useState } from "react";
-import { Heart, Baby, Droplets, ClipboardList, Stamp, HeartCrack, CalendarRange } from "lucide-react";
+import { Heart, Baby, Droplets, ClipboardList, Stamp, HeartCrack, CalendarRange, ShieldCheck } from "lucide-react";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import HistoricoServicos, { type Foco } from "@/components/reproducao/HistoricoServicos";
 import HistoricoPartos from "@/components/reproducao/HistoricoPartos";
 import HistoricoSecagens from "@/components/reproducao/HistoricoSecagens";
 import HistoricoCiclosIatf from "@/components/reproducao/HistoricoCiclosIatf";
+import AuditoriaClassificacao from "@/components/reproducao/AuditoriaClassificacao";
+import { ehAdmin } from "@/lib/api";
 
-export type AbaVisao = "servicos" | "diagnosticos" | "perdas" | "partos" | "secagens" | "ciclos_iatf";
+export type AbaVisao = "servicos" | "diagnosticos" | "perdas" | "partos" | "secagens" | "ciclos_iatf" | "auditoria";
 export const ABAS_VISAO = [
   // Antigas abas "Serviços" e "IAs" — a única diferença era o filtro de base
   // excluindo monta natural. Viraram uma tela só, com o recorte disponível
@@ -24,7 +26,13 @@ export const ABAS_VISAO = [
     titulo: "", descricao: "" },
   { id: "ciclos_iatf", label: "Ciclos de IATF", icon: CalendarRange, foco: null,
     titulo: "", descricao: "" },
+  // Só administrador: compara a classificação de cada animal com os registros dele (ver AuditoriaClassificacao.tsx).
+  { id: "auditoria", label: "Auditoria", icon: ShieldCheck, foco: null,
+    titulo: "", descricao: "" },
 ] as const satisfies readonly { id: AbaVisao; label: string; icon: any; foco: Foco | null; titulo: string; descricao: string }[];
+
+/** As abas que o usuário pode ver: a Auditoria é só do administrador. */
+export const abasVisaoVisiveis = () => ABAS_VISAO.filter((v) => v.id !== "auditoria" || ehAdmin());
 
 export default function ReproducaoPage() {
   const [abaVisao, setAbaVisao] = useState<AbaVisao>("servicos");
@@ -33,7 +41,7 @@ export default function ReproducaoPage() {
   // entre elas e reseta sozinha ao sair da área Reprodução (esta página desmonta).
   const [animaisSel, setAnimaisSel] = useState<Set<string>>(new Set());
 
-  const subNavTree: SubNavNode[] = useMemo(() => ABAS_VISAO.map((v) => ({ id: v.id, label: v.label, icon: v.icon })), []);
+  const subNavTree: SubNavNode[] = useMemo(() => abasVisaoVisiveis().map((v) => ({ id: v.id, label: v.label, icon: v.icon })), []);
   useSubNavRegister(useMemo(() => ({
     tree: subNavTree, activeId: abaVisao, onSelect: (id: string) => setAbaVisao(id as AbaVisao),
   }), [subNavTree, abaVisao]));
@@ -50,6 +58,7 @@ export default function ReproducaoPage() {
         {abaVisao === "partos" ? <HistoricoPartos />
           : abaVisao === "secagens" ? <HistoricoSecagens />
           : abaVisao === "ciclos_iatf" ? <HistoricoCiclosIatf />
+          : abaVisao === "auditoria" ? <AuditoriaClassificacao />
           : <HistoricoServicos foco={visaoAtiva.foco as Foco} titulo={visaoAtiva.titulo} descricao={visaoAtiva.descricao}
               animaisSel={animaisSel} setAnimaisSel={setAnimaisSel} />}
       </div>

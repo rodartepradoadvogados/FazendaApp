@@ -62,4 +62,5 @@ def test_tipos_devolve_metadados(client):
     # contagem presente para os tipos mapeados; null para os demais
     assert por_id["financeiro"]["contagem"] == 0
     assert por_id["animal"]["contagem"] == 0
-    assert por_id["servico"]["contagem"] is None
+    assert por_id["servico"]["contagem"] == 0  # tela gerencial: contagem ampliada a mais tipos de tabela única
+    assert por_id["empreitada"]["contagem"] is None  # sem contador → a tela mostra "—"

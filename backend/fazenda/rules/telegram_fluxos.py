@@ -28,9 +28,10 @@ from fazenda.models import Animal, ControleLeiteiro, EstoqueSemen, Lote, Movimen
 # "data"     → aceita "hoje", "ontem", DD/MM, DD/MM/AAAA ou AAAA-MM-DD.
 # "ordenhas" → uma ou mais pesagens ("20 18 15").
 # "opcoes"   → botões; `opcoes` é lista de (valor, rótulo) ou função(session).
-def C(chave, pergunta, tipo, opcoes=None, obrigatorio=True, dica=None):
+# `quando` (opcional): função(dados) → bool; o campo só é perguntado (e só é exigido) quando devolve True.
+def C(chave, pergunta, tipo, opcoes=None, obrigatorio=True, dica=None, quando=None):
     return {"chave": chave, "pergunta": pergunta, "tipo": tipo, "opcoes": opcoes,
-            "obrigatorio": obrigatorio, "dica": dica}
+            "obrigatorio": obrigatorio, "dica": dica, "quando": quando}
 
 
 def _lotes_opcoes(session: Session) -> list[tuple[str, str]]:
@@ -96,7 +97,8 @@ FLUXOS: dict[str, dict] = {
             C("numero_matriz", "Qual o <b>número da mãe (matriz)</b>?", "animal"),
             C("data_parto", "Qual a <b>data do parto</b>?", "data"),
             C("cria_numero", "Qual o <b>número da cria</b>? (ou escreva <code>pular</code> se não for cadastrar agora)", "texto", obrigatorio=False),
-            C("cria_sexo", "Qual o <b>sexo da cria</b>?", "opcoes", opcoes=SEXO_CRIA, obrigatorio=False),
+            # Sexo é obrigatório quando há cria (decisão do dono): sem número de cria, nem pergunta.
+            C("cria_sexo", "Qual o <b>sexo da cria</b>?", "opcoes", opcoes=SEXO_CRIA, quando=lambda d: bool(d.get("cria_numero"))),
         ],
     },
     "secagem": {
@@ -317,7 +319,8 @@ def criar_registro(tipo: str, dados: dict, session: Session, *, user, fazenda_id
         from fazenda.api.routers.reproducao import CriaIn, PartoIn, registrar_parto
         crias = []
         if dados.get("cria_numero") and str(dados["cria_numero"]).strip().lower() not in ("pular", "-"):
-            crias.append(CriaIn(numero=str(dados["cria_numero"]).strip(), sexo=dados.get("cria_sexo") or "F"))
+            # Sem default: pedido antigo sem sexo falha na validação de CriaIn (a aprovação mostra o motivo).
+            crias.append(CriaIn(numero=str(dados["cria_numero"]).strip(), sexo=dados.get("cria_sexo") or ""))
         resultado = registrar_parto(PartoIn(numero_matriz=dados["numero_matriz"], data_parto=_d(dados["data_parto"]), crias=crias), session=session, user=user, fazenda_id=fazenda_id)
         criado = session.exec(
             select(Parto)

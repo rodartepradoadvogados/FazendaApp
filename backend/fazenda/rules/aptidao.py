@@ -239,6 +239,43 @@ def _get(obj: Any, campo: str) -> Any:
     return getattr(obj, campo, None)
 
 
+def _contexto_de_listas(
+    animal: Animal, *, data: date, pesagens: list, partos: list, servicos: list,
+) -> ContextoAptidao:
+    """Monta o `ContextoAptidao` a partir de listas JÁ carregadas do animal.
+
+    Núcleo comum de `contexto_aptidao` (um animal, consultas próprias) e de
+    `avaliar_aptidao_em_massa` (o rebanho todo, uma consulta por tabela) — a
+    regra mora aqui, num lugar só, para o veredito em massa que a tela usa
+    nunca divergir do que o POST de verdade vai decidir."""
+    idade_dias: int | None = None
+    if animal.data_nasc:
+        idade_dias = (data - animal.data_nasc).days
+    elif animal.idade_meses is not None:
+        idade_dias = round(float(animal.idade_meses) * DIAS_POR_MES)
+
+    pesagens_ate = [p for p in pesagens if p.data_pesagem and p.data_pesagem <= data]
+    ultima_pesagem = max(pesagens_ate, key=lambda p: p.data_pesagem, default=None)
+
+    partos_ate = [p for p in partos if p.data_parto and p.data_parto <= data]
+    ultimo_parto = max((p.data_parto for p in partos_ate), default=None)
+
+    servicos_ate = [
+        s for s in servicos
+        if s.data_servico and s.data_servico <= data
+        and (ultimo_parto is None or s.data_servico > ultimo_parto)
+    ]
+    servico_vigente = max(servicos_ate, key=lambda s: s.data_servico, default=None)
+
+    return ContextoAptidao(
+        idade_dias=idade_dias,
+        peso_kg=ultima_pesagem.peso_kg if ultima_pesagem else None,
+        tem_pesagem=ultima_pesagem is not None,
+        ja_pariu=bool(partos_ate),
+        servico_vigente=servico_vigente,
+    )
+
+
 def contexto_aptidao(
     session: Session, animal: Animal, *, data: date, fazenda_id: int | None = None,
 ) -> ContextoAptidao:
@@ -255,40 +292,23 @@ def contexto_aptidao(
     """
     from fazenda.models import Parto
 
-    idade_dias: int | None = None
-    if animal.data_nasc:
-        idade_dias = (data - animal.data_nasc).days
-    elif animal.idade_meses is not None:
-        idade_dias = round(float(animal.idade_meses) * DIAS_POR_MES)
-
     query_pesagem = select(PesagemCorporal).where(PesagemCorporal.numero_matriz == animal.numero)
     if fazenda_id is not None:
         query_pesagem = query_pesagem.where(PesagemCorporal.fazenda_id == fazenda_id)
-    pesagens = [p for p in session.exec(query_pesagem).all() if p.data_pesagem and p.data_pesagem <= data]
-    ultima_pesagem = max(pesagens, key=lambda p: p.data_pesagem, default=None)
 
     query_parto = select(Parto).where(Parto.numero_matriz == animal.numero)
     if fazenda_id is not None:
         query_parto = query_parto.where(Parto.fazenda_id == fazenda_id)
-    partos = [p for p in session.exec(query_parto).all() if p.data_parto and p.data_parto <= data]
-    ultimo_parto = max((p.data_parto for p in partos), default=None)
 
     query_servico = select(Servico).where(Servico.numero_matriz == animal.numero)
     if fazenda_id is not None:
         query_servico = query_servico.where(Servico.fazenda_id == fazenda_id)
-    servicos = [
-        s for s in session.exec(query_servico).all()
-        if s.data_servico and s.data_servico <= data
-        and (ultimo_parto is None or s.data_servico > ultimo_parto)
-    ]
-    servico_vigente = max(servicos, key=lambda s: s.data_servico, default=None)
 
-    return ContextoAptidao(
-        idade_dias=idade_dias,
-        peso_kg=ultima_pesagem.peso_kg if ultima_pesagem else None,
-        tem_pesagem=ultima_pesagem is not None,
-        ja_pariu=bool(partos),
-        servico_vigente=servico_vigente,
+    return _contexto_de_listas(
+        animal, data=data,
+        pesagens=list(session.exec(query_pesagem).all()),
+        partos=list(session.exec(query_parto).all()),
+        servicos=list(session.exec(query_servico).all()),
     )
 
 
@@ -302,3 +322,52 @@ def avaliar_aptidao_no_banco(
         contexto_aptidao(session, animal, data=data, fazenda_id=fazenda_id),
         params or parametros_aptidao(),
     )
+
+
+def avaliar_aptidao_em_massa(
+    session: Session, animais: list[Animal], *, data: date, fazenda_id: int | None = None,
+    params: ParametrosAptidao | None = None,
+) -> dict[str, AptidaoResultado]:
+    """Veredito de aptidão de VÁRIOS animais de uma vez (número -> resultado).
+
+    Existe para a tela de Lançamentos: ela precisa mostrar, antes de o usuário
+    preencher o formulário, quem é apta, quem pede confirmação (peso da
+    novilha, matriz que consta gestante) e quem está bloqueada (idade, a
+    descartar, baixada). Calcular isso no navegador duplicaria a regra — e foi
+    exatamente a divergência entre a tela e o servidor que esta função
+    elimina: o veredito mostrado é o MESMO que o POST de serviço vai dar,
+    porque as duas pontas passam por `_contexto_de_listas` +
+    `avaliar_aptidao_servico`.
+
+    Uma consulta por tabela (pesagens, partos, serviços) em vez de três por
+    animal; o rebanho inteiro é o caso comum.
+    """
+    from fazenda.models import Parto
+
+    if not animais:
+        return {}
+    numeros = {a.numero for a in animais}
+    params = params or parametros_aptidao()
+
+    def _agrupa(modelo) -> dict[str, list]:
+        consulta = select(modelo)
+        if fazenda_id is not None:
+            consulta = consulta.where(modelo.fazenda_id == fazenda_id)
+        por: dict[str, list] = {}
+        for r in session.exec(consulta).all():
+            if r.numero_matriz in numeros:
+                por.setdefault(r.numero_matriz, []).append(r)
+        return por
+
+    pesagens, partos, servicos = _agrupa(PesagemCorporal), _agrupa(Parto), _agrupa(Servico)
+    return {
+        a.numero: avaliar_aptidao_servico(
+            a,
+            _contexto_de_listas(
+                a, data=data, pesagens=pesagens.get(a.numero, []), partos=partos.get(a.numero, []),
+                servicos=servicos.get(a.numero, []),
+            ),
+            params,
+        )
+        for a in animais
+    }

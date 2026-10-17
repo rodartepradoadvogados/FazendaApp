@@ -7,12 +7,13 @@ import { fetchExclusaoV2 } from "@/lib/api";
 import { ExclusaoPage } from "@/components/exclusao/ExclusaoPage";
 import { FormExclusaoLegado } from "@/components/FormExclusaoLegado";
 
-export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {}) {
+export function FormExclusao({ ocultarTipos, onV2 }: { ocultarTipos?: string[]; onV2?: (ativa: boolean) => void } = {}) {
   const [v2, setV2] = useState(false);
   useEffect(() => {
     let vivo = true;
-    fetchExclusaoV2().then((r) => { if (vivo) setV2(!!r.ativa); }).catch(() => {});
-    return () => { vivo = false; };
+    fetchExclusaoV2().then((r) => { if (vivo) { setV2(!!r.ativa); onV2?.(!!r.ativa); } }).catch(() => {});
+    return () => { vivo = false; onV2?.(false); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return v2

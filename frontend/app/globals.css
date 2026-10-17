@@ -2021,3 +2021,77 @@ tr.st-row-sel td{background:var(--sel-row)}
 .ft-botao-mob b { font-size: 1.25rem; font-weight: 800; color: var(--mob-text); line-height: 1.05; font-variant-numeric: tabular-nums; }
 .ft-botao-mob[aria-pressed="true"] { background: #0E2A47; border-color: var(--ft-ouro); color: #F2D58A; }
 .ft-botao-mob[aria-pressed="true"] b { color: #F2D58A; }
+
+/* ── Kit "gerencial" (Lançamentos) ─────────────────────────────────────────────
+   A língua do Diagnóstico de gestação aplicada às outras telas de lançamento: passos numerados, seleção SEMPRE em tabela
+   com caixas (nunca em modal), faixa de números no topo e uma barra fixa no pé com o resumo e a ação em ouro. Só tokens:
+   serve ao claro, ao escuro e ao misto sem mexer em nada. Componentes em components/gerencial/kit.tsx. */
+.gv-quadro { border: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; width: var(--gv-largura, 860px); max-width: 100%; }
+.gv-quadro-topo { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.75rem 0.9rem; background: var(--card-header-bg);
+  color: var(--card-header-fg); border-bottom: 1px solid var(--border); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; font-size: 0.78rem; }
+.gv-corpo { padding: 0.9rem; display: flex; flex-direction: column; font-size: 0.85rem; color: var(--text); }
+.gv-passo { display: flex; flex-direction: column; gap: 0.6rem; padding: 0.95rem 0; border-top: 1px solid var(--border); }
+.gv-passo:first-child { border-top: 0; padding-top: 0; }
+.gv-passo-topo { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.gv-rotulo { display: flex; align-items: center; gap: 0.55rem; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase; color: var(--text-muted); }
+.gv-n { display: inline-flex; align-items: center; justify-content: center; width: 1.35rem; height: 1.35rem; border-radius: 50%; border: 1.5px solid var(--ft-ouro);
+  color: var(--ft-ouro-txt); font-size: 0.72rem; font-weight: 800; letter-spacing: 0; }
+.gv-ajuda { margin: 0; font-size: 0.76rem; line-height: 1.5; color: var(--text-muted); }
+.gv-linha { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.gv-faixa { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); border: 1px solid var(--border); background: var(--surface); margin-bottom: 0.9rem; }
+.gv-faixa-item { padding: 0.55rem 0.9rem; border-right: 1px solid var(--border); min-width: 0; }
+.gv-faixa-item:last-child { border-right: 0; }
+.gv-faixa-valor { display: block; font-size: 1.35rem; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--text); }
+.gv-faixa-rotulo { display: block; margin-top: 0.15rem; font-size: 0.66rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); }
+.gv-faixa-item[data-tom="atencao"] .gv-faixa-valor { color: var(--ft-ambar); }
+.gv-faixa-item[data-tom="ok"] .gv-faixa-valor { color: var(--ft-verde); }
+.gv-faixa-item[data-tom="alerta"] .gv-faixa-valor { color: var(--ft-verm); }
+/* Gaveta de lançamento aberta = janela modal: o botão flutuante do Assistente fica de fora (cobria o botão "Lançar…" da barra de ação, no canto inferior direito). */
+body[data-gaveta-aberta] .assistente-fab, body[data-gaveta-aberta] .assistente-painel { display: none !important; }
+.gv-tabela-moldura { border: 1px solid var(--border-strong, var(--border)); max-height: var(--gv-altura-tabela, 21rem); overflow: auto; background: var(--surface); }
+.gv-tabela { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.gv-tabela thead th { position: sticky; top: 0; z-index: 1; background: var(--thead-bg); color: var(--thead-fg); text-align: left; padding: 0.45rem 0.6rem;
+  font-size: 0.66rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; border-bottom: 1px solid var(--border-strong, var(--border)); }
+.gv-tabela tbody td { padding: 0.42rem 0.6rem; border-bottom: 1px solid var(--border); white-space: nowrap; vertical-align: middle; }
+.gv-tabela tbody tr:hover > td { background: var(--surface-2); }
+.gv-tabela .gv-num { font-variant-numeric: tabular-nums; }
+.gv-tabela .gv-forte { font-weight: 800; }
+.gv-tabela .gv-dir { text-align: right; }
+.gv-tabela .gv-quebra { white-space: normal; }
+.gv-grupo > th { text-align: left; background: var(--surface-2); color: var(--text-muted); font-size: 0.66rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; padding: 0.3rem 0.6rem; }
+.gv-tabela input[type="checkbox"] { width: 1.05rem; height: 1.05rem; accent-color: var(--ft-ouro); vertical-align: middle; }
+.gv-linha-marcada > td { background: var(--ft-ouro-tint); }
+.gv-linha-fora > td { color: var(--text-muted); }
+.gv-celula-input { width: 5.2rem; padding: 0.28rem 0.45rem; text-align: right; font-variant-numeric: tabular-nums; background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border-strong, var(--border)); border-radius: var(--r-sm); font-size: 0.82rem; }
+.gv-celula-input:focus { outline: 2px solid var(--ft-ouro); outline-offset: -1px; }
+.gv-selo { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.12rem 0.5rem; border: 1px solid var(--border-strong, var(--border)); border-radius: var(--r-sm);
+  font-size: 0.66rem; font-weight: 800; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-muted); background: var(--surface); white-space: nowrap; }
+.gv-selo[data-tom="ok"] { color: var(--ft-verde); border-color: var(--ft-verde); }
+.gv-selo[data-tom="atencao"] { color: var(--ft-ouro-txt); border-color: var(--ft-ouro); background: var(--ft-ouro-tint); }
+.gv-selo[data-tom="bloqueio"] { color: var(--ft-verm); border-color: var(--ft-verm); }
+.gv-selo[data-tom="info"] { color: var(--ft-aco); border-color: var(--ft-aco); }
+.gv-cartao-opcao { display: flex; flex-direction: column; align-items: flex-start; gap: 0.15rem; min-height: 3.6rem; padding: 0.65rem 0.8rem; text-align: left; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font: inherit; }
+.gv-cartao-opcao b { font-size: 0.85rem; }
+.gv-cartao-opcao span { font-size: 0.72rem; color: var(--text-muted); }
+.gv-cartao-opcao[aria-pressed="true"] { border-color: var(--ft-ouro); background: var(--ft-ouro-tint); box-shadow: inset 0 0 0 1px var(--ft-ouro); }
+.gv-aviso { display: flex; gap: 0.5rem; align-items: flex-start; padding: 0.6rem 0.8rem; border: 1px solid var(--ft-ouro); background: var(--ft-ouro-tint);
+  border-radius: var(--r-sm); font-size: 0.78rem; color: var(--ft-ouro-txt); }
+.gv-aviso[data-tom="erro"] { border-color: var(--ft-verm); background: color-mix(in srgb, var(--ft-verm) 8%, transparent); color: var(--ft-verm); }
+.gv-barra { position: sticky; bottom: -0.9rem; margin: 0 -0.9rem -0.9rem; z-index: 2; border-top: 1px solid var(--border); background: var(--surface-2); }
+.gv-barra-retorno { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; padding: 0.5rem 0.9rem; border-bottom: 1px solid var(--border); font-size: 0.8rem; }
+.gv-barra-miolo { display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; padding: 0.75rem 0.9rem; }
+.gv-barra-resumo { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.gv-barra-resumo b { font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.gv-barra-resumo span { font-size: 0.75rem; color: var(--text-muted); }
+.gv-barra-miolo > .gv-espaco { flex: 1; }
+.gv-campo { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+.gv-campo > label { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
+.gv-campo input, .gv-campo select, .gv-campo textarea { background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong, var(--border));
+  border-radius: var(--r-sm); padding: 0.45rem 0.6rem; font-size: 0.85rem; min-width: 0; }
+.gv-campo input:focus, .gv-campo select:focus { outline: 2px solid var(--ft-ouro); outline-offset: -1px; }
+.gv-grade { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
+@media (prefers-reduced-motion: no-preference) {
+  .gv-cartao-opcao, .gv-tabela tbody tr > td { transition: background-color 0.15s ease, border-color 0.15s ease; }
+}

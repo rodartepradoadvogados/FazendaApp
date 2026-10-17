@@ -35,7 +35,7 @@ from fazenda.models import (
 )
 from fazenda.auth import exigir_fazenda_da_operacao
 from fazenda.rules.exclusao_impacto import Bloqueio, ExclusaoBloqueada
-from fazenda.rules.exclusao_tipos._base import TipoExclusao, _br, _contem, _dentro_periodo
+from fazenda.rules.exclusao_tipos._base import TipoExclusao, _br, _contem, _dentro_periodo, recentes_primeiro
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +92,7 @@ def _buscar_diaria_pagamento(termo, data_inicio, data_fim, session, fazenda_id=N
             "subtitulo": f"R$ {pg.valor:,.2f}" + (f" · {pg.observacao}" if pg.observacao else ""),
             "_data": pg.data_pagamento,
         })
-    return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+    return recentes_primeiro(out)
 
 
 def _alvos_diaria_pagamento(id_, session, fazenda_id=None) -> tuple[list[str], list]:
@@ -352,7 +352,7 @@ def _buscar_diaria(termo, data_inicio, data_fim, session, fazenda_id=None) -> li
             "subtitulo": f"{resumo['numero_diarias']} diária(s) · saldo R$ {resumo['saldo_devedor']:,.2f}",
             "_data": d.data_inicio,
         })
-    return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+    return recentes_primeiro(out)
 
 
 def _alvos_diaria(id_, session, fazenda_id=None) -> tuple[list[str], list]:

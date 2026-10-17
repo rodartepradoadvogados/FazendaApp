@@ -74,6 +74,7 @@ export const RISCO_TXT: Record<Risco, [string, string]> = {
 export const DESTINO_EDITAR: Record<string, string> = {
   animal: "/rebanho?aba=ficha&numero=",
   servico: "/lancamentos?ir=inseminacao",
+  diagnostico: "/lancamentos?ir=diagnostico",
   parto: "/lancamentos?ir=parto",
   controle: "/lancamentos?ir=controle",
   sanidade: "/lancamentos?ir=sanidade_aplicacao",

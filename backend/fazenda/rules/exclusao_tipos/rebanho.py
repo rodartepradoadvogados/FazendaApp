@@ -11,8 +11,8 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlmodel import Session, select
 
-from fazenda.models import Animal, AplicacaoAgendada, MovimentoLote, Sanidade, Secagem
-from fazenda.rules.exclusao_tipos._base import TipoExclusao, _br, _contem, _dentro_periodo
+from fazenda.models import Animal, AplicacaoAgendada, MovimentoLote, Sanidade, Secagem, Servico
+from fazenda.rules.exclusao_tipos._base import TipoExclusao, _br, _contem, _dentro_periodo, recentes_primeiro
 
 # Espelha ORIGEM_MOVIMENTO_LOTE_LABEL de frontend/lib/constants.ts — mantido
 # aqui em vez de importado (backend não pode importar do frontend) só para
@@ -49,7 +49,7 @@ def _buscar_movimento_lote(
         if _contem(termo, m.numero_matriz, m.lote_origem, m.lote_destino, m.motivo, m.responsavel)
         and _dentro_periodo(m.data_movimento, data_inicio, data_fim)
     ]
-    return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+    return recentes_primeiro(out)
 
 
 def _alvos_movimento_lote(id_: str, session: Session, fazenda_id: int | None = None) -> tuple[list[str], list]:
@@ -114,7 +114,7 @@ def _buscar_secagem(
         for s in rows
         if _contem(termo, s.numero_matriz, s.motivo, s.observacao) and _dentro_periodo(s.data_secagem, data_inicio, data_fim)
     ]
-    return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+    return recentes_primeiro(out)
 
 
 def _alvos_secagem(id_: str, session: Session, fazenda_id: int | None = None) -> tuple[list[str], list]:
@@ -169,7 +169,116 @@ def _alvos_secagem(id_: str, session: Session, fazenda_id: int | None = None) ->
     return impacto, [s, *sanidades, *agendadas]
 
 
+
+# ---------------------------------------------------------------------------
+# Diagnóstico de gestação — o EXAME como item excluível.
+#
+# O diagnóstico não é uma linha própria: mora dentro do `Servico` (toque em `diagnostico`/`data_diagnostico`,
+# retoque em `diagnostico_reconfirmacao`/`data_reconfirmacao`, perda de prenhez em `data_perda_prenhez`). O tipo
+# "Serviço / IA" só sabe apagar a inseminação inteira, então quem lançou um diagnóstico errado hoje não tinha onde
+# apagá-lo. Aqui cada exame vira um item ("<id do serviço>:toque|reconfirmacao|perda") e apagar = desfazer só aquele
+# exame, a inseminação fica. Ordem de desfazer: perda → reconfirmação → toque (não dá para tirar o toque deixando a
+# reconfirmação para trás).
+# ---------------------------------------------------------------------------
+_EXAMES = ("toque", "reconfirmacao", "perda")
+_ROTULO_EXAME = {"toque": "Toque", "reconfirmacao": "Retoque / reconfirmação", "perda": "Perda de prenhez"}
+
+
+def _exames_do_servico(s: Servico) -> list[tuple[str, object]]:
+    achados: list[tuple[str, object]] = []
+    if s.data_diagnostico or s.diagnostico:
+        achados.append(("toque", s.data_diagnostico))
+    if s.data_reconfirmacao or s.diagnostico_reconfirmacao:
+        achados.append(("reconfirmacao", s.data_reconfirmacao))
+    if s.data_perda_prenhez:
+        achados.append(("perda", s.data_perda_prenhez))
+    return achados
+
+
+def _resultado_do_exame(s: Servico, exame: str) -> str:
+    if exame == "toque":
+        return " · ".join(x for x in (s.diagnostico or "sem resultado", s.metodo_diagnostico) if x)
+    if exame == "reconfirmacao":
+        return s.diagnostico_reconfirmacao or "sem resultado"
+    motivo = {"aborto": "aborto", "natimorto": "natimorto", "outros": "outros", "nao_informado": "motivo não informado"}.get(
+        s.motivo_perda_prenhez or "", "motivo pendente")
+    return motivo
+
+
+def _buscar_diagnostico(
+    termo: str, data_inicio: str, data_fim: str, session: Session, fazenda_id: int | None = None,
+) -> list[dict]:
+    query = select(Servico)
+    if fazenda_id is not None:
+        query = query.where(Servico.fazenda_id == fazenda_id)
+    out: list[dict] = []
+    for s in session.exec(query).all():
+        for exame, data in _exames_do_servico(s):
+            resultado = _resultado_do_exame(s, exame)
+            if not _contem(termo, s.numero_matriz, resultado, _ROTULO_EXAME[exame]):
+                continue
+            if not _dentro_periodo(data, data_inicio, data_fim):
+                continue
+            out.append({
+                "id": f"{s.id}:{exame}",
+                "titulo": f"{s.numero_matriz} — {_ROTULO_EXAME[exame]} {_br(data)}",
+                "subtitulo": f"{resultado} · inseminação de {_br(s.data_servico)}",
+                "_data": data,
+            })
+    return recentes_primeiro(out)
+
+
+def _alvos_diagnostico(id_: str, session: Session, fazenda_id: int | None = None) -> tuple[list[str], list]:
+    """Desfaz UM exame no `Servico` (campos voltam a vazio) — não apaga nenhuma linha, então devolve `[]` como
+    objetos e descreve o que foi desfeito na lista de impacto. As mutações só valem na confirmação (o endpoint de
+    impacto descarta a sessão no fim)."""
+    try:
+        sid, exame = id_.split(":", 1)
+        s = session.get(Servico, int(sid))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=404, detail="Diagnóstico não encontrado")
+    if not s or exame not in _EXAMES or (fazenda_id is not None and s.fazenda_id not in (None, fazenda_id)):
+        raise HTTPException(status_code=404, detail="Diagnóstico não encontrado")
+    if exame not in dict(_exames_do_servico(s)):
+        raise HTTPException(status_code=404, detail="Este exame já foi desfeito")
+
+    matriz = s.numero_matriz
+    if exame == "toque":
+        if s.data_perda_prenhez:
+            raise HTTPException(status_code=400, detail="Este animal tem perda de prenhez registrada: exclua primeiro a perda.")
+        if s.data_reconfirmacao or s.diagnostico_reconfirmacao:
+            raise HTTPException(status_code=400, detail="Este toque já tem retoque/reconfirmação: exclua primeiro o retoque.")
+        impacto = f"Toque de {matriz} em {_br(s.data_diagnostico)} ({_resultado_do_exame(s, 'toque')}) — o animal volta a «a tocar»"
+        s.diagnostico = None
+        s.data_diagnostico = None
+        s.metodo_diagnostico = None
+        s.retoque = None
+    elif exame == "reconfirmacao":
+        if s.data_perda_prenhez:
+            raise HTTPException(status_code=400, detail="Este animal tem perda de prenhez registrada: exclua primeiro a perda.")
+        impacto = f"Retoque de {matriz} em {_br(s.data_reconfirmacao)} ({s.diagnostico_reconfirmacao or 'sem resultado'}) — o animal volta a «a reconfirmar»"
+        s.data_reconfirmacao = None
+        s.diagnostico_reconfirmacao = None
+        # volta a ser um toque positivo aguardando reconfirmação
+        s.retoque = True if (s.diagnostico or "").strip().upper() == "POSITIVO" else s.retoque
+    else:
+        impacto = f"Perda de prenhez de {matriz} em {_br(s.data_perda_prenhez)} ({_resultado_do_exame(s, 'perda')}) — a prenhez volta a valer"
+        s.data_perda_prenhez = None
+        s.motivo_perda_prenhez = None
+        s.origem_perda_prenhez = None
+        s.perda_causada_por_servico_id = None
+    session.add(s)
+    return [impacto], []
+
+
 TIPOS_EXCLUSAO: list = [
+    TipoExclusao(
+        id="diagnostico",
+        label="Diagnóstico de gestação (toque, retoque, perda)",
+        buscar=_buscar_diagnostico,
+        alvos=_alvos_diagnostico,
+        sem_filtro_data=False,
+    ),
     TipoExclusao(
         id="movimento_lote",
         label="Movimentação entre lotes",

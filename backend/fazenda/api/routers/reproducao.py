@@ -10,10 +10,10 @@ import logging
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
+from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaReprodutivaCards,
@@ -24,7 +24,8 @@ from fazenda.models import (
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_reprodutiva_configuravel import SITUACOES, avaliar_card
 from fazenda.rules.agenda_veterinario import classificar_rebanho
-from fazenda.rules.aptidao import AptidaoResultado, avaliar_aptidao_no_banco, parametros_aptidao
+from fazenda.rules.aptidao import AptidaoResultado, avaliar_aptidao_em_massa, avaliar_aptidao_no_banco, parametros_aptidao
+from fazenda.rules.iatf_vigente import MOTIVO_EM_PROTOCOLO, mensagem_em_protocolo, protocolos_vigentes_por_animal
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules import estoque_baixa
 from fazenda.rules.email import enviar_email
@@ -35,6 +36,7 @@ from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 from fazenda.rules.parto import (
     TIPO_PARTO_ABORTO, TIPO_PARTO_NATIMORTO, TIPO_PARTO_NORMAL, eh_parto_produtivo, proxima_ordem_parto,
 )
+from fazenda.rules.auditoria_classificacao import auditar as _auditar_classificacao, explicar_animal as _explicar_animal
 from fazenda.rules.fase_toque import FASES as FASES_TOQUE
 from fazenda.rules.repasse import usa_adesivo_vigente
 from fazenda.rules.parametros import (
@@ -904,6 +906,73 @@ def candidatas_ao_diagnostico(
         "situacoes": grupos,
         "totais": {fase: len(itens) for fase, itens in grupos.items()},
     }
+
+
+@router.get("/auditoria-classificacao")
+def auditoria_classificacao(
+    animal: str | None = None,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Auditoria (só administrador, só leitura): onde a classificação reprodutiva de um animal não bate com os dados dele
+    ou com a outra leitura do sistema (estado ao vivo × roteiro do veterinário). Ver `rules/auditoria_classificacao.py`
+    para os achados e as causas. Com `?animal=NUMERO`, devolve também a linha do tempo e o passo a passo daquele animal."""
+    from fazenda.rules.agenda_veterinario import _categoria as _categoria_vet
+
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    hoje = date.today()
+    animais, estados = _estados_da_agenda(session, fazenda_id, hoje)
+
+    q_serv = select(Servico)
+    q_part = select(Parto)
+    q_lact = select(Lactacao)
+    if fazenda_id is not None:
+        q_serv, q_part, q_lact = (q.where(m.fazenda_id == fazenda_id) for q, m in ((q_serv, Servico), (q_part, Parto), (q_lact, Lactacao)))
+    servicos_por_animal: dict[str, list] = {}
+    for s in session.exec(q_serv).all():
+        servicos_por_animal.setdefault(s.numero_matriz, []).append(s)
+    partos_por_animal: dict[str, list[date]] = {}
+    for p in session.exec(q_part).all():
+        if p.data_parto:
+            partos_por_animal.setdefault(p.numero_matriz, []).append(p.data_parto)
+    lactacao_inicio: dict[str, date] = {}
+    for lact in session.exec(q_lact).all():
+        if lact.data_inicio and not (lact.data_fim is not None and lact.data_fim <= hoje):
+            if lact.numero_matriz not in lactacao_inicio or lact.data_inicio > lactacao_inicio[lact.numero_matriz]:
+                lactacao_inicio[lact.numero_matriz] = lact.data_inicio
+
+    listas = agenda_veterinario(data=None, session=session, fazenda_id=fazenda_id)["listas"]
+    roteiro: dict[str, list[str]] = {}
+    for nome, itens in listas.items():
+        if nome == "observacao_cio":  # subconjunto de "inseminadas_1_29"
+            continue
+        for item in itens:
+            roteiro.setdefault(item["numero_matriz"], []).append(nome)
+
+    # O roteiro não classifica bezerras nem animais marcados "a descartar": fora deles a comparação não faz sentido.
+    auditaveis = [a for a in animais if not a.get("a_descartar") and _categoria_vet(a) != "bezerra"]
+    achados = _auditar_classificacao(
+        animais=auditaveis, servicos_por_animal=servicos_por_animal, partos_por_animal=partos_por_animal,
+        lactacao_inicio_por_animal=lactacao_inicio, estados=estados, roteiro_por_animal=roteiro, hoje=hoje,
+    )
+    ordem = {"alta": 0, "media": 1}
+    achados.sort(key=lambda a: (ordem.get(a["severidade"], 9), a["codigo"], chave_numero(a["numero"])))
+    resumo: dict[str, int] = {}
+    for a in achados:
+        resumo[a["codigo"]] = resumo.get(a["codigo"], 0) + 1
+    resposta: dict = {
+        "data_referencia": hoje.isoformat(), "total_animais": len(auditaveis), "total_achados": len(achados),
+        "animais_com_achado": len({a["numero"] for a in achados}), "resumo": resumo, "achados": achados[:2000],
+    }
+    if animal:
+        if animal not in estados:
+            raise HTTPException(status_code=404, detail=f"Animal {animal} não encontrado entre as fêmeas ativas da fazenda")
+        resposta["animal"] = _explicar_animal(
+            animal, servicos=servicos_por_animal.get(animal, []), partos=sorted(partos_por_animal.get(animal, [])),
+            lactacao_inicio=lactacao_inicio.get(animal), estado=estados.get(animal), roteiro=roteiro.get(animal, []), hoje=hoje,
+        )
+    return resposta
 
 
 class CardSalvoIn(BaseModel):
@@ -1783,8 +1852,25 @@ def atualizar_secagem(
 
 class CriaIn(BaseModel):
     numero: str = ""      # vazio = cria sem número → baixa automática (natimorto/não entra no rebanho)
-    sexo: str  # "F" | "M"
+    sexo: str  # "F" | "M" — OBRIGATÓRIO quando há número (ver _exigir_sexo_com_numero)
     nasceu_viva: bool = True
+
+    @model_validator(mode="after")
+    def _exigir_sexo_com_numero(self) -> "CriaIn":
+        """Cria com número exige sexo "F" ou "M" (decisão do dono: sem sexo não grava).
+
+        Antes o site mandava "F" quando o sexo vinha em branco e o robô do Telegram
+        também — a cria virava fêmea sem ninguém ter dito. Vale para os dois endpoints
+        que recebem `CriaIn` (POST /reproducao/parto e /reproducao/encerramento-gestacao,
+        este usado também pelo app de campo). Cria SEM número (baixa automática) não
+        cadastra animal, então o sexo em branco continua aceito. O valor válido é
+        normalizado para maiúsculas ("f" → "F")."""
+        sexo = (self.sexo or "").strip().upper()
+        if (self.numero or "").strip() and sexo not in ("F", "M"):
+            raise ValueError(f"Informe o sexo da cria {self.numero.strip()} (F ou M): sem sexo a cria não é cadastrada.")
+        if sexo in ("F", "M"):
+            self.sexo = sexo
+        return self
 
 
 class PartoIn(BaseModel):
@@ -2287,6 +2373,16 @@ def lancar_protocolo_iatf(
             ),
         }
 
+    # Matriz que JÁ está em protocolo IATF vigente não entra em outro: seria o
+    # mesmo animal em dois ciclos hormonais. Fica DEPOIS da idempotência acima
+    # de propósito — o retry de um POST idêntico (duplo clique, fila offline)
+    # precisa devolver "já lançado", não 409 por causa do lançamento que ele
+    # mesmo criou.
+    _exigir_fora_de_protocolo_vigente(
+        session, dados.animais, fazenda_id=fazenda_id,
+        acao="lance a inseminação dela, ou remova-a do protocolo atual (em Em andamento) antes de lançar outro.",
+    )
+
     # Os passos deste lançamento — dias do molde (livres, com dia de
     # inseminação calculado) quando um molde foi escolhido; D0/D7/D9/D11
     # clássico quando não (hormônios digitados na hora).
@@ -2458,6 +2554,12 @@ def listar_protocolos_iatf_ativos(
 
     ativos = []
     for lanc in lancamentos:
+        # Cancelado (ativo=False) ou encerrado na Central de Protocolos não está
+        # "em andamento": sem este corte ele continuava na lista, com botão de
+        # remover animal, e suas matrizes apareciam como "prontas para
+        # inseminar" (mesma definição de rules.iatf_vigente).
+        if lanc.ativo is False or lanc.encerrado_em is not None:
+            continue
         aps = por_lancamento.get(lanc.id, [])
         pendentes = [a for a in aps if not a.realizada]
         # A etapa de inseminação é a de MAIOR dia deste lançamento — não
@@ -2500,6 +2602,9 @@ def listar_protocolos_iatf_ativos(
                         # implantada (ver diagnóstico "mais animais do que o
                         # implantado") — sinaliza para o usuário conferir.
                         "d0_confirmado": any(a.dia == 0 and a.realizada for a in aps_por_animal_concluido[n]),
+                        # Qualquer etapa confirmada: é o que o servidor usa para
+                        # recusar "remover do protocolo" (remover_animal_iatf).
+                        "tem_etapa_confirmada": any(a.realizada for a in aps_por_animal_concluido[n]),
                         # Protocolo "concluído" aqui só quer dizer que o hormônio
                         # já foi todo aplicado — é exatamente quando a
                         # inseminação está pronta pra ser lançada. Só deixa de
@@ -2525,6 +2630,7 @@ def listar_protocolos_iatf_ativos(
             if not pendentes_animal:
                 animais_status.append({
                     "numero_matriz": numero, "etapa_atual": "Concluído", "data_etapa_atual": None, "d0_confirmado": True,
+                    "tem_etapa_confirmada": True,
                     "pronta_para_inseminar": _vigente(numero, lanc.data_d0),
                 })
                 continue
@@ -2558,6 +2664,7 @@ def listar_protocolos_iatf_ativos(
                 "etapa_atual": f"D{proxima.dia}",
                 "data_etapa_atual": proxima.data_prevista.isoformat(),
                 "d0_confirmado": bool(d0 and d0.realizada),
+                "tem_etapa_confirmada": any(a.realizada for a in aps_animal),
                 # Mantido por compatibilidade — indica só se a etapa de HOJE é a
                 # de inseminação. Não pode comparar etapa_atual com a string
                 # "D11", porque o dia de inseminação varia conforme o molde.
@@ -2737,6 +2844,7 @@ def listar_lancamentos_iatf(
 
 class AdicionarAnimaisIatfIn(BaseModel):
     animais: list[str]
+    forcar: bool = False  # confirmação manual dos bloqueios confirmáveis de aptidão (ver rules/aptidao.py)
 
 
 @router.post("/protocolo-iatf/{lancamento_id}/animais")
@@ -2767,6 +2875,18 @@ def adicionar_animais_iatf(
         select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.lancamento_id == lancamento_id)
     ).all()
     ja_no_protocolo = {a.numero_matriz for a in aplicacoes_existentes}
+    # Só o que de fato ENTRA passa pelas travas: quem já está neste protocolo é
+    # ignorado mais abaixo (reenviar não pode virar erro). A aptidão é a mesma
+    # do lançamento de um protocolo novo — antes, este caminho não validava
+    # nada, e era a porta dos fundos para pôr no hormônio uma bezerra ou uma
+    # vaca descartada. Vale a idade na data do D0 do lançamento.
+    entram = [n for n in dados.animais if n not in ja_no_protocolo]
+    if entram:
+        _exigir_aptidao_do_lote(session, entram, data=lancamento.data_d0, fazenda_id=fazenda_id, forcar=dados.forcar)
+        _exigir_fora_de_protocolo_vigente(
+            session, entram, fazenda_id=fazenda_id, ignorar_lancamento_id=lancamento_id,
+            acao="remova-a do protocolo atual (em Em andamento) antes de incluí-la neste, ou lance a inseminação dela.",
+        )
     # Os dias deste lançamento são os que ELE JÁ TEM — não o cronograma padrão
     # nem o molde reconsultado (que pode ter sido editado depois). Um animal
     # incluído depois entra exatamente nos mesmos dias que os que já estavam,
@@ -2956,6 +3076,13 @@ def registrar_servico(
     _exigir_aptidao(
         session, animal, data=dados.data_servico, fazenda_id=fazenda_id, forcar=dados.forcar,
     )
+    # Mesma regra de `/servico-lote`: sem `protocolo` o lançamento é cio natural / monta natural, e matriz em protocolo IATF
+    # vigente não recebe um segundo ciclo (é por esta rota que o app de campo lança). Com `protocolo` é a IA do próprio IATF.
+    if not dados.protocolo:
+        _exigir_fora_de_protocolo_vigente(
+            session, [dados.numero_matriz], fazenda_id=fazenda_id, a_partir_de=dados.data_servico,
+            acao="lance como IATF (vincula e fecha o protocolo) ou remova-a do protocolo antes de lançar cio natural / monta natural.",
+        )
 
     query_anteriores = select(Servico).where(Servico.numero_matriz == dados.numero_matriz)
     if fazenda_id is not None:
@@ -3224,6 +3351,75 @@ def _exigir_aptidao_do_lote(
     raise HTTPException(status_code=409, detail=_detalhe_aptidao(resumo, [n for n, _ in bloqueados]))
 
 
+def _exigir_fora_de_protocolo_vigente(
+    session: Session, numeros: list[str], *, fazenda_id: int | None, acao: str,
+    ignorar_lancamento_id: int | None = None, a_partir_de: date | None = None,
+) -> None:
+    """409 (NÃO confirmável) se alguma matriz já está em protocolo IATF vigente.
+
+    Tudo ou nada, como `_exigir_aptidao_do_lote`: valida o lote inteiro antes de
+    gravar. `ignorar_lancamento_id` deixa passar quem está justamente no
+    lançamento de destino; `a_partir_de` só conta o protocolo cujo D0 é
+    anterior ou igual à data (um serviço datado ANTES do D0 não conflita com ele).
+    """
+    vigentes = protocolos_vigentes_por_animal(session, fazenda_id=fazenda_id, numeros=numeros)
+    em = [
+        (n, vigentes[n]) for n in numeros
+        if n in vigentes
+        and vigentes[n].lancamento_id != ignorar_lancamento_id
+        and (a_partir_de is None or vigentes[n].data_d0 <= a_partir_de)
+    ]
+    if not em:
+        return
+    mensagem = (
+        mensagem_em_protocolo(em[0][0], em[0][1], acao=acao) if len(em) == 1
+        else f"{len(em)} animal(is) já estão em protocolo IATF vigente: "
+             + "; ".join(f"{n} (“{p.nome_protocolo}”)" for n, p in em) + f" — {acao}"
+    )
+    raise HTTPException(status_code=409, detail={
+        "erro": "em_protocolo_vigente", "msg": mensagem, "motivo": MOTIVO_EM_PROTOCOLO,
+        "confirmavel": False, "animais": [n for n, _ in em],
+    })
+
+
+@router.get("/aptidao-servico")
+def aptidao_servico_do_rebanho(
+    data: date | None = Query(None, description="Data do serviço/D0 (padrão: hoje) — a idade e o peso valem NESTA data"),
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Veredito de aptidão a serviço de cada fêmea ativa — o MESMO que o
+    servidor dá ao gravar inseminação/protocolo IATF, para a tela de
+    Lançamentos mostrar de antemão quem é apta, quem pede confirmação e quem
+    está bloqueada (sem recalcular a regra no navegador).
+
+    Só traz quem NÃO é apta (`animais`: número -> motivo, mensagem e
+    `confirmavel`); ausente = apta. `em_protocolo` lista quem já está em
+    protocolo IATF vigente (não pode entrar em outro, nem receber cio natural
+    / monta natural — ver `_exigir_fora_de_protocolo_vigente`)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    ref = data or date.today()
+    q = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        q = q.where(Animal.fazenda_id == fazenda_id)
+    femeas = [a for a in session.exec(q).all() if not a.eh_semen and a.sexo != "M"]
+    veredictos = avaliar_aptidao_em_massa(session, femeas, data=ref, fazenda_id=fazenda_id, params=parametros_aptidao())
+    vigentes = protocolos_vigentes_por_animal(session, fazenda_id=fazenda_id, numeros=[a.numero for a in femeas])
+    params = parametros_aptidao()
+    return {
+        "data": ref.isoformat(),
+        "idade_min_meses": params.idade_apta_min_meses,
+        "peso_min_kg": params.peso_apta_min_kg,
+        "animais": {
+            n: {"motivo": r.motivo, "mensagem": r.mensagem, "confirmavel": r.confirmavel}
+            for n, r in veredictos.items() if not r.apta
+        },
+        "em_protocolo": {
+            n: {"lancamento_id": p.lancamento_id, "nome_protocolo": p.nome_protocolo, "data_d0": p.data_d0.isoformat()}
+            for n, p in vigentes.items()
+        },
+    }
+
+
 @router.post("/servico-lote")
 def registrar_servico_lote(
     dados: ServicoLoteIn,
@@ -3247,6 +3443,20 @@ def registrar_servico_lote(
     _exigir_aptidao_do_lote(
         session, dados.animais, data=dados.data_servico, fazenda_id=fazenda_id, forcar=dados.forcar,
     )
+    # Cio natural / monta natural de matriz que está em protocolo IATF vigente
+    # cria um segundo ciclo para o mesmo animal (o protocolo ficaria aberto,
+    # com hormônio a aplicar, e a Agenda cobrando a inseminação dele). A saída
+    # é lançar como IATF — que vincula e fecha o protocolo — ou remover a
+    # matriz do protocolo. O caso IATF com D0 retroativo é conferido no laço.
+    if dados.tipo != "iatf":
+        _exigir_fora_de_protocolo_vigente(
+            session, dados.animais, fazenda_id=fazenda_id, a_partir_de=dados.data_servico,
+            acao="lance como IATF (vincula e fecha o protocolo) ou remova-a do protocolo antes de lançar cio natural / monta natural.",
+        )
+    vigentes_iatf = (
+        protocolos_vigentes_por_animal(session, fazenda_id=fazenda_id, numeros=dados.animais)
+        if dados.tipo == "iatf" and dados.auto_lancar_iatf else {}
+    )
 
     tipo_servico = "Monta natural" if dados.tipo == "monta_natural" else "IA"
     # `protocolo_lancamento_id` vem do corpo da requisição: carga filtrada por
@@ -3265,6 +3475,15 @@ def registrar_servico_lote(
         if dados.tipo == "iatf":
             alvo = lanc_escolhido or _animal_tem_protocolo_pendente(session, numero, fazenda_id=fazenda_id)
             if alvo is None and dados.auto_lancar_iatf:
+                if numero in vigentes_iatf:
+                    # Já está em protocolo vigente (sem etapa de inseminação
+                    # pendente para vincular): fabricar um D0 retroativo seria
+                    # pô-la num segundo protocolo. Nada foi commitado ainda —
+                    # o 409 desfaz o que o laço já adicionou à sessão.
+                    _exigir_fora_de_protocolo_vigente(
+                        session, [numero], fazenda_id=fazenda_id,
+                        acao="vincule a inseminação a esse protocolo (campo “Vincular ao protocolo IATF”) em vez de gerar um D0 retroativo.",
+                    )
                 d0 = dados.data_servico - timedelta(days=11)
                 alvo = ProtocoloIatfLancamento(
                     nome_protocolo=_nome_auto_iatf(d0), data_d0=d0, retroativo=True,
