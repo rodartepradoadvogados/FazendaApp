@@ -2159,6 +2159,21 @@ export async function fetchSugestaoAcasalamento(numeroMatriz: string): Promise<S
   }
   return res.json() as Promise<SugestaoAcasalamento>;
 }
+// Veredito de aptidão a serviço de cada fêmea (só quem NÃO é apta) e quem já está em protocolo IATF vigente — o MESMO
+// código que o servidor usa ao gravar inseminação/protocolo, para a tela mostrar de antemão o que o POST vai decidir
+// (confirmável = marcável, pede "confirmar"; não confirmável = bloqueada). Ver backend/fazenda/rules/aptidao.py e
+// backend/fazenda/rules/iatf_vigente.py.
+export type AptidaoServicoApi = {
+  data: string; idade_min_meses: number; peso_min_kg: number;
+  animais: Record<string, { motivo: string | null; mensagem: string | null; confirmavel: boolean }>;
+  em_protocolo: Record<string, { lancamento_id: number; nome_protocolo: string; data_d0: string }>;
+};
+export async function fetchAptidaoServico(data?: string): Promise<AptidaoServicoApi> {
+  const qs = data ? `?data=${encodeURIComponent(data)}` : "";
+  const res = await authFetch(`${API}/reproducao/aptidao-servico${qs}`, { cache: "no-store" });
+  if (!res.ok) throw await erroDaResposta(res, "Erro ao conferir a aptidão das matrizes");
+  return res.json() as Promise<AptidaoServicoApi>;
+}
 export async function criarServicoLote(dados: {
   animais: string[]; data_servico: string; tipo: "cio_natural" | "iatf" | "monta_natural";
   reprodutor?: string; responsavel?: string; protocolo_lancamento_id?: number | null; auto_lancar_iatf?: boolean;
@@ -7193,11 +7208,12 @@ export async function fetchLancamentosIatf() {
   if (!res.ok) throw new Error(`Lançamentos IATF error: ${res.status}`);
   return res.json() as Promise<{ lancamento_id: number; nome_protocolo: string; data_d0: string; qtd_animais: number }[]>;
 }
-export async function adicionarAnimaisIatf(lancamentoId: number, animais: string[]) {
+export async function adicionarAnimaisIatf(lancamentoId: number, animais: string[], forcar?: boolean) {
   const res = await authFetch(`${API}/reproducao/protocolo-iatf/${lancamentoId}/animais`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ animais }),
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ animais, forcar: forcar || undefined }),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao adicionar animais ao protocolo"); }
+  // ErroApi (subclasse de Error): quem só lê `.message` continua igual; a tela lê `.confirmavel` para oferecer "confirmar".
+  if (!res.ok) throw await erroDaResposta(res, "Erro ao adicionar animais ao protocolo");
   return res.json();
 }
 // Corrige uma inclusão por engano num lançamento ativo — só permite remover
@@ -9107,6 +9123,33 @@ export async function fetchExclusaoV2(): Promise<{ ativa: boolean; chave: string
   return res.json();
 }
 
+// Lote (tela "Excluir lançamento", passo 2): `itens[]` ≤ 50, SÓ administrador. Impacto agregado e confirmação usam as
+// mesmas rotas de item único; bloqueados vêm em `bloqueia` (e a tela não deixa confirmar enquanto houver algum).
+export async function impactoExclusaoLote(itens: { tipo: string; id: string }[]) {
+  const res = await authFetch(`${API}/exclusoes/impacto`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itens }),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    if (res.status === 422) throw new Error(mensagemValidacao(d.detail) || "Não foi possível calcular o impacto do lote.");
+    throw new Error(mensagemErroApi(d.detail) || "Erro ao calcular impacto do lote");
+  }
+  return res.json();
+}
+export async function confirmarExclusaoLote(itens: { tipo: string; id: string }[], motivo?: string, confirmacao?: string) {
+  const res = await authFetch(`${API}/exclusoes/confirmar`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ itens, motivo: motivo || null, confirmacao: confirmacao || null }),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    if (res.status === 409) throw new Error(mensagemBloqueio(d.detail) || "Não dá para excluir o lote: há um bloqueio.");
+    if (res.status === 422) throw new Error(mensagemValidacao(d.detail) || "Falta motivo ou confirmação.");
+    throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir o lote");
+  }
+  return res.json();
+}
+
 // Mensagens amigáveis para os erros estruturados do servidor (nada de e.message cru).
 function mensagemBloqueio(detail: any): string | null {
   const b = Array.isArray(detail?.bloqueia) ? detail.bloqueia[0] : null;
@@ -9118,6 +9161,7 @@ function mensagemValidacao(detail: any): string | null {
   if (detail.codigo === "motivo_obrigatorio") return "Diga o motivo da exclusão.";
   if (detail.codigo === "confirmacao_invalida") return `Para confirmar, digite ${detail.esperado || "a confirmação"}.`;
   if (detail.codigo === "motivo_rejeicao_obrigatorio") return "Diga o motivo da rejeição.";
+  if (detail.codigo === "lote_grande") return `O lote aceita no máximo ${detail.limite ?? 50} itens por vez.`;
   return null;
 }
 
@@ -10742,4 +10786,19 @@ export async function registrarExportacaoRelatorio(d: ExportacaoRelatorioIn): Pr
   return _jsonOuErro(await authFetch(`${API}/relatorios/exportacoes`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(d),
   }), "Registrar a exportação");
+}
+
+// ── Secagem: a tabela de vacas em lactação com a previsão (GET /producao/secagem-lista) ──
+// Mesma conta de /secagem-info (serviço positivo vigente + base de gestação − período seco), para o rebanho todo
+// em uma chamada. Campos de previsão `null` = vaca sem prenhez confirmada.
+export type SecagemListaLinha = {
+  numero_matriz: string; grupo_primario: string | null; del_atual: number | null;
+  dias_gestacao: number | null; data_prevista_secagem: string | null; dias_para_secagem: number | null;
+  deve_secar: boolean | null; motivo_exclusao: string | null;
+};
+export type SecagemLista = { hoje: string; ultima_secagem: string | null; animais: SecagemListaLinha[] };
+export async function fetchSecagemLista(): Promise<SecagemLista> {
+  const res = await authFetch(`${API}/producao/secagem-lista`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao buscar a lista de secagem"); }
+  return res.json();
 }

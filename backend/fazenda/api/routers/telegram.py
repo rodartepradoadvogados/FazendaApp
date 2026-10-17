@@ -420,6 +420,14 @@ def _perguntar_campo(session: Session, sess: TelegramSessao) -> None:
         _finalizar(session, sess)
         return
     campo = campos[sess.etapa]
+    quando = campo.get("quando")
+    if quando and not quando(json.loads(sess.dados)):
+        # Campo condicional (ex.: sexo da cria só quando há número de cria) — pula sem perguntar.
+        sess.etapa += 1
+        session.add(sess)
+        session.commit()
+        _perguntar_campo(session, sess)
+        return
     if campo["tipo"] == "opcoes":
         dados = json.loads(sess.dados)
         # A lista de opções pode depender das respostas já dadas (ex.: touros por
@@ -532,7 +540,7 @@ def _finalizar(session: Session, sess: TelegramSessao) -> None:
     dados = json.loads(sess.dados)
     nome = dados.pop("_nome", None)
     dados.pop("_ops", None)
-    faltando = [c["chave"] for c in fx.FLUXOS[tipo]["campos"] if c["obrigatorio"] and c["chave"] not in dados]
+    faltando = [c["chave"] for c in fx.FLUXOS[tipo]["campos"] if c["obrigatorio"] and c["chave"] not in dados and (not c.get("quando") or c["quando"](dados))]
     if faltando:
         session.delete(sess)
         session.commit()

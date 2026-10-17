@@ -1,199 +1,292 @@
 "use client";
-// Excluir lançamento — PASSO 2: encontrar o(s) registro(s) do tipo escolhido (aqui: Diagnóstico de gestação).
-// Variante desktop de apresentação, página cheia (Captura largura 1800). Dados de exemplo; sem fetch.
+// Excluir lançamento — PASSO 2: encontrar o(s) registro(s) do tipo escolhido (página cheia). Dados REAIS de
+// GET /exclusoes/buscar?tipo&termo&data_inicio&data_fim (debounce de 250 ms; erro em texto no topo).
 //
-// Substitui components/exclusao/ListaResultados.tsx (v2): lista de botões sem filtro de data, sem ordenação, sem
-// paginação, sem "Editar" e sem o tipo real em "Todos os lançamentos" → TABELA compacta com tudo isso de volta, e a
-// seleção em LOTE (que o backend já aceita e o front nunca usou).
-//
-// A versão ligada a dados precisa preservar:
-//  • GET /exclusoes/buscar?tipo&termo&data_inicio&data_fim, com debounce de 250 ms; "Data de/até" SÓ se o tipo não
-//    for `sem_filtro_data` (senão os dois campos somem e vão vazios); o termo refina; erro de busca em texto, no topo;
-//  • ordenação por coluna (useOrdenacao/ThOrdenavel) e paginação de 50 (usePaginacao/Paginacao); padrão = mais recentes
-//    primeiro (o servidor já devolve nessa ordem);
-//  • DADO QUE FALTA no payload: o servidor remove `_data` antes de responder → a coluna Data exige expor `data` (ISO) em
-//    cada item de /buscar (mudança pequena em `buscar`), senão a coluna sai do `titulo` por regex ("— Toque 17/10/2026");
-//  • "Todos os lançamentos": cada item traz `tipo_real`; a coluna "Tipo" (selo com o label do tipo real) aparece SÓ nesse
-//    tipo (prop `mostrarOrigem`), e o impacto/lote usam `tipo_real || tipo`;
-//  • "Editar em vez de apagar": `destinoEditar(tipo_real || tipo, id)` (22 destinos). Para `diagnostico`, `movimento_lote`,
-//    `secagem` etc. NÃO existe destino hoje — proposta: diagnostico → /lancamentos?ir=diagnostico; sem destino o link
-//    simplesmente não aparece (como no legado);
-//  • "Apagar" numa linha = impacto de UM item (POST /exclusoes/impacto {tipo,id}); caixas + barra = impacto de LOTE
-//    (itens[] ≤ 50, SÓ admin; operador não vê caixas nem a barra). Limite 50 em texto, não em erro seco;
-//  • tabelas com scope="col", caixas com aria-label, UMA área de rolagem (--gv-altura-tabela).
-import React, { useState } from "react";
-import { ArrowDown, ArrowLeftRight, ChevronsUpDown, Pencil, Search, Trash2 } from "lucide-react";
+// Preservado da ListaResultados v2 + FormExclusaoLegado (nada se perde):
+//  • "Data de/até" SÓ se o tipo não for `sem_filtro_data` (senão somem e vão vazios); o termo refina;
+//  • ordenação por coluna (Data, Registro) e paginação (25/50/100; padrão 50); padrão = a ordem do servidor (mais recentes);
+//  • coluna Data vem de `data` (ISO) do servidor; a coluna "Tipo" (selo com o tipo REAL) aparece SÓ em "Todos os lançamentos"
+//    e o impacto/lote usam `tipo_real || tipo`;
+//  • "Editar em vez de apagar": destinoEditar(tipo_real || tipo, id) — sem destino o link simplesmente não aparece;
+//  • "Apagar" numa linha = impacto de UM item; caixas + barra = impacto de LOTE (itens[] ≤ 50, SÓ admin: operador não vê
+//    caixas nem a barra). O limite 50 é dito em texto, não em erro seco;
+//  • depois de apagar a tela volta aqui com a lista recarregada e a barra mostra o retorno (comprovante / pedido enviado);
+//  • UMA área de rolagem (--gv-altura-tabela), tabela com scope="col" e aria-label nas caixas.
+import React, { useEffect, useRef, useState } from "react";
+import { ArrowDown, ArrowLeftRight, ArrowUp, Check, ChevronsUpDown, Pencil, Search, Trash2 } from "lucide-react";
 import { BarraAcao, Campo, Passo, Selo } from "@/components/gerencial/kit";
-import { Migalhas, MolduraExcluir } from "./excluirComum";
+import { buscarExclusao } from "@/lib/api";
+import { destinoEditar } from "@/lib/exclusao";
+import {
+  LIMITE_LOTE, alternarPagina, alternarSelecao, botoesPagina, chaveRegistro, dataBr, dataDoRegistro, ordenarRegistros,
+  paginar, podarSelecao, proximaOrdem, tetoDaBusca, tipoDoRegistro, tituloSemData,
+  type ColunaOrdem, type Ordem, type RegistroBusca, type Retorno, type Selecao, type TipoApi,
+} from "@/lib/exclusaoTela";
+import { Migalhas } from "./excluirComum";
 
-type Exame = "Toque" | "Retoque" | "Perda de prenhez";
-type Linha = { id: string; data: Date; matriz: string; exame: Exame; resultado: string; detalhe: string; hoje?: boolean };
+const PERDAS = new Set(["aborto", "natimorto", "outros", "motivo não informado", "motivo pendente"]);
 
-const HOJE = new Date(2026, 9, 17);
-const br = (d: Date) => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
-const dia = (d: Date, delta: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
-
-// 14 linhas escritas à mão (as de cima aparecem na foto) + o resto gerado de forma determinística até fechar a página de 50.
-const FIXAS: { matriz: string; exame: Exame; res: string; metodo?: string; ia: string; d: number }[] = [
-  { matriz: "11153", exame: "Toque", res: "POSITIVO", metodo: "Palpação", ia: "28/08/2026", d: 0 },
-  { matriz: "3335", exame: "Toque", res: "NEGATIVO", metodo: "Ultrassom", ia: "12/09/2026", d: 0 },
-  { matriz: "075", exame: "Retoque", res: "POSITIVO", ia: "05/07/2026", d: -1 },
-  { matriz: "9378", exame: "Toque", res: "POSITIVO", metodo: "Palpação", ia: "30/08/2026", d: -1 },
-  { matriz: "2210", exame: "Toque", res: "NEGATIVO", metodo: "Cio de repasse", ia: "21/09/2026", d: -2 },
-  { matriz: "4471", exame: "Retoque", res: "POSITIVO", ia: "14/07/2026", d: -2 },
-  { matriz: "6802", exame: "Perda de prenhez", res: "aborto", ia: "19/05/2026", d: -3 },
-  { matriz: "1187", exame: "Toque", res: "POSITIVO", metodo: "Palpação", ia: "25/08/2026", d: -3 },
-  { matriz: "3902", exame: "Toque", res: "NEGATIVO", metodo: "Palpação", ia: "03/09/2026", d: -4 },
-  { matriz: "5516", exame: "Retoque", res: "NEGATIVO", ia: "28/06/2026", d: -4 },
-  { matriz: "0742", exame: "Toque", res: "POSITIVO", metodo: "Ultrassom", ia: "01/09/2026", d: -5 },
-  { matriz: "8830", exame: "Toque", res: "POSITIVO", metodo: "Palpação", ia: "27/08/2026", d: -5 },
-  { matriz: "2954", exame: "Toque", res: "NEGATIVO", metodo: "Palpação", ia: "10/09/2026", d: -7 },
-  { matriz: "7701", exame: "Retoque", res: "POSITIVO", ia: "02/07/2026", d: -8 },
-];
-const MATRIZES = ["4012", "1650", "9120", "3478", "0861", "5239", "7344", "2096", "6615", "1308", "8472", "4955"];
-
-function montar(): Linha[] {
-  const out: Linha[] = FIXAS.map((f, i) => {
-    const data = dia(HOJE, f.d);
-    const resultado = f.res;
-    const detalhe = f.exame === "Perda de prenhez" ? `${resultado} · inseminação de ${f.ia}` : [resultado, f.metodo, `inseminação de ${f.ia}`].filter(Boolean).join(" · ");
-    return { id: `${4821 - i}:${f.exame === "Toque" ? "toque" : f.exame === "Retoque" ? "reconfirmacao" : "perda"}`, data, matriz: f.matriz, exame: f.exame, resultado, detalhe, hoje: f.d === 0 };
-  });
-  for (let i = FIXAS.length; i < 50; i++) {
-    const data = dia(HOJE, -9 - Math.floor((i - FIXAS.length) / 2));
-    const toque = i % 4 !== 3;
-    const pos = i % 3 !== 0;
-    const ia = dia(data, toque ? -(38 + (i % 9) * 3) : -(100 + (i % 5) * 4));
-    const resultado = pos ? "POSITIVO" : "NEGATIVO";
-    out.push({
-      id: `${4821 - i}:${toque ? "toque" : "reconfirmacao"}`, data, matriz: MATRIZES[i % MATRIZES.length], exame: toque ? "Toque" : "Retoque", resultado,
-      detalhe: [resultado, toque ? (i % 2 ? "Palpação" : "Ultrassom") : null, `inseminação de ${br(ia)}`].filter(Boolean).join(" · "),
-    });
-  }
-  return out;
-}
-const LINHAS = montar();
-const TOTAL = 126;
-const LIMITE_LOTE = 50;
-
-const classeRes = (r: string) => (r === "POSITIVO" ? "gx-res-pos" : r === "NEGATIVO" ? "gx-res-neg" : "gx-res-per");
-
-function Detalhe({ l }: { l: Linha }) {
-  const [res, ...resto] = l.detalhe.split(" · ");
-  return <><span className={classeRes(l.resultado)}>{res}</span>{resto.length > 0 && <span style={{ color: "var(--text-muted)" }}> · {resto.join(" · ")}</span>}</>;
+/** Subtítulo com o 1º termo em destaque quando ele é o RESULTADO de um exame (texto + cor, nunca só cor). */
+function Detalhe({ r, tipoReal }: { r: RegistroBusca; tipoReal: string }) {
+  const [primeiro, ...resto] = (r.subtitulo || "").split(" · ");
+  const cls = tipoReal !== "diagnostico" ? null
+    : primeiro === "POSITIVO" ? "gx-res-pos" : primeiro === "NEGATIVO" ? "gx-res-neg" : PERDAS.has(primeiro) ? "gx-res-per" : null;
+  if (!cls) return <>{r.subtitulo}</>;
+  return <><span className={cls}>{primeiro}</span>{resto.length > 0 && <span style={{ color: "var(--text-muted)" }}> · {resto.join(" · ")}</span>}</>;
 }
 
-export function ExcluirRegistros({ mostrarOrigem = false }: { mostrarOrigem?: boolean }) {
-  const [sel, setSel] = useState<Set<string>>(() => new Set([LINHAS[0].id, LINHAS[1].id, LINHAS[2].id]));
+function CabOrdenavel({ rotulo, coluna, ordem, onOrdenar, largura }: { rotulo: string; coluna: ColunaOrdem; ordem: Ordem; onOrdenar: (c: ColunaOrdem) => void; largura?: string }) {
+  const ativa = ordem?.coluna === coluna;
+  // Sem clique ainda, a lista já está do mais recente ao mais antigo (ordem do servidor): a Data mostra isso.
+  const seta = ativa ? (ordem!.dir === 1 ? <ArrowUp size={12} aria-hidden /> : <ArrowDown size={12} aria-hidden />)
+    : coluna === "data" && !ordem ? <ArrowDown size={12} aria-hidden /> : <ChevronsUpDown size={12} aria-hidden />;
+  const sort = ativa ? (ordem!.dir === 1 ? "ascending" : "descending") : coluna === "data" && !ordem ? "descending" : "none";
+  return (
+    <th scope="col" aria-sort={sort} style={largura ? { width: largura } : undefined}>
+      <button type="button" className="gx-th-ord" title={`Ordenar por ${rotulo.toLowerCase()}`} onClick={() => onOrdenar(coluna)}>{rotulo} {seta}</button>
+    </th>
+  );
+}
+
+export function ExcluirRegistros({
+  tipo, tipos, souAdmin, recarga, retorno, calculando, erro, onVoltarTipos, onEscolherTipo, onApagar, onLote, onAtalho, onFecharRetorno,
+}: {
+  tipo: TipoApi;
+  tipos: TipoApi[];
+  souAdmin: boolean;
+  /** Sobe a cada exclusão concluída: recarrega a lista e limpa a seleção. */
+  recarga: number;
+  retorno: Retorno | null;
+  /** Calculando o impacto (pedido ao servidor em andamento). */
+  calculando: boolean;
+  erro: string | null;
+  onVoltarTipos: () => void;
+  onEscolherTipo: (t: TipoApi) => void;
+  onApagar: (r: RegistroBusca) => void;
+  onLote: (sel: Selecao) => void;
+  onAtalho: (a: "trilha" | "pedidos") => void;
+  onFecharRetorno: () => void;
+}) {
   const [de, setDe] = useState("");
   const [ate, setAte] = useState("");
   const [busca, setBusca] = useState("");
+  const [lista, setLista] = useState<RegistroBusca[]>([]);
+  const [buscando, setBuscando] = useState(true);
+  const [erroBusca, setErroBusca] = useState<string | null>(null);
+  const [ordem, setOrdem] = useState<Ordem>(null);
+  const [pagina, setPagina] = useState(1);
+  const [tamanho, setTamanho] = useState(50);
+  const [sel, setSel] = useState<Selecao>(new Map());
+  const [avisoLimite, setAvisoLimite] = useState(false);
 
-  const alternar = (id: string) => setSel((p) => { const s = new Set(p); if (s.has(id)) s.delete(id); else s.add(id); return s; });
-  const todasMarcadas = LINHAS.every((l) => sel.has(l.id));
-  const alternarTodas = () => setSel(todasMarcadas ? new Set() : new Set(LINHAS.slice(0, LIMITE_LOTE).map((l) => l.id)));
+  const semData = !!tipo.sem_filtro_data;
+  const ehTodos = tipo.id === "todos_lancamentos";
+  const seq = useRef(0);
+  const ultimoFiltro = useRef<string | null>(null);
+
+  // Busca: debounce de 250 ms só quando o FILTRO muda (digitando); entrar no passo ou recarregar após apagar é imediato.
+  useEffect(() => {
+    const filtro = JSON.stringify([tipo.id, busca, semData ? "" : de, semData ? "" : ate]);
+    const imediato = ultimoFiltro.current === null || ultimoFiltro.current === filtro;
+    ultimoFiltro.current = filtro;
+    const h = setTimeout(async () => {
+      const eu = ++seq.current;
+      setBuscando(true); setErroBusca(null);
+      try {
+        const r = (await buscarExclusao(tipo.id, busca, semData ? "" : de, semData ? "" : ate)) as RegistroBusca[];
+        if (eu !== seq.current) return; // chegou uma resposta mais nova
+        setLista(r);
+        setPagina(1);
+        setSel((s) => podarSelecao(s, r, tipo.id));
+      } catch (e: any) {
+        if (eu === seq.current) { setErroBusca(e.message || "Erro na busca"); setLista([]); }
+      } finally {
+        if (eu === seq.current) setBuscando(false);
+      }
+    }, imediato ? 0 : 250);
+    return () => clearTimeout(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipo.id, busca, de, ate, semData, recarga]);
+
+  // Depois de apagar (ou enviar o pedido) a seleção recomeça do zero.
+  useEffect(() => { setSel(new Map()); setAvisoLimite(false); }, [recarga]);
+
+  const ordenada = ordenarRegistros(lista, ordem);
+  const pag = paginar(ordenada, pagina, tamanho);
+
   const n = sel.size;
-  const colunas = 5 + (mostrarOrigem ? 1 : 0);
+  const todasMarcadas = pag.linhas.length > 0 && pag.linhas.every((r) => sel.has(chaveRegistro(r, tipo.id)));
+  const algumasMarcadas = !todasMarcadas && pag.linhas.some((r) => sel.has(chaveRegistro(r, tipo.id)));
+  const colunas = 4 + (souAdmin ? 1 : 0) + (ehTodos ? 1 : 0);
+  const teto = tetoDaBusca(tipo.id);
+  const rotuloTipo = (id: string) => tipos.find((t) => t.id === id)?.label ?? id;
+  const outroTipoServico = tipos.find((t) => t.id === "servico");
+
+  const marcar = (r: RegistroBusca) => {
+    const x = alternarSelecao(sel, chaveRegistro(r, tipo.id), r);
+    setSel(x.sel); setAvisoLimite(x.estourou);
+  };
+  const marcarPagina = () => {
+    const x = alternarPagina(sel, pag.linhas, tipo.id);
+    setSel(x.sel); setAvisoLimite(x.estourou);
+  };
+
+  const ordenarPor = (c: ColunaOrdem) => { setOrdem((o) => proximaOrdem(o, c)); setPagina(1); };
+  const nome = tipo.plural ? tipo.plural.charAt(0).toUpperCase() + tipo.plural.slice(1) : tipo.label;
+  const contagemTxt = buscando ? "Buscando…"
+    : `${lista.length} ${lista.length === 1 ? "registro" : "registros"}${lista.length >= teto ? ` (os ${teto} mais recentes — refine por data ou busca)` : ""} · ${ordem ? "ordem escolhida" : "mais recentes primeiro"}`;
+
+  const barraRetorno = retorno && (
+    <>
+      <span className="gx-ok" role="status" data-tom={retorno.tom}><Check size={14} aria-hidden /> {retorno.texto}</span>
+      {retorno.comprovante && <span>Comprovante <span className="gx-comprovante">{retorno.comprovante}</span></span>}
+      {retorno.tom === "ok" && <span style={{ color: "var(--text-muted)" }}>Ficou na trilha: quem, quando e o quê (guardada por 30 dias).</span>}
+      {retorno.detalhes.map((d, i) => <span key={i} style={{ color: "var(--text-muted)" }}>{d}</span>)}
+      <span style={{ flex: 1 }} />
+      {retorno.atalho === "trilha" && souAdmin && <button type="button" className="gx-acao-linha" onClick={() => onAtalho("trilha")}>Ver na trilha</button>}
+      {retorno.atalho === "pedidos" && <button type="button" className="gx-acao-linha" onClick={() => onAtalho("pedidos")}>{souAdmin ? "Ver pedidos" : "Ver meus pedidos"}</button>}
+      <button type="button" className="gx-acao-linha" onClick={onFecharRetorno}>Fechar</button>
+    </>
+  );
 
   return (
-    <MolduraExcluir>
-      <Migalhas itens={["Tipos", "Diagnósticos de gestação"]} />
+    <>
+      <Migalhas itens={[{ texto: "Tipos", aoClicar: onVoltarTipos }, { texto: nome }]} />
+
+      {!souAdmin && barraRetorno && <div className="gx-retorno-op" aria-live="polite">{barraRetorno}</div>}
 
       <Passo n={2} id="ex2-p2" titulo="Encontre o registro"
-        direita={<span style={{ fontSize: "0.8rem", color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }} aria-live="polite">{TOTAL} exames · mais recentes primeiro</span>}>
+        direita={<span style={{ fontSize: "0.8rem", color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }} aria-live="polite">{contagemTxt}</span>}>
+        {(erro || erroBusca) && <div className="gv-aviso" role="alert" data-tom="erro"><span>{erro || erroBusca}</span></div>}
+
         <div className="gx-filtros">
-          <Campo rotulo="Data de" id="ex2-de"><input type="date" value={de} onChange={(e) => setDe(e.target.value)} /></Campo>
-          <Campo rotulo="Data até" id="ex2-ate"><input type="date" value={ate} onChange={(e) => setAte(e.target.value)} /></Campo>
+          {!semData && (
+            <>
+              <Campo rotulo="Data de" id="ex2-de"><input type="date" value={de} onChange={(e) => setDe(e.target.value)} /></Campo>
+              <Campo rotulo="Data até" id="ex2-ate"><input type="date" value={ate} onChange={(e) => setAte(e.target.value)} /></Campo>
+            </>
+          )}
           <div className="gv-campo gx-campo-busca">
             <label htmlFor="ex2-busca">Buscar</label>
             <div className="gx-busca" style={{ flex: "none" }}>
               <Search size={14} aria-hidden />
-              <input id="ex2-busca" type="search" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="matriz, resultado, método…" style={{ minHeight: "2.1rem" }} />
+              <input id="ex2-busca" type="search" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="lote, medicamento, ação, número, nome…" style={{ minHeight: "2.1rem" }} />
             </div>
           </div>
           <span className="gv-espaco" style={{ flex: 1 }} />
           <p className="gv-ajuda" style={{ alignSelf: "center" }}>A lista se atualiza sozinha enquanto você digita.</p>
         </div>
 
-        <div className="gx-compara" role="group" aria-label="Diagnóstico ou Serviço / IA">
-          <div>
-            <div className="gx-compara-topo"><Selo tom="atencao">Este tipo</Selo><b>Diagnóstico de gestação</b></div>
-            <p>Desfaz <b>só o exame</b> (toque, retoque ou perda). A inseminação fica e o animal volta a «a tocar».</p>
-          </div>
-          <div>
-            <div className="gx-compara-topo"><Selo tom="neutro">Outro tipo</Selo><b>Serviço / IA</b>
-              <span style={{ flex: 1 }} />
-              <button type="button" className="gx-acao-linha"><ArrowLeftRight size={13} aria-hidden />Ir para Serviços / IA</button>
+        {tipo.id === "diagnostico" && (
+          <div className="gx-compara" role="group" aria-label="Diagnóstico ou Serviço / IA">
+            <div>
+              <div className="gx-compara-topo"><Selo tom="atencao">Este tipo</Selo><b>Diagnóstico de gestação</b></div>
+              <p>Desfaz <b>só o exame</b> (toque, retoque ou perda). A inseminação fica e o animal volta a «a tocar».</p>
             </div>
-            <p>Apaga a <b>inseminação inteira</b>, com o diagnóstico dela; a inseminação anterior volta a valer.</p>
+            <div>
+              <div className="gx-compara-topo"><Selo tom="neutro">Outro tipo</Selo><b>Serviço / IA</b>
+                <span style={{ flex: 1 }} />
+                {outroTipoServico && <button type="button" className="gx-acao-linha" onClick={() => onEscolherTipo(outroTipoServico)}><ArrowLeftRight size={13} aria-hidden />Ir para Serviços / IA</button>}
+              </div>
+              <p>Apaga a <b>inseminação inteira</b>, com o diagnóstico dela; a inseminação anterior volta a valer.</p>
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="gv-tabela-moldura" style={{ ["--gv-altura-tabela" as string]: "26rem" }}>
           <table className="gv-tabela">
-            <caption className="sr-only" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}>Exames de diagnóstico de gestação, do mais recente ao mais antigo</caption>
+            <caption style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}>{`${nome}: registros encontrados`}</caption>
             <thead>
               <tr>
-                <th scope="col" style={{ width: "2.4rem" }}>
-                  <input type="checkbox" checked={todasMarcadas} onChange={alternarTodas} aria-label={`Selecionar os ${LIMITE_LOTE} exames desta página (limite do lote)`} />
-                </th>
-                <th scope="col" aria-sort="descending" style={{ width: "9.5rem" }}>
-                  <button type="button" className="gx-th-ord" title="Ordenar por data">Data <ArrowDown size={12} aria-hidden /></button>
-                </th>
-                <th scope="col" style={{ width: "13rem" }}>
-                  <button type="button" className="gx-th-ord" title="Ordenar por registro">Registro <ChevronsUpDown size={12} aria-hidden /></button>
-                </th>
+                {souAdmin && (
+                  <th scope="col" style={{ width: "2.4rem" }}>
+                    <input type="checkbox" checked={todasMarcadas} ref={(el) => { if (el) el.indeterminate = algumasMarcadas; }} onChange={marcarPagina}
+                      disabled={pag.linhas.length === 0}
+                      aria-label={`Selecionar os registros desta página (limite do lote: ${LIMITE_LOTE})`} />
+                  </th>
+                )}
+                <CabOrdenavel rotulo="Data" coluna="data" ordem={ordem} onOrdenar={ordenarPor} largura="9.5rem" />
+                <CabOrdenavel rotulo="Registro" coluna="titulo" ordem={ordem} onOrdenar={ordenarPor} />
                 <th scope="col">Detalhe</th>
-                {mostrarOrigem && <th scope="col">Tipo</th>}
+                {ehTodos && <th scope="col">Tipo</th>}
                 <th scope="col" className="gv-dir" style={{ width: "13rem" }}>Ações</th>
               </tr>
             </thead>
             <tbody>
-              {LINHAS.map((l) => {
-                const marcada = sel.has(l.id);
+              {pag.linhas.map((r) => {
+                const chave = chaveRegistro(r, tipo.id);
+                const tr = tipoDoRegistro(r, tipo.id);
+                const marcada = sel.has(chave);
+                const iso = dataDoRegistro(r);
+                const hoje = iso === new Date().toLocaleDateString("sv-SE");
+                const href = destinoEditar(tr, String(r.id));
+                const t = tituloSemData(r);
                 return (
-                  <tr key={l.id} className={marcada ? "gv-linha-marcada" : undefined}>
-                    <td><input type="checkbox" checked={marcada} onChange={() => alternar(l.id)} aria-label={`Selecionar ${l.exame} de ${l.matriz} em ${br(l.data)}`} /></td>
-                    <td className="gv-num">{br(l.data)} {l.hoje && <Selo tom="info">Hoje</Selo>}</td>
-                    <td><b className="gv-num">{l.matriz}</b> <span style={{ color: "var(--text-muted)" }}>· {l.exame}</span></td>
-                    <td className="gv-quebra"><Detalhe l={l} /></td>
-                    {mostrarOrigem && <td><Selo tom="neutro">Diagnóstico</Selo></td>}
+                  <tr key={chave} className={marcada ? "gv-linha-marcada" : undefined}>
+                    {souAdmin && <td><input type="checkbox" checked={marcada} onChange={() => marcar(r)} aria-label={`Selecionar ${r.titulo}`} /></td>}
+                    <td className="gv-num">{dataBr(iso)} {hoje && <Selo tom="info">Hoje</Selo>}</td>
+                    <td className="gv-quebra" title={r.titulo}><b>{t}</b></td>
+                    <td className="gv-quebra"><Detalhe r={r} tipoReal={tr} /></td>
+                    {ehTodos && <td><Selo tom="neutro">{rotuloTipo(tr)}</Selo></td>}
                     <td className="gv-dir">
-                      <a href="#editar" className="gx-acao-linha" style={{ marginRight: "0.35rem" }} aria-label={`Editar em vez de apagar: ${l.exame} de ${l.matriz}`}><Pencil size={12} aria-hidden />Editar</a>
-                      <button type="button" className="gx-acao-linha" data-perigo="true" aria-label={`Apagar ${l.exame} de ${l.matriz} em ${br(l.data)}`}><Trash2 size={12} aria-hidden />Apagar</button>
+                      {href && (
+                        <a href={href} className="gx-acao-linha" style={{ marginRight: "0.35rem" }} aria-label={`Editar em vez de apagar: ${r.titulo}`}><Pencil size={12} aria-hidden />Editar</a>
+                      )}
+                      <button type="button" className="gx-acao-linha" data-perigo="true" disabled={calculando} onClick={() => onApagar(r)} aria-label={`Apagar ${r.titulo}`}>
+                        <Trash2 size={12} aria-hidden />Apagar
+                      </button>
                     </td>
                   </tr>
                 );
               })}
-              {LINHAS.length === 0 && <tr><td colSpan={colunas} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1.5rem" }}>Nenhum registro encontrado.</td></tr>}
+              {!buscando && lista.length === 0 && (
+                <tr><td colSpan={colunas} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1.5rem" }}>Nenhum registro encontrado.</td></tr>
+              )}
+              {buscando && lista.length === 0 && (
+                <tr><td colSpan={colunas} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1.5rem" }}>Buscando…</td></tr>
+              )}
             </tbody>
           </table>
         </div>
 
-        <div className="gx-pag">
-          <span>Mostrando <b>1–50</b> de <b>{TOTAL}</b></span>
-          <span className="gx-pag-botoes" role="group" aria-label="Páginas">
-            <button type="button" disabled aria-label="Página anterior">‹</button>
-            <button type="button" aria-current="page">1</button>
-            <button type="button">2</button>
-            <button type="button">3</button>
-            <button type="button" aria-label="Próxima página">›</button>
-          </span>
-          <span style={{ flex: 1 }} />
-          <label htmlFor="ex2-tam">Por página</label>
-          <select id="ex2-tam" defaultValue="50" style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border-strong, var(--border))", borderRadius: "var(--r-sm)", padding: "0.25rem 0.4rem", font: "inherit" }}>
-            <option>25</option><option>50</option><option>100</option>
-          </select>
-        </div>
-        <p className="gv-ajuda">Marque vários exames para apagar de uma vez (só administrador, até {LIMITE_LOTE} por lote). Para só corrigir o resultado, use “Editar” em vez de apagar.</p>
+        {lista.length > 0 && (
+          <div className="gx-pag">
+            <span>Mostrando <b>{pag.de}–{pag.ate}</b> de <b>{pag.total}</b></span>
+            <span className="gx-pag-botoes" role="group" aria-label="Páginas">
+              <button type="button" disabled={pag.pagina <= 1} aria-label="Página anterior" onClick={() => setPagina(pag.pagina - 1)}>‹</button>
+              {botoesPagina(pag.pagina, pag.paginas).map((b, i) => b === "…"
+                ? <span key={`e${i}`} aria-hidden style={{ alignSelf: "center" }}>…</span>
+                : <button key={b} type="button" aria-current={b === pag.pagina ? "page" : undefined} onClick={() => setPagina(b)}>{b}</button>)}
+              <button type="button" disabled={pag.pagina >= pag.paginas} aria-label="Próxima página" onClick={() => setPagina(pag.pagina + 1)}>›</button>
+            </span>
+            <span style={{ flex: 1 }} />
+            <label htmlFor="ex2-tam">Por página</label>
+            <select id="ex2-tam" value={tamanho} onChange={(e) => { setTamanho(Number(e.target.value)); setPagina(1); }}
+              style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border-strong, var(--border))", borderRadius: "var(--r-sm)", padding: "0.25rem 0.4rem", font: "inherit" }}>
+              <option value={25}>25</option><option value={50}>50</option><option value={100}>100</option>
+            </select>
+          </div>
+        )}
+        <p className="gv-ajuda">
+          {souAdmin
+            ? <>Marque vários registros para apagar de uma vez (só administrador, até {LIMITE_LOTE} por lote). </>
+            : <>Seu pedido de exclusão vai para o administrador decidir. </>}
+          Para só corrigir um dado, use “Editar” em vez de apagar.
+        </p>
+        {avisoLimite && <p className="gv-ajuda" role="status" style={{ color: "var(--ft-ambar)", fontWeight: 700 }}>O lote aceita no máximo {LIMITE_LOTE} registros por vez: apague estes e depois marque os próximos.</p>}
       </Passo>
 
-      <BarraAcao
-        resumo={`${n} ${n === 1 ? "selecionado" : "selecionados"} · máx. ${LIMITE_LOTE} por lote`}
-        detalhe={n > 0 ? "Cada exame é desfeito sozinho; as inseminações ficam. Você confere o impacto do lote antes de confirmar." : "Marque as caixas para apagar em lote."}
-        secundaria={<button type="button" className="btn-ghost" onClick={() => setSel(new Set())} disabled={n === 0}>Limpar seleção</button>}
-        acao={<button type="button" className="btn-primary" disabled={n === 0 || n > LIMITE_LOTE}>Ver impacto do lote ({n})</button>}
-      />
-    </MolduraExcluir>
+      {souAdmin && (
+        <BarraAcao
+          retorno={barraRetorno || undefined}
+          resumo={calculando ? "Calculando o impacto…" : `${n} ${n === 1 ? "selecionado" : "selecionados"} · máx. ${LIMITE_LOTE} por lote`}
+          detalhe={n > 0
+            ? (tipo.id === "diagnostico" ? "Cada exame é desfeito sozinho; as inseminações ficam. Você confere o impacto do lote antes de confirmar." : "Você confere o impacto do lote antes de confirmar.")
+            : "Marque as caixas para apagar em lote."}
+          secundaria={<button type="button" className="btn-ghost" onClick={() => { setSel(new Map()); setAvisoLimite(false); }} disabled={n === 0}>Limpar seleção</button>}
+          acao={<button type="button" className="btn-primary-gold" disabled={n === 0 || n > LIMITE_LOTE || calculando} onClick={() => onLote(sel)}>Ver impacto do lote ({n})</button>}
+        />
+      )}
+    </>
   );
 }

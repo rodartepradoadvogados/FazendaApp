@@ -333,6 +333,8 @@ function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: str
       return;
     }
     if (!criaSexo) return erroValidacao("Toque no sexo da cria (F ou M).");
+    // Sexo é obrigatório para toda cria com número (o servidor recusa com 422): a 2ª cria não pode mais ser descartada em silêncio.
+    if (gemelar && cria2Numero.trim() && !cria2Sexo) return erroValidacao("Toque no sexo da 2ª cria (F ou M).");
 
     const crias: { numero: string; sexo: string; nasceu_viva: boolean }[] = [
       { numero: criaNumero.trim(), sexo: criaSexo, nasceu_viva: !criaBaixada },

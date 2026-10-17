@@ -1,16 +1,9 @@
 "use client";
-// Peças COMUNS das 3 telas de Lançamentos › Excluir lançamento (ExcluirTipos, ExcluirRegistros, ExcluirConfirmar):
-// moldura de página cheia (um só cabeçalho com as 3 abas), faixa de aviso única, migalhas, os tipos (dados de exemplo
-// no formato de GET /exclusoes/tipos + META_TIPOS) e o CSS `.gx-*` (só tokens). Só apresentação.
-//
-// O que a versão ligada a dados (components/exclusao/ExclusaoPage.tsx) precisa preservar — vale para as 3 telas:
-//  • Abas: Apagar / Pedidos (admin; operador vê "Meus pedidos") / Trilha (só admin). O contador de Pedidos = pendentes.
-//  • Tipos vêm de GET /exclusoes/tipos (id, label, sem_filtro_data, dominio, plural, dica, cadastro, contagem), já
-//    filtrados por `ocultarTipos` (prop de FormExclusao). Tipo sem META (os 11 do REGISTRO: secagem, movimento_lote,
-//    safra, diárias…) hoje chega SEM dominio/plural/dica/contagem → completar META_TIPOS no backend (ver relatório).
-//  • Aviso único: admin "exclui na hora"; os demais "solicitam e o administrador decide" (texto muda por papel).
-//  • Este CSS deve migrar para o fim de `.gv-*` em globals.css (prefixo `.gx-`); está aqui só para a prévia não tocar
-//    em arquivo compartilhado.
+// Peças COMUNS das 3 telas de Lançamentos › Excluir lançamento (ExcluirTipos, ExcluirRegistros, ExcluirConfirmar), já LIGADAS
+// a dados reais por components/exclusao/ExclusaoPage.tsx: moldura de página cheia (um só cabeçalho com as 3 abas — o papel
+// decide o rótulo de "Pedidos" × "Meus pedidos", a aba Trilha só existe para o admin — e UMA faixa de aviso), migalhas
+// clicáveis, o ícone/destaque de cada tipo e o CSS `.gx-*` (só tokens).
+// Este CSS deve migrar para o fim de `.gv-*` em globals.css (prefixo `.gx-`); fica aqui para não tocar em arquivo compartilhado.
 import React from "react";
 import {
   AlertTriangle, ArrowLeftRight, Baby, Banknote, Boxes, CalendarCheck, CalendarClock, ChevronRight, ClipboardCheck,
@@ -19,120 +12,65 @@ import {
 } from "lucide-react";
 import { Selo } from "@/components/gerencial/kit";
 
-export type Dominio = "reb" | "san" | "fin" | "est" | "pes" | "cad";
 export type Icone = React.ComponentType<{ size?: number | string; "aria-hidden"?: boolean }>;
 
-export type TipoEx = {
-  id: string;
-  label: string;          // texto completo (TIPOS[].label) — vai no título/tooltip e na migalha
-  plural: string;         // META_TIPOS.plural — nome curto do bloco
-  dica: string;           // META_TIPOS.dica — uma linha
-  dominio: Dominio;
-  cadastro?: boolean;     // META_TIPOS.cadastro — vai para o grupo recolhido
-  contagem: number | null; // GET /tipos → contagem (hoje só 10 tipos contam; os demais viriam null)
-  sem_filtro_data?: boolean;
-  Icone: Icone;
-  novo?: boolean;         // só apresentação: selo "Novo" no tipo recém-criado
-  destaque?: boolean;     // só apresentação: bloco com tinta de ouro (os tipos que o dono mais procura)
+/** Ícone de cada tipo (por id de GET /exclusoes/tipos). Tipo novo sem ícone cai em "documento". */
+const ICONES: Record<string, Icone> = {
+  diagnostico: Stethoscope, servico: Heart, parto: Baby, controle: Milk, animal: PawPrint, movimento_lote: ArrowLeftRight,
+  secagem: Droplets, pesagem_corporal: Scale, evento_manual: CalendarClock,
+  sanidade: Syringe, protocolo_sanitario_lancamento: ClipboardCheck, protocolo_iatf_lancamento: FlaskConical,
+  calendario_sanitario: CalendarCheck, exame_resultado: Pill,
+  financeiro: Receipt, compra_animal: ShoppingCart, compra_semen: Dna, venda_animal: HandCoins, entrega_leite: Truck,
+  estoque: Package, movimento_estoque: Boxes,
+  diaria: CalendarCheck, diaria_pagamento: Banknote, empreitada: HardHat, contrato: FileText,
+  lote: Layers, fornecedor: Truck, pessoa: Users, doenca: AlertTriangle, principio_ativo: Pill, motivo_movimentacao: Tags,
+  evento_sanitario: ClipboardList, protocolo_sanitario: ClipboardList, safra: Wheat, todos_lancamentos: Layers,
 };
+export const iconeDoTipo = (id: string): Icone => ICONES[id] ?? FileText;
 
-export const DOMINIOS: { id: Dominio; nome: string; cor: string }[] = [
-  { id: "reb", nome: "Rebanho e reprodução", cor: "var(--cat-reproducao)" },
-  { id: "san", nome: "Sanidade", cor: "var(--cat-sanidade)" },
-  { id: "fin", nome: "Financeiro", cor: "var(--cat-financeiro)" },
-  { id: "est", nome: "Estoque", cor: "var(--cat-estoque)" },
-  { id: "pes", nome: "Pessoal", cor: "var(--cat-gestao)" },
-  { id: "cad", nome: "Cadastros", cor: "var(--cat-acesso)" },
-];
-
-// Os 34 tipos de GET /exclusoes/tipos (23 de TIPOS + 12 do REGISTRO, menos o "todos_lancamentos" que é o bloco largo)
-// com plural/dica de META_TIPOS. Onde o texto da dica foi ENCURTADO para caber em uma linha, o original está no comentário.
-export const TIPOS: TipoEx[] = [
-  // Rebanho e reprodução
-  { id: "diagnostico", label: "Diagnóstico de gestação (toque, retoque, perda)", plural: "Diagnósticos de gestação",
-    dica: "Desfaz só o exame; a inseminação fica.", // original: "Desfaz só o exame (toque, retoque ou perda); a inseminação fica."
-    dominio: "reb", contagem: 1126, Icone: Stethoscope, novo: true, destaque: true },
-  { id: "servico", label: "Serviço / IA (a inseminação inteira)", plural: "Serviços / IA",
-    dica: "Apaga a IA inteira, com o diagnóstico dela.", // original: "Apaga a inseminação inteira, com o diagnóstico dela; a anterior volta a valer."
-    dominio: "reb", contagem: 1840, Icone: Heart, destaque: true },
-  { id: "parto", label: "Parto / nascimento", plural: "Partos", dica: "Remove a lactação e a cria gerada.", dominio: "reb", contagem: 487, Icone: Baby },
-  { id: "controle", label: "Controle leiteiro", plural: "Controles leiteiros", dica: "Some o registro de produção.", dominio: "reb", contagem: 3420, Icone: Milk },
-  { id: "animal", label: "Animal (ficha)", plural: "Animais", dica: "Apaga a ficha e todo o histórico.", dominio: "reb", contagem: 612, Icone: PawPrint },
-  { id: "movimento_lote", label: "Movimentação entre lotes", plural: "Movimentações de lote", dica: "O animal volta ao lote anterior.", dominio: "reb", contagem: 2135, Icone: ArrowLeftRight, sem_filtro_data: false },
-  { id: "secagem", label: "Secagem", plural: "Secagens", dica: "A lactação é reaberta.", dominio: "reb", contagem: 238, Icone: Droplets },
-  { id: "pesagem_corporal", label: "Pesagem corporal", plural: "Pesagens", dica: "Some o peso lançado.", dominio: "reb", contagem: 1207, Icone: Scale },
-  { id: "evento_manual", label: "Evento manual da agenda", plural: "Eventos da agenda", dica: "Some o evento da agenda.", dominio: "reb", contagem: 64, Icone: CalendarClock },
-  // Sanidade
-  { id: "sanidade", label: "Sanidade", plural: "Sanidades", dica: "O remédio volta ao estoque.", dominio: "san", contagem: 2906, Icone: Syringe },
-  { id: "protocolo_sanitario_lancamento", label: "Aplicação de protocolo sanitário (curativo/vacina)", plural: "Aplicações de protocolo", dica: "A aplicação sai; o protocolo continua.", dominio: "san", contagem: 312, Icone: ClipboardCheck },
-  { id: "protocolo_iatf_lancamento", label: "Aplicação de protocolo hormonal (IATF)", plural: "Aplicações de IATF", dica: "A aplicação sai; o protocolo continua.", dominio: "san", contagem: 145, Icone: FlaskConical },
-  { id: "calendario_sanitario", label: "Evento do calendário sanitário", plural: "Eventos do calendário", dica: "Some o evento do calendário.", dominio: "san", contagem: 58, Icone: CalendarCheck },
-  { id: "exame_resultado", label: "Resultado de exame preventivo", plural: "Resultados de exame", dica: "Some o resultado lançado.", dominio: "san", contagem: 174, Icone: Pill },
-  // Financeiro
-  { id: "financeiro", label: "Financeiro", plural: "Lançamentos financeiros", dica: "Apaga a nota e suas parcelas.", dominio: "fin", contagem: 4718, Icone: Receipt },
-  { id: "compra_animal", label: "Compra de animal", plural: "Compras de animal", dica: "Apaga a compra e o lançamento financeiro.", dominio: "fin", contagem: 36, Icone: ShoppingCart },
-  { id: "compra_semen", label: "Compra de sêmen", plural: "Compras de sêmen", dica: "Apaga a compra; o estoque volta.", dominio: "fin", contagem: 22, Icone: Dna },
-  { id: "venda_animal", label: "Venda de animal", plural: "Vendas de animal", dica: "Apaga a venda e o lançamento financeiro.", dominio: "fin", contagem: 71, Icone: HandCoins },
-  { id: "entrega_leite", label: "Entrega de leite (mensal)", plural: "Entregas de leite", dica: "Some a entrega do mês.", dominio: "fin", contagem: 34, Icone: Truck },
-  // Estoque
-  { id: "estoque", label: "Estoque", plural: "Movimentos de estoque", dica: "O estoque volta ao valor anterior.", dominio: "est", contagem: 3870, Icone: Package },
-  { id: "movimento_estoque", label: "Movimento de estoque (entrada/saída manual)", plural: "Entradas e saídas manuais", dica: "O saldo volta ao anterior.", dominio: "est", contagem: 912, Icone: Boxes },
-  // Pessoal
-  { id: "diaria", label: "Diária", plural: "Diárias", dica: "Some a diária lançada.", dominio: "pes", contagem: 214, Icone: CalendarCheck },
-  { id: "diaria_pagamento", label: "Pagamento de diária", plural: "Pagamentos de diária", dica: "O pagamento volta a pendente.", dominio: "pes", contagem: 128, Icone: Banknote },
-  { id: "empreitada", label: "Empreitada", plural: "Empreitadas", dica: "Some a empreitada lançada.", dominio: "pes", contagem: 17, Icone: HardHat },
-  { id: "contrato", label: "Contrato (Pessoal)", plural: "Contratos", dica: "Some o contrato lançado.", dominio: "pes", contagem: 9, Icone: FileText },
-  // Cadastros (recolhidos por padrão: raros e perigosos)
-  { id: "lote", label: "Lote (cadastro)", plural: "Lotes", dica: "Os animais do lote ficam sem lote.", dominio: "cad", cadastro: true, contagem: 14, Icone: Layers, sem_filtro_data: true },
-  { id: "fornecedor", label: "Fornecedor/fabricante/cliente/corretor", plural: "Fornecedores", dica: "As notas continuam, mas perdem a ligação.", dominio: "cad", cadastro: true, contagem: 87, Icone: Truck, sem_filtro_data: true },
-  { id: "pessoa", label: "Pessoa", plural: "Pessoas", dica: "Só sai se não tiver folha nem vale.", dominio: "cad", cadastro: true, contagem: 23, Icone: Users, sem_filtro_data: true },
-  { id: "doenca", label: "Doença", plural: "Doenças", dica: "Protocolos perdem a ligação.", dominio: "cad", cadastro: true, contagem: 19, Icone: AlertTriangle, sem_filtro_data: true },
-  { id: "principio_ativo", label: "Princípio ativo", plural: "Princípios ativos", dica: "Cadastro auxiliar.", dominio: "cad", cadastro: true, contagem: 41, Icone: Pill, sem_filtro_data: true },
-  { id: "motivo_movimentacao", label: "Motivo de movimentação", plural: "Motivos de movimentação", dica: "Cadastro auxiliar.", dominio: "cad", cadastro: true, contagem: 12, Icone: Tags, sem_filtro_data: true },
-  { id: "evento_sanitario", label: "Evento sanitário", plural: "Eventos sanitários", dica: "Cadastro auxiliar.", dominio: "cad", cadastro: true, contagem: 26, Icone: ClipboardList, sem_filtro_data: true },
-  { id: "protocolo_sanitario", label: "Protocolo sanitário (cadastro)", plural: "Protocolos sanitários", dica: "Cadastro auxiliar.", dominio: "cad", cadastro: true, contagem: 11, Icone: ClipboardList, sem_filtro_data: true },
-  { id: "safra", label: "Safra (Agricultura)", plural: "Safras", dica: "Some a safra e o que dela depende.", dominio: "cad", cadastro: true, contagem: 6, Icone: Wheat },
-];
-
-export const TODOS: TipoEx = {
-  id: "todos_lancamentos", label: "Todos os lançamentos (mais recentes primeiro)", plural: "Todos os lançamentos",
-  dica: "Busca em todos os lançamentos — para quando você não sabe em qual tipo foi lançado.",
-  dominio: "reb", contagem: 15274, Icone: Layers,
-};
-
-export const fmtN = (n: number | null) => (n == null ? "—" : n.toLocaleString("pt-BR"));
-export const nomeCurto = (t: TipoEx) => t.plural.charAt(0).toUpperCase() + t.plural.slice(1);
+/** Blocos com tinta de ouro: os dois tipos que o dono mais procura (apagar a IA inteira × só o exame). */
+export const TIPOS_DESTAQUE = new Set(["diagnostico", "servico"]);
 
 export type AbaId = "apagar" | "pedidos" | "trilha";
 
-const ABAS: { id: AbaId; rotulo: string; Icone: Icone }[] = [
-  { id: "apagar", rotulo: "Apagar", Icone: Trash2 },
-  { id: "pedidos", rotulo: "Pedidos", Icone: ClipboardList },
-  { id: "trilha", rotulo: "Trilha", Icone: History },
+const ABAS: { id: AbaId; Icone: Icone; admin?: boolean }[] = [
+  { id: "apagar", Icone: Trash2 },
+  { id: "pedidos", Icone: ClipboardList },
+  { id: "trilha", Icone: History, admin: true },
 ];
 
 /** Moldura de PÁGINA CHEIA (não gaveta): UM só cabeçalho (título + abas na mesma linha) e UMA faixa de aviso. */
-export function MolduraExcluir({ children, pedidosPendentes = 2 }: { children: React.ReactNode; pedidosPendentes?: number }) {
+export function MolduraExcluir({ children, aba = "apagar", onAba, souAdmin = false, pedidosPendentes = 0 }: {
+  children: React.ReactNode; aba?: AbaId; onAba?: (a: AbaId) => void; souAdmin?: boolean; pedidosPendentes?: number;
+}) {
+  const rotulo = (id: AbaId) => (id === "apagar" ? "Apagar" : id === "pedidos" ? (souAdmin ? "Pedidos" : "Meus pedidos") : "Trilha");
   return (
     <div className="gv-quadro gx-quadro" style={{ ["--gv-largura" as string]: "100%" }}>
       <EstiloExcluir />
       <div className="gx-topo">
         <span className="gx-titulo"><Trash2 size={15} aria-hidden /> Excluir lançamento</span>
         <div className="gx-abas" role="tablist" aria-label="Excluir lançamento">
-          {ABAS.map((a) => (
-            <button key={a.id} type="button" role="tab" className="gx-aba" aria-selected={a.id === "apagar"}>
-              <a.Icone size={14} aria-hidden />{a.rotulo}
-              {a.id === "pedidos" && pedidosPendentes > 0 && <span className="gx-aba-n" title={`${pedidosPendentes} pedidos esperando decisão`}>{pedidosPendentes}</span>}
+          {ABAS.filter((a) => !a.admin || souAdmin).map((a) => (
+            <button key={a.id} type="button" role="tab" id={`gx-aba-${a.id}`} className="gx-aba" aria-selected={a.id === aba}
+              aria-controls="gx-painel" onClick={() => onAba?.(a.id)}>
+              <a.Icone size={14} aria-hidden />{rotulo(a.id)}
+              {a.id === "pedidos" && pedidosPendentes > 0 && (
+                <span className="gx-aba-n" title={`${pedidosPendentes} ${pedidosPendentes === 1 ? "pedido" : "pedidos"} ${souAdmin ? "esperando decisão" : "seu(s) em análise"}`}>{pedidosPendentes}</span>
+              )}
             </button>
           ))}
         </div>
         <span className="gv-espaco" style={{ flex: 1 }} />
-        <Selo tom="info" titulo="Administrador: exclui na hora. Os demais usuários enviam um pedido.">Administrador · apaga na hora</Selo>
+        {souAdmin
+          ? <Selo tom="info" titulo="Administrador: exclui na hora. Os demais usuários enviam um pedido.">Administrador · apaga na hora</Selo>
+          : <Selo tom="neutro" titulo="Você envia um pedido de exclusão; o administrador decide.">Você pede · o administrador decide</Selo>}
       </div>
-      <div className="gv-corpo gx-corpo">
+      <div className="gv-corpo gx-corpo" id="gx-painel" role="tabpanel" aria-labelledby={`gx-aba-${aba}`}>
         <div className="gx-aviso" role="note">
           <AlertTriangle size={15} aria-hidden />
-          <span><b>Exclusão apaga de verdade.</b> Administradores excluem na hora; os demais usuários só solicitam e o administrador decide.</span>
+          {souAdmin
+            ? <span><b>Exclusão apaga de verdade.</b> Você é administrador: exclui na hora, com motivo, e fica registrado na trilha.</span>
+            : <span><b>Exclusão apaga de verdade.</b> Você solicita e o administrador decide; acompanhe em Meus pedidos.</span>}
         </div>
         {children}
       </div>
@@ -140,16 +78,18 @@ export function MolduraExcluir({ children, pedidosPendentes = 2 }: { children: R
   );
 }
 
+export type ItemMigalha = { texto: string; aoClicar?: () => void };
+
 /** Migalhas: "Tipos › Diagnósticos de gestação › 11153". O que não é o último item volta um passo. */
-export function Migalhas({ itens }: { itens: string[] }) {
+export function Migalhas({ itens }: { itens: ItemMigalha[] }) {
   return (
     <nav aria-label="Onde você está" className="gx-migalhas">
       <ol>
         {itens.map((t, i) => {
           const ultimo = i === itens.length - 1;
           return (
-            <li key={t}>
-              {ultimo ? <span aria-current="page">{t}</span> : <button type="button" className="gx-link">{t}</button>}
+            <li key={`${i}-${t.texto}`}>
+              {ultimo ? <span aria-current="page">{t.texto}</span> : <button type="button" className="gx-link" onClick={t.aoClicar}>{t.texto}</button>}
               {!ultimo && <ChevronRight size={13} aria-hidden />}
             </li>
           );
@@ -281,5 +221,32 @@ const CSS = `
 .gx-depois > .gv-rotulo { padding: 0.55rem 0.9rem; border-bottom: 1px dashed var(--border); }
 .gx-depois .gv-barra { position: static; margin: 0; border-top: 0; }
 .gx-ok { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--ft-verde); font-weight: 700; }
+.gx-lote-det { margin-top: 0.5rem; font-size: 0.78rem; }
+.gx-lote-det summary { cursor: pointer; font-weight: 700; color: var(--ft-aco); }
+.gx-lote-det ul { margin: 0.2rem 0 0; padding-left: 1.1rem; color: var(--text-muted); }
+.gx-ok[data-tom="pedido"] { color: var(--ft-aco); }
 .gx-comprovante { font-variant-numeric: tabular-nums; font-weight: 800; padding: 0.05rem 0.4rem; border: 1px solid var(--border-strong, var(--border)); border-radius: var(--r-sm); background: var(--surface); }
+
+/* Responsivo: esta tela também roda no app de campo (celular) e dentro de Cadastro. */
+@media (max-width: 1280px) { .gx-grade { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 900px) {
+  .gx-grade { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gx-topo { flex-wrap: wrap; gap: 0.4rem 1rem; padding-top: 0.4rem; }
+  .gx-linha-busca { flex-wrap: wrap; }
+  .gx-busca, .gx-filtros .gx-campo-busca { flex: 1 1 100%; }
+  .gx-todos { flex: 1 1 100%; }
+  .gx-compara, .gx-impacto, .gx-decisao { grid-template-columns: 1fr; }
+  .gx-compara > div + div { border-left: 0; border-top: 1px solid var(--border); }
+  .gx-desfazer { flex-direction: column; align-items: flex-start; }
+  .gx-desfazer-dir { margin-left: 0; align-items: flex-start; }
+}
+@media (max-width: 520px) {
+  .gx-grade { grid-template-columns: 1fr; }
+  .gx-niveis { grid-template-columns: 1fr; }
+  .gx-nivel + .gx-nivel { border-left: 0; border-top: 1px solid var(--border); }
+  .gx-abas { overflow-x: auto; }
+}
+.gx-retorno-op { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; padding: 0.5rem 0.75rem; margin-bottom: 0.75rem; border: 1px solid var(--border);
+  border-left: 3px solid var(--ft-aco); border-radius: var(--r-sm); background: var(--surface-2); font-size: 0.8rem; }
+.gx-th-ord:focus-visible, .gx-link:focus-visible, .gx-pag-botoes button:focus-visible { outline: 2px solid var(--ft-ouro); outline-offset: 2px; }
 `;

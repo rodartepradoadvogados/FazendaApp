@@ -1,847 +1,508 @@
 "use client";
+// Lançar › Reprodutivo › Parto / nascimento — tela gerencial (passos numerados, tabela com caixas, barra fixa no pé).
+// Substitui o formulário antigo (25 campos, duas colunas com rolagem própria). Mantém o export, o nome e as props
+// (animais, lotes, onSalvo), então app/lancamentos/page.tsx não muda. Peças visuais: components/gerencial/telas/PartoPecas.tsx;
+// regras puras (sexo obrigatório, payloads, colostro): lib/partoLancamento.ts (testado em lib/partoLancamento.test.ts).
+//
+// Endpoints (iguais aos do formulário antigo): POST /reproducao/parto · POST /reproducao/encerramento-gestacao (aborto) ·
+// POST /sanidade/colostragem (um por cria) · POST /producao/sugestao-lote-evento · POST /movimentacoes/mover · POST /lotes/preview
+// (Categoria) · GET /parametros/transferencia-lote-automatica.
+// Falha da colostragem ou do lote NUNCA desfaz o parto já salvo: vira "Atenção: …" no retorno da barra.
 import React, { useEffect, useMemo, useState } from "react";
-import { Baby, BookOpen, ExternalLink, X } from "lucide-react";
-import { criarMovimentacao, criarParto, encerrarGestacao, previewCriteriosLote, registrarColostragem, sugestaoLoteEvento, fetchTransferenciaLoteAutomatica, LoteSugeridoEvento } from "@/lib/api";
-import { AnimalRow } from "@/components/AnimalModal";
-import { TabBar } from "@/components/ui";
-import { Campo, codigoGrupo, inputStyle, nota } from "@/components/lancamentos/comumForms";
-import { SelectAnimal, CATEGORIAS_ANIMAIS } from "@/components/lancamentos/_shared";
+import {
+  criarMovimentacao, criarParto, encerrarGestacao, fetchTransferenciaLoteAutomatica, previewCriteriosLote, registrarColostragem,
+  sugestaoLoteEvento, type LoteSugeridoEvento,
+} from "@/lib/api";
+import type { AnimalRow } from "@/components/AnimalModal";
+import { codigoGrupo } from "@/components/lancamentos/comumForms";
+import { CATEGORIAS_ANIMAIS } from "@/components/lancamentos/_shared";
 import { PopupAborto } from "@/components/lancamentos/PopupAborto";
-import { Modal } from "@/components/Modal";
+import { Ajuda, BarraAcao, BotaoOuro, Faixa, Passo, Pilulas } from "@/components/gerencial/kit";
+import { BuscaMatrizes, EstiloRepro, PilulasX, alterna, fmtData } from "@/components/gerencial/telas/ReprodutivoComum";
+import {
+  EstiloParto, PainelColostro, PainelLotes, TabelaPartos, type CriaColostro, type ItemRevisaoLote, type MaeLinha,
+} from "@/components/gerencial/telas/PartoPecas";
+import { hojeLocal, somaDias } from "@/lib/financeiroSituacao";
+import { invalidarEstadosReprodutivos, useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
+import { normalizarBusca } from "@/lib/busca";
+import {
+  abortosSemResposta, baixada2Efetiva, baixadaEfetiva, chaveCria, colostroTemDado, colostroVazio, ehAborto, linhaEfetiva,
+  linhaVazia, payloadColostragem, payloadParto, problemasDeSalvar, relativoPrevisto, resumoDosPartos, TIPOS_PARTO_LOTE,
+  type Colostro, type EfetivaParto, type LinhaParto,
+} from "@/lib/partoLancamento";
 
-const LINK_COLOSTRO = "https://altagenetics.inf.br/shared/Circulares/Informativo_formas%20de%20utiliza%C3%A7%C3%A3o%20colostro_site.pdf";
-/* ───────────────────────── Manual do colostro (modal em tela) ───────────────────────── */
-const MANUAL_COLOSTRO = [
-  { t: "1. Nascimento e ordenha rápida", d: "Curar umbigo (iodo 10%). Ordenhar a vaca na 1ª HORA pós-parto, com higiene total dos tetos. Coletar todo o colostro em balde limpo. Meta: ordenhar dentro da 1ª hora." },
-  { t: "2. Teste de qualidade (Brix)", d: "Misturar o colostro. Pingar 2 gotas no refratômetro limpo e ler a escala Brix contra a luz." },
-  { t: "3. A decisão", d: ">25% (OURO): congelar/dar (excelente). 18–25% (PRATA): enriquecer com pó até 25% (médio). <18% (BRONZE): descartar 1ª mamada (ruim) — apenas se o estoque estiver cheio." },
-  { t: "4. Banco de colostro (congelamento)", d: "2 L de colostro OURO (>25%) no saco. Tirar o ar, selar, etiquetar (data, vaca, Brix), deitar na forma e congelar." },
-  { t: "5. A hora de mamar", d: "Descongelar em banho-maria (máx. 50°C — use termômetro!). Fornecer a 37°C. Volume: 10% do peso vivo (aprox. 4 L)." },
-  { t: "6. O tira-teima (monitoramento)", d: "Coletar sangue da bezerra entre 24h e 48h de vida. Separar o soro e medir no refratômetro. Meta: Brix do soro > 8,4%." },
-];
-const MANUAL_SANGUE = [
-  { t: "1. O momento certo", d: "Coletar entre 24h e 48h após o nascimento. Antes de 24h a absorção continua; após 48h perde precisão." },
-  { t: "2. A coleta", d: "Conter a bezerra. Agulha e tubo limpos (tampa vermelha). Coletar 5 ml da veia jugular. Higiene total." },
-  { t: "3. Separação do soro", d: "Deixar o tubo em pé em temperatura ambiente por 2–4 horas. O sangue coagula e libera o soro (líquido amarelo)." },
-  { t: "4. Leitura no refratômetro", d: "Limpar o refratômetro. Pingar uma gota do SORO amarelo (não o sangue). Ler a escala Brix contra a luz." },
-  { t: "5. Resultado e ação", d: "≥ 8,4% (sucesso): manter rotina, bezerra protegida. 8,1–8,3% (alerta): monitorar e revisar rotina de colostro. ≤ 8,0% (falha): ação urgente, bezerra desprotegida." },
-  { t: "6. Ação urgente (falha ≤ 8,0%)", d: "1) Isolar a bezerra. 2) Monitorar temperatura 2x/dia. 3) Avisar Vet/Gerente. 4) Auditar urgente a rotina de colostro." },
-];
-function ManualColostroModal({ onClose }: { onClose: () => void }) {
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "1rem" }} onClick={onClose}>
-      <div className="card" style={{ width: "500px", maxWidth: "96vw", maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-3">
-          <div className="card-header" style={{ margin: 0 }}>Manual — Rotina do Colostro</div>
-          <button onClick={onClose} title="Fechar" aria-label="Fechar" style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><X size={20} /></button>
-        </div>
-        <div className="space-y-2">
-          {MANUAL_COLOSTRO.map((s) => (
-            <div key={s.t} style={{ borderLeft: "3px solid var(--green-light)", paddingLeft: "0.6rem" }}>
-              <p style={{ fontSize: "0.8rem", fontWeight: 700 }}>{s.t}</p>
-              <p style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{s.d}</p>
-            </div>
-          ))}
-        </div>
-        <a href={LINK_COLOSTRO} target="_blank" rel="noreferrer" className="flex items-center gap-2 mt-4" style={{ color: "var(--dourado-light)", fontSize: "0.8rem" }}>
-          <ExternalLink size={14} /> Abrir a tabela oficial da Alta (PDF)
-        </a>
-      </div>
-    </div>
-  );
-}
+type Modo = "animal" | "lote" | "categoria";
+type PendenciaLote = { numero: string; rotuloAnimal: string; loteSugerido: LoteSugeridoEvento; motivo: string; data: string };
+type ErroComMsg = { message?: string };
+const msgDe = (e: unknown) => (e as ErroComMsg | null)?.message;
+type Retorno = { ok: string; atencao: string[]; erros: string[]; movidos: string[] };
 
-function ManualSangueModal({ onClose }: { onClose: () => void }) {
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "1rem" }} onClick={onClose}>
-      <div className="card" style={{ width: "500px", maxWidth: "96vw", maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-3">
-          <div className="card-header" style={{ margin: 0 }}>Manual — Teste de Sangue (IgG)</div>
-          <button onClick={onClose} title="Fechar" aria-label="Fechar" style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><X size={20} /></button>
-        </div>
-        <div className="space-y-2">
-          {MANUAL_SANGUE.map((s) => (
-            <div key={s.t} style={{ borderLeft: "3px solid var(--blue)", paddingLeft: "0.6rem" }}>
-              <p style={{ fontSize: "0.8rem", fontWeight: 700 }}>{s.t}</p>
-              <p style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{s.d}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-// Classificação padrão ouro/prata/bronze (manual da fazenda):
-//  > 25% OURO (excelente) · 18–25% PRATA (médio, enriquecer) · < 18% BRONZE (ruim).
-// Tabela de enriquecimento: medidas de pó por litro = Brix alvo − Brix atual.
-function classeColostro(brix: number): { txt: string; cor: string } {
-  if (brix > 25) return { txt: "Ouro (excelente)", cor: "var(--dourado-light)" };
-  if (brix >= 18) return { txt: "Prata (médio — enriquecer)", cor: "var(--text-muted)" };
-  return { txt: "Bronze (ruim — descartar 1ª mamada)", cor: "var(--red)" };
-}
-
-// Brix do soro (teste de IgG): >=8,4 sucesso; 8,1-8,3 alerta; <=8,0 falha.
-function classeSoro(brix: number): { txt: string; cor: string } {
-  if (brix >= 8.4) return { txt: "Sucesso — bezerra protegida", cor: "var(--green-light)" };
-  if (brix >= 8.1) return { txt: "Alerta — monitorar, revisar colostro", cor: "var(--amber)" };
-  return { txt: "Falha — bezerra desprotegida (ação urgente)", cor: "var(--red)" };
-}
-const OPCOES_SORO = Array.from({ length: 13 }, (_, i) => (6 + i * 0.5).toFixed(1)); // 6,0 … 12,0
-
-// Eficiência de colostragem em 4 níveis por Brix sérico (%) OU proteína
-// sérica (g/dL) — o que estiver disponível (Brix tem prioridade).
-function classeColostragemUI(brix: number | null, proteina: number | null): { txt: string; cor: string } {
-  const excelente = { txt: "Excelente", cor: "var(--green-light)" };
-  const boa = { txt: "Boa", cor: "var(--dourado-light)" };
-  const aceitavel = { txt: "Aceitável", cor: "var(--amber)" };
-  const ruim = { txt: "Ruim — bezerra desprotegida", cor: "var(--red)" };
-  if (brix != null && !Number.isNaN(brix)) {
-    if (brix > 9.4) return excelente;
-    if (brix >= 8.9) return boa;
-    if (brix >= 8.1) return aceitavel;
-    return ruim;
-  }
-  if (proteina != null && !Number.isNaN(proteina)) {
-    if (proteina > 6.2) return excelente;
-    if (proteina >= 5.8) return boa;
-    if (proteina >= 5.1) return aceitavel;
-    return ruim;
-  }
-  return { txt: "—", cor: "var(--text-muted)" };
-}
+const soData = (iso: string | null | undefined) => (iso && /^\d{4}-\d{2}-\d{2}/.test(iso) ? iso.slice(0, 10) : null);
+const ehFemeaAtiva = (a: AnimalRow) => (a.sexo || "").toUpperCase() !== "M" && a.ativo !== false;
 
 export function FormParto({ animais, lotes, onSalvo }: { animais: AnimalRow[]; lotes: string[]; onSalvo?: () => void }) {
-  const [modo, setModo] = useState<"animal" | "lote" | "categoria">("animal");
-  const [matriz, setMatriz] = useState("");
-  const [dataParto, setDataParto] = useState(() => new Date().toISOString().slice(0, 10));
-  const [tipoParto, setTipoParto] = useState("");
-  const [gemelar, setGemelar] = useState(false);
-  const [gemelarSexo, setGemelarSexo] = useState("");
-  const [criaNumero, setCriaNumero] = useState("");
-  const [criaSexo, setCriaSexo] = useState("");
-  const [criaBaixada, setCriaBaixada] = useState(false);
-  const [cria2Numero, setCria2Numero] = useState("");
-  const [cria2Sexo, setCria2Sexo] = useState("");
-  const [cria2Baixada, setCria2Baixada] = useState(false);
-  const [retencaoPlacenta, setRetencaoPlacenta] = useState(false);
+  const hoje = useMemo(() => hojeLocal(), []);
+  const { porNumero, rotuloDe } = useEstadosReprodutivos();
+
+  const [modo, setModo] = useState<Modo>("animal");
+  const modoLote = modo !== "animal";
+
+  // "Uma matriz": linhas adicionadas (uma por parto). Lote/Categoria: dados por matriz e marcação própria.
+  const [adds, setAdds] = useState<string[]>([]);
+  const [dadosAnimal, setDadosAnimal] = useState<Record<string, LinhaParto>>({});
+  const [colostros, setColostros] = useState<Record<string, Colostro>>({});
+  const [busca, setBusca] = useState("");
+  const [abertas, setAbertas] = useState<Set<string>>(new Set());
+
+  const [lote, setLote] = useState("");
+  const [cats, setCats] = useState<string[]>([]);
+  const [catsCarregadas, setCatsCarregadas] = useState<{ chave: string; nums: string[] }>({ chave: "", nums: [] });
+  const [dadosLote, setDadosLote] = useState<Record<string, LinhaParto>>({});
+  const [marcLote, setMarcLote] = useState<Set<string>>(new Set());
+  const [lancadosLote, setLancadosLote] = useState<Set<string>>(new Set());
+  const [dataTodas, setDataTodas] = useState(hoje);
+  const [tipoTodas, setTipoTodas] = useState("");
+
   const [salvando, setSalvando] = useState(false);
-  const [erro, setErro] = useState<string | null>(null);
-  const [sucesso, setSucesso] = useState<string | null>(null);
-  // Aborto: não gera cria — some com o bloco de cria/colostro/IgG. Ao salvar,
-  // pergunta sobre a lactação (PopupAborto) e grava tudo num POST só (ver
-  // `concluirAborto`): o `Parto` do aborto (com `ordem_parto` NULL, para não
-  // contar como cria em IEP/ordem de parto), a perda de prenhez no serviço
-  // certo e, se for o caso, a `Lactacao` com a data real do evento.
-  const ehAborto = tipoParto === "Aborto";
-  const [abortoPendente, setAbortoPendente] = useState<string | null>(null);
-  // Natimorto: nasceu, mas não entra no rebanho — baixa automática, sexo
-  // continua sendo perguntado (relatório de % de machos/fêmeas).
-  useEffect(() => {
-    if (tipoParto === "Natimorto") { setCriaBaixada(true); setCria2Baixada(true); }
-  }, [tipoParto]);
-
-  const [tomouColostro, setTomou] = useState("");
-  const [litros, setLitros] = useState("");
-  const [brix, setBrix] = useState("");
-  const [alvo, setAlvo] = useState("25");
-  const [horaParto, setHoraParto] = useState("");
-  const [horaColostro, setHoraColostro] = useState("");
-  const [pesoNascer, setPesoNascer] = useState("");
-  const [manualColostroAberto, setManualColostroAberto] = useState(false);
-  const [manualSangueAberto, setManualSangueAberto] = useState(false);
-
-  const [soro, setSoro] = useState("");
-  const [proteinaSerica, setProteinaSerica] = useState("");
-  const [apenasColostroPo, setApenasColostroPo] = useState(false);
-  const brixN = brix ? Number(brix) : null;
-  const litrosN = litros ? Number(litros) : 0;
-  const cls = brixN != null ? classeColostro(brixN) : null;
-  const soroN = soro ? Number(soro) : null;
-  const clsSoro = soroN != null ? classeSoro(soroN) : null;
-  const enriquecer = brixN != null && brixN < 25;
-  const medidasPorL = enriquecer ? Math.max(0, Number(alvo) - brixN!) : 0;
-  const totalMedidas = medidasPorL * (litrosN || 1);
-  // Intervalo parto→colostro em horas (a partir de "HH:MM"), tratando virada de dia.
-  const intervaloColostroHoras = (() => {
-    if (!horaParto || !horaColostro) return null;
-    const [hp, mp] = horaParto.split(":").map(Number);
-    const [hc, mc] = horaColostro.split(":").map(Number);
-    if ([hp, mp, hc, mc].some((n) => Number.isNaN(n))) return null;
-    let diff = (hc * 60 + mc) - (hp * 60 + mp);
-    if (diff < 0) diff += 24 * 60; // colostro no dia seguinte ao parto
-    return diff / 60;
-  })();
-
-  // Confirmações de troca de lote pendentes (mãe + cria(s)) — UMA janela só,
-  // com um seletor de lote por animal (em vez da fila de pop-ups "Sim/Não"
-  // um de cada vez que existia antes, pedido explícito do usuário). `codigo`
-  // de cada `<option>` vem de `codigoGrupo` sobre o rótulo do lote — mesmo
-  // esquema de 2 dígitos usado em todo o app para casar rótulo↔código.
-  // `rotuloAnimal` é só o texto ("a vaca", "o bezerro", "a bezerra") usado no
-  // rótulo da pergunta.
-  type PendenciaLote = { numero: string; rotuloAnimal: string; loteSugerido: LoteSugeridoEvento; motivo: string };
+  const [retorno, setRetorno] = useState<Retorno | null>(null);
+  const [filaAborto, setFilaAborto] = useState<string[]>([]);
   const [filaLotes, setFilaLotes] = useState<PendenciaLote[]>([]);
-  // Escolha de cada animal na janela: código do lote, ou "" = "não
-  // movimentar" (mantém no lote atual). Começa em cada sugestão do backend,
-  // mas o usuário pode trocar por qualquer lote ou por "não movimentar"
-  // antes de confirmar.
-  const [escolhasLote, setEscolhasLote] = useState<Record<string, string>>({});
-  useEffect(() => {
-    if (!filaLotes.length) return;
-    setEscolhasLote(Object.fromEntries(filaLotes.map((p) => [p.numero, p.loteSugerido.codigo])));
-  }, [filaLotes]);
-  const opcoesLote = useMemo(
-    () => lotes.map((l) => ({ codigo: codigoGrupo(l), rotulo: l })).filter((o): o is { codigo: string; rotulo: string } => !!o.codigo),
-    [lotes]
-  );
+  const [lotesAberto, setLotesAberto] = useState(false);
   const [movendoLote, setMovendoLote] = useState(false);
-  // Configurações > Parâmetros > "transferir para o lote sugerido
-  // automaticamente" — quando ligado, mãe e cria(s) são movidas sozinhas
-  // (mesmo caminho de `alocarSemConfirmar`, já usado no lançamento em lote),
-  // sem abrir a fila de confirmação abaixo.
+
+  // Configurações > Parâmetros > "transferir para o lote sugerido automaticamente": mãe e crias vão sozinhas, sem revisão.
   const [transferenciaAutomatica, setTransferenciaAutomatica] = useState(false);
   useEffect(() => { fetchTransferenciaLoteAutomatica().then(setTransferenciaAutomatica).catch(() => {}); }, []);
 
-  // Busca a sugestão real de lote (motor de critérios do backend) para um
-  // animal num evento de vida (parto/nascimento) e decide se vale a pena
-  // perguntar: sem sugestão (nenhum lote bate nos critérios) não pergunta
-  // nada e não trava o fluxo; se a sugestão for igual ao lote atual do
-  // animal, também não pergunta (evita pop-up redundante). Retorna a
-  // pendência (para entrar na fila) ou null. Falhas na própria busca da
-  // sugestão são best-effort — só avisam no fim, não bloqueiam o parto.
+  const opcoesLote = useMemo(
+    () => lotes.map((l) => ({ codigo: codigoGrupo(l), rotulo: l })).filter((o): o is { codigo: string; rotulo: string } => !!o.codigo),
+    [lotes],
+  );
+  const porNum = useMemo(() => new Map(animais.map((a) => [a.numero, a])), [animais]);
+
+  // Categoria: união das categorias marcadas (mesmo motor de critérios de Configurações > Lotes — POST /lotes/preview).
+  const chaveCats = [...cats].sort().join("|");
+  useEffect(() => {
+    if (!cats.length) return;
+    let vivo = true;
+    Promise.all(cats.map((id) => {
+      const cat = CATEGORIAS_ANIMAIS.find((c) => c.id === id);
+      if (!cat) return Promise.resolve([] as string[]);
+      return previewCriteriosLote(cat.criterios).then((r: { animais?: string[] }) => r.animais || []).catch(() => [] as string[]);
+    })).then((listas) => { if (vivo) setCatsCarregadas({ chave: chaveCats, nums: Array.from(new Set(listas.flat())) }); });
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chaveCats]);
+  const carregandoCats = cats.length > 0 && catsCarregadas.chave !== chaveCats;
+  const uniaoCats = useMemo(() => (cats.length > 0 && catsCarregadas.chave === chaveCats ? catsCarregadas.nums : []), [cats.length, catsCarregadas, chaveCats]);
+
+  // Lote/Categoria: matrizes da fonte escolhida (só fêmeas ativas — macho/baixado não pare).
+  const fonteLote = useMemo<AnimalRow[]>(() => {
+    if (modo === "lote") return lote ? animais.filter((a) => a.grupo_primario === lote && ehFemeaAtiva(a)) : [];
+    if (modo === "categoria") { const s = new Set(uniaoCats); return animais.filter((a) => s.has(a.numero) && ehFemeaAtiva(a)); }
+    return [];
+  }, [modo, lote, uniaoCats, animais]);
+  const fonteLoteVis = useMemo(() => fonteLote.filter((a) => !lancadosLote.has(a.numero)), [fonteLote, lancadosLote]);
+
+  // Decisão do dono: no Lote/Categoria ficam marcadas TODAS as matrizes (como no formulário antigo).
+  const chaveFonte = `${modo}|${lote}|${uniaoCats.join(",")}`;
+  const [chaveVista, setChaveVista] = useState(chaveFonte);
+  if (chaveVista !== chaveFonte) {
+    // Troca de lote/categoria: reaplica "todas marcadas" (ajuste de estado durante a renderização, sem efeito).
+    setChaveVista(chaveFonte);
+    setMarcLote(new Set(fonteLote.map((a) => a.numero)));
+    setLancadosLote(new Set());
+  }
+
+  const dados = modoLote ? dadosLote : dadosAnimal;
+  const setDados = modoLote ? setDadosLote : setDadosAnimal;
+  const muda = (n: string, p: Partial<LinhaParto>) => setDados((d) => ({ ...d, [n]: { ...(d[n] ?? linhaVazia(hoje)), ...p } }));
+
+  function infoMae(n: string): MaeLinha {
+    const a = porNum.get(n);
+    const e = porNumero.get(n);
+    const cod = codigoGrupo(a?.grupo_primario) ?? a?.grupo_primario ?? "—";
+    const prev = soData(e?.parto_previsto);
+    const sub = e?.estado === "gestante" && prev
+      ? `${cod} · prevista ${fmtData(prev, true)} (${relativoPrevisto(prev, hoje)})`
+      : `${cod} · ${rotuloDe(n)}`;
+    return { n, lote: a?.grupo_primario ?? "", sub };
+  }
+
+  const linhasVis: MaeLinha[] = useMemo(
+    () => (modoLote ? fonteLoteVis.map((a) => a.numero) : adds).map(infoMae),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [modoLote, fonteLoteVis, adds, porNum, porNumero, hoje],
+  );
+  const marc: ReadonlySet<string> = useMemo(() => (modoLote ? marcLote : new Set(adds)), [modoLote, marcLote, adds]);
+
+  function aoMarcar(n: string) {
+    if (!modoLote) {
+      setAdds((a) => a.filter((x) => x !== n));
+      return;
+    }
+    setMarcLote((m) => alterna(m, n));
+  }
+  function adiciona(n: string) {
+    if (adds.includes(n)) return;
+    setAdds((a) => [...a, n]);
+    setDadosAnimal((d) => ({ ...d, [n]: d[n] ?? linhaVazia(hoje) }));
+    setBusca("");
+  }
+  function trocaModo(m: Modo) { setModo(m); setRetorno(null); }
+  const alternaCat = (id: string) => setCats((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
+
+  // Sugestões de "Uma matriz": gestantes com parto previsto nos próximos 3 dias (e as atrasadas); ou o resultado da busca.
+  const sugestoes = useMemo(() => {
+    const q = normalizarBusca(busca.trim());
+    if (q) {
+      return animais
+        .filter((a) => ehFemeaAtiva(a) && !adds.includes(a.numero) && normalizarBusca(`${a.numero} ${a.grupo_primario ?? ""}`).includes(q))
+        .slice(0, 8).map((a) => ({ n: a.numero, rot: soData(porNumero.get(a.numero)?.parto_previsto) }));
+    }
+    const lim = somaDias(hoje, 3);
+    return animais
+      .filter((a) => ehFemeaAtiva(a) && !adds.includes(a.numero))
+      .map((a) => ({ n: a.numero, e: porNumero.get(a.numero) }))
+      .filter((x) => x.e?.estado === "gestante" && soData(x.e?.parto_previsto) && soData(x.e?.parto_previsto)! <= lim)
+      .sort((p, q2) => soData(p.e?.parto_previsto)!.localeCompare(soData(q2.e?.parto_previsto)!))
+      .slice(0, 12).map((x) => ({ n: x.n, rot: soData(x.e?.parto_previsto) }));
+  }, [busca, animais, adds, porNumero, hoje]);
+
+  // Faixa de números (o estado do mundo antes de lançar).
+  const faixa = useMemo(() => {
+    const carregado = porNumero.size > 0;
+    const gest = animais.filter((a) => a.ativo !== false).map((a) => ({ a, prev: porNumero.get(a.numero)?.estado === "gestante" ? soData(porNumero.get(a.numero)?.parto_previsto) : null })).filter((x) => x.prev);
+    const v = (n: number) => (carregado ? n : "—");
+    return [
+      { rotulo: "A parir em 7 dias", valor: v(gest.filter((x) => x.prev! <= somaDias(hoje, 7)).length) },
+      { rotulo: "Passaram da data prevista", valor: v(gest.filter((x) => x.prev! < hoje).length), tom: "atencao" as const },
+      { rotulo: "Partos lançados hoje", valor: animais.filter((a) => soData(a.data_ult_parto) === hoje).length, tom: "ok" as const },
+      { rotulo: "Novilhas a parir em 15 dias", valor: v(gest.filter((x) => /novilha/i.test(x.a.categoria_abrev || x.a.categoria_completa || "") && x.prev! <= somaDias(hoje, 15)).length) },
+    ];
+  }, [animais, porNumero, hoje]);
+
+  // Efeito do que está marcado.
+  const efetivas: EfetivaParto[] = useMemo(
+    () => linhasVis.filter((g) => marc.has(g.n)).map((g) => ({ n: g.n, l: linhaEfetiva(dados[g.n] ?? linhaVazia(hoje), modoLote, dataTodas, tipoTodas) })),
+    [linhasVis, marc, dados, modoLote, dataTodas, tipoTodas, hoje],
+  );
+  const resumo = resumoDosPartos(efetivas);
+  const problemas = problemasDeSalvar(efetivas);
+  const existentes = useMemo(() => new Set(animais.map((a) => a.numero)), [animais]);
+  const repetidas = new Set(problemas.repetidas);
+  const bloqueado = efetivas.length === 0 || problemas.semSexo.length > 0 || problemas.semData.length > 0 || problemas.repetidas.length > 0;
+
+  // Colostro/IgG: um registro por cria que vai ser cadastrada (número informado e não baixada). Só em "Uma matriz".
+  const criasColostro: CriaColostro[] = [];
+  const criasSemColostro: string[] = [];
+  if (!modoLote) {
+    for (const e of efetivas) {
+      if (ehAborto(e.l)) continue;
+      const c1 = e.l.cria.trim();
+      if (c1) { if (baixadaEfetiva(e.l)) criasSemColostro.push(c1); else criasColostro.push({ chave: chaveCria(e.n, 1), cria: c1, mae: e.n, ordem: 1 }); }
+      const c2 = e.l.gemelar ? e.l.cria2.trim() : "";
+      if (c2) { if (baixada2Efetiva(e.l)) criasSemColostro.push(c2); else criasColostro.push({ chave: chaveCria(e.n, 2), cria: c2, mae: e.n, ordem: 2 }); }
+    }
+  }
+  const mudaColostro = (chave: string, patch: Partial<Colostro>) => setColostros((c) => ({ ...c, [chave]: { ...(c[chave] ?? colostroVazio()), ...patch } }));
+
+  /* ───────────── lote (sugestão do motor de critérios) ───────────── */
   async function prepararPendenciaLote(
-    numero: string, rotuloAnimal: string, categoriaAbrev: string,
-    extra: { del_dias?: number | null; data_nasc?: string | null },
-    loteAtualRotulo: string | null, motivo: string, falhas: string[]
+    numero: string, rotuloAnimal: string, categoriaAbrev: string, extra: { del_dias?: number | null; data_nasc?: string | null },
+    loteAtualRotulo: string | null, motivo: string, data: string, falhas: string[],
   ): Promise<PendenciaLote | null> {
     try {
       const { lote_sugerido } = await sugestaoLoteEvento({ numero_matriz: numero, categoria_abrev: categoriaAbrev, ...extra });
       if (!lote_sugerido) return null; // nenhum lote bate nos critérios — segue sem perguntar
       if (loteAtualRotulo && lote_sugerido.rotulo === loteAtualRotulo) return null; // já está lá
-      return { numero, rotuloAnimal, loteSugerido: lote_sugerido, motivo };
-    } catch (e: any) {
-      falhas.push(`sugestão de lote para ${numero} não pôde ser calculada${e?.message ? `: ${e.message}` : ""}`);
+      return { numero, rotuloAnimal, loteSugerido: lote_sugerido, motivo, data };
+    } catch (e) {
+      falhas.push(`sugestão de lote para ${numero} não pôde ser calculada${msgDe(e) ? `: ${msgDe(e)}` : ""}`);
       return null;
     }
   }
-
-  // Confirma a janela inteira de uma vez: move só quem tem um lote escolhido
-  // (não "" = não movimentar) — SÓ reporta sucesso se a resposta do backend
-  // confirmar que o animal foi realmente movido (`movidos` >= 1 e o número
-  // não está em `nao_encontrados`), não basta o request não ter dado erro.
-  async function confirmarLotes() {
-    const pendentes = filaLotes;
-    setMovendoLote(true);
-    const movidos: string[] = []; const falhas: string[] = [];
-    for (const pend of pendentes) {
-      const codigo = escolhasLote[pend.numero];
-      if (!codigo) continue; // "não movimentar" — mantém no lote atual
-      const rotulo = opcoesLote.find((o) => o.codigo === codigo)?.rotulo || codigo;
-      try {
-        const r = await criarMovimentacao({ data_movimento: dataParto, motivo: pend.motivo, lote_destino_codigo: codigo, animais: [pend.numero], origem: "sugestao_confirmada" });
-        const moveuDeFato = (r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(pend.numero);
-        if (moveuDeFato) movidos.push(`${pend.numero} → ${rotulo}`);
-        else falhas.push(`Não foi possível confirmar a movimentação de ${pend.numero} para o lote ${rotulo}.`);
-      } catch (e: any) {
-        falhas.push(`Erro ao mover ${pend.numero}: ${e?.message || "erro desconhecido"}.`);
-      }
-    }
-    if (movidos.length) setSucesso((s) => `${s ? `${s} ` : ""}Movido(s): ${movidos.join(", ")}.`);
-    if (falhas.length) setErro((e) => `${e ? `${e} ` : ""}${falhas.join(" ")}`);
-    setMovendoLote(false);
-    setFilaLotes([]);
-    setEscolhasLote({});
-  }
-  // Fechar a janela sem confirmar equivale a "não movimentar" ninguém — nada
-  // foi gravado ainda nesse ponto, então não há o que desfazer.
-  function fecharJanelaLotes() {
-    setFilaLotes([]);
-    setEscolhasLote({});
-  }
-
-  // Lançamento em lote (batch): aloca a cria automaticamente, sem
-  // confirmação — usado só em `salvarLote` (ver comentário lá sobre o
-  // porquê). Continua usando a sugestão real (motor de critérios), não um
-  // código fixo, e agora só reporta sucesso se o backend confirmar que a
-  // movimentação de fato aconteceu.
-  async function alocarSemConfirmar(numero: string, categoriaAbrev: string, extra: { del_dias?: number | null; data_nasc?: string | null }, motivo: string, falhas: string[]) {
+  // Aloca sem perguntar (parâmetro ligado, ou cria no Lote/Categoria). Só afirma "movido" se o servidor confirmar.
+  async function alocarSemConfirmar(numero: string, categoriaAbrev: string, extra: { del_dias?: number | null; data_nasc?: string | null }, motivo: string, data: string, falhas: string[]) {
     try {
       const { lote_sugerido } = await sugestaoLoteEvento({ numero_matriz: numero, categoria_abrev: categoriaAbrev, ...extra });
       if (!lote_sugerido) return null;
-      const r = await criarMovimentacao({ data_movimento: dataParto, motivo, lote_destino_codigo: lote_sugerido.codigo, animais: [numero], origem: "sugestao_automatica" });
+      const r = await criarMovimentacao({ data_movimento: data, motivo, lote_destino_codigo: lote_sugerido.codigo, animais: [numero], origem: "sugestao_automatica" });
       const moveuDeFato = (r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(numero);
-      if (!moveuDeFato) {
-        falhas.push(`${numero} não foi movido para o lote ${lote_sugerido.rotulo} (a movimentação não foi confirmada pelo servidor)`);
-        return null;
-      }
+      if (!moveuDeFato) { falhas.push(`${numero} não foi movido para o lote ${lote_sugerido.rotulo} (a movimentação não foi confirmada pelo servidor)`); return null; }
       return lote_sugerido.rotulo as string;
-    } catch (e: any) {
-      falhas.push(`alocação do animal ${numero} não pôde ser feita${e?.message ? `: ${e.message}` : ""}`);
+    } catch (e) {
+      falhas.push(`alocação do animal ${numero} não pôde ser feita${msgDe(e) ? `: ${msgDe(e)}` : ""}`);
     }
     return null;
   }
 
-  // Lançamento em lote: partos simples (sem gêmeos/colostro/IgG) de várias
-  // matrizes de um mesmo lote de uma vez — mesma data e tipo de parto para
-  // todas, cria/retenção de placenta editável linha a linha. Cada linha chama
-  // o mesmo endpoint do lançamento único (não existe endpoint de parto em
-  // lote no backend); a mudança de lote da mãe (que pede confirmação one-by-one
-  // no modo "Uma matriz") não é feita automaticamente aqui para não abrir N
-  // caixas de confirmação — só a alocação da cria (sem confirmação) é mantida.
-  const [loteBatch, setLoteBatch] = useState("");
-  const [selBatch, setSelBatch] = useState<Set<string>>(new Set());
-  const [dadosBatch, setDadosBatch] = useState<Record<string, { criaNumero: string; criaSexo: string; criaBaixada: boolean; retencaoPlacenta: boolean }>>({});
-  const [salvandoBatch, setSalvandoBatch] = useState(false);
-  const [erroBatch, setErroBatch] = useState<string | null>(null);
-  const [sucessoBatch, setSucessoBatch] = useState<string | null>(null);
-
-  const animaisDoLoteBatch = useMemo(() => (loteBatch ? animais.filter((a) => a.grupo_primario === loteBatch) : []), [animais, loteBatch]);
-
-  // Categoria: alternativa ao lote — pode escolher uma ou mais categorias
-  // prontas (mesmo motor de critérios cumulativos de Configurações > Lotes,
-  // POST /lotes/preview, reaproveitando CATEGORIAS_ANIMAIS — mesmo padrão do
-  // Preventivo > Aplicação) para lançar partos em lote sem precisar que as
-  // matrizes estejam todas no mesmo lote.
-  const [categoriasSel, setCategoriasSel] = useState<Set<string>>(new Set());
-  const toggleCategoria = (id: string) => setCategoriasSel((p) => { const s = new Set(p); s.has(id) ? s.delete(id) : s.add(id); return s; });
-  const [animaisCategoriasUniao, setAnimaisCategoriasUniao] = useState<string[]>([]);
-  useEffect(() => {
-    if (!categoriasSel.size) { setAnimaisCategoriasUniao([]); return; }
-    Promise.all(Array.from(categoriasSel).map((id) => {
-      const cat = CATEGORIAS_ANIMAIS.find((c) => c.id === id);
-      if (!cat) return Promise.resolve([] as string[]);
-      return previewCriteriosLote(cat.criterios).then((r: any) => r.animais || []).catch(() => [] as string[]);
-    })).then((listas) => setAnimaisCategoriasUniao(Array.from(new Set(listas.flat()))));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [Array.from(categoriasSel).sort().join("|")]);
-  const animaisDaCategoriaBatch = useMemo(() => {
-    const nums = new Set(animaisCategoriasUniao);
-    return animais.filter((a) => nums.has(a.numero));
-  }, [animais, animaisCategoriasUniao]);
-  const animaisBatchFonte = modo === "categoria" ? animaisDaCategoriaBatch : animaisDoLoteBatch;
-
-  useEffect(() => {
-    setSelBatch(new Set(animaisBatchFonte.map((a) => a.numero)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loteBatch, animaisCategoriasUniao.join("|"), modo]);
-
-  function toggleBatch(numero: string) {
-    setSelBatch((p) => { const s = new Set(p); s.has(numero) ? s.delete(numero) : s.add(numero); return s; });
-  }
-  function toggleTodosBatch() {
-    setSelBatch((p) => (p.size === animaisBatchFonte.length && animaisBatchFonte.length ? new Set() : new Set(animaisBatchFonte.map((a) => a.numero))));
-  }
-  function campoBatch(numero: string) {
-    return dadosBatch[numero] || { criaNumero: "", criaSexo: "", criaBaixada: false, retencaoPlacenta: false };
-  }
-  function setCampoBatch(numero: string, patch: Partial<{ criaNumero: string; criaSexo: string; criaBaixada: boolean; retencaoPlacenta: boolean }>) {
-    setDadosBatch((p) => ({ ...p, [numero]: { ...campoBatch(numero), ...patch } }));
-  }
-
-  async function salvarLote() {
-    setErroBatch(null); setSucessoBatch(null);
-    const alvo = Array.from(selBatch);
-    if (!alvo.length) { setErroBatch("Selecione ao menos uma matriz do lote ou categoria."); return; }
-    if (!dataParto) { setErroBatch("Informe a data do parto."); return; }
-    setSalvandoBatch(true);
-    let partosOk = 0;
-    const criasOk: string[] = [];
-    const falhas: string[] = [];
-    for (const numero of alvo) {
-      const d = campoBatch(numero);
+  async function confirmarLotes(escolhas: Record<string, string>) {
+    const pendentes = filaLotes;
+    setMovendoLote(true);
+    const movidos: string[] = []; const falhas: string[] = [];
+    for (const pend of pendentes) {
+      const codigo = escolhas[pend.numero];
+      if (!codigo) continue; // "Não movimentar"
+      const rotulo = opcoesLote.find((o) => o.codigo === codigo)?.rotulo || codigo;
       try {
-        const crias = d.criaNumero ? [{ numero: d.criaNumero, sexo: d.criaSexo === "Macho" ? "M" : "F", nasceu_viva: !(d.criaBaixada || tipoParto === "Natimorto") }] : [];
-        const r = await criarParto({
-          numero_matriz: numero, data_parto: dataParto, tipo_parto: tipoParto || undefined,
-          crias, retencao_placenta: d.retencaoPlacenta, gemelar: false,
-        });
-        partosOk += 1;
-        for (const c of r.crias_criadas as string[]) {
-          criasOk.push(c);
-          await alocarSemConfirmar(c, d.criaSexo === "Macho" ? "Bezerro" : "Bezerra", { data_nasc: dataParto }, "Nascimento", falhas);
-        }
-      } catch (e: any) {
-        falhas.push(`${numero}: ${e.message || "erro ao registrar parto"}`);
+        const r = await criarMovimentacao({ data_movimento: pend.data, motivo: pend.motivo, lote_destino_codigo: codigo, animais: [pend.numero], origem: "sugestao_confirmada" });
+        const moveuDeFato = (r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(pend.numero);
+        if (moveuDeFato) movidos.push(`${pend.numero} → ${rotulo}`);
+        else falhas.push(`Não foi possível confirmar a movimentação de ${pend.numero} para o lote ${rotulo}.`);
+      } catch (e) {
+        falhas.push(`Erro ao mover ${pend.numero}: ${msgDe(e) || "erro desconhecido"}.`);
       }
     }
-    setSucessoBatch(
-      `${partosOk} de ${alvo.length} parto(s) registrado(s)${criasOk.length ? `; cria(s) cadastrada(s): ${criasOk.join(", ")}` : ""}.` +
-      `${falhas.length ? ` Atenção: ${falhas.join("; ")}.` : ""} A mudança de lote das mães não é automática aqui — use Rebanho > Movimentar animais, se precisar.`
-    );
-    if (partosOk) { setSelBatch(new Set()); setDadosBatch({}); setLoteBatch(""); setCategoriasSel(new Set()); }
-    setSalvandoBatch(false);
+    setRetorno((r) => (r ? { ...r, movidos: [...r.movidos, ...movidos], erros: [...r.erros, ...falhas] } : { ok: "", atencao: [], erros: falhas, movidos }));
+    setMovendoLote(false); setFilaLotes([]); setLotesAberto(false);
   }
 
-  function limparFormulario() {
-    setMatriz(""); setTipoParto(""); setGemelar(false); setGemelarSexo("");
-    setCriaNumero(""); setCriaSexo(""); setCriaBaixada(false);
-    setCria2Numero(""); setCria2Sexo(""); setCria2Baixada(false);
-    setRetencaoPlacenta(false);
-    setTomou(""); setLitros(""); setBrix(""); setSoro(""); setProteinaSerica("");
-    setHoraParto(""); setHoraColostro(""); setPesoNascer(""); setApenasColostroPo(false);
-  }
+  /* ───────────── salvar ───────────── */
+  async function executarSalvar(dadosUsados: Record<string, LinhaParto>) {
+    setSalvando(true); setRetorno(null); setFilaLotes([]); setLotesAberto(false);
+    const alvos = linhasVis.filter((g) => marc.has(g.n)).map((g) => ({ n: g.n, l: linhaEfetiva(dadosUsados[g.n] ?? linhaVazia(hoje), modoLote, dataTodas, tipoTodas) }));
+    const salvos: string[] = [];
+    const partosOk: { n: string; ordem: number | null }[] = []; const abortosOk: string[] = []; const criasOk: string[] = [];
+    const erros: string[] = []; const falhasEfeito: string[] = []; const movidosAuto: string[] = [];
+    const pendencias: PendenciaLote[] = [];
+    let lactacoesAbertas = 0;
 
-  /**
-   * Grava o aborto inteiro num POST só (POST /reproducao/encerramento-gestacao):
-   * `Parto` com `ordem_parto` NULL (a gestação acabou, mas não houve cria),
-   * perda de prenhez carimbada no serviço vigente positivo CERTO, e — se o
-   * usuário respondeu "sim" no popup — a `Lactacao` com a data REAL do
-   * evento, que pode ser retroativa.
-   *
-   * Em seguida roda o MESMO bloco de sugestão de lote do parto normal
-   * (`prepararPendenciaLote`/`alocarSemConfirmar`), que o caminho de aborto
-   * pulava inteiro: a vaca que volta a produzir precisa ir para o lote de
-   * lactação, e ninguém lembrava de mover na mão.
-   */
-  async function concluirAborto(abrirLact: boolean) {
-    setErro(null); setSucesso(null);
-    const numero = matriz;
-    setSalvando(true);
-    try {
-      const r = await encerrarGestacao({
-        numero_matriz: numero,
-        data: dataParto,
-        tipo: "aborto",
-        abrir_lactacao: abrirLact,
-        motivo: "aborto",
-      });
-      const falhasEfeito: string[] = [];
-      const pendencias: PendenciaLote[] = [];
-      const movidos: string[] = [];
-      if (r.sugerir_lote) {
-        const loteAtual = animais.find((a) => a.numero === numero)?.grupo_primario || null;
-        const delDias = r.del_dias ?? 0;
-        if (transferenciaAutomatica) {
-          const destino = await alocarSemConfirmar(numero, "Vaca", { del_dias: delDias }, "Aborto", falhasEfeito);
-          if (destino) movidos.push(`${numero} → ${destino}`);
+    for (const { n, l } of alvos) {
+      try {
+        if (ehAborto(l)) {
+          // Aborto não é parto: perda de prenhez no serviço certo (+ lactação com a data real, se escolhido).
+          const r = await encerrarGestacao({ numero_matriz: n, data: l.data, tipo: "aborto", abrir_lactacao: l.lact === "sim", motivo: "aborto" });
+          abortosOk.push(n); salvos.push(n);
+          if (r.lactacao_aberta) lactacoesAbertas += 1;
+          if (r.sugerir_lote) {
+            const loteAtual = porNum.get(n)?.grupo_primario || null;
+            const delDias = r.del_dias ?? 0;
+            if (transferenciaAutomatica) {
+              const destino = await alocarSemConfirmar(n, "Vaca", { del_dias: delDias }, "Aborto", l.data, falhasEfeito);
+              if (destino) movidosAuto.push(`${n} → ${destino}`);
+            } else {
+              const pend = await prepararPendenciaLote(n, "a vaca", "Vaca", { del_dias: delDias }, loteAtual, "Aborto", l.data, falhasEfeito);
+              if (pend) pendencias.push(pend);
+            }
+          }
+          continue;
+        }
+
+        const r = await criarParto(payloadParto(n, l));
+        partosOk.push({ n, ordem: r.ordem_parto ?? null }); salvos.push(n);
+        const criadas: string[] = r.crias_criadas || [];
+        criasOk.push(...criadas);
+        const sexoDa = (c: string) => (c === l.cria2.trim() && l.gemelar ? l.sexo2 : l.sexo);
+        const categoriaDa = (c: string) => (sexoDa(c) === "M" ? "Bezerro" : "Bezerra");
+
+        // Efeitos complementares: nunca desfazem o parto já salvo.
+        if (modoLote) {
+          // Lote/Categoria: cria alocada sem confirmar; a mãe NÃO é movida automaticamente (evita N confirmações).
+          for (const c of criadas) await alocarSemConfirmar(c, categoriaDa(c), { data_nasc: l.data }, "Nascimento", l.data, falhasEfeito);
         } else {
-          const pend = await prepararPendenciaLote(numero, "a vaca", "Vaca", { del_dias: delDias }, loteAtual, "Aborto", falhasEfeito);
-          if (pend) pendencias.push(pend);
+          const loteAtualMae = porNum.get(n)?.grupo_primario || null;
+          if (transferenciaAutomatica) {
+            const loteMae = await alocarSemConfirmar(n, "Vaca", { del_dias: 0 }, "Parto", l.data, falhasEfeito);
+            if (loteMae) movidosAuto.push(`${n} → ${loteMae}`);
+            for (const c of criadas) {
+              const loteCria = await alocarSemConfirmar(c, categoriaDa(c), { data_nasc: l.data }, "Nascimento", l.data, falhasEfeito);
+              if (loteCria) movidosAuto.push(`${c} → ${loteCria}`);
+            }
+          } else {
+            const pendMae = await prepararPendenciaLote(n, "a vaca", "Vaca", { del_dias: 0 }, loteAtualMae, "Parto", l.data, falhasEfeito);
+            if (pendMae) pendencias.push(pendMae);
+            for (const c of criadas) {
+              const pendCria = await prepararPendenciaLote(c, sexoDa(c) === "M" ? "o bezerro" : "a bezerra", categoriaDa(c), { data_nasc: l.data }, null, "Nascimento", l.data, falhasEfeito);
+              if (pendCria) pendencias.push(pendCria);
+            }
+          }
+          // Colostro/IgG: um registro POR cria, só das criadas e só se algum dado foi informado.
+          const slots: { chave: string; numero: string }[] = [
+            ...(l.cria.trim() ? [{ chave: chaveCria(n, 1), numero: l.cria.trim() }] : []),
+            ...(l.gemelar && l.cria2.trim() ? [{ chave: chaveCria(n, 2), numero: l.cria2.trim() }] : []),
+          ];
+          for (const s of slots) {
+            const col = colostros[s.chave];
+            if (!colostroTemDado(col)) continue;
+            if (!criadas.includes(s.numero)) { falhasEfeito.push(`o colostro da cria ${s.numero} não foi gravado (cria baixada ou já cadastrada)`); continue; }
+            try { await registrarColostragem(payloadColostragem(s.numero, col!, l.data)); }
+            catch (e) { falhasEfeito.push(`a colostragem da cria ${s.numero} não pôde ser gravada${msgDe(e) ? `: ${msgDe(e)}` : ""}`); }
+          }
         }
+      } catch (e) {
+        erros.push(`${n}: ${msgDe(e) || (ehAborto(l) ? "erro ao registrar o aborto" : "erro ao registrar parto")}`);
       }
-      setSucesso(
-        `Aborto registrado para a matriz ${numero}.` +
-        (r.lactacao_aberta ? ` Lactação aberta em ${new Date(dataParto + "T00:00:00").toLocaleDateString("pt-BR")} (DEL ${r.del_dias ?? 0}).` : "") +
-        (r.perda_prenhez_servico_id ? " Perda de prenhez registrada no serviço vigente." : "") +
-        (pendencias.length ? " Sugestão de troca de lote aguardando confirmação abaixo." : "") +
-        (movidos.length ? ` Transferido(s) automaticamente: ${movidos.join(", ")}.` : "") +
-        (falhasEfeito.length ? ` Atenção: ${falhasEfeito.join("; ")}.` : "")
-      );
-      if (pendencias.length) setFilaLotes(pendencias);
-      limparFormulario();
-      onSalvo?.();
-    } finally {
-      setSalvando(false);
     }
+
+    // Mensagem de retorno (resumo do que foi gravado).
+    const partes: string[] = [];
+    if (partosOk.length === 1 && alvos.length === 1) partes.push(`Parto registrado${partosOk[0].ordem != null ? ` (ordem ${partosOk[0].ordem})` : ""} para ${partosOk[0].n}`);
+    else if (partosOk.length) partes.push(`${partosOk.length} ${partosOk.length === 1 ? "parto registrado" : "partos registrados"}${erros.length ? ` de ${alvos.length}` : ""}`);
+    if (abortosOk.length) partes.push(`Aborto registrado para ${abortosOk.join(", ")}${lactacoesAbertas ? ` · lactação aberta em ${lactacoesAbertas}` : ""}`);
+    if (criasOk.length) partes.push(`${criasOk.length === 1 ? "cria" : "crias"} ${criasOk.join(" e ")} ${criasOk.length === 1 ? "cadastrada" : "cadastradas"}`);
+    if (pendencias.length) partes.push(`${pendencias.length} ${pendencias.length === 1 ? "sugestão" : "sugestões"} de lote aguardando revisão`);
+    if (movidosAuto.length) partes.push(`transferido(s) automaticamente: ${movidosAuto.join(", ")}`);
+    if (modoLote && partosOk.length) partes.push("a mãe não é movida de lote neste modo (Rebanho › Movimentar animais)");
+    setRetorno({ ok: salvos.length ? `✓ ${partes.join(" · ")}.` : "", atencao: falhasEfeito, erros, movidos: [] });
+    if (pendencias.length) setFilaLotes(pendencias);
+
+    if (salvos.length) {
+      invalidarEstadosReprodutivos();
+      if (modoLote) {
+        setLancadosLote((s) => new Set([...s, ...salvos]));
+        setDadosLote((d) => { const x = { ...d }; salvos.forEach((n) => delete x[n]); return x; });
+      } else {
+        setAdds((a) => a.filter((n) => !salvos.includes(n)));
+        setDadosAnimal((d) => { const x = { ...d }; salvos.forEach((n) => delete x[n]); return x; });
+        setColostros((c) => { const x = { ...c }; salvos.forEach((n) => { delete x[chaveCria(n, 1)]; delete x[chaveCria(n, 2)]; }); return x; });
+      }
+      onSalvo?.();
+    }
+    setSalvando(false);
   }
 
-  async function salvar() {
-    setErro(null); setSucesso(null);
-    if (!matriz) { setErro("Selecione a matriz que pariu."); return; }
-    if (ehAborto) {
-      // Aborto: só ABRE a pergunta "deseja abrir lactação?" — nada é gravado
-      // ainda. A resposta entra no MESMO POST que grava tudo
-      // (`concluirAborto` abaixo).
-      //
-      // O caminho antigo fazia dois lançamentos independentes e incoerentes:
-      // `registrarPerdaPrenhez` (que não criava Parto nenhum, e carimbava a
-      // perda no serviço mais recente por data — nem sempre o que originou a
-      // gestação perdida) e, se o usuário respondesse "sim", `abrirLactacao`
-      // (que só gravava `del_dias = 0`, sem sequer receber a data do evento).
-      // Sem `Parto`, a matriz continuava "novilha gestante, sem parto" na
-      // Ficha para sempre — o bug que originou esta correção.
-      setAbortoPendente(matriz);
-      return;
-    }
-    const crias = [
-      ...(criaNumero ? [{ numero: criaNumero, sexo: criaSexo === "Macho" ? "M" : "F", nasceu_viva: !criaBaixada }] : []),
-      ...(gemelar && cria2Numero ? [{ numero: cria2Numero, sexo: cria2Sexo === "Macho" ? "M" : "F", nasceu_viva: !cria2Baixada }] : []),
-    ];
-    setSalvando(true);
-    try {
-      const r = await criarParto({
-        numero_matriz: matriz, data_parto: dataParto, tipo_parto: tipoParto || undefined,
-        crias, retencao_placenta: retencaoPlacenta, gemelar,
-        gemelar_sexo: gemelar ? (gemelarSexo || undefined) : undefined,
-      });
-      // Efeitos colaterais do parto (alocação de lote e colostragem) são
-      // complementares: não bloqueiam o parto já salvo, mas as falhas são
-      // coletadas para avisar o usuário no fim, em vez de sumirem em silêncio.
-      // A troca de lote (mãe e cria(s)) vira uma fila de pop-ups de
-      // confirmação (ver `filaLotes`/`prepararPendenciaLote`), um por vez —
-      // a não ser que "transferir automaticamente" esteja ligado em
-      // Configurações > Parâmetros, aí move sozinho (mesmo caminho de
-      // `alocarSemConfirmar`, já usado no lançamento em lote).
-      const falhasEfeito: string[] = [];
-      const pendencias: PendenciaLote[] = [];
-      const movidosAutomaticamente: string[] = [];
-      const loteAtualMae = animais.find((a) => a.numero === matriz)?.grupo_primario || null;
-      if (transferenciaAutomatica) {
-        const loteMae = await alocarSemConfirmar(matriz, "Vaca", { del_dias: 0 }, "Parto", falhasEfeito);
-        if (loteMae) movidosAutomaticamente.push(`${matriz} → ${loteMae}`);
-        for (const c of r.crias_criadas as string[]) {
-          const sexoCria = c === cria2Numero ? cria2Sexo : criaSexo;
-          const categoriaAbrevCria = sexoCria === "Macho" ? "Bezerro" : "Bezerra";
-          const loteCria = await alocarSemConfirmar(c, categoriaAbrevCria, { data_nasc: dataParto }, "Nascimento", falhasEfeito);
-          if (loteCria) movidosAutomaticamente.push(`${c} → ${loteCria}`);
-        }
-      } else {
-        const pendMae = await prepararPendenciaLote(matriz, "a vaca", "Vaca", { del_dias: 0 }, loteAtualMae, "Parto", falhasEfeito);
-        if (pendMae) pendencias.push(pendMae);
-        for (const c of r.crias_criadas as string[]) {
-          const sexoCria = c === cria2Numero ? cria2Sexo : criaSexo;
-          const categoriaAbrevCria = sexoCria === "Macho" ? "Bezerro" : "Bezerra";
-          const pendCria = await prepararPendenciaLote(c, sexoCria === "Macho" ? "o bezerro" : "a bezerra", categoriaAbrevCria, { data_nasc: dataParto }, null, "Nascimento", falhasEfeito);
-          if (pendCria) pendencias.push(pendCria);
-        }
-      }
-      // Colostragem/IgG acima descrevem só a 1ª cria (o formulário tem um único
-      // bloco de colostro mesmo em parto gemelar) — grava se a cria foi criada
-      // e algum dado foi informado.
-      const criaRegistrada = r.crias_criadas.includes(criaNumero);
-      if (criaRegistrada && (tomouColostro || litros || brix || soro || proteinaSerica || horaParto || horaColostro || pesoNascer || apenasColostroPo)) {
-        try {
-          await registrarColostragem({
-            numero_animal: criaNumero,
-            tomou_colostro: tomouColostro ? tomouColostro === "Sim" : undefined,
-            litros_colostro: litrosN || undefined,
-            brix_colostro: brixN ?? undefined,
-            data_colostro: brix ? dataParto : undefined,
-            hora_parto: horaParto || undefined,
-            hora_colostro: horaColostro || undefined,
-            peso_nascer_kg: pesoNascer ? Number(pesoNascer) : undefined,
-            brix_soro: soroN ?? undefined,
-            proteina_serica: proteinaSerica ? Number(proteinaSerica) : undefined,
-            apenas_colostro_po: apenasColostroPo || undefined,
-            data_teste_sangue: soro ? dataParto : undefined,
-          });
-        } catch (e: any) {
-          falhasEfeito.push(`a colostragem não pôde ser gravada${e?.message ? `: ${e.message}` : ""}`);
-        }
-      }
-      setSucesso(`Parto registrado (ordem ${r.ordem_parto}).${r.crias_criadas.length ? ` Cria(s) cadastrada(s): ${r.crias_criadas.join(", ")}.` : ""}${pendencias.length ? ` ${pendencias.length} sugestão(ões) de troca de lote aguardando confirmação abaixo.` : ""}${movidosAutomaticamente.length ? ` Transferido(s) automaticamente: ${movidosAutomaticamente.join(", ")}.` : ""}${falhasEfeito.length ? ` Atenção: ${falhasEfeito.join("; ")}.` : ""}`);
-      if (pendencias.length) setFilaLotes(pendencias);
-      limparFormulario();
-      onSalvo?.();
-    } catch (e: any) {
-      setErro(e.message || "Erro ao registrar parto");
-    } finally {
-      setSalvando(false);
-    }
+  function salvar() {
+    if (bloqueado || salvando) return;
+    // Aborto sem resposta a "abrir lactação?": o popup pergunta (um por vez) e, no fim, grava tudo.
+    const faltam = abortosSemResposta(efetivas);
+    if (faltam.length) { setFilaAborto(faltam); return; }
+    void executarSalvar(dadosAnimal);
   }
+  async function responderAborto(sim: boolean) {
+    const n = filaAborto[0];
+    const novos = { ...dadosAnimal, [n]: { ...(dadosAnimal[n] ?? linhaVazia(hoje)), lact: (sim ? "sim" : "nao") as LinhaParto["lact"] } };
+    setDadosAnimal(novos);
+    const resto = filaAborto.slice(1);
+    setFilaAborto(resto);
+    if (!resto.length) await executarSalvar(novos);
+  }
+
+  const rotuloBotao = modoLote
+    ? `Salvar ${efetivas.length || ""} ${efetivas.length === 1 ? "parto" : "partos"}`.replace("  ", " ")
+    : `Lançar ${efetivas.length || ""} ${efetivas.length === 1 ? "registro" : "registros"}`.replace("  ", " ");
+
+  const itensRevisao: ItemRevisaoLote[] = filaLotes.map((p) => ({ numero: p.numero, rotulo: p.rotuloAnimal, sugerido: p.loteSugerido.codigo }));
+  const vazioTabela = modoLote
+    ? (modo === "lote" ? (lote ? "Nenhuma matriz neste lote." : "Escolha um lote acima para ver as matrizes.") : (cats.length ? (carregandoCats ? "Carregando as matrizes das categorias…" : "Nenhuma matriz nesta(s) categoria(s).") : "Escolha uma ou mais categorias acima para ver as matrizes."))
+    : "Adicione a matriz que pariu, nas sugestões acima ou pela busca.";
 
   return (
-    <>
-      {manualColostroAberto && <ManualColostroModal onClose={() => setManualColostroAberto(false)} />}
-      {manualSangueAberto && <ManualSangueModal onClose={() => setManualSangueAberto(false)} />}
+    <div className="pt-raiz">
+      <EstiloRepro />
+      <EstiloParto />
+      <Faixa itens={faixa} />
 
-      <div className="mb-3">
-        <TabBar<"animal" | "lote" | "categoria">
-          abas={[
-            { id: "animal", label: "Uma matriz", title: "Lançar o parto de uma matriz, com cria, colostragem e IgG" },
-            { id: "lote", label: "Lotes", title: "Selecionar um lote e lançar partos simples de várias matrizes de uma vez" },
-            { id: "categoria", label: "Categoria", title: "Selecionar uma ou mais categorias e lançar partos simples de várias matrizes de uma vez" },
-          ]}
-          ativa={modo}
-          onChange={setModo}
-        />
-      </div>
-
-      {modo !== "animal" ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {modo === "lote" ? (
-              <Campo label="Lote">
-                <select style={inputStyle} value={loteBatch} onChange={(e) => setLoteBatch(e.target.value)}>
-                  <option value="">Selecione…</option>
-                  {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
-                </select>
-              </Campo>
-            ) : (
-              <Campo label="Categoria(s)" full>
-                <div className="flex flex-wrap gap-3">
-                  {CATEGORIAS_ANIMAIS.map((c) => (
-                    <label key={c.id} className="flex items-center gap-2" style={{ fontSize: "0.8rem", cursor: "pointer" }}>
-                      <input type="checkbox" checked={categoriasSel.has(c.id)} onChange={() => toggleCategoria(c.id)} /> {c.label}
-                    </label>
-                  ))}
-                </div>
-              </Campo>
-            )}
-            <Campo label="Data do parto (todas)"><input type="date" style={inputStyle} value={dataParto} onChange={(e) => setDataParto(e.target.value)} /></Campo>
-            <Campo label="Tipo de parto (todas)">
-              <select style={inputStyle} value={tipoParto} onChange={(e) => setTipoParto(e.target.value)}>
-                <option value="">Selecione…</option><option>Normal</option>
-                <option>Distócico moderado</option><option>Distócico severo</option>
-                <option>Cesariana</option><option>Natimorto</option>
-              </select>
-            </Campo>
-          </div>
-        </div>
-
-        <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
-          {(modo === "lote" ? !!loteBatch : categoriasSel.size > 0) ? (
-            <div className="card mt-3" style={{ padding: 0 }}>
-              <div className="card-header m-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
-                <span>{modo === "lote" ? `Matrizes do lote ${loteBatch}` : "Matrizes das categorias selecionadas"} ({animaisBatchFonte.length})</span>
-                <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodosBatch} disabled={!animaisBatchFonte.length}>
-                  {selBatch.size === animaisBatchFonte.length && animaisBatchFonte.length ? "Limpar seleção" : "Selecionar todos"}
-                </button>
-              </div>
-              <div className="overflow-x-auto" style={{ maxHeight: "460px" }}>
-                <table className="fazenda-table" style={{ margin: 0 }}>
-                  <thead><tr><th></th><th>Nº</th><th>Nº da cria (vazio = baixa)</th><th>Sexo da cria</th><th>Cria baixada?</th><th>Retenção de placenta</th></tr></thead>
-                  <tbody>
-                    {animaisBatchFonte.map((a) => {
-                      const d = campoBatch(a.numero);
-                      const marcada = selBatch.has(a.numero);
-                      return (
-                        <tr key={a.numero} style={{ opacity: marcada ? 1 : 0.45 }}>
-                          <td><input type="checkbox" checked={marcada} onChange={() => toggleBatch(a.numero)} /></td>
-                          <td style={{ fontWeight: 700 }}>{a.numero}</td>
-                          <td><input style={inputStyle} disabled={!marcada} value={d.criaNumero} onChange={(e) => setCampoBatch(a.numero, { criaNumero: e.target.value })} placeholder="ex.: 483" /></td>
-                          <td>
-                            <select style={inputStyle} disabled={!marcada} value={d.criaSexo} onChange={(e) => setCampoBatch(a.numero, { criaSexo: e.target.value })}>
-                              <option value="">—</option><option>Fêmea</option><option>Macho</option>
-                            </select>
-                          </td>
-                          <td>
-                            <select style={inputStyle} disabled={!marcada} value={d.criaBaixada ? "Sim" : "Não"} onChange={(e) => setCampoBatch(a.numero, { criaBaixada: e.target.value === "Sim" })}>
-                              <option>Não</option><option>Sim</option>
-                            </select>
-                          </td>
-                          <td style={{ textAlign: "center" }}>
-                            <input type="checkbox" disabled={!marcada} checked={d.retencaoPlacenta} onChange={(e) => setCampoBatch(a.numero, { retencaoPlacenta: e.target.checked })} />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {!animaisBatchFonte.length && <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1rem" }}>Nenhum animal {modo === "lote" ? "neste lote" : "nesta(s) categoria(s)"}.</td></tr>}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : (
-            <p style={nota}>Selecione um lote ou uma categoria para ver a lista de matrizes e lançar vários partos de uma vez.</p>
-          )}
-
-          <p style={nota}>
-            Modo simplificado: grava matriz, data, tipo de parto, cria e retenção de placenta de cada uma. Para
-            parto gemelar, colostragem e IgG, use "Uma matriz". A mudança de lote da mãe (lote 3) precisa ser feita
-            depois, manualmente, em Rebanho {"›"} Movimentar animais.
-          </p>
-
-          {erroBatch && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erroBatch}</p>}
-          {sucessoBatch && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucessoBatch}</p>}
-          <div className="flex items-center gap-3 mt-4">
-            <button className="btn-primary" onClick={salvarLote} disabled={salvandoBatch}>{salvandoBatch ? "Salvando…" : "Salvar todos"}</button>
-          </div>
-        </div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Matriz (nº)"><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a matriz que pariu…" /></Campo>
-        <Campo label="Data do parto"><input type="date" style={inputStyle} value={dataParto} onChange={(e) => setDataParto(e.target.value)} /></Campo>
-        <Campo label="Tipo de parto">
-          <select style={inputStyle} value={tipoParto} onChange={(e) => setTipoParto(e.target.value)}>
-            <option value="">Selecione…</option><option>Normal</option>
-            <option>Distócico moderado</option><option>Distócico severo</option>
-            <option>Cesariana</option><option>Natimorto</option><option>Aborto</option>
-          </select>
-        </Campo>
-        {!ehAborto && (
+      <Passo n={1} id="pt-p1" titulo="Como lançar">
+        <Pilulas<Modo> rotulo="Modo de lançamento" valor={modo} onChange={trocaModo} opcoes={[
+          { id: "animal", nome: "Uma matriz", titulo: "Parto de uma matriz (ou de várias, uma linha por parto), com cria, colostragem e IgG" },
+          { id: "lote", nome: "Lote", titulo: "Partos simples das matrizes de um lote" },
+          { id: "categoria", nome: "Categoria", titulo: "Partos simples das matrizes de uma ou mais categorias" },
+        ]} />
+        {modo === "lote" && (
+          <PilulasX<string> rotulo="Lote" valor={lote} onChange={setLote}
+            opcoes={lotes.map((l) => ({ id: l, nome: l, n: animais.filter((a) => a.grupo_primario === l && ehFemeaAtiva(a)).length }))} />
+        )}
+        {modo === "categoria" && (
+          <Pilulas<string> rotulo="Categorias" valor={cats} onChange={alternaCat}
+            opcoes={CATEGORIAS_ANIMAIS.map((c) => ({ id: c.id, nome: c.label }))} />
+        )}
+        {modoLote && (
           <>
-            <Campo label="Retenção de placenta"><label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}><input type="checkbox" checked={retencaoPlacenta} onChange={(e) => setRetencaoPlacenta(e.target.checked)} /> Sim (gera item na Agenda)</label></Campo>
-            <Campo label="Parto gemelar (2 crias)"><label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}><input type="checkbox" checked={gemelar} onChange={(e) => setGemelar(e.target.checked)} /> Sim</label></Campo>
-            {gemelar && (
-              <Campo label="Sexos do parto gemelar">
-                <select style={inputStyle} value={gemelarSexo} onChange={(e) => setGemelarSexo(e.target.value)}>
-                  <option value="">Selecione… (ou deriva dos sexos)</option>
-                  <option value="FF">FF — duas fêmeas</option>
-                  <option value="FM">FM — fêmea e macho (fêmea pode ser freemartin)</option>
-                  <option value="MM">MM — dois machos</option>
-                </select>
-              </Campo>
-            )}
+            <div className="rp-grade-4" style={{ maxWidth: "36rem", gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+              <div className="gv-campo"><label htmlFor="pt-data-todas">Data do parto (todas)</label>
+                <input id="pt-data-todas" type="date" className="rp-input" value={dataTodas} onChange={(e) => setDataTodas(e.target.value)} /></div>
+              <div className="gv-campo"><label htmlFor="pt-tipo-todas">Tipo de parto (todas)</label>
+                <select id="pt-tipo-todas" className="rp-select" value={tipoTodas} onChange={(e) => setTipoTodas(e.target.value)}>
+                  <option value="">Selecione…</option>{TIPOS_PARTO_LOTE.map((t) => <option key={t}>{t}</option>)}
+                </select></div>
+            </div>
+            <Ajuda>
+              Modo simplificado: data e tipo valem para todas; por linha você informa nº da cria, sexo, baixada e retenção de placenta. <strong>Aborto, parto gemelar e colostro/IgG ficam só no modo “Uma matriz”.</strong>{" "}
+              A cria é alocada no lote sugerido sem perguntar; a mudança de lote das mães não é automática aqui (Rebanho › Movimentar animais).
+            </Ajuda>
           </>
         )}
-      </div>
-        </div>
+      </Passo>
 
-        <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
-      {ehAborto ? (
-        <p style={nota}>
-          Aborto não é um parto — nenhuma cria é cadastrada. Ao salvar, registra a perda de prenhez da matriz (mesmo
-          efeito de Histórico → Reprodução → Perda de prenhez, motivo "aborto") e pergunta se deseja abrir lactação.
-        </p>
-      ) : (
-      <>
-      <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
-        <div className="card-header mb-2 flex items-center gap-2" style={{ background: "none", color: "var(--dourado-light)", padding: "0 0 0.3rem" }}>
-          <Baby size={14} /> Cadastro da cria (prole)
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Campo label="Número da cria (vazio = baixa automática)"><input style={inputStyle} value={criaNumero} onChange={(e) => setCriaNumero(e.target.value)} placeholder="ex.: 483 — em branco, natimorto/baixa" /></Campo>
-          <Campo label="Sexo da cria"><select style={inputStyle} value={criaSexo} onChange={(e) => setCriaSexo(e.target.value)}><option value="" disabled>Selecione…</option><option>Fêmea</option><option>Macho</option></select></Campo>
-          <Campo label="Cria baixada? (não entra no rebanho)">
-            <select style={inputStyle} value={criaBaixada ? "Sim" : "Não"} disabled={tipoParto === "Natimorto"} onChange={(e) => setCriaBaixada(e.target.value === "Sim")}><option>Não</option><option>Sim</option></select>
-            {tipoParto === "Natimorto" && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>Automático — natimorto.</p>}
-          </Campo>
-        </div>
-        {gemelar && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3" style={{ borderTop: "1px solid var(--border)", paddingTop: "0.75rem" }}>
-            <Campo label="Número da 2ª cria"><input style={inputStyle} value={cria2Numero} onChange={(e) => setCria2Numero(e.target.value)} placeholder="ex.: 484" /></Campo>
-            <Campo label="Sexo da 2ª cria"><select style={inputStyle} value={cria2Sexo} onChange={(e) => setCria2Sexo(e.target.value)}><option value="" disabled>Selecione…</option><option>Fêmea</option><option>Macho</option></select></Campo>
-            <Campo label="2ª cria baixada?">
-              <select style={inputStyle} value={cria2Baixada ? "Sim" : "Não"} disabled={tipoParto === "Natimorto"} onChange={(e) => setCria2Baixada(e.target.value === "Sim")}><option>Não</option><option>Sim</option></select>
-            </Campo>
+      <Passo n={2} id="pt-p2" titulo="Partos a lançar" direita={
+        <span className="rp-contagem" aria-live="polite">{efetivas.length} de {linhasVis.length} {modoLote ? "marcadas" : efetivas.length === 1 ? "matriz na lista" : "matrizes na lista"}</span>
+      }>
+        {!modoLote && (
+          <div className="rp-ferr">
+            <BuscaMatrizes valor={busca} onChange={setBusca} rotulo="Buscar matriz que pariu (nº ou lote)" />
+            <div className="rp-tarja">
+              <span>{busca.trim() ? "Resultado:" : "Previstas para os próximos 3 dias:"}</span>
+              {sugestoes.length === 0 && <span>nenhuma</span>}
+              {sugestoes.map((g) => (
+                <button key={g.n} type="button" className="rp-chip" onClick={() => adiciona(g.n)} aria-label={`Adicionar ${g.n}`}>
+                  + {g.n} {g.rot && <small>{relativoPrevisto(g.rot, hoje)}</small>}
+                </button>
+              ))}
+            </div>
           </div>
         )}
+        <TabelaPartos linhasVis={linhasVis} modoLote={modoLote} marc={marc} dados={dados} dataTodas={dataTodas} tipoTodas={tipoTodas}
+          abertas={abertas} existentes={existentes} repetidas={repetidas} vazio={vazioTabela}
+          onToggle={aoMarcar} onMuda={muda} onAbre={(n) => setAbertas((a) => alterna(a, n))} />
+        <Ajuda>
+          {modoLote
+            ? "Cria em branco = a matriz pariu sem cria cadastrada. Sexo é obrigatório quando há cria. Cria “baixada” não entra no rebanho; natimorto força baixada. Ficam marcadas todas as matrizes da lista; desmarque as que não pariram."
+            : <>Número da cria em branco = <strong>sem cria</strong> (natimorto/baixa). <strong>Sexo é obrigatório quando há cria</strong>: o sistema não assume “fêmea”. Retenção de placenta gera item na Agenda. Para mais de uma matriz, adicione quantas precisar: cada linha é um parto.</>}
+        </Ajuda>
+      </Passo>
 
-        <div className="mt-3" style={{ background: "rgba(22,101,52,0.12)", border: "1px solid var(--green-light)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem" }}>
-          <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--green-light)" }}>Colostragem da cria</p>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2">
-            <Campo label="Hora do parto"><input type="time" style={inputStyle} value={horaParto} onChange={(e) => setHoraParto(e.target.value)} /></Campo>
-            <Campo label="Hora do colostro"><input type="time" style={inputStyle} value={horaColostro} onChange={(e) => setHoraColostro(e.target.value)} /></Campo>
-            <Campo label="Peso ao nascer (kg)"><input type="number" step="0.1" inputMode="decimal" style={inputStyle} value={pesoNascer} onChange={(e) => setPesoNascer(e.target.value)} placeholder="ex.: 38" /></Campo>
-          </div>
-          {horaParto && horaColostro && (
-            <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
-              Intervalo parto→colostro: <strong style={{ color: intervaloColostroHoras != null && intervaloColostroHoras <= 6 ? "var(--green-light)" : "var(--amber)" }}>
-                {intervaloColostroHoras != null ? `${intervaloColostroHoras.toFixed(1)} h` : "—"}</strong> (ideal ≤ 6 h; quanto antes, melhor a absorção de IgG).
-            </p>
-          )}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
-            <Campo label="Tomou colostro?"><select style={inputStyle} value={tomouColostro} onChange={(e) => setTomou(e.target.value)}><option value="" disabled>Selecione…</option><option>Sim</option><option>Não</option></select></Campo>
-            <Campo label="Quantidade de colostro (litros)">
-              <select style={inputStyle} value={litros} onChange={(e) => setLitros(e.target.value)}>
-                <option value="" disabled>Selecione…</option>
-                {["1", "1.5", "2", "2.5", "3", "3.5", "4", "4.5", "5"].map((l) => <option key={l} value={l}>{l} L</option>)}
-              </select>
-            </Campo>
-            <Campo label="Brix do colostro (%)">
-              <select style={inputStyle} value={brix} onChange={(e) => setBrix(e.target.value)}>
-                <option value="" disabled>Selecione…</option>
-                {Array.from({ length: 21 }, (_, i) => 15 + i).map((b) => <option key={b} value={b}>{b}%</option>)}
-              </select>
-            </Campo>
-          </div>
+      {!modoLote && (
+        <Passo n={3} id="pt-p3" titulo="Colostro e IgG de cada cria">
+          <PainelColostro crias={criasColostro} dados={colostros} onMuda={mudaColostro} baixadas={criasSemColostro} />
+          <Ajuda>Um registro por cria, gravado em Sanidade › Relatório sanitário de bezerras. Se a gravação do colostro falhar, o parto continua salvo e o retorno avisa.</Ajuda>
+        </Passo>
+      )}
 
-          {cls && (
-            <div className="mt-2" style={{ fontSize: "0.82rem" }}>
-              Qualidade: <strong style={{ color: cls.cor }}>{cls.txt}</strong>
-              {enriquecer && (
-                <div style={{ marginTop: "0.5rem", background: "rgba(94,26,46,0.2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem" }}>
-                  <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-                    <span>Enriquecer até</span>
-                    <select style={{ ...inputStyle, width: "auto", padding: "0.2rem 0.4rem" }} value={alvo} onChange={(e) => setAlvo(e.target.value)}>
-                      {["22", "23", "24", "25", "26", "27", "28", "29", "30"].map((a) => <option key={a} value={a}>{a}%</option>)}
-                    </select>
-                  </div>
-                  <p style={{ marginTop: "0.4rem" }}>
-                    Adicionar <strong style={{ color: "var(--dourado-light)" }}>{medidasPorL} medida(s) de colostro em pó por litro</strong> (15 g cada).
-                    {litrosN > 0 && <> Para {litrosN} L: <strong>{totalMedidas} medidas ≈ {totalMedidas * 15} g</strong>.</>}
-                  </p>
-                </div>
+      <BarraAcao
+        resumo={`${resumo.registros} ${resumo.registros === 1 ? "registro" : "registros"} · ${resumo.partos} ${resumo.partos === 1 ? "parto" : "partos"} · ${resumo.crias} ${resumo.crias === 1 ? "cria" : "crias"}${resumo.abortos ? ` · ${resumo.abortos} ${resumo.abortos === 1 ? "aborto" : "abortos"}` : ""}`}
+        detalhe={problemas.semSexo.length
+          ? <span className="rp-err" role="alert">Falta o sexo da cria de {problemas.semSexo.join(", ")} — preencha para lançar.</span>
+          : problemas.repetidas.length ? <span className="rp-err" role="alert">Número de cria repetido: {problemas.repetidas.join(", ")}.</span>
+          : problemas.semData.length ? <span className="rp-err" role="alert">Informe a data do parto de {problemas.semData.join(", ")}.</span>
+          : efetivas.length === 0 ? (modoLote ? "Marque ao menos uma matriz na tabela do passo 2" : "Adicione ao menos uma matriz no passo 2")
+          : modoLote ? "Ao salvar, cada cria é alocada no lote sugerido; a mãe não é movida neste modo."
+          : transferenciaAutomatica ? "Ao salvar, mãe e crias vão sozinhas para o lote sugerido (parâmetro ligado)."
+          : "Ao salvar, sugere o lote da mãe e de cada cria; você confirma antes de mover."}
+        retorno={retorno && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", width: "100%", maxHeight: "45vh", overflowY: "auto" }}>
+            <div className="rp-retorno-linha">
+              <span style={{ display: "flex", flexDirection: "column", gap: "0.2rem", flex: "1 1 20rem", minWidth: 0 }}>
+                {retorno.ok && <span className="rp-ok">{retorno.ok}</span>}
+                {retorno.movidos.length > 0 && <span className="rp-ok">Movido(s): {retorno.movidos.join(", ")}.</span>}
+                {retorno.erros.map((e) => <span key={e} className="rp-err" role="alert">{e}</span>)}
+                {retorno.atencao.length > 0 && <span style={{ color: "var(--ft-ouro-txt)", fontWeight: 600 }}>Atenção: {retorno.atencao.join("; ")}.</span>}
+              </span>
+              {filaLotes.length > 0 && (
+                <button type="button" className="btn-secondary" aria-expanded={lotesAberto} onClick={() => setLotesAberto((a) => !a)}>Revisar lotes ({filaLotes.length})</button>
               )}
+              <button type="button" className="btn-ghost" onClick={() => { setRetorno(null); setFilaLotes([]); setLotesAberto(false); }} title={filaLotes.length ? "Descarta a revisão de lotes: ninguém é movido" : undefined}>Dispensar</button>
             </div>
-          )}
-
-          <div className="flex items-center gap-3 mt-2" style={{ flexWrap: "wrap" }}>
-            <button onClick={() => setManualColostroAberto(true)} className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.75rem" }}><BookOpen size={13} /> Manual do colostro</button>
-            <a href={LINK_COLOSTRO} target="_blank" rel="noreferrer" className="flex items-center gap-1" style={{ color: "var(--dourado-light)", fontSize: "0.75rem" }}><ExternalLink size={13} /> Tabela oficial (PDF)</a>
+            {lotesAberto && filaLotes.length > 0 && (
+              <PainelLotes itens={itensRevisao} opcoes={opcoesLote} ocupado={movendoLote} onConfirmar={confirmarLotes} onFechar={() => setLotesAberto(false)} />
+            )}
+            {filaLotes.length > 0 && (
+              <span className="rp-mudo" style={{ fontSize: "0.74rem" }}>Com “transferir para o lote sugerido automaticamente” ligado em Configurações › Parâmetros, mãe e crias são movidas sozinhas e esta revisão não aparece.</span>
+            )}
           </div>
-        </div>
+        )}
+        acao={<BotaoOuro desabilitado={bloqueado || salvando} onClick={salvar}>{salvando ? "Salvando…" : rotuloBotao}</BotaoOuro>}
+      />
 
-        <div className="mt-3" style={{ background: "rgba(30,111,168,0.1)", border: "1px solid var(--blue)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem" }}>
-          <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--blue)" }}>Exame de sangue (IgG) da cria</p>
-          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-            Colher entre <strong>24h e 48h</strong> após o nascimento. Pode informar <strong>Brix sérico</strong> OU
-            <strong> proteína sérica</strong>. Classificação: excelente (Brix &gt;9,4% · prot. &gt;6,2 g/dL) ·
-            boa (8,9–9,3% · 5,8–6,1) · aceitável (8,1–8,8% · 5,1–5,7) · ruim (abaixo disso).
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
-            <Campo label="Brix do soro (%)">
-              <select style={inputStyle} value={soro} onChange={(e) => setSoro(e.target.value)}>
-                <option value="" disabled>Selecione…</option>
-                {OPCOES_SORO.map((v) => <option key={v} value={v}>{v.replace(".", ",")}%</option>)}
-              </select>
-            </Campo>
-            <Campo label="Proteína sérica (g/dL)">
-              <input type="number" step="0.1" inputMode="decimal" style={inputStyle} value={proteinaSerica} onChange={(e) => setProteinaSerica(e.target.value)} placeholder="ex.: 6,0" />
-            </Campo>
-          </div>
-          {(clsSoro || proteinaSerica) && (
-            <p style={{ fontSize: "0.82rem", marginTop: "0.4rem" }}>
-              Eficiência de colostragem: <strong style={{ color: classeColostragemUI(soroN, proteinaSerica ? Number(proteinaSerica) : null).cor }}>
-                {classeColostragemUI(soroN, proteinaSerica ? Number(proteinaSerica) : null).txt}</strong>
-            </p>
-          )}
-          <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", marginTop: "0.4rem" }}>
-            <input type="checkbox" checked={apenasColostroPo} onChange={(e) => setApenasColostroPo(e.target.checked)} /> Bezerra recebeu somente colostro em pó (sem colostro materno)
-          </label>
-          <div className="flex items-center gap-3 mt-2" style={{ flexWrap: "wrap" }}>
-            <button onClick={() => setManualSangueAberto(true)} className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.75rem" }}><BookOpen size={13} /> Manual do sangue</button>
-          </div>
-        </div>
-      </div>
-      <p style={nota}>
-        Matriz, data, tipo de parto, crias e retenção de placenta já gravam de verdade. Ao salvar, sugere o lote da
-        mãe e de cada cria (confirmação antes de mover). Colostragem e IgG da 1ª cria também são gravadas — o
-        histórico completo aparece em Sanidade → Relatório sanitário de bezerras.
-      </p>
-      </>
-      )}
-      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
-      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
-      <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
-      </div>
-        </div>
-        </div>
-      )}
-
-      {abortoPendente && (
+      {filaAborto.length > 0 && (
         <PopupAborto
-          numeroMatriz={abortoPendente}
-          onFechar={() => setAbortoPendente(null)}
-          // A resposta do popup entra no MESMO POST que grava o aborto —
-          // ver `concluirAborto`. Antes eram duas chamadas separadas, e a
-          // segunda (abrir lactação) podia simplesmente não acontecer.
-          onResponder={concluirAborto}
+          key={filaAborto[0]}
+          numeroMatriz={filaAborto[0]}
+          // A visibilidade é da fila (filaAborto); a resposta do popup entra no MESMO POST que grava o aborto.
+          onFechar={() => {}}
+          onResponder={responderAborto}
         />
       )}
-
-      {filaLotes.length > 0 && (
-        <Modal title="Movimentação de lote" onClose={fecharJanelaLotes} width="460px" zIndex={95}>
-          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
-            Escolha o lote de destino de cada animal, ou deixe em "Não movimentar" para manter no lote atual.
-          </p>
-          <div className="space-y-3 mb-4">
-            {filaLotes.map((pend) => (
-              <Campo key={pend.numero} label={`Deseja movimentar ${pend.rotuloAnimal} Nº ${pend.numero} para qual lote?`}>
-                <select
-                  style={inputStyle}
-                  value={escolhasLote[pend.numero] ?? ""}
-                  onChange={(e) => setEscolhasLote((p) => ({ ...p, [pend.numero]: e.target.value }))}
-                >
-                  <option value="">Não movimentar</option>
-                  {opcoesLote.map((o) => <option key={o.codigo} value={o.codigo}>{o.rotulo}</option>)}
-                </select>
-              </Campo>
-            ))}
-          </div>
-          <div className="flex items-center justify-end gap-2">
-            <button className="btn-ghost" onClick={fecharJanelaLotes} disabled={movendoLote}>Cancelar</button>
-            <button className="btn-primary" onClick={confirmarLotes} disabled={movendoLote}>
-              {movendoLote ? "Movendo…" : "Confirmar"}
-            </button>
-          </div>
-        </Modal>
-      )}
-    </>
+    </div>
   );
 }
