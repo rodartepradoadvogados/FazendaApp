@@ -123,7 +123,7 @@ type ComunicadoAgenda = { id: string; descricao: string; data: string; tipo?: st
 function AgendaConteudo() {
   const router = useRouter();
   // "Definir nova data da visita" (comunicado da visita reprodutiva) — mesmo diálogo da Agenda Reprodutiva do Insights.
-  const [definindoVisita, setDefinindoVisita] = useState<{ data: string | null; origem: "definida" | "calculada" | null; intervalo: number | null } | null>(null);
+  const [definindoVisita, setDefinindoVisita] = useState<{ data: string | null; origem: "definida" | "calculada" | null; intervalo: number | null; ultima: string | null } | null>(null);
   // Módulos contratados (Plano Financeiro §2.6). A página só monta depois do AuthShell confirmar o login
   // (nunca é desenhada no servidor), então ler o contrato do localStorage na inicialização é seguro.
   // Os efeitos de carga abaixo consultam moduloContratado() direto, sem esperar este estado.
@@ -2361,7 +2361,7 @@ function AgendaConteudo() {
                       <ClipboardList size={12} /> Ver agenda reprodutiva
                     </a>
                     <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }}
-                      onClick={() => setDefinindoVisita({ data: e.data_visita ?? e.data, origem: e.origem_visita ?? null, intervalo: e.intervalo_visita ?? null })}>
+                      onClick={() => setDefinindoVisita({ data: e.data_visita ?? e.data, origem: e.origem_visita ?? null, intervalo: e.intervalo_visita ?? null, ultima: e.ultima_visita ?? null })}>
                       <Calendar size={12} /> Definir nova data da visita
                     </button>
                   </div>
@@ -2865,7 +2865,7 @@ function AgendaConteudo() {
       {visao === "painel" ? renderPainel() : renderDiaADia()}
 
       {definindoVisita && (
-        <DefinirDataVisitaModal dataAtual={definindoVisita.data} origem={definindoVisita.origem} intervalo={definindoVisita.intervalo}
+        <DefinirDataVisitaModal dataAtual={definindoVisita.data} origem={definindoVisita.origem} intervalo={definindoVisita.intervalo} ultimaVisita={definindoVisita.ultima}
           onClose={() => setDefinindoVisita(null)} onSalvo={() => { carregar(); }} />
       )}
 

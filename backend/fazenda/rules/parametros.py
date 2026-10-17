@@ -47,6 +47,7 @@ DEFINICOES: list[dict] = [
     {"chave": "dias_toque", "grupo": "manejo", "label": "Dias para toque (diagnóstico)", "valor": 30, "unidade": "dias"},
     {"chave": "dias_reconfirmacao", "grupo": "manejo", "label": "Dias para reconfirmação", "valor": 30, "unidade": "dias"},
     {"chave": "intervalo_visita_reprodutiva", "grupo": "manejo", "label": "Intervalo da visita reprodutiva", "valor": 21, "unidade": "dias"},
+    {"chave": "ultima_visita_reprodutiva_data", "grupo": "manejo", "label": "Data da última visita reprodutiva (âncora da contagem dos dias entre visitas)", "valor": "", "tipo": "date"},
     {"chave": "proxima_visita_reprodutiva_data", "grupo": "manejo", "label": "Data da próxima visita reprodutiva (definida por você; passada a data, volta o cálculo automático)", "valor": "", "tipo": "date"},
     {"chave": "intervalo_bst", "grupo": "manejo", "label": "Intervalo de aplicação de BST", "valor": 12, "unidade": "dias"},
     {"chave": "intervalo_visita_vet", "grupo": "manejo", "label": "Intervalo de visitas do veterinário", "valor": 30, "unidade": "dias"},

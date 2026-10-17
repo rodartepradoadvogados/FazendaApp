@@ -2244,6 +2244,8 @@ export type AgendaVetItem = {
 export type AgendaVetResposta = {
   data_referencia: string; projetado?: boolean; listas: Record<string, AgendaVetItem[]>; totais: Record<string, number>;
   ultimo_servico?: string | null; proxima_visita_reprodutiva?: string | null; intervalo_visita_reprodutiva?: number;
+  ultima_visita_reprodutiva?: string | null; ultima_visita_vigente?: string | null;
+  origem_visita_reprodutiva?: "definida" | "calculada" | null;
 };
 
 // data (opcional, AAAA-MM-DD): simula um cenário projetado numa data futura
@@ -3923,10 +3925,20 @@ export async function fetchTransferenciaLoteAutomatica(): Promise<boolean> {
  * último serviço + intervalo). É a data única que a Agenda (comunicado), a Agenda Reprodutiva (projeção), as candidatas
  * projetadas de IATF e Configurações > Parâmetros leem — ver backend rules/visita_reprodutiva.py.
  */
-export type VisitaReprodutivaResposta = { ok: boolean; proxima_visita_reprodutiva: string | null; origem_visita_reprodutiva: "definida" | "calculada" | null; definida: string | null };
-export async function definirVisitaReprodutiva(data: string | null): Promise<VisitaReprodutivaResposta> {
+export type VisitaReprodutivaResposta = {
+  ok: boolean; proxima_visita_reprodutiva: string | null; origem_visita_reprodutiva: "definida" | "calculada" | null; definida: string | null;
+  /** Data da última visita informada por você (âncora da contagem dos dias entre visitas). */
+  ultima_visita_reprodutiva: string | null;
+  /** Última visita que vale de fato: a informada ou o último serviço lançado, o que for mais recente. */
+  ultima_visita_vigente: string | null;
+};
+/**
+ * `data` = próxima visita definida; `ultima` = data da última visita (âncora da contagem). Só o campo presente é alterado;
+ * `null` remove (próxima volta ao cálculo; última deixa de ancorar e vale o último serviço).
+ */
+export async function definirVisitaReprodutiva(campos: { data?: string | null; ultima?: string | null }): Promise<VisitaReprodutivaResposta> {
   const res = await authFetch(`${API}/reproducao/visita-reprodutiva`, {
-    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data }),
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(campos),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao definir a data da visita reprodutiva"); }
   return res.json();

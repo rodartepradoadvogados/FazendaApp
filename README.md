@@ -113,7 +113,7 @@ Acesse: http://localhost:3000
 | POST | `/upload/{tipo}` | Upload CSV (geral/reprodutivo/estoque/conta_gerencial) |
 | GET | `/agenda/` | Agenda preditiva (param: `?data=YYYY-MM-DD`) |
 | POST | `/agenda/manual` | Adicionar evento manual |
-| PUT | `/reproducao/visita-reprodutiva` | Define (ou limpa, com `{"data": null}`) a data da próxima visita reprodutiva; `data` < hoje → 400 |
+| PUT | `/reproducao/visita-reprodutiva` | Define (ou limpa, com `null`) a próxima visita (`data`, < hoje → 400) e/ou a data da última visita (`ultima`, > hoje → 400); só o campo enviado muda |
 | GET | `/financeiro/dre` | DRE por período e regime |
 | GET | `/financeiro/contas-a-pagar` | Contas próximas |
 
@@ -147,7 +147,7 @@ nasce `aguardando_aprovacao` e sem módulo até o dono da plataforma aprovar o c
   `responsavel` opcional em `LoteIn`/`NotasNaFaturaIn`/`NotasAvulsasIn` (devolvido por nota). Detalhes: `docs/auditoria-faturas-lancar-notas.md`
   e `docs/mockups/lancamento-financeiro/COMPARACAO_tela_real.md`.
 - **Lançamento financeiro — colunas (15/10/2026)**: as duas colunas de despesa/receita têm **rolagem própria** (classe `.fin-coluna` em `globals.css`; só a partir de `lg`, altura = janela − cabeçalho/barra de salvar; dentro de modal e gaveta sobra menos).
-- **Visita reprodutiva (15/10/2026)**: UMA regra (`rules/visita_reprodutiva.py`) para a data da próxima visita: **data definida por você** (parâmetro `proxima_visita_reprodutiva_data`, enquanto não passou) > último serviço do rebanho + `intervalo_visita_reprodutiva` > nenhuma.
+- **Visita reprodutiva (15/10/2026)**: UMA regra (`rules/visita_reprodutiva.py`) para a data da próxima visita: **data definida por você** (parâmetro `proxima_visita_reprodutiva_data`, enquanto não passou) > âncora + `intervalo_visita_reprodutiva` > nenhuma, onde a âncora é a mais recente entre a **data da última visita** (parâmetro `ultima_visita_reprodutiva_data`, informada em Insights › Listas › Agenda Reprodutiva, no diálogo da Agenda ou em Parâmetros) e o último serviço do rebanho. Com a última visita informada como âncora o ciclo é fixo: se já venceu, avança de intervalo em intervalo até a próxima data futura (assim o comunicado de véspera/dia não some se ninguém atualizar). Os dois campos são o componente `components/reproducao/CamposVisitaReprodutiva.tsx`.
   Quem lê: motor da Agenda, **comunicado da Agenda** ("Amanhã: visita reprodutiva" na véspera, "Visita reprodutiva" no dia — vem em `GET /agenda/` e `/agenda/painel` (`comunicados`) e, no Dia a dia, em `GET /agenda/dia` (`comunicados_dia`); `data` = dia do aviso, `data_visita` = a visita),
   a projeção da **Insights › Listas › Agenda Reprodutiva** (nota "Cenário projetado para …" tem a data clicável) e as candidatas de IATF. Dois lugares mudam a data com o mesmo diálogo
   (`components/reproducao/DefinirDataVisitaModal.tsx` → `PUT /reproducao/visita-reprodutiva`): o comunicado da Agenda ("Definir nova data da visita") e a nota do cenário projetado; também dá para editar em Configurações › Parâmetros.
