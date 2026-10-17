@@ -30,6 +30,7 @@ from fazenda.rules.parametros import (
     bst_ajuste_ancora_data, dias_resultado_conhecido, intervalo_bst, intervalo_visita_reprodutiva,
 )
 from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
+from fazenda.rules.visita_reprodutiva import ultima_visita_informada, ultima_visita_vigente
 
 MARCADORES_BST = re.compile(r"\b(lactotropi[nm]|boostin|bst|somatotropina)\b", re.IGNORECASE)
 
@@ -102,15 +103,18 @@ def _rotina_visita_reprodutiva(session: Session, fazenda_id: int | None, hoje: d
         query = query.where(Servico.fazenda_id == fazenda_id)
     datas = [s.data_servico for s in session.exec(query).all() if s.data_servico]
     intervalo = intervalo_visita_reprodutiva()
-    if not datas or intervalo <= 0:
+    if (not datas and ultima_visita_informada(hoje) is None) or intervalo <= 0:
         return None
     responsavel = parametro.responsavel_manejo_nome or "responsável não cadastrado"
     if parametro.responsavel_manejo_empresa:
         responsavel = f"{responsavel} ({parametro.responsavel_manejo_empresa})"
+    ultima_informada = ultima_visita_informada(hoje)
+    ancora = ultima_visita_vigente(max(datas) if datas else None, ultima_informada)
     return {
         "titulo": f"Manejo reprodutivo — a cada {intervalo} dias, com {responsavel}",
-        "descricao": "Ancorada no último serviço lançado.",
-        "proximas_datas": _proximas_datas(max(datas), intervalo, hoje),
+        "descricao": ("Ancorada na última visita informada." if ancora == ultima_informada
+                      else "Ancorada no último serviço lançado."),
+        "proximas_datas": _proximas_datas(ancora, intervalo, hoje),
     }
 
 

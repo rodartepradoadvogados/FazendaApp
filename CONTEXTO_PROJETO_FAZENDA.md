@@ -60,7 +60,7 @@ Encoding dos CSV: **Windows-1252 (Latin-1)**, separador `;`, decimal com vírgul
 - **Desmama:** 90 dias de nascido (bezerreiros → desmama).
 - **Transições por peso (não há peso na base ainda):** Recria 1 a 160kg, Recria 2 a 250kg, novilha apta à IA 280-300kg. Hoje só se agenda a pesagem; a transição é manual (o dono altera no Ideagri).
 - **Pesagens:** leite toda quinta; bezerros (Bez 1/2/3 e Desmama) a cada 15 dias na terça; Recria 1/2 a cada 2 meses na terça.
-- **Visita reprodutiva Alpha/ABS (Carlos):** a cada 21 dias, sexta (próxima 03/07/2026). **Data definida pelo usuário** (Agenda › comunicado "Definir nova data da visita", ou nota "Cenário projetado" em Insights › Listas › Agenda Reprodutiva, ou Parâmetros) vale no lugar do cálculo enquanto não passar; depois volta ao último serviço + intervalo. Aviso na Agenda: "Amanhã: visita reprodutiva" e, no dia, "Visita reprodutiva" (só informa; não se marca como realizado).
+- **Visita reprodutiva Alpha/ABS (Carlos):** a cada 21 dias, sexta (próxima 03/07/2026). **Data definida pelo usuário** (Agenda › comunicado "Definir nova data da visita", ou nota "Cenário projetado" em Insights › Listas › Agenda Reprodutiva, ou Parâmetros) vale no lugar do cálculo enquanto não passar; depois volta ao cálculo: **data da última visita** informada (ou o último serviço, se mais recente) + intervalo de Parâmetros, em ciclo fixo. Aviso na Agenda: "Amanhã: visita reprodutiva" e, no dia, "Visita reprodutiva" (só informa; não se marca como realizado).
 - **Lotes:** 1 = novilhas alta lactação; 2 = vacas alta; 3 = média/final de lactação/baixa/tratamento (mastite, leite fora do tanque). Sobe de lote com ≥ 20 DEL e boa produção.
 
 ---

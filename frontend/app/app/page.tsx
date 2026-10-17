@@ -253,7 +253,7 @@ export default function AgendaMovel() {
   const [feitos, setFeitos] = useState<Set<string>>(new Set());
   const [aviso, setAviso] = useState<{ tipo: "ok" | "offline" | "erro"; msg: string } | null>(null);
   // "Definir nova data da visita" (comunicado da visita reprodutiva).
-  const [definindoVisita, setDefinindoVisita] = useState<{ data: string | null; origem: "definida" | "calculada" | null; intervalo: number | null } | null>(null);
+  const [definindoVisita, setDefinindoVisita] = useState<{ data: string | null; origem: "definida" | "calculada" | null; intervalo: number | null; ultima: string | null } | null>(null);
   // Protocolo IATF: cartões expansíveis. Primeiro pergunta LOTE ou INDIVIDUAL;
   // em lote confirma todas de uma vez, individual é vaca por vaca (Sim/Não).
   const [iatfAberto, setIatfAberto] = useState<Set<string>>(new Set());
@@ -1431,7 +1431,7 @@ export default function AgendaMovel() {
     // Comunicado da visita reprodutiva (véspera e dia): só informa — sem "concluir" — e leva à Agenda Reprodutiva do app
     // ou deixa definir a nova data (a mesma que a Agenda do site e a projeção usam).
     if (e.tipo === "visita_reprodutiva") {
-      const x = e as unknown as { data_visita?: string; origem_visita?: "definida" | "calculada"; intervalo_visita?: number };
+      const x = e as unknown as { data_visita?: string; origem_visita?: "definida" | "calculada"; intervalo_visita?: number; ultima_visita?: string };
       return (
         <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
           <a href="/app/menu#agenda-reprodutiva" style={{ display: "flex", alignItems: "center", gap: "0.6rem", color: "inherit", textDecoration: "none" }}>
@@ -1445,7 +1445,7 @@ export default function AgendaMovel() {
           <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.7rem", flexWrap: "wrap" }}>
             <a href="/app/menu#agenda-reprodutiva" className="mob-btn" style={{ flex: 1, textAlign: "center", textDecoration: "none" }}>Ver agenda reprodutiva</a>
             <button type="button" className="mob-btn mob-btn-sec" style={{ flex: 1 }}
-              onClick={() => setDefinindoVisita({ data: x.data_visita ?? e.data, origem: x.origem_visita ?? null, intervalo: x.intervalo_visita ?? null })}>
+              onClick={() => setDefinindoVisita({ data: x.data_visita ?? e.data, origem: x.origem_visita ?? null, intervalo: x.intervalo_visita ?? null, ultima: x.ultima_visita ?? null })}>
               Definir nova data da visita
             </button>
           </div>
@@ -1797,7 +1797,7 @@ export default function AgendaMovel() {
       {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
 
       {definindoVisita && (
-        <DefinirDataVisitaModal dataAtual={definindoVisita.data} origem={definindoVisita.origem} intervalo={definindoVisita.intervalo}
+        <DefinirDataVisitaModal dataAtual={definindoVisita.data} origem={definindoVisita.origem} intervalo={definindoVisita.intervalo} ultimaVisita={definindoVisita.ultima}
           onClose={() => setDefinindoVisita(null)} onSalvo={() => { carregar(); }} />
       )}
 

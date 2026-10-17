@@ -66,7 +66,7 @@ from fazenda.rules import repasse as _repasse_rules
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
 from fazenda.rules.nomenclatura_protocolo import nome_curto
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
-from fazenda.rules.visita_reprodutiva import data_definida as _visita_data_definida
+from fazenda.rules.visita_reprodutiva import data_definida as _visita_data_definida, ultima_visita_informada as _ultima_visita_informada
 from fazenda.rules.parametros import bst_ajuste_ancora_data, get_param, intervalo_bst, minimos_semen_por_tipo, patrimonio_atualizacao_valor_mercado_meses
 from fazenda.rules.patrimonio import proxima_atualizacao_valor_mercado, status_manutencao
 from fazenda.rules.unidades import kg_equivalente
@@ -756,6 +756,7 @@ def calcular_agenda(
         dias_contas_a_pagar=dias,
         proxima_visita_bst_real=proxima_visita_bst_real,
         proxima_visita_definida=_visita_data_definida(data),
+        ultima_visita_informada=_ultima_visita_informada(data),
         lotes=lotes,
         secagens=secagens,
         pedidos_documentos_vencendo=pedidos_documentos_vencendo,
@@ -1304,6 +1305,7 @@ def calcular_agenda(
     # último serviço + intervalo. Como "nova dieta", é computado a cada consulta — mudou a data, o comunicado acompanha.
     eventos_visita_repro = []
     visita_vr = result.proxima_visita_iatf
+    ultima_vr = _ultima_visita_informada(data)
     if visita_vr is not None and visita_vr in (data, data + timedelta(days=1)):
         chave_vr = f"visita_reprodutiva_{visita_vr.isoformat()}_{data.isoformat()}"
         if chave_vr not in realizados:
@@ -1312,11 +1314,12 @@ def calcular_agenda(
                 "descricao": "Visita reprodutiva" if visita_vr == data else "Amanhã: visita reprodutiva",
                 "numero_animal": None,
                 "observacao": ("Data definida por você." if _visita_data_definida(data) == visita_vr
-                               else "Data calculada: último serviço do rebanho + intervalo da visita."),
+                               else "Data calculada: última visita (ou último serviço do rebanho) + intervalo da visita."),
                 "fonte": "auto", "cor": "var(--dourado)", "ref": visita_vr.isoformat(), "tipo": "visita_reprodutiva",
                 "comunicado": True, "data_visita": visita_vr.isoformat(),
                 "origem_visita": "definida" if _visita_data_definida(data) == visita_vr else "calculada",
                 "intervalo_visita": int(get_param("intervalo_visita_reprodutiva", 21) or 21),
+                "ultima_visita": ultima_vr.isoformat() if ultima_vr else None,
             })
 
     # Nova dieta: alerta um dia antes ("para amanhã") e no dia ("hoje"), com

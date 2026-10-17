@@ -208,3 +208,104 @@ class TestAgendaDiaADia:
         c, _ = client
         assert c.put("/reproducao/visita-reprodutiva", json={"data": (HOJE + timedelta(days=6)).isoformat()}).status_code == 200
         assert self._dia(c)["comunicados_dia"] == []
+
+
+class TestUltimaVisitaInformada:
+    """Data da última visita reprodutiva informada pelo usuário: âncora da contagem dos dias entre visitas."""
+
+    def test_ultima_visita_ontem_ancora_a_proxima(self):
+        ontem = HOJE - timedelta(days=1)
+        servico_antigo = HOJE - timedelta(days=9)
+        assert proxima_visita(servico_antigo, 21, HOJE, None, ontem) == (ontem + timedelta(days=21), "calculada")
+        assert proxima_visita(None, 21, HOJE, None, ontem) == (ontem + timedelta(days=21), "calculada")
+
+    def test_servico_mais_novo_que_a_ultima_visita_informada_volta_a_ser_a_ancora(self):
+        informada, servico = HOJE - timedelta(days=10), HOJE - timedelta(days=2)
+        assert proxima_visita(servico, 21, HOJE, None, informada) == (servico + timedelta(days=21), "calculada")
+
+    def test_ciclo_fixo_pula_ciclos_vencidos_para_o_comunicado_nao_sumir(self):
+        informada = HOJE - timedelta(days=50)  # 50 dias atrás, a cada 21: ciclos em -29, -8, +13
+        assert proxima_visita(None, 21, HOJE, None, informada) == (HOJE + timedelta(days=13), "calculada")
+        exata = HOJE - timedelta(days=42)  # a visita calculada cai exatamente hoje: permanece hoje
+        assert proxima_visita(None, 21, HOJE, None, exata) == (HOJE, "calculada")
+
+    def test_data_definida_continua_vencendo_a_ultima_visita(self):
+        definida = HOJE + timedelta(days=3)
+        assert proxima_visita(None, 21, HOJE, definida, HOJE - timedelta(days=1)) == (definida, "definida")
+
+    def test_intervalo_zero_desliga_tambem_com_ultima_visita(self):
+        assert proxima_visita(None, 0, HOJE, None, HOJE - timedelta(days=1)) == (None, None)
+
+    def test_parametro_existe_no_seed_como_data_no_grupo_manejo(self):
+        d = {i["chave"]: i for i in DEFINICOES}["ultima_visita_reprodutiva_data"]
+        assert d["tipo"] == "date" and d["grupo"] == "manejo"
+
+    def test_motor_usa_a_ultima_visita_informada(self):
+        ontem = HOJE - timedelta(days=1)
+        r = AgendaEngine().calcular(
+            data_referencia=HOJE, animais=[], servicos=[], partos=[], estoque=[], contas=[], eventos_manuais=[],
+            ultima_visita_informada=ontem)
+        assert r.proxima_visita_iatf == ontem + timedelta(days=21)
+
+
+class TestUltimaVisitaApi:
+    def test_ida_e_volta_ultima_visita_ontem(self, client):
+        c, engine = client
+        ontem = HOJE - timedelta(days=1)
+        r = c.put("/reproducao/visita-reprodutiva", json={"ultima": ontem.isoformat()})
+        assert r.status_code == 200, r.text
+        corpo = r.json()
+        assert corpo["ultima_visita_reprodutiva"] == ontem.isoformat()
+        assert corpo["proxima_visita_reprodutiva"] == (ontem + timedelta(days=21)).isoformat()
+        with Session(engine) as s:
+            row = s.exec(select(ParametroFazenda).where(ParametroFazenda.chave == "ultima_visita_reprodutiva_data")).first()
+            assert row.valor == ontem.isoformat()
+        d = c.get("/reproducao/agenda-veterinario").json()
+        assert d["ultima_visita_reprodutiva"] == ontem.isoformat()
+        assert d["ultima_visita_vigente"] == ontem.isoformat()
+        assert d["proxima_visita_reprodutiva"] == (ontem + timedelta(days=21)).isoformat()
+        assert d["origem_visita_reprodutiva"] == "calculada"
+
+    def test_campo_ausente_nao_mexe_no_outro(self, client):
+        c, engine = client
+        prox = HOJE + timedelta(days=8)
+        assert c.put("/reproducao/visita-reprodutiva", json={"data": prox.isoformat()}).status_code == 200
+        r = c.put("/reproducao/visita-reprodutiva", json={"ultima": (HOJE - timedelta(days=1)).isoformat()})
+        assert r.json()["definida"] == prox.isoformat() and r.json()["origem_visita_reprodutiva"] == "definida"
+        r = c.put("/reproducao/visita-reprodutiva", json={"ultima": None})  # limpa só a última
+        assert r.json()["ultima_visita_reprodutiva"] is None and r.json()["definida"] == prox.isoformat()
+
+    def test_salva_as_duas_de_uma_vez(self, client):
+        c, _ = client
+        ontem, prox = HOJE - timedelta(days=1), HOJE + timedelta(days=4)
+        r = c.put("/reproducao/visita-reprodutiva", json={"ultima": ontem.isoformat(), "data": prox.isoformat()})
+        assert r.status_code == 200
+        assert r.json()["ultima_visita_reprodutiva"] == ontem.isoformat() and r.json()["proxima_visita_reprodutiva"] == prox.isoformat()
+
+    def test_ultima_visita_no_futuro_e_recusada(self, client):
+        c, _ = client
+        assert c.put("/reproducao/visita-reprodutiva", json={"ultima": (HOJE + timedelta(days=1)).isoformat()}).status_code == 400
+
+    @staticmethod
+    def _sem_servicos(engine):
+        # a fixture tem um serviço de 5 dias atrás, que (sendo mais novo) ancoraria a contagem no lugar da última visita informada
+        with Session(engine) as s:
+            for sv in s.exec(select(Servico)).all():
+                s.delete(sv)
+            s.commit()
+
+    def test_comunicado_na_vespera_pela_ultima_visita(self, client):
+        c, engine = client
+        self._sem_servicos(engine)
+        # última visita há 20 dias, intervalo 21 → a próxima é amanhã: "Amanhã: visita reprodutiva"
+        assert c.put("/reproducao/visita-reprodutiva", json={"ultima": (HOJE - timedelta(days=20)).isoformat()}).status_code == 200
+        com = [e for e in c.get(f"/agenda/?data={HOJE.isoformat()}&dias=30").json()["eventos"] if e.get("tipo") == "visita_reprodutiva"]
+        assert len(com) == 1 and com[0]["descricao"] == "Amanhã: visita reprodutiva"
+        assert com[0]["data_visita"] == (HOJE + timedelta(days=1)).isoformat() and com[0]["origem_visita"] == "calculada"
+
+    def test_comunicado_no_dia_pela_ultima_visita(self, client):
+        c, engine = client
+        self._sem_servicos(engine)
+        assert c.put("/reproducao/visita-reprodutiva", json={"ultima": (HOJE - timedelta(days=21)).isoformat()}).status_code == 200
+        com = [e for e in c.get(f"/agenda/?data={HOJE.isoformat()}&dias=30").json()["eventos"] if e.get("tipo") == "visita_reprodutiva"]
+        assert len(com) == 1 and com[0]["descricao"] == "Visita reprodutiva"

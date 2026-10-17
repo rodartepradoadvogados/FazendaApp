@@ -171,6 +171,8 @@ class AgendaEngine:
         # Data da próxima visita reprodutiva DEFINIDA pelo usuário (Parâmetros / Agenda / Agenda Reprodutiva).
         # Tem prioridade sobre o cálculo (último serviço + intervalo) enquanto não passar — ver rules/visita_reprodutiva.py.
         proxima_visita_definida: date | None = None,
+        # Data da última visita reprodutiva informada pelo usuário: âncora da contagem dos dias entre visitas.
+        ultima_visita_informada: date | None = None,
         lotes: list[dict] | None = None,
         secagens: list[dict] | None = None,
         pedidos_documentos_vencendo: list[dict] | None = None,
@@ -385,7 +387,8 @@ class AgendaEngine:
         datas_servico = [s["data_servico"] for s in servicos if s.get("data_servico")]
         ultimo_servico_rebanho = max(datas_servico) if datas_servico else None
         result.proxima_visita_iatf, _origem_visita = _proxima_visita_reprodutiva(
-            ultimo_servico_rebanho, intervalo_visita_reprodutiva, data_referencia, proxima_visita_definida)
+            ultimo_servico_rebanho, intervalo_visita_reprodutiva, data_referencia, proxima_visita_definida,
+            ultima_visita_informada)
         if datas_servico:
             ultimo_servico = max(datas_servico)
             result.proxima_visita_bst = ultimo_servico + timedelta(days=intervalo_bst)

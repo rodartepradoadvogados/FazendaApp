@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, Stethoscope, AlertTriangle, Check, X, Mail, 
 import { fetchAgendaVeterinario, enviarDiagnosticoEmail, atualizarParametro } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { DefinirDataVisitaModal } from "@/components/reproducao/DefinirDataVisitaModal";
+import { CamposVisitaReprodutiva } from "@/components/reproducao/CamposVisitaReprodutiva";
 import { exportarFichaPDF, exportarMultiExcel, type ColunaExport } from "@/lib/export";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { useCardsAgendaReprodutivaConfiguraveis, GradeCardsConfiguraveis, TabelasCardsConfiguraveis } from "@/components/CardsAgendaReprodutivaConfiguraveis";
@@ -157,6 +158,8 @@ type DadosAgendaVet = {
   ultimo_servico?: string | null; proxima_visita_reprodutiva?: string | null; intervalo_visita_reprodutiva?: number;
   // "definida" = data escolhida por você; "calculada" = último serviço + intervalo (Parâmetros); null = sem visita.
   origem_visita_reprodutiva?: "definida" | "calculada" | null;
+  // Última visita informada por você (âncora da contagem dos dias entre visitas) e a que vale de fato (a informada ou o último serviço).
+  ultima_visita_reprodutiva?: string | null; ultima_visita_vigente?: string | null;
 };
 
 export default function AgendaVeterinarioPage() {
@@ -298,6 +301,23 @@ export default function AgendaVeterinarioPage() {
         </div>
       </div>
 
+      {/* Datas da rotina de visita: a ÚLTIMA visita ancora a contagem dos dias (intervalo em Administração › Parâmetros)
+          e a PRÓXIMA pode ser marcada à mão. Mesmos campos do diálogo "Definir nova data da visita" da Agenda. */}
+      <div className="card mb-3" style={{ padding: "0.9rem 1rem" }} data-testid="card-datas-visita-reprodutiva">
+        <div style={{ fontWeight: 700, fontSize: "0.9rem", marginBottom: "0.6rem" }}>Visitas reprodutivas</div>
+        <CamposVisitaReprodutiva
+          key={`${dados.ultima_visita_reprodutiva ?? ""}|${dados.origem_visita_reprodutiva === "definida" ? dados.proxima_visita_reprodutiva ?? "" : ""}`}
+          ultimaInformada={dados.ultima_visita_reprodutiva ?? null}
+          proximaDefinida={dados.origem_visita_reprodutiva === "definida" ? dados.proxima_visita_reprodutiva ?? null : null}
+          proximaAtual={dados.proxima_visita_reprodutiva ?? null} origem={dados.origem_visita_reprodutiva ?? null}
+          intervalo={dados.intervalo_visita_reprodutiva ?? null} ultimoServico={dados.ultimo_servico ?? null}
+          onSalvo={(r) => {
+            setSucesso(r.proxima_visita_reprodutiva ? `Próxima visita reprodutiva em ${fmtDia(r.proxima_visita_reprodutiva)}.` : "Sem próxima visita reprodutiva agendada.");
+            if (modo === "projecao" && r.proxima_visita_reprodutiva && r.proxima_visita_reprodutiva !== dataRef) setDataRef(r.proxima_visita_reprodutiva);
+            else carregar();
+          }} />
+      </div>
+
       {painelExportar && (
         <div className="card mb-3" style={{ padding: "0.9rem 1rem" }}>
           <div className="flex items-center justify-between mb-2" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
@@ -370,7 +390,8 @@ export default function AgendaVeterinarioPage() {
       )}
       {definindoVisita && (
         <DefinirDataVisitaModal dataAtual={dados.proxima_visita_reprodutiva ?? null} origem={dados.origem_visita_reprodutiva ?? null}
-          intervalo={dados.intervalo_visita_reprodutiva ?? null} onClose={() => setDefinindoVisita(false)}
+          intervalo={dados.intervalo_visita_reprodutiva ?? null} ultimaVisita={dados.ultima_visita_reprodutiva ?? null}
+          ultimoServico={dados.ultimo_servico ?? null} onClose={() => setDefinindoVisita(false)}
           onSalvo={(proxima) => {
             setSucesso(proxima ? `Próxima visita reprodutiva em ${fmtDia(proxima)}. A projeção foi recalculada.` : "Sem próxima visita reprodutiva agendada.");
             if (proxima) { if (proxima === dataRef) carregar(); else setDataRef(proxima); } else { setModo("atual"); carregar(); }
