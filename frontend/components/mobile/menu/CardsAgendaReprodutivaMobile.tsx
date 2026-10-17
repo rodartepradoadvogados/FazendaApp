@@ -12,8 +12,8 @@
 // FiltroAgendaReprodutiva.tsx) — sem forma de SALVAR uma combinação como
 // card reaproveitável, e sem o padrão de card múltiplo do site (#570/#591 só
 // levaram a capacidade de buscar, não a de configurar cards fixos). Cards
-// ficam salvos em localStorage (mesma chave do site — useCardsAgendaReprodutivaConfiguraveis),
-// então o conjunto configurado é por navegador/instalação, não por servidor.
+// ficam salvos no servidor, por fazenda (useCardsAgendaReprodutivaConfiguraveis): o conjunto configurado é o mesmo no
+// site, no app, na exportação e no lançamento do diagnóstico.
 import { useState } from "react";
 import { ChevronRight, Plus, Settings, Trash2, X } from "lucide-react";
 import {

@@ -32,6 +32,7 @@ from .animais import (
     ComissaoCorretagem,
 )
 from .reprodutivo import (
+    AgendaReprodutivaCards,
     RepasseConfig,
     Servico,
     TipoServicoReprodutivo,
@@ -520,6 +521,7 @@ __all__ = [
     "RotinaListaEsperaEstado",
     "CronogramaSanitarioVinculo",
     "RepasseConfig",
+    "AgendaReprodutivaCards",
     "ChecklistTemplateItem",
     "ChecklistItem",
     "CalendarioSanitarioChecklistItem",

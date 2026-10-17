@@ -2311,6 +2311,20 @@ export async function fetchAgendaReprodutivaCard(
   return res.json();
 }
 
+/** Cards da Agenda Reprodutiva salvos no servidor, por fazenda (`cards: null` = nunca salvou). */
+export type CardSalvoApi = { id: string; nome: string; config: CardAgendaReprodutivaConfig };
+export async function fetchCardsAgendaReprodutivaSalvos(): Promise<{ cards: CardSalvoApi[] | null; atualizado_em: string | null }> {
+  const res = await authFetch(`${API}/reproducao/agenda-reprodutiva/cards-config`);
+  if (!res.ok) throw new Error("Não foi possível ler os cards salvos");
+  return res.json();
+}
+export async function salvarCardsAgendaReprodutiva(cards: CardSalvoApi[]): Promise<void> {
+  const res = await authFetch(`${API}/reproducao/agenda-reprodutiva/cards-config`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cards }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Não foi possível salvar os cards"); }
+}
+
 /** Vários cards numa chamada só: o servidor calcula o estado do rebanho uma vez (antes eram N chamadas completas). */
 export async function fetchAgendaReprodutivaCards(
   cards: { id: string; config: CardAgendaReprodutivaConfig }[], data?: string,

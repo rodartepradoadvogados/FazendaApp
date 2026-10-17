@@ -1,7 +1,7 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, Settings, Trash2, X } from "lucide-react";
-import { fetchAgendaReprodutivaCards, fetchLotes, type CardAgendaReprodutivaConfig, type ItemCardAgendaReprodutiva, type ParametrosToque, type SituacaoCard } from "@/lib/api";
+import { fetchAgendaReprodutivaCards, fetchCardsAgendaReprodutivaSalvos, fetchLotes, salvarCardsAgendaReprodutiva, type CardAgendaReprodutivaConfig, type ItemCardAgendaReprodutiva, type ParametrosToque, type SituacaoCard } from "@/lib/api";
 import { GrupoLotePicker } from "@/components/GrupoLotePicker";
 import { CelulaExame, ChipFase, LegendaToque, SeloAindaNao } from "@/components/reproducao/FaseToque";
 import { FASES, ROTULO_FASE_PLURAL, contarPorFase, filtrarPorFases, ordenarNoPrazoPrimeiro, seloBreve, type FaseToque } from "@/lib/fasesToque";
@@ -224,15 +224,56 @@ function TabelaResultado({ itens, situacao }: { itens: ItemCardAgendaReprodutiva
   );
 }
 
+/** Os cards da fazenda. A fonte de verdade é o servidor (por fazenda): site, app, exportação e lançamento do diagnóstico
+ * enxergam o mesmo conjunto. O `localStorage` ficou só como cache de abertura rápida e como rede de segurança offline.
+ * Migração: quem já tinha cards salvos só neste navegador e o servidor ainda está vazio sobe esses cards na primeira
+ * leitura; o conjunto padrão sem nenhuma edição não é gravado (ninguém decidiu nada). `escrita=false` só lê. */
+function useCardsSalvos(escrita: boolean) {
+  const [cards, setCards] = useState<CardDef[]>(carregarCards);
+  const [sincronizado, setSincronizado] = useState(false);
+  const [erroSalvar, setErroSalvar] = useState<string | null>(null);
+  const noServidor = useRef<string | null>(null); // JSON do que o servidor tem (null = nunca salvou)
+
+  useEffect(() => {
+    let cancelado = false;
+    fetchCardsAgendaReprodutivaSalvos()
+      .then((r) => {
+        if (cancelado) return;
+        if (r.cards !== null) { noServidor.current = JSON.stringify(r.cards); setCards(r.cards); }
+        setSincronizado(true);
+      })
+      .catch(() => { if (!cancelado) setSincronizado(true); }); // sem rede: segue com o que o navegador tem
+    return () => { cancelado = true; };
+  }, []);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(CHAVE_STORAGE, JSON.stringify(cards)); } catch { /* storage indisponível — não impede o uso da tela */ }
+  }, [cards]);
+
+  useEffect(() => {
+    if (!escrita || !sincronizado) return;
+    const json = JSON.stringify(cards);
+    if (json === noServidor.current) return;
+    if (noServidor.current === null && json === JSON.stringify(cardsPadrao())) return;
+    const timer = setTimeout(() => {
+      salvarCardsAgendaReprodutiva(cards.map((c) => ({ id: c.id, nome: c.nome, config: c.config })))
+        .then(() => { noServidor.current = json; setErroSalvar(null); })
+        .catch((e: Error) => setErroSalvar(`Os cards não foram salvos no servidor (${e.message}); ficaram neste navegador.`));
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [cards, sincronizado, escrita]);
+
+  return { cards, setCards, erroSalvar };
+}
+
 /** Estado + lógica dos cards 100% configuráveis da Agenda Reprodutiva —
  * extraído em hook para poder ser controlado a partir de AgendaVeterinario.tsx
  * e alimentar dois pedaços de UI que ficam em lugares diferentes da página:
  * a grade de chips (GradeCardsConfiguraveis, perto do topo) e a área de
  * tabelas abertas (TabelasCardsConfiguraveis, depois de "Outras pendências").
- * Definição de cada card fica em localStorage (por navegador) — sem
- * persistência no servidor nesta primeira entrega. */
+ * A definição de cada card fica no servidor, por fazenda (ver useCardsSalvos). */
 export function useCardsAgendaReprodutivaConfiguraveis(dataRef?: string) {
-  const [cards, setCards] = useState<CardDef[]>(carregarCards);
+  const { cards, setCards, erroSalvar } = useCardsSalvos(true);
   const [opcoesLote, setOpcoesLote] = useState<string[]>([]);
   const [itensPorCard, setItensPorCard] = useState<Record<string, ItemCardAgendaReprodutiva[]>>({});
   const [parametros, setParametros] = useState<ParametrosToque | null>(null);
@@ -244,10 +285,6 @@ export function useCardsAgendaReprodutivaConfiguraveis(dataRef?: string) {
   useEffect(() => {
     fetchLotes().then((lotes: any[]) => setOpcoesLote(lotes.map((l) => `${l.codigo} - ${l.nome}`))).catch(() => {});
   }, []);
-
-  useEffect(() => {
-    try { window.localStorage.setItem(CHAVE_STORAGE, JSON.stringify(cards)); } catch { /* storage indisponível — não impede o uso da tela */ }
-  }, [cards]);
 
   // Um POST só para todos os cards: o servidor calcula o estado do rebanho uma vez. As tabelas e as contagens
   // saem dos mesmos itens, então o filtro de situação atualiza tudo ao vivo, sem nova chamada.
@@ -310,7 +347,7 @@ export function useCardsAgendaReprodutivaConfiguraveis(dataRef?: string) {
   const filtroAtivo = fases.size > 0;
 
   return {
-    cards, opcoesLote, contagens, abertos, itensAbertos, editando, erro, parametros,
+    cards, opcoesLote, contagens, abertos, itensAbertos, itensPorCard, editando, erro, erroSalvar, parametros,
     fases, filtroAtivo, contagensFase, alternarFase, limparFases,
     setEditando, toggle, salvarCard, removerCard, cardEditando,
   };
@@ -318,8 +355,8 @@ export function useCardsAgendaReprodutivaConfiguraveis(dataRef?: string) {
 
 export type CardsAgendaReprodutivaConfiguraveisState = ReturnType<typeof useCardsAgendaReprodutivaConfiguraveis>;
 
-/** Leitura simples dos cards configuráveis — mesma origem (localStorage,
- * `carregarCards`) e mesma busca de itens (`fetchAgendaReprodutivaCard`) do
+/** Leitura simples dos cards configuráveis — mesma origem (servidor, por fazenda;
+ * `useCardsSalvos`) e mesma busca de itens (`fetchAgendaReprodutivaCard`) do
  * hook acima, mas sem os estados de edição/criação de card nem o controle de
  * "tabela aberta": para telas que só precisam oferecer os cards já
  * configurados pelo usuário como opção de seleção (ex.: FormDiagnostico —
@@ -329,7 +366,7 @@ export type CardsAgendaReprodutivaConfiguraveisState = ReturnType<typeof useCard
  * `habilitado=false` evita a chamada ao backend enquanto a aba não estiver
  * em uso (mesmo padrão do fetchAgendaVeterinario sob demanda ao lado). */
 export function useCardsAgendaReprodutivaLeitura(dataRef?: string, habilitado: boolean = true) {
-  const [cards] = useState<CardDef[]>(carregarCards);
+  const { cards } = useCardsSalvos(false);
   const [itensPorCard, setItensPorCard] = useState<Record<string, ItemCardAgendaReprodutiva[]>>({});
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -350,7 +387,7 @@ export function useCardsAgendaReprodutivaLeitura(dataRef?: string, habilitado: b
       .catch(() => { if (!cancelado) { setErro("Os cards não puderam ser calculados agora."); setCarregando(false); } });
     return () => { cancelado = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataRef, habilitado]);
+  }, [dataRef, habilitado, cards]);
 
   return { cards, itensPorCard, carregando, erro };
 }
@@ -376,6 +413,7 @@ export function GradeCardsConfiguraveis({ estado }: { estado: CardsAgendaReprodu
         </button>
       </div>
       {erro && <p style={{ fontSize: "0.78rem", color: "var(--red)", marginBottom: "0.5rem" }}>{erro}</p>}
+      {estado.erroSalvar && <p role="status" style={{ fontSize: "0.78rem", color: "var(--ft-ambar)", marginBottom: "0.5rem" }}>{estado.erroSalvar}</p>}
 
       {editando === "novo" && (
         <PainelEdicao cardId={null} nomeInicial="" configInicial={{ categoria: "todas", lotes: [], situacao: "vazia", periodos: [], somente_atrasadas: false, exceto_atrasadas: false }}

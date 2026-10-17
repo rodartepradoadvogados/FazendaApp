@@ -7,6 +7,8 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { DefinirDataVisitaModal } from "@/components/reproducao/DefinirDataVisitaModal";
 import { CamposVisitaReprodutiva } from "@/components/reproducao/CamposVisitaReprodutiva";
 import { exportarFichaPDF, exportarMultiExcel, type ColunaExport } from "@/lib/export";
+import { ExportarAgendaReprodutivaModal } from "@/components/reproducao/ExportarAgendaReprodutivaModal";
+import { descreverFiltro, fmtExame, linhasDoModal, montarExportacao, type EntradaExportacao, type ListaOutra } from "@/lib/exportAgendaReprodutiva";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { useCardsAgendaReprodutivaConfiguraveis, GradeCardsConfiguraveis, TabelasCardsConfiguraveis, FiltroSituacaoDiagnostico } from "@/components/CardsAgendaReprodutivaConfiguraveis";
 
@@ -34,14 +36,14 @@ function BadgeDiag({ v }: { v: string | null | undefined }) {
 }
 
 const LISTAS: {
-  key: string; label: string; color: string; extra?: "motivo"; vazia?: boolean; lancar?: boolean;
+  key: string; label: string; curto: string; color: string; extra?: "motivo"; vazia?: boolean; lancar?: boolean;
 }[] = [
   // Só estas duas continuam fixas: não são "situação reprodutiva" (uma vem de
   // resultado de diagnóstico, a outra é dado faltante), então não têm
   // equivalente nos cards configuráveis acima — ver
   // fazenda.rules.agenda_reprodutiva_configuravel.
-  { key: "vazias_por_diagnostico", label: "Vazias por diagnóstico (negativo/aborto/perda de prenhez) — novo serviço", color: "var(--red)", extra: "motivo", vazia: true },
-  { key: "pendentes_classificacao", label: "Pendentes de classificação (dado faltante)", color: "var(--text-muted)", extra: "motivo", lancar: true },
+  { key: "vazias_por_diagnostico", label: "Vazias por diagnóstico (negativo/aborto/perda de prenhez) — novo serviço", curto: "Vazias por diagnóstico", color: "var(--red)", extra: "motivo", vazia: true },
+  { key: "pendentes_classificacao", label: "Pendentes de classificação (dado faltante)", curto: "Pendentes de classificação", color: "var(--text-muted)", extra: "motivo", lancar: true },
 ];
 
 /** Rótulo de Status por lista — a categoria em que o animal foi classificado
@@ -76,12 +78,23 @@ function colunasDaCategoria(cfg: typeof LISTAS[number]): ColunaExport[] {
     ] : []),
   ];
 }
+/** PDF: poucas colunas, com largura em mm (as 17 do Excel espremiam o texto em uma letra por linha). */
+function colunasPdfDaCategoria(cfg: typeof LISTAS[number]): ColunaExport[] {
+  return [
+    { header: "Matriz", key: "numero_matriz", larguraPdf: 16 }, { header: "Categoria", key: "categoria", larguraPdf: 22 },
+    { header: "Lote atual", key: "lote_atual" }, { header: "Dias insem.", key: "dias_inseminada", larguraPdf: 18 },
+    { header: "Toque / confirmação", key: "toque_fmt", larguraPdf: 36 }, { header: "Retoque / reconfirmação", key: "retoque_fmt", larguraPdf: 38 },
+    ...(cfg.extra === "motivo" ? [{ header: "Motivo", key: "motivo" }] : []),
+    ...(cfg.vazia ? [{ header: "Próximo DG (estimado)", key: "proxima_data_dg_estimada_fmt", larguraPdf: 34 }] : []),
+  ];
+}
 function linhasDaCategoria(itens: Item[], cfg: typeof LISTAS[number]): Record<string, unknown>[] {
   return itens.map((it) => ({
     ...it,
     diagnostico_fmt: badgeTexto(it.diagnostico), data_diagnostico_fmt: fmtDia(it.data_diagnostico),
     diagnostico_reconfirmacao_fmt: badgeTexto(it.diagnostico_reconfirmacao), data_reconfirmacao_fmt: fmtDia(it.data_reconfirmacao),
     status_fmt: statusDe(cfg, it),
+    toque_fmt: fmtExame(it.data_diagnostico, it.diagnostico), retoque_fmt: fmtExame(it.data_reconfirmacao, it.diagnostico_reconfirmacao),
     data_dg_negativo_fmt: fmtDia(it.data_dg_negativo), proxima_data_dg_estimada_fmt: fmtDia(it.proxima_data_dg_estimada),
   }));
 }
@@ -183,12 +196,9 @@ export default function AgendaVeterinarioPage() {
   const [salvandoParam, setSalvandoParam] = useState(false);
   const [avisoParam, setAvisoParam] = useState<string | null>(null);
 
-  // Exportação combinada — escolher uma, várias ou todas as categorias e
-  // exportar juntas num único arquivo (Excel com uma aba por categoria, ou
-  // PDF com uma seção por categoria), independente de a pílula estar aberta.
-  const [painelExportar, setPainelExportar] = useState(false);
-  const [selecionadasExport, setSelecionadasExport] = useState<Set<string>>(new Set());
-  const [exportando, setExportando] = useState<"excel" | "pdf" | null>(null);
+  // Exportação: o pop-up "Exportar agenda reprodutiva" escolhe as listas (cards configurados e outras pendências)
+  // e gera PDF ou Excel num arquivo só, independente de a lista estar aberta na tela.
+  const [exportarAberto, setExportarAberto] = useState(false);
 
   function carregar() {
     fetchAgendaVeterinario(dataRef !== hoje ? dataRef : undefined).then(setDados).catch((e) => setError(e.message));
@@ -231,39 +241,6 @@ export default function AgendaVeterinarioPage() {
     setAvisoParam("Para que a próxima visita reprodutiva seja sugerida automaticamente, vá em Configurações > Parâmetros e defina o intervalo entre serviços.");
   }
 
-  const categoriasComDados = dados ? LISTAS.filter((l) => (dados.totais[l.key] ?? 0) > 0) : [];
-  const subtituloExport = dados
-    ? `Data de referência: ${fmtDia(dados.data_referencia)}${dados.projetado ? " (cenário projetado)" : " (data atual)"}`
-    : "";
-
-  function abrirPainelExportar() {
-    if (!painelExportar) setSelecionadasExport(new Set(categoriasComDados.map((l) => l.key)));
-    setPainelExportar((v) => !v);
-  }
-  function alternarSelecao(key: string) {
-    setSelecionadasExport((s) => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; });
-  }
-  function montarSecoes() {
-    return categoriasComDados
-      .filter((l) => selecionadasExport.has(l.key))
-      .map((l) => ({ titulo: l.label, colunas: colunasDaCategoria(l), linhas: linhasDaCategoria(dados!.listas[l.key] ?? [], l) }));
-  }
-  async function exportarSelecionadas(formato: "excel" | "pdf") {
-    setExportando(formato);
-    try {
-      const secoes = montarSecoes();
-      if (formato === "excel") {
-        await exportarMultiExcel("Agenda Reprodutiva", secoes, "agenda_reprodutiva_combinado");
-      } else {
-        await exportarFichaPDF("Agenda Reprodutiva", subtituloExport, secoes, "agenda_reprodutiva_combinado");
-      }
-    } catch {
-      // erro já mostrado ao usuário dentro de exportarMultiExcel/exportarFichaPDF (lib/export.ts)
-    } finally {
-      setExportando(null);
-    }
-  }
-
   // Estado dos cards configuráveis é levantado para cá (state lifting) porque
   // a grade de chips e a área de tabelas abertas agora vivem em pontos
   // diferentes da página (ver GradeCardsConfiguraveis/TabelasCardsConfiguraveis
@@ -274,6 +251,29 @@ export default function AgendaVeterinarioPage() {
 
   if (error) return <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>;
   if (!dados) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
+
+  // Entrada do pop-up e dos arquivos: os cards vêm do hook (já com os itens de TODOS, abertos ou não) e as duas listas de
+  // "Outras pendências" vêm da agenda do veterinário, já nas duas versões de colunas (PDF enxuto, Excel completo).
+  const outrasListas: ListaOutra[] = LISTAS.map((l) => {
+    const linhas = linhasDaCategoria(dados.listas[l.key] ?? [], l);
+    return {
+      id: l.key, titulo: l.curto, total: dados.totais[l.key] ?? 0,
+      pdf: { titulo: l.curto, colunas: colunasPdfDaCategoria(l), linhas },
+      excel: { titulo: l.curto, colunas: colunasDaCategoria(l), linhas },
+    };
+  });
+  const entradaExportacao = (selecionadas: ReadonlySet<string>, aplicarFiltro: boolean): EntradaExportacao => ({
+    cards: cardsConfiguraveis.cards.map((c) => ({ id: c.id, titulo: c.nome, situacao: c.config.situacao, itens: cardsConfiguraveis.itensPorCard[c.id] ?? [] })),
+    outras: outrasListas, selecionadas, fases: cardsConfiguraveis.fases, aplicarFiltro, parametros: cardsConfiguraveis.parametros,
+    dataReferencia: dados.data_referencia, projetado: !!dados.projetado, proximaVisita: dados.proxima_visita_reprodutiva ?? null,
+    geradoEm: new Date().toLocaleDateString("pt-BR"),
+  });
+  async function exportarAgenda(formato: "pdf" | "excel", ids: Set<string>, aplicarFiltro: boolean) {
+    const saida = montarExportacao(entradaExportacao(ids, aplicarFiltro));
+    if (saida.totais.listas === 0) throw new Error("Nenhuma das listas escolhidas tem animais para exportar.");
+    if (formato === "pdf") await exportarFichaPDF(saida.pdf.titulo, saida.pdf.subtitulo, saida.pdf.secoes, "agenda_reprodutiva", "baixar", saida.pdf.opcoes);
+    else await exportarMultiExcel(saida.excel.titulo, saida.excel.secoes, "agenda_reprodutiva", "baixar", saida.excel.opcoes);
+  }
 
   return (
     <div className="animate-in">
@@ -291,12 +291,8 @@ export default function AgendaVeterinarioPage() {
           <label style={{ fontSize: "0.8rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
             <input type="radio" name="modoAgendaRepro" checked={modo === "projecao"} onChange={() => setModo("projecao")} /> Projeção — próxima visita reprodutiva agendada{dados.proxima_visita_reprodutiva ? ` (${fmtDia(dados.proxima_visita_reprodutiva)})` : ""}
           </label>
-          <button onClick={abrirPainelExportar} disabled={categoriasComDados.length === 0}
-            title="Exportar a lista completa, escolhendo quais categorias incluir"
-            style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem", padding: "0.35rem 0.7rem", borderRadius: "var(--r-sm)",
-              border: "1px solid var(--dourado)", background: painelExportar ? "var(--ft-ouro-tint)" : "transparent",
-              color: "var(--ft-ouro-txt)", cursor: categoriasComDados.length === 0 ? "not-allowed" : "pointer", opacity: categoriasComDados.length === 0 ? 0.5 : 1 }}>
-            <Download size={14} /> Exportar lista completa
+          <button type="button" onClick={() => setExportarAberto(true)} className="btn-primary" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem" }}>
+            <Download size={14} aria-hidden="true" /> Exportar agenda reprodutiva
           </button>
         </div>
       </div>
@@ -317,44 +313,6 @@ export default function AgendaVeterinarioPage() {
             else carregar();
           }} />
       </div>
-
-      {painelExportar && (
-        <div className="card mb-3" style={{ padding: "0.9rem 1rem" }}>
-          <div className="flex items-center justify-between mb-2" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
-            <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>Exportar lista completa</span>
-            <div className="flex items-center gap-2">
-              <button onClick={() => setSelecionadasExport(new Set(categoriasComDados.map((l) => l.key)))}
-                style={{ fontSize: "0.75rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
-                Selecionar todas
-              </button>
-              <button onClick={() => setSelecionadasExport(new Set())}
-                style={{ fontSize: "0.75rem", padding: "0.25rem 0.6rem", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
-                Nenhuma
-              </button>
-            </div>
-          </div>
-          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>{subtituloExport}</p>
-          <div className="flex flex-wrap gap-3 mb-3">
-            {categoriasComDados.map((l) => (
-              <label key={l.key} style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem", color: "var(--text)", cursor: "pointer" }}>
-                <input type="checkbox" checked={selecionadasExport.has(l.key)} onChange={() => alternarSelecao(l.key)} />
-                {l.label} ({dados.totais[l.key]})
-              </label>
-            ))}
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => exportarSelecionadas("excel")} disabled={selecionadasExport.size === 0 || exportando !== null}
-              className="btn-primary" style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem" }}>
-              {exportando === "excel" ? "Gerando…" : "Exportar Excel"}
-            </button>
-            <button onClick={() => exportarSelecionadas("pdf")} disabled={selecionadasExport.size === 0 || exportando !== null}
-              className="btn-primary" style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem" }}>
-              {exportando === "pdf" ? "Gerando…" : "Exportar PDF"}
-            </button>
-            {selecionadasExport.size === 0 && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Selecione ao menos uma categoria.</span>}
-          </div>
-        </div>
-      )}
 
       {modo === "projecao" && !dados.proxima_visita_reprodutiva && (
         <div className="mb-3" style={{ background: "rgba(198,58,58,0.12)", border: "1px solid var(--red)", borderRadius: "var(--r-sm)", padding: "0.75rem 1rem", fontSize: "0.85rem" }}>
@@ -396,6 +354,13 @@ export default function AgendaVeterinarioPage() {
             setSucesso(proxima ? `Próxima visita reprodutiva em ${fmtDia(proxima)}. A projeção foi recalculada.` : "Sem próxima visita reprodutiva agendada.");
             if (proxima) { if (proxima === dataRef) carregar(); else setDataRef(proxima); } else { setModo("atual"); carregar(); }
           }} />
+      )}
+
+      {exportarAberto && (
+        <ExportarAgendaReprodutivaModal
+          linhasPara={(aplicar) => linhasDoModal(entradaExportacao(new Set(), aplicar))}
+          filtroAtivo={cardsConfiguraveis.filtroAtivo} rotuloFiltro={descreverFiltro(cardsConfiguraveis.fases, true)}
+          onClose={() => setExportarAberto(false)} onExportar={exportarAgenda} />
       )}
 
       {sucesso && (

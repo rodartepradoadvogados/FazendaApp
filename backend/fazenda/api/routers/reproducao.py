@@ -5,6 +5,7 @@ e lançamento de diagnóstico de gestação.
 from __future__ import annotations
 
 import html
+import json
 import logging
 from datetime import date, datetime, timedelta
 
@@ -15,6 +16,7 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
+    AgendaReprodutivaCards,
     Animal, ControleLeiteiro, EstoqueSemen, Lactacao, Lote, Parto, PesagemCorporal, ProtocoloIatf, ProtocoloIatfAplicacao,
     ProtocoloIatfEtapa, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     Sanidade, SeedFlag, Secagem, Servico, Usuario,
@@ -868,6 +870,70 @@ def agenda_reprodutiva_cards(
         "resultados": {c.id: _resposta_card(c.config, animais, estados, params) for c in corpo.cards},
     }
 
+
+
+class CardSalvoIn(BaseModel):
+    """Um card como a tela o guarda: id estável (criado no navegador), nome e a configuração dos 4 eixos."""
+
+    id: str
+    nome: str
+    config: CardAgendaReprodutivaIn
+
+
+class CardsSalvosIn(BaseModel):
+    cards: list[CardSalvoIn]
+
+
+@router.get("/agenda-reprodutiva/cards-config")
+def obter_cards_agenda_reprodutiva(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Cards configurados da fazenda. `cards: null` = nunca salvou no servidor (a tela usa os padrão ou migra o que o
+    navegador já tinha); `[]` = salvou sem nenhum card."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    linha = session.exec(select(AgendaReprodutivaCards).where(AgendaReprodutivaCards.fazenda_id == fazenda_id)).first()
+    if linha is None:
+        return {"cards": None, "atualizado_em": None}
+    try:
+        cards = json.loads(linha.cards_json or "[]")
+    except ValueError:
+        cards = []
+    return {"cards": cards, "atualizado_em": linha.atualizado_em.isoformat() if linha.atualizado_em else None}
+
+
+@router.put("/agenda-reprodutiva/cards-config")
+def salvar_cards_agenda_reprodutiva(
+    corpo: CardsSalvosIn,
+    session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
+    fazenda_id: int = Depends(get_fazenda_id_escrita),
+) -> dict:
+    """Guarda os cards da fazenda (substitui a lista inteira). Cada card é validado como no cálculo; ids repetidos,
+    nome vazio ou mais de 40 cards são recusados — nada é gravado pela metade."""
+    if len(corpo.cards) > 40:
+        raise HTTPException(status_code=422, detail="Cards demais (máximo 40)")
+    vistos: set[str] = set()
+    for c in corpo.cards:
+        _validar_card(c.config)
+        ident = c.id.strip()
+        if not ident or len(ident) > 64:
+            raise HTTPException(status_code=422, detail="Id de card inválido")
+        if ident in vistos:
+            raise HTTPException(status_code=422, detail=f"Card repetido: {ident}")
+        vistos.add(ident)
+        if not c.nome.strip() or len(c.nome) > 80:
+            raise HTTPException(status_code=422, detail="Nome de card inválido (1 a 80 caracteres)")
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    linha = session.exec(select(AgendaReprodutivaCards).where(AgendaReprodutivaCards.fazenda_id == fazenda_id)).first()
+    if linha is None:
+        linha = AgendaReprodutivaCards(fazenda_id=fazenda_id)
+    linha.cards_json = json.dumps([c.model_dump() for c in corpo.cards], ensure_ascii=False)
+    linha.atualizado_em = datetime.utcnow()
+    linha.atualizado_por_usuario_id = usuario_id_seguro(usuario)
+    session.add(linha)
+    session.commit()
+    return {"ok": True, "total": len(corpo.cards), "atualizado_em": linha.atualizado_em.isoformat()}
 
 
 def _ultimo_servico(session: Session, numero_matriz: str, fazenda_id: int | None = None) -> Servico | None:
