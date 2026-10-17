@@ -26,7 +26,7 @@ export function motivoCurto(mensagem: string | null | undefined, numero?: string
   t = t.replace(/\s*\([^)]*Configurações[^)]*\)/g, "");
   const fim = t.search(/\.\s|\.$/);
   if (fim > 0) t = t.slice(0, fim);
-  t = t.replace(/\s+$/, "");
+  t = t.replace(/\s+$/, "").replace(/(\d)\.(\d)/g, "$1,$2"); // o servidor escreve "15.0 meses": na tela é vírgula decimal
   return t ? t[0].toUpperCase() + t.slice(1) : "";
 }
 

@@ -187,6 +187,21 @@ def test_adicionar_aplica_a_mesma_aptidao_do_protocolo_novo(client):
 # ---------------------------------------------------------------------------
 # Inseminação em lote
 # ---------------------------------------------------------------------------
+def test_servico_avulso_sem_protocolo_recusa_matriz_em_protocolo_vigente(client):
+    """POST /reproducao/servico (rota do app de campo) sem `protocolo` é cio/monta natural: mesma recusa do /servico-lote.
+    Com `protocolo` preenchido é a IA do próprio IATF e passa."""
+    c, engine = client
+    _protocolo(c, ["800"])
+    r = c.post("/reproducao/servico", json={"numero_matriz": "800", "data_servico": HOJE.isoformat(), "tipo_servico": "Monta natural"})
+    assert r.status_code == 409
+    d = r.json()["detail"]
+    assert d["motivo"] == "em_protocolo" and d["animais"] == ["800"] and d["confirmavel"] is False
+    with Session(engine) as s:
+        assert s.exec(select(Servico)).first() is None
+    ok = c.post("/reproducao/servico", json={"numero_matriz": "800", "data_servico": HOJE.isoformat(), "protocolo": "IATF"})
+    assert ok.status_code == 200, ok.text
+
+
 def test_cio_natural_e_monta_natural_recusam_matriz_em_protocolo_vigente(client):
     c, engine = client
     _protocolo(c, ["800"])

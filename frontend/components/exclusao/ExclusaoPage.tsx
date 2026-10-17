@@ -36,7 +36,7 @@ export function ExclusaoPage({ ocultarTipos }: { ocultarTipos?: string[] } = {})
   const ex = useExclusao();
   const { estado } = ex;
   const topo = useRef<HTMLDivElement>(null);
-  const primeiraEtapa = useRef(true);
+  const etapaAnterior = useRef(estado.etapa);
 
   useEffect(() => {
     let vivo = true;
@@ -63,7 +63,10 @@ export function ExclusaoPage({ ocultarTipos }: { ocultarTipos?: string[] } = {})
 
   // A cada troca de passo o foco vai para o topo do conteúdo (leitor de tela e teclado acompanham a mudança).
   useEffect(() => {
-    if (primeiraEtapa.current) { primeiraEtapa.current = false; return; }
+    // Compara com a etapa anterior (e não com "primeira execução"): no modo estrito do React o efeito roda duas vezes na montagem
+    // e o foco ia para o topo logo ao abrir a tela, desenhando o anel de foco em volta do passo 1.
+    if (etapaAnterior.current === estado.etapa) return;
+    etapaAnterior.current = estado.etapa;
     topo.current?.focus();
   }, [estado.etapa]);
 

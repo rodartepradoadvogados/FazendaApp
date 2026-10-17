@@ -192,6 +192,8 @@ export default function LancamentosPage() {
   const [gavetaAberta, setGavetaAberta] = useState(false);
   const [formKey, setFormKey] = useState(0);
   const [mensagemSalva, setMensagemSalva] = useState<string | null>(null);
+  // Tela nova de Excluir lançamento (flag `exclusao_v2` da fazenda) traz moldura, título e aviso próprios: o título/aviso da página saem.
+  const [exclusaoV2, setExclusaoV2] = useState(false);
   // Pré-preenchimento vindo do card "Pedidos em aberto" (Financeiro > Lançar)
   // — mesmo mecanismo/shape que app/pedidos/page.tsx já usa no ícone "$
   // Lançar em Financeiro" (ver PrefillPedido em components/FormFinanceiro.tsx).
@@ -435,7 +437,7 @@ export default function LancamentosPage() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Entrada de dados direto no sistema — escolha o tipo e preencha.</p>
       </div>
 
-      <div className="card mb-4" style={{ display: "flex", gap: "0.6rem", alignItems: "flex-start", background: "rgba(94,26,46,0.18)" }}>
+      {!(sel === "exclusao" && exclusaoV2) && <div className="card mb-4" style={{ display: "flex", gap: "0.6rem", alignItems: "flex-start", background: "rgba(94,26,46,0.18)" }}>
         <Info size={16} style={{ color: "var(--dourado-light)", marginTop: "0.15rem", flexShrink: 0 }} />
         <p style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
           {sel === "financeiro_despesa" || sel === "financeiro_receita" ? (
@@ -478,7 +480,7 @@ export default function LancamentosPage() {
             <><strong style={{ color: "var(--text)" }}>Indução de cio já grava de verdade.</strong> Gera histórico (sem tocar em Servico/Protocolo IATF) e um lembrete "Observar cio" na Agenda entre 2 e 5 dias depois da aplicação — some sozinho assim que a inseminação for lançada.</>
           ) : null}
         </p>
-      </div>
+      </div>}
 
       {(sel === "sanidade_aplicacao" || sel === "protocolo_sanitario") && (
         <div role="note" className="card mb-4" style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap", borderLeft: "3px solid var(--dourado)" }}>
@@ -499,8 +501,10 @@ export default function LancamentosPage() {
         </div>
       ) : (
         <div className="card" ref={cardRef} onChange={verificarSujo}>
-          <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
-          <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
+          {!(sel === "exclusao" && exclusaoV2) && <>
+            <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
+          </>}
           {(sel === "financeiro_despesa" || sel === "financeiro_receita") && avisoPedido && (
             <div role="status" className="card mb-4" style={{ background: "var(--surface-2)", fontSize: "0.84rem" }}>✓ {avisoPedido}</div>
           )}
@@ -593,7 +597,7 @@ export default function LancamentosPage() {
           {sel === "comprar_semen" && <CompraSemenForm />}
           {sel === "vender_animal" && <CompraVendaAnimalForm modo="venda" animais={animais} />}
           {sel === "baixar_animal" && <BaixarAnimal />}
-          {sel === "exclusao" && <FormExclusao />}
+          {sel === "exclusao" && <FormExclusao onV2={setExclusaoV2} />}
         </div>
       )}
 

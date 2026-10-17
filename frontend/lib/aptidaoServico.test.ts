@@ -17,7 +17,7 @@ const API: AptidaoServicoApi = {
 };
 
 test("motivo curto: sem o número, sem parêntese de configuração, só a primeira frase", () => {
-  assert.equal(motivoCurto(API.animais["13204"].mensagem, "13204"), "Tem 11.0 meses — abaixo da idade mínima de aptidão");
+  assert.equal(motivoCurto(API.animais["13204"].mensagem, "13204"), "Tem 11,0 meses — abaixo da idade mínima de aptidão");
   assert.equal(motivoCurto(API.animais["8012"].mensagem, "8012"), "Consta como GESTANTE (serviço de 10/05/2026)");
   assert.equal(motivoCurto(null), "");
 });

@@ -11,7 +11,7 @@ import { Selo } from "@/components/gerencial/kit";
 import { agrupaPorLote, ehApta, marcavel, todasAptasMarcadas, type LinhaFemea } from "@/lib/aptidaoServico";
 
 // O motivo pode ser uma frase: quebra linha em vez de empurrar a tabela para o lado.
-const CSS_FEMEAS = `.rp-motivo.tf-motivo { white-space: normal; display: inline-block; max-width: 26rem; vertical-align: middle; line-height: 1.35; }`;
+const CSS_FEMEAS = `.rp-motivo.tf-motivo { white-space: normal; display: inline-block; max-width: 15rem; vertical-align: middle; line-height: 1.35; }`;
 
 export function TabelaFemeas({
   linhas, sel, onToggle, onToggleLote, onToggleAptas, mostrarProtocolo, colunaExtra, tituloAptidao = "Aptidão para servir",

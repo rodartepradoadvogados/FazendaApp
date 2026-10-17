@@ -101,6 +101,13 @@ test("retorno de aplicar: online hoje, online agendado, offline e fila do app", 
   assert.match(hoje.texto, /^2 aplicadas em 17\/10\/2026\. Estoque baixou 2 unidade de Lactotropin \(restam 48\)\. Próxima aplicação calculada: 29\/10\/2026\.$/);
   assert.deepEqual(hoje.avisos, ["Saldo de Lactotropin ficou negativo"]);
 
+  // Produto fora do estoque da fazenda: o servidor avisa uma vez por animal e a tela não pode afirmar que baixou.
+  const aviso = "\"Lactotropin\" não está no estoque desta fazenda — lançamento registrado sem baixa.";
+  const semEstoque = interpretarRetornoAplicar({ aplicados: 2, agendados: 0, avisos: [aviso, aviso] }, 2, params({ dose: "1" }), HOJE, estoque);
+  assert.deepEqual(semEstoque.avisos, [aviso]);
+  assert.doesNotMatch(semEstoque.texto, /Estoque baixou/);
+  assert.match(semEstoque.texto, /O estoque não baixou/);
+
   const semDose = interpretarRetornoAplicar({ aplicados: 1, agendados: 0 }, 1, params(), HOJE, estoque);
   assert.match(semDose.texto, /^1 aplicada em 17\/10\/2026\. Sem dose e unidade informadas: o estoque não baixou\.$/);
 

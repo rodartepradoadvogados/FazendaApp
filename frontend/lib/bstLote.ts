@@ -162,7 +162,8 @@ export function interpretarRetornoAplicar(resposta: unknown, n: number, p: Param
   if (r.enviado === false) {
     return { tipo: "offline", texto: "Sem internet — guardado, será enviado quando conectar.", avisos: [], agendou: p.data > hoje };
   }
-  const avisos: string[] = Array.isArray(r.avisos) ? r.avisos.filter((x: unknown): x is string => typeof x === "string") : [];
+  // O servidor repete o mesmo aviso uma vez por animal ("… lançamento registrado sem baixa." × N): mostra cada um uma vez.
+  const avisos: string[] = Array.isArray(r.avisos) ? [...new Set(r.avisos.filter((x: unknown): x is string => typeof x === "string"))] : [];
   const agendados = typeof r.agendados === "number" ? r.agendados : null;
   const aplicados = typeof r.aplicados === "number" ? r.aplicados : null;
   if ((agendados !== null && agendados > 0) || (aplicados === null && p.data > hoje)) {
@@ -171,7 +172,11 @@ export function interpretarRetornoAplicar(resposta: unknown, n: number, p: Param
   }
   const k = aplicados ?? n;
   const prev = preverEstoque(p, k, hoje, estoque);
-  const baixa = prev.tipo === "baixar"
+  // Produto que o servidor não achou no estoque: o lançamento ficou sem baixa — não afirmar o contrário.
+  const semBaixaNoServidor = avisos.some((a) => /sem baixa/i.test(a));
+  const baixa = prev.tipo === "baixar" && semBaixaNoServidor
+    ? " O estoque não baixou (veja o aviso abaixo)."
+    : prev.tipo === "baixar"
     ? ` Estoque baixou ${prev.total.toLocaleString("pt-BR", { maximumFractionDigits: 4 })} ${prev.unidade} de ${prev.produto}${prev.restam !== null ? ` (restam ${prev.restam.toLocaleString("pt-BR", { maximumFractionDigits: 4 })})` : ""}.`
     : " Sem dose e unidade informadas: o estoque não baixou.";
   const prox = typeof r.proxima_aplicacao_calculada === "string" ? ` Próxima aplicação calculada: ${dataBR(r.proxima_aplicacao_calculada)}.` : "";

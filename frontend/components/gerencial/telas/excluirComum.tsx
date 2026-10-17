@@ -147,9 +147,9 @@ const CSS = `
 .gx-bloco:focus-visible { outline: 2px solid var(--ft-ouro); outline-offset: 1px; }
 .gx-bloco[data-destaque="true"] { border-color: var(--ft-ouro); background: var(--ft-ouro-tint); box-shadow: inset 0 0 0 1px var(--ft-ouro); }
 .gx-bloco-ic { grid-area: ic; display: inline-flex; color: var(--gx-cor, var(--text-muted)); }
-.gx-bloco-nome { grid-area: nome; font-size: 0.85rem; font-weight: 700; min-width: 0; display: flex; align-items: center; gap: 0.4rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gx-bloco-nome { grid-area: nome; font-size: 0.85rem; font-weight: 700; min-width: 0; display: flex; align-items: center; gap: 0.4rem; line-height: 1.2; overflow-wrap: anywhere; }
 .gx-bloco-n { grid-area: n; font-size: 0.85rem; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--text); }
-.gx-bloco-dica { grid-area: dica; font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gx-bloco-dica { grid-area: dica; font-size: 0.7rem; color: var(--text-muted); line-height: 1.3; }
 .gx-todos { flex: 1; min-width: 0; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "ic nome n" "ic dica n"; border-color: var(--ft-aco); border-width: 1.5px; background: var(--surface); }
 .gx-todos .gx-bloco-ic { color: var(--ft-aco); }
 .gx-todos .gx-bloco-n { font-size: 1.1rem; }
