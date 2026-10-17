@@ -1,20 +1,19 @@
 "use client";
 // Sub-tela REPRODUTIVO: quatro lançamentos em pílulas — Inseminação,
 // Diagnóstico, Parto e Protocolo IATF (D0). Usa os mesmos endpoints do
-// desktop (/reproducao/*).
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+// desktop (/reproducao/*). Inseminação e Protocolo IATF são lançamentos EM LOTE
+// (dois passos, como o Diagnóstico) e moram em ./lote/ — aqui só se escolhe qual abrir.
+import { useEffect, useState, type CSSProperties } from "react";
 import { Syringe, Stethoscope, Baby, CalendarClock } from "lucide-react";
 import { MobCampo, MobAviso, MobVoltar, MobConfirmModal } from "@/components/mobile/ui";
-import {
-  fetchSemenDisponivel, fetchTouros, sugestaoLoteEvento, criarMovimentacao, type SemenDisponivel, type Touro,
-} from "@/lib/api";
-import { enviarOuEnfileirar, fetchComCache } from "@/lib/offline";
-import { TouroPicker, type TouroPickerItem } from "@/components/TouroPicker";
+import { sugestaoLoteEvento, criarMovimentacao } from "@/lib/api";
+import { enviarOuEnfileirar } from "@/lib/offline";
 import { DiagnosticoGestacao } from "./DiagnosticoGestacao";
-import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
+import { Inseminacao } from "./lote/InseminacaoLote";
+import { ProtocoloIatf } from "./lote/ProtocoloIatfLote";
 import {
-  type Animal, useCache, useEnvio, useRascunho, hoje, rotuloAnimal,
-  BotoesEscolha, SeletorAnimal, GradeAcoes, MobPill, LinhaPills, RascunhoAviso,
+  type Animal, useEnvio, useRascunho, hoje,
+  BotoesEscolha, SeletorAnimal, GradeAcoes, RascunhoAviso,
 } from "./comum";
 
 type Aba = "inseminacao" | "diagnostico" | "parto" | "iatf";
@@ -22,16 +21,6 @@ type Aba = "inseminacao" | "diagnostico" | "parto" | "iatf";
 const TITULOS_ABA: Record<Aba, string> = {
   inseminacao: "Inseminação", diagnostico: "Diagnóstico", parto: "Parto", iatf: "Protocolo IATF",
 };
-
-// Cronograma do protocolo IATF — mesmos hormônios do backend
-// (fazenda/api/routers/reproducao.py → PASSOS_PROTOCOLO_IATF). O D0 é o que
-// está sendo aplicado agora; as demais etapas entram na agenda.
-const ETAPAS_IATF: { dia: number; hormonios: string }[] = [
-  { dia: 0, hormonios: "Implante de progesterona + Benzoato de estradiol + Acetato de buserelina" },
-  { dia: 7, hormonios: "Cloprostenol" },
-  { dia: 9, hormonios: "Retirar implante + Cipionato de estradiol + Cloprostenol" },
-  { dia: 11, hormonios: "Inseminação (IATF)" },
-];
 
 export function FormReprodutivo({ animais, animalFixado, restringirA }: { animais: Animal[]; animalFixado: string | null; restringirA?: Aba[] }) {
   const [aba, setAba] = useState<Aba | null>(null);
@@ -58,150 +47,6 @@ export function FormReprodutivo({ animais, animalFixado, restringirA }: { animai
       {aba === "diagnostico" && <DiagnosticoGestacao animalFixado={animalFixado} onIrParaInseminacao={(n) => { setParaInseminar(n); setAba("inseminacao"); }} />}
       {aba === "parto" && <Parto animais={animais} animalFixado={animalFixado} />}
       {aba === "iatf" && <ProtocoloIatf animais={animais} animalFixado={animalFixado} />}
-    </>
-  );
-}
-
-// ── Inseminação → POST /reproducao/servico ───────────────────────────────────
-// Categoria "fazenda" = cobertura por touro da fazenda (monta natural, sem
-// sêmen estocado) — mesmo conceito do site (FormInseminacao.tsx). Precisa de
-// tratamento à parte porque muda o que é enviado como tipo_servico: sem essa
-// opção, toda cobertura lançada pelo app virava "IA" e debitava dose de sêmen
-// que nunca foi usada de verdade (ver reproducao.py::registrar_servico).
-function Inseminacao({ animais, animalFixado, matrizesIniciais }: { animais: Animal[]; animalFixado: string | null; matrizesIniciais?: string[] }) {
-  const { aviso, setAviso, enviar, enviando, erroValidacao } = useEnvio();
-  const semen = useCache<SemenDisponivel | null>("semen_disponivel", () => fetchSemenDisponivel(), null);
-  // Rascunho da matriz escolhida — o passo mais trabalhoso (buscar/tocar o
-  // animal certo); se o app for interrompido no meio, não se perde ao voltar
-  // (docs/agents/design-implementation.md §5, acabamento-de-campo.html).
-  const rascunho = useRascunho<string>("inseminacao_matriz", animalFixado || "");
-  const matriz = rascunho.valor;
-  const setMatriz = rascunho.setValor;
-  // Vários animais vindos do diagnóstico Negativo: lista própria (sem rascunho), um lançamento por animal. Com um só
-  // animal vindo de lá, ele entra como a matriz escolhida de sempre.
-  const [lote, setLote] = useState<string[]>(matrizesIniciais && matrizesIniciais.length > 1 ? matrizesIniciais : []);
-  useEffect(() => {
-    if (matrizesIniciais?.length === 1) setMatriz(matrizesIniciais[0]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  const [data, setData] = useState(hoje());
-  const [categoria, setCategoria] = useState<"convencional" | "sexado" | "fazenda">("convencional");
-  const [touro, setTouro] = useState("");
-  const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
-  const [catalogoTouros, setCatalogoTouros] = useState<Touro[]>([]);
-  const [salvandoLote, setSalvandoLote] = useState(false);
-  const ehFazenda = categoria === "fazenda";
-
-  async function salvarLote() {
-    if (!data) return erroValidacao("Informe a data da inseminação.");
-    setSalvandoLote(true);
-    setAviso(null);
-    let salvos = 0, guardados = 0;
-    const falhas: string[] = [];
-    for (const numero of lote) {
-      try {
-        const { enviado } = await enviarOuEnfileirar(
-          "/reproducao/servico",
-          { numero_matriz: numero, data_servico: data, tipo_servico: ehFazenda ? "Monta natural" : "IA", reprodutor: touro || undefined, tipo_semen: ehFazenda ? undefined : categoria },
-          `${ehFazenda ? "Monta natural" : "Inseminação"} — matriz ${numero}${touro ? ` (${touro})` : ""}`,
-        );
-        if (enviado) salvos++; else guardados++;
-      } catch { falhas.push(numero); }
-    }
-    setSalvandoLote(false);
-    if (falhas.length) {
-      setLote(falhas);
-      setAviso({ tipo: "erro", msg: `${salvos + guardados ? `Salvos: ${salvos + guardados}. ` : ""}Falharam: ${falhas.join(", ")} — tente novamente só esses.` });
-      return;
-    }
-    setLote([]); setTouro("");
-    setAviso(guardados
-      ? { tipo: "offline", msg: `${guardados} sem internet — guardado${guardados > 1 ? "s" : ""}, será enviado ao conectar.${salvos ? ` Salvos agora: ${salvos}.` : ""}` }
-      : { tipo: "ok", msg: `Inseminação salva para ${salvos} ${salvos === 1 ? "animal" : "animais"}.` });
-  }
-
-  function salvar() {
-    if (lote.length) return salvarLote();
-    if (!matriz) return erroValidacao("Selecione a matriz.");
-    if (!data) return erroValidacao("Informe a data da inseminação.");
-    enviar(
-      "/reproducao/servico",
-      {
-        numero_matriz: matriz, data_servico: data,
-        tipo_servico: ehFazenda ? "Monta natural" : "IA",
-        reprodutor: touro || undefined,
-        tipo_semen: ehFazenda ? undefined : categoria,
-      },
-      `${ehFazenda ? "Monta natural" : "Inseminação"} — matriz ${matriz}${touro ? ` (${touro})` : ""}`,
-      () => { setTouro(""); rascunho.limpar(); },
-    );
-  }
-
-  const touros = semen.dados?.touros || [];
-  const opcoes = touros.filter((t) => t.tipo === categoria).map((t) => t.nome);
-  const itensCatalogo: TouroPickerItem[] = catalogoTouros.map((t) => ({ naab: t.naab, nome: t.nome || t.naab, central: t.central, raca: t.raca, tpi: t.tpi }));
-  return (
-    <>
-      <RascunhoAviso mostrar={rascunho.salvo} />
-      {lote.length > 0 ? (
-        <MobCampo label={`Matrizes vindas do diagnóstico (${lote.length})`}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
-            {lote.map((n) => (
-              <span key={n} style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", padding: "0.4rem 0.5rem 0.4rem 0.7rem", borderRadius: 999, background: "var(--mob-vinho)", color: "#FFFFFF", fontSize: "0.85rem", fontWeight: 700 }}>
-                {n}
-                <button type="button" onClick={() => setLote((p) => p.filter((x) => x !== n))} aria-label={`Remover ${n}`}
-                  style={{ width: 32, height: 32, margin: "-4px -6px -4px 0", borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.2)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1rem", lineHeight: 1, flexShrink: 0 }}>×</button>
-              </span>
-            ))}
-          </div>
-        </MobCampo>
-      ) : (
-        <MobCampo label="Matriz (nº / nome)">
-          <SeletorAnimal animais={animais} valor={matriz} onChange={setMatriz} placeholder="Buscar matriz…" />
-        </MobCampo>
-      )}
-      <MobCampo label="Data da inseminação/cobertura">
-        <input type="date" className="mob-input" value={data} onChange={(e) => setData(e.target.value)} />
-      </MobCampo>
-      <MobCampo label="Categoria do touro / sêmen">
-        <BotoesEscolha
-          opcoes={[
-            { valor: "convencional", label: "Convencional" }, { valor: "sexado", label: "Sexado" },
-            { valor: "fazenda", label: "Touro da fazenda" },
-          ]}
-          valor={categoria} onChange={(v) => { setCategoria(v); setTouro(""); setIncluirSemEstoque(false); }}
-        />
-        {ehFazenda && <p style={{ fontSize: "0.72rem", color: "var(--mob-muted)", marginTop: "0.4rem" }}>Touro da fazenda — registrado como <strong>monta natural</strong>, sem debitar dose de sêmen.</p>}
-      </MobCampo>
-      <MobCampo label={ehFazenda ? "Touro (monta natural)" : "Touro / sêmen (opcional)"}>
-        {!incluirSemEstoque || ehFazenda ? (
-          <select className="mob-input" value={touro} onChange={(e) => setTouro(e.target.value)}>
-            <option value="">{ehFazenda ? "Selecione o touro…" : "Selecione o sêmen…"}</option>
-            {opcoes.map((t) => <option key={t} value={t}>{t}</option>)}
-          </select>
-        ) : (
-          <TouroPicker className="mob-input" itens={itensCatalogo} value={touro} placeholder="Buscar touro no catálogo NAAB..."
-            onChangeTexto={setTouro} onSelecionar={(t) => setTouro(t.nome)} />
-        )}
-        {!opcoes.length && <p style={{ fontSize: "0.72rem", color: "var(--mob-laranja)", marginTop: 2 }}>{ehFazenda ? "Nenhum touro da fazenda cadastrado." : `Nenhum sêmen ${categoria} em estoque.`}</p>}
-        {!ehFazenda && (
-          <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginTop: "0.4rem", fontSize: "0.76rem", color: "var(--mob-muted)" }}>
-            <input type="checkbox" checked={incluirSemEstoque}
-              onChange={(e) => {
-                setIncluirSemEstoque(e.target.checked);
-                setTouro("");
-                if (e.target.checked && !catalogoTouros.length) {
-                  fetchComCache<Touro[]>("touros_naab", () => fetchTouros()).then(({ dados }) => { if (dados) setCatalogoTouros(dados); });
-                }
-              }} />
-            Incluir touros sem estoque (catálogo NAAB)
-          </label>
-        )}
-      </MobCampo>
-      <button className="mob-btn" onClick={salvar} disabled={enviando || salvandoLote}>
-        {enviando || salvandoLote ? "Salvando…" : `Salvar${lote.length > 1 ? ` (${lote.length})` : ""}`}
-      </button>
-      {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
     </>
   );
 }
@@ -637,120 +482,5 @@ function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: str
   );
 }
 
-// ── Protocolo IATF (D0) → POST /reproducao/protocolo-iatf ────────────────────
-// Lança o D0 do protocolo para uma ou mais matrizes. As etapas seguintes
-// (D7/D9/D11) entram na agenda pelo backend. O protocolo hormonal é fixo no
-// backend — aqui exibimos os hormônios de cada dia para conferência.
-// Exportado para a tela Lançar > Protocolos usar o MESMO formulário — dois
-// caminhos até o mesmo lançamento, uma só implementação (ver FormProtocolos).
-export function ProtocoloIatf({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
-  const { aviso, enviar, enviando, erroValidacao } = useEnvio();
-  const { rotuloDe } = useEstadosReprodutivos();
-  // Rascunho persistido — se o app for interrompido no meio (a vaca se move,
-  // toca o telefone), as matrizes já escolhidas não se perdem ao voltar
-  // (docs/agents/design-implementation.md §5, acabamento-de-campo.html).
-  const rascunho = useRascunho<string[]>("iatf_matrizes", animalFixado ? [animalFixado] : []);
-  const matrizes = rascunho.valor;
-  const [dataD0, setDataD0] = useState(hoje());
-  const [verHormonios, setVerHormonios] = useState(false);
-
-  function adicionar(numero: string) {
-    if (!matrizes.includes(numero)) rascunho.setValor([...matrizes, numero]);
-  }
-  function remover(numero: string) {
-    rascunho.setValor(matrizes.filter((n) => n !== numero));
-  }
-
-  function salvar() {
-    if (matrizes.length === 0) return erroValidacao("Selecione ao menos uma matriz.");
-    if (!dataD0) return erroValidacao("Informe a data do D0.");
-    enviar(
-      "/reproducao/protocolo-iatf",
-      { animais: matrizes, data_d0: dataD0 },
-      `Protocolo IATF D0 — ${matrizes.length} vaca(s)`,
-      () => rascunho.limpar(),
-      { ok: "Protocolo IATF (D0) lançado — as etapas entram na agenda." },
-    );
-  }
-
-  // Data prevista de cada etapa = D0 + dias (só para conferência visual).
-  function dataEtapa(dias: number): string {
-    if (!dataD0) return "";
-    const d = new Date(`${dataD0}T00:00:00`);
-    d.setDate(d.getDate() + dias);
-    return d.toLocaleDateString("pt-BR");
-  }
-
-  return (
-    <>
-      <MobCampo label="Matrizes (nº / nome) — pode escolher várias">
-        <SeletorAnimal animais={animais} valor="" onChange={adicionar} placeholder="Buscar matriz e tocar para adicionar…" />
-      </MobCampo>
-
-      <RascunhoAviso mostrar={rascunho.salvo} />
-
-      {matrizes.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "0.9rem" }}>
-          {matrizes.map((n) => {
-            const a = animais.find((x) => x.numero === n);
-            return (
-              <span key={n} style={{
-                display: "inline-flex", alignItems: "center", gap: "0.4rem",
-                padding: "0.4rem 0.5rem 0.4rem 0.7rem", borderRadius: 999,
-                background: "var(--mob-vinho)", color: "#FFFFFF", fontSize: "0.85rem", fontWeight: 700,
-              }} title={a ? rotuloAnimal(a, rotuloDe) : undefined}>
-                {n}
-                <button type="button" onClick={() => remover(n)} aria-label={`Remover ${n}`}
-                  style={{ width: 32, height: 32, margin: "-4px -6px -4px 0", borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.2)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1rem", lineHeight: 1, flexShrink: 0 }}>
-                  ×
-                </button>
-              </span>
-            );
-          })}
-        </div>
-      )}
-
-      <MobCampo label="Data do D0">
-        <input type="date" className="mob-input" value={dataD0} onChange={(e) => setDataD0(e.target.value)} />
-      </MobCampo>
-
-      <div style={{ marginBottom: "0.9rem" }}>
-        <button type="button" className="mob-btn-2" onClick={() => setVerHormonios((v) => !v)}
-          style={{ justifyContent: "space-between" }}>
-          <span>Hormônios do protocolo (D0/D7/D9/D11)</span>
-          <span aria-hidden style={{ fontWeight: 800 }}>{verHormonios ? "−" : "+"}</span>
-        </button>
-        {verHormonios && (
-          <div style={{ marginTop: "0.5rem", display: "grid", gap: "0.5rem" }}>
-            {ETAPAS_IATF.map((e) => {
-              const ehD0 = e.dia === 0;
-              return (
-                <div key={e.dia} style={{
-                  padding: "0.7rem 0.8rem", borderRadius: "var(--r-app)",
-                  border: `1px solid ${ehD0 ? "var(--mob-vinho)" : "var(--mob-border)"}`,
-                  background: ehD0 ? "color-mix(in srgb, var(--mob-vinho) 8%, transparent)" : "var(--mob-surface)",
-                }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.5rem", marginBottom: "0.2rem" }}>
-                    <strong style={{ fontSize: "0.9rem" }}>
-                      D{e.dia}{ehD0 ? " · aplicando agora" : ""}
-                    </strong>
-                    {dataEtapa(e.dia) && <span style={{ fontSize: "0.78rem", color: "var(--mob-muted)" }}>{dataEtapa(e.dia)}</span>}
-                  </div>
-                  <span style={{ fontSize: "0.85rem", color: "var(--mob-text)", lineHeight: 1.4 }}>{e.hormonios}</span>
-                </div>
-              );
-            })}
-            <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", lineHeight: 1.4, margin: "0.1rem 0 0" }}>
-              Protocolo padrão da fazenda. As etapas D7/D9/D11 entram automaticamente na agenda.
-            </p>
-          </div>
-        )}
-      </div>
-
-      <button className="mob-btn" onClick={salvar} disabled={enviando}>
-        {enviando ? "Salvando…" : `Lançar D0${matrizes.length ? ` (${matrizes.length})` : ""}`}
-      </button>
-      {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
-    </>
-  );
-}
+// Lançar › Protocolos › IATF (FormProtocolos) abre este MESMO componente — duas portas, uma implementação.
+export { ProtocoloIatf };

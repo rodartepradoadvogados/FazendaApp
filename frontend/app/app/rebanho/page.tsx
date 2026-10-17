@@ -18,7 +18,7 @@ export default function Pagina() {
   const [numeroInicial, setNumeroInicial] = useState<string | null>(null);
   const [destacarInicial, setDestacarInicial] = useState<string | null>(null);
 
-  // Chegou da Agenda com uma pendência de colostro/IgG (link /app/rebanho?numero=...&destacar=...).
+  // Chegou da Agenda com uma pendência de colostro/IgG (link /app/rebanho?numero=...&destacar=...) ou de Movimentar (?aba=lotes).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const numero = params.get("numero");
@@ -27,6 +27,9 @@ export default function Pagina() {
       setNumeroInicial(numero);
       setDestacarInicial(destacar);
       setAba("animais");
+    } else if (params.get("aba") === "lotes") {
+      // "Ver lotes" no resultado de Lançar › Movimentar animais.
+      setAba("lotes");
     }
   }, []);
 
