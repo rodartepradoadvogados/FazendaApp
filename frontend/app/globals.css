@@ -2028,7 +2028,7 @@ tr.st-row-sel td{background:var(--sel-row)}
    components/mobile/lancar/lote/* e components/mobile/rebanho/Movimentar.tsx.
    Mesmo "quem" do Diagnóstico (origem → situação → cartão-checkbox → barra fixa), mockups aprovados pelo dono.
    Tokens locais (--lote-*) só para o que o app ainda não tinha: borda de componente com 3:1 de contraste, cor de
-   situação com texto AA nos dois temas e o texto do botão de ação (branco no dourado do claro: 4,9:1 em vez de 3,6:1
+   situação com texto AA nos dois temas e o texto do botão de ação (branco no dourado do claro, #8A6D2F: 4,9:1 em vez de 3,6:1
    do #1A1A1A). Nada global muda: o .mob-btn das outras telas continua como era.
    ═══════════════════════════════════════════════════════════════════════════ */
 .lote {
@@ -2050,6 +2050,7 @@ tr.st-row-sel td{background:var(--sel-row)}
 /* transição entre passos: o conteúdo novo entra deslizando de lado (só opacity + margin, como .mob-troca-aba) */
 /* fill-mode "backwards" (e não "both"): uma animação que continua "preenchendo" depois de acabar mantém um contexto de
    empilhamento, e a folha de confirmação (position: fixed, z-index alto) ficaria presa embaixo da navegação do app */
+.lote-view:focus { outline: none; }
 .lote-view { animation: lote-entra 0.3s var(--lote-ease) backwards; }
 .lote-view.volta { animation-name: lote-volta; }
 @keyframes lote-entra { from { opacity: 0; margin-left: 26px; } to { opacity: 1; margin-left: 0; } }
@@ -2142,7 +2143,6 @@ tr.st-row-sel td{background:var(--sel-row)}
 .lote-barra .n span small { display: block; font-weight: 600; font-size: 0.78rem; }
 .lote-barra .lote-cta { flex: 1; }
 @keyframes lote-bump { 0% { transform: scale(1); } 40% { transform: scale(1.28); color: var(--mob-acao); } 100% { transform: scale(1); } }
-.lote-barra-txt { font-size: 0.82rem; color: var(--mob-muted); text-align: center; font-variant-numeric: tabular-nums; }
 
 /* cartões de conteúdo */
 .lote-resumo { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; padding: 0.8rem 0.9rem; background: var(--mob-surface); border: 1px solid var(--mob-border); }

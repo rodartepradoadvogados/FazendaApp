@@ -1,6 +1,7 @@
 "use client";
 // Peças da tela de resultado compartilhadas: selo + frase humana, quadro de números e linha de ação.
 import type { ReactNode } from "react";
+import { focarAoMontar } from "./hooks";
 
 export function ResultadoCabecalho({ tipo, titulo, texto }: { tipo: "ok" | "offline" | "erro"; titulo: ReactNode; texto?: ReactNode }) {
   return (
@@ -11,7 +12,8 @@ export function ResultadoCabecalho({ tipo, titulo, texto }: { tipo: "ok" | "offl
         {tipo === "offline" && <path d="M42 22v22M42 56v1" />}
         {tipo === "erro" && <path d="M42 22v24M42 58v1" />}
       </svg>
-      <h2 role="status">{titulo}</h2>
+      {/* título é título (não região viva); recebe o foco ao abrir o resultado, e o leitor de tela o lê */}
+      <h2 ref={focarAoMontar} tabIndex={-1}>{titulo}</h2>
       {texto ? <p>{texto}</p> : null}
     </div>
   );

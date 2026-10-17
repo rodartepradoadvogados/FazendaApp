@@ -6,7 +6,7 @@
 // Offline-first: a lista vem de fetchComCache e o envio sai por enviarOuEnfileirar. A seleção fica guardada como
 // rascunho (se o app for interrompido no meio, não se perde) e persiste ao trocar de origem — mover costuma juntar
 // animais de lugares diferentes.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, ArrowRightLeft } from "lucide-react";
 import { fetchAnimais, fetchLotes, fetchMotivosMovimentacao, fetchSugestoesMovimentacao, today } from "@/lib/api";
@@ -24,7 +24,7 @@ import {
 import { BarraAcao, BarraContinuar } from "@/components/mobile/lancar/lote/BarraLote";
 import { ColapsavelLote, OpcaoLote, ResumoLote } from "@/components/mobile/lancar/lote/ResumoLote";
 import { AcoesFim, LinhaQuadro, QuadroLote, ResultadoCabecalho } from "@/components/mobile/lancar/lote/ResultadoLote";
-import { usePassos, useSelecaoPersistida } from "@/components/mobile/lancar/lote/hooks";
+import { focarAoMontar, usePassos, useSelecaoPersistida, vibrar } from "@/components/mobile/lancar/lote/hooks";
 import { useToastLote } from "@/components/mobile/lancar/lote/SheetLote";
 
 type Lote = LoteBasico & { id?: number };
@@ -43,10 +43,6 @@ const ORIGENS_MOV: { id: OrigemLote; rotulo: string }[] = [
 ];
 const LIMITE_LISTA = 40;
 const MOTIVO_OUTRO = "Outro motivo";
-
-function vibrar(padrao: number | number[]) {
-  try { navigator.vibrate?.(padrao); } catch { /* sem suporte — segue sem vibrar */ }
-}
 
 export default function Movimentar() {
   const online = useConectividadeReal();
@@ -74,6 +70,7 @@ export default function Movimentar() {
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [resultado, setResultado] = useState<Resultado | null>(null);
+  const trava = useRef(false);
 
   // Cada lista tem uma busca (com cache) e um "aplicar" que a guarda no estado; o efeito de abertura só atualiza o
   // estado dentro do .then, e o refresh depois de mover reaproveita as mesmas peças.
@@ -86,11 +83,13 @@ export default function Movimentar() {
   function aplicarLotes(r: { dados: Lote[] | null }) {
     if (r.dados) setLotes([...r.dados].sort((a, b) => comparaNumero(a.codigo, b.codigo)));
   }
+  const buscarSugestoes = () => fetchComCache<{ sugestoes: SugestaoMov[] }>("sugestoes_mov", () => fetchSugestoesMovimentacao());
+  function aplicarSugestoes(r: { dados: { sugestoes: SugestaoMov[] } | null }) { setSugestoes(r.dados?.sugestoes ?? []); }
   useEffect(() => {
     buscarAnimais().then(aplicarAnimais);
     buscarLotes().then(aplicarLotes);
     fetchComCache<string[]>("motivos_mov", () => fetchMotivosMovimentacao()).then(({ dados }) => { if (dados) setMotivos(dados); });
-    fetchComCache<{ sugestoes: SugestaoMov[] }>("sugestoes_mov", () => fetchSugestoesMovimentacao()).then(({ dados }) => setSugestoes(dados?.sugestoes ?? []));
+    buscarSugestoes().then(aplicarSugestoes);
   }, []);
 
   const porNumero = useMemo(() => new Map(animais.map((a) => [a.numero, a])), [animais]);
@@ -181,12 +180,14 @@ export default function Movimentar() {
     if (!marcados.length) return;
     setErro(null);
     // Quando todos os marcados vêm de sugestões que apontam para o mesmo lote, o destino já vem escolhido.
-    setDestinoCodigo(sugerido);
+    // Ao voltar do passo 2 e continuar de novo, o destino que a pessoa já escolheu continua escolhido.
+    setDestinoCodigo((d) => d ?? sugerido);
     ir(2);
   }
 
   async function enviar() {
-    if (!destino || !projecao || !nMover || enviando) return;
+    if (!destino || !projecao || !nMover || trava.current) return;
+    trava.current = true;
     setEnviando(true);
     setErro(null);
     const brincos = projecao.movem.map((a) => a.numero);
@@ -206,7 +207,9 @@ export default function Movimentar() {
       const conjuntoMovidos = new Set(movidos);
       const depois = contagemDepois(animais, lotes, conjuntoMovidos, destino);
       setAnimais((lista) => lista.map((a) => (conjuntoMovidos.has(a.numero) ? { ...a, grupo_primario: rotuloDoLote(destino) } : a)));
-      mudarSelecao(new Set([...sel].filter((n) => !conjuntoMovidos.has(n))));
+      // Saem da seleção os que mudaram de lote e também os que já estavam no destino (a pessoa não os escolheu para o próximo lote).
+      const saem = new Set([...conjuntoMovidos, ...projecao.jaAqui.map((a) => a.numero)]);
+      mudarSelecao(new Set([...sel].filter((n) => !saem.has(n))));
       const tipo: Resultado["tipo"] = !enviado ? "offline" : naoEncontrados.length ? "erro" : "ok";
       setResultado({ tipo, destino, movidos, naoEncontrados, motivo: motivoFinal, antes, depois });
       vibrar(tipo === "ok" ? 20 : tipo === "offline" ? [15, 60, 15] : [25, 60, 25, 60, 25]);
@@ -215,12 +218,14 @@ export default function Movimentar() {
       if (enviado) {
         buscarAnimais().then(aplicarAnimais);
         buscarLotes().then(aplicarLotes);
+        buscarSugestoes().then(aplicarSugestoes);
         fetchComCache("animais", () => fetchAnimais());
       }
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao mover os animais.");
       vibrar([25, 60, 25, 60, 25]);
     } finally {
+      trava.current = false;
       setEnviando(false);
     }
   }
@@ -245,7 +250,7 @@ export default function Movimentar() {
     const afetados = lotes.filter((l) => (r.antes.get(l.codigo) ?? 0) !== (r.depois.get(l.codigo) ?? 0));
     const previsto = r.tipo === "offline";
     return (
-      <div key="p3" className={classeView}>
+      <div key="p3" ref={focarAoMontar} tabIndex={-1} className={classeView}>
         {r.tipo === "ok" && <ResultadoCabecalho tipo="ok" titulo={`${n} ${plural(n, "animal movido", "animais movidos")} para ${rotuloDoLote(r.destino)}`} texto={r.motivo ? `Motivo: ${r.motivo}` : "Movimentação salva."} />}
         {r.tipo === "offline" && <ResultadoCabecalho tipo="offline" titulo={`${n} ${plural(n, "movimentação guardada", "movimentações guardadas")}`} texto="Sem internet — guardado, será enviado ao conectar." />}
         {r.tipo === "erro" && (
@@ -287,7 +292,7 @@ export default function Movimentar() {
   if (passo === 2) {
     const n = marcados.length;
     return (
-      <div key="p2" className={classeView}>
+      <div key="p2" ref={focarAoMontar} tabIndex={-1} inert={enviando || undefined} className={classeView}>
         <PassoIndicador passo={2}>para <b>onde</b> vão</PassoIndicador>
         <ResumoLote titulo={`${n} ${plural(n, "animal", "animais")}`} sub={`${textoOrigem} · ${origensDistintas} ${plural(origensDistintas, "lote", "lotes")} de origem`} onAlterar={() => ir(1, true)} />
 
@@ -394,7 +399,7 @@ export default function Movimentar() {
 
   // ───────────────────────── Passo 1: quem ─────────────────────────
   return (
-    <div key="p1" className={classeView}>
+    <div key="p1" ref={focarAoMontar} tabIndex={-1} className={classeView}>
       <PassoIndicador passo={1}><b>quem</b> vai mudar de lote</PassoIndicador>
       <RascunhoAviso mostrar={sel.size > 0 && passo === 1} />
       {doCache && <AvisoLote tipo="offline">Sem internet: mostrando a lista do último acesso.</AvisoLote>}
@@ -414,7 +419,7 @@ export default function Movimentar() {
       {origem === "animais" && <CampoBusca valor={busca} onChange={setBusca} placeholder="Buscar brinco, nome ou lote" />}
 
       {carregando && <p className="lote-nota">Carregando os animais…</p>}
-      <div aria-live="polite">
+      <div>
         {!carregando && !grupos.length && (origem === "animais" && !busca.trim() ? <NotaLote>{dicaVazia}</NotaLote> : <VazioLote>{dicaVazia}</VazioLote>)}
         {grupos.map((g) => {
           const ids = g.itens.map((a) => a.numero);

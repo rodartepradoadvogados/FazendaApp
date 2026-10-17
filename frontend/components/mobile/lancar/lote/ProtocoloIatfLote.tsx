@@ -4,12 +4,11 @@
 // à vista. Um único POST /reproducao/protocolo-iatf com todas as vacas: o servidor valida a aptidão do lote INTEIRO
 // antes de gravar (tudo ou nada). Se recusar, a tela diz qual(is) vaca(s) e por quê, e oferece tirar essas e lançar o
 // resto ou, se o bloqueio admitir, confirmar. As etapas seguintes (D7/D9/D11) entram na Agenda pelo servidor.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { CalendarDays } from "lucide-react";
 import { ErroApi } from "@/lib/api";
 import { enviarOuEnfileirar, useConectividadeReal } from "@/lib/offline";
-import { invalidarEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 import {
   dataCurta, dataPorExtenso, etapasComData, lerRecusaAptidao, plural, resumoOrigem, somarDiasIso,
   type AnimalDaLista, type RecusaAptidao,
@@ -19,16 +18,12 @@ import { AvisoLote, NotaLote, PassoIndicador, RotuloLote } from "./SelecaoLote";
 import { BarraAcao } from "./BarraLote";
 import { ResumoLote } from "./ResumoLote";
 import { AcoesFim, LinhaQuadro, QuadroLote, ResultadoCabecalho } from "./ResultadoLote";
-import { usePassos } from "./hooks";
+import { focarAoMontar, usePassos, vibrar } from "./hooks";
 import { QuemServico, useQuemServico } from "./QuemServico";
 
 type Resultado =
   | { tipo: "ok" | "offline"; n: number; d0: string; nConf: number; fora: string[] }
   | { tipo: "recusa"; recusa: RecusaAptidao; numeros: string[] };
-
-function vibrar(padrao: number | number[]) {
-  try { navigator.vibrate?.(padrao); } catch { /* sem suporte — segue sem vibrar */ }
-}
 
 export function ProtocoloIatf({ animais, animalFixado }: { animais: readonly AnimalDaLista[]; animalFixado: string | null }) {
   const online = useConectividadeReal();
@@ -41,6 +36,7 @@ export function ProtocoloIatf({ animais, animalFixado }: { animais: readonly Ani
   const [resultado, setResultado] = useState<Resultado | null>(null);
   // Vacas que a pessoa tirou do lote depois de uma recusa ("ficou de fora" no resultado).
   const [foraDoLote, setForaDoLote] = useState<string[]>([]);
+  const trava = useRef(false);
 
   const marcadas = q.marcadas;
   const n = marcadas.length;
@@ -50,12 +46,13 @@ export function ProtocoloIatf({ animais, animalFixado }: { animais: readonly Ani
   const nConfirmadas = q.confirmadas.length;
 
   // `aceitos` = vacas que a pessoa acabou de confirmar na tela de recusa (além das que já confirmou no Passo 1).
-  async function lancar(numeros: string[], aceitos: string[], fora: string[]) {
-    if (enviando || !numeros.length) return;
+  async function lancar(numeros: string[], aceitos: string[], fora: string[], retirar: string[] = []) {
+    if (trava.current || !numeros.length) return;
     if (!dataD0) { setErro("Informe a data do D0."); return; }
+    trava.current = true;
     setEnviando(true);
     setErro(null);
-    const confirmadas = new Set([...numeros.filter((x) => q.confirmacoes.sel.has(x)), ...aceitos]);
+    const confirmadas = new Set([...numeros.filter((x) => q.confirmadasSet.has(x)), ...aceitos]);
     try {
       const { enviado } = await enviarOuEnfileirar(
         "/reproducao/protocolo-iatf",
@@ -63,9 +60,11 @@ export function ProtocoloIatf({ animais, animalFixado }: { animais: readonly Ani
         { animais: numeros, data_d0: dataD0, forcar: confirmadas.size > 0 ? true : undefined },
         `Protocolo IATF D0 — ${numeros.length} ${plural(numeros.length, "vaca", "vacas")}`,
       );
-      q.removerDaSelecao(numeros);
+      // Só agora, com o envio aceito, saem da seleção — as que a pessoa tirou depois de uma recusa também. Se falhar,
+      // ninguém some ao "Voltar e revisar".
+      q.removerDaSelecao([...numeros, ...retirar]);
       q.ocultar(numeros);
-      invalidarEstadosReprodutivos();
+      setForaDoLote(fora);
       setResultado({ tipo: enviado ? "ok" : "offline", n: numeros.length, d0: dataD0, nConf: confirmadas.size, fora });
       vibrar(enviado ? 20 : [15, 60, 15]);
       if (enviado) q.recarregar();
@@ -82,6 +81,7 @@ export function ProtocoloIatf({ animais, animalFixado }: { animais: readonly Ani
         vibrar([25, 60, 25, 60, 25]);
       }
     } finally {
+      trava.current = false;
       setEnviando(false);
     }
   }
@@ -102,14 +102,14 @@ export function ProtocoloIatf({ animais, animalFixado }: { animais: readonly Ani
       const resto = numeros.filter((x) => !problemas.includes(x));
       const podeTirar = problemas.length > 0 && resto.length > 0;
       return (
-        <div key="p3r" className={classeView}>
+        <div key="p3r" ref={focarAoMontar} tabIndex={-1} inert={enviando || undefined} className={classeView}>
           <ResultadoCabecalho tipo="erro" titulo="Nenhuma vaca foi lançada" texto="O servidor recusa o lote inteiro se uma vaca não estiver apta." />
           {/* O texto do servidor costuma já citar a matriz; só se acrescenta o brinco quando ele não aparece na frase. */}
           <AvisoLote tipo="erro">{problemas.length > 0 && !problemas.every((x) => recusa.mensagem.includes(x)) && <><b>{problemas.join(", ")}</b>: </>}{recusa.mensagem}</AvisoLote>
           <AcoesFim>
             {podeTirar && (
               <button type="button" className="lote-cta" disabled={enviando}
-                onClick={() => { q.removerDaSelecao(problemas); setForaDoLote((f) => [...f, ...problemas]); lancar(resto, [], [...foraDoLote, ...problemas]); }}>
+                onClick={() => lancar(resto, [], [...foraDoLote, ...problemas], problemas)}>
                 {enviando ? "Enviando…" : `Tirar ${problemas.join(", ")} e lançar ${resto.length}`}
               </button>
             )}
@@ -128,7 +128,7 @@ export function ProtocoloIatf({ animais, animalFixado }: { animais: readonly Ani
     const d0etapas = etapasComData(r.d0);
     const d7 = d0etapas.find((e) => e.dia === 7);
     return (
-      <div key="p3" className={classeView}>
+      <div key="p3" ref={focarAoMontar} tabIndex={-1} className={classeView}>
         {r.tipo === "ok" ? (
           <ResultadoCabecalho tipo="ok" titulo={`${r.n} ${plural(r.n, "vaca", "vacas")} no protocolo`}
             texto={`D7 em ${d7?.dataCurta ?? dataCurta(somarDiasIso(r.d0, 7))} entra na Agenda.${r.nConf ? ` ${r.nConf} com confirmação sua.` : ""}${r.fora.length ? ` ${r.fora.join(", ")} ${plural(r.fora.length, "ficou", "ficaram")} de fora.` : ""}`} />
@@ -156,7 +156,7 @@ export function ProtocoloIatf({ animais, animalFixado }: { animais: readonly Ani
   if (passo === 2) {
     const ehHoje = dataD0 === hoje();
     return (
-      <div key="p2" className={classeView}>
+      <div key="p2" ref={focarAoMontar} tabIndex={-1} inert={enviando || undefined} className={classeView}>
         <PassoIndicador passo={2}>o <b>protocolo</b></PassoIndicador>
         <ResumoLote titulo={`${n} ${plural(n, "vaca", "vacas")}`} sub={resumoOrigem(q.origem, q.lotesSel, nomesCards)} onAlterar={() => ir(1, true)} />
 
@@ -199,7 +199,7 @@ export function ProtocoloIatf({ animais, animalFixado }: { animais: readonly Ani
 
   // ───────────────────────── Passo 1: quem ─────────────────────────
   return (
-    <div key="p1" className={classeView}>
+    <div key="p1" ref={focarAoMontar} tabIndex={-1} className={classeView}>
       <QuemServico q={q} quando={<><b>quem</b> entra no protocolo</>} onContinuar={() => { setErro(null); ir(2); }} />
     </div>
   );

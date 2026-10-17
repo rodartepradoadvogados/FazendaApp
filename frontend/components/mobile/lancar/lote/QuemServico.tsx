@@ -13,7 +13,7 @@ import { useCardsAgendaReprodutivaLeitura } from "@/components/CardsAgendaReprod
 import {
   FILTROS_SITUACAO, NOTA_SITUACAO_SERVICO, agruparCandidatasPorLote, alternarItem, buscarCandidatas, contagensPorSituacao, contarForaDoFiltro,
   definirVarios, existeEmOutraSituacao, frasePertenceOutraSituacao, lotesComCandidatas, marcaveisEmBloco, montarCandidatas, passaFiltro,
-  plural, podarSelecao, recortarPorOrigem, rotuloMarcarTodas, todosMarcados,
+  plural, proximaConfirmacaoPendente, recortarPorOrigem, rotuloMarcarTodas, selecaoEfetiva, todosMarcados,
   type AnimalDaLista, type CandidataServico, type FiltroSituacao, type ModoServico, type OrigemLote,
 } from "@/lib/lancamentoLote";
 import { RascunhoAviso } from "../comum";
@@ -23,13 +23,9 @@ import {
 } from "./SelecaoLote";
 import { BarraContinuar } from "./BarraLote";
 import { SheetLote, useToastLote } from "./SheetLote";
-import { useSelecaoPersistida } from "./hooks";
+import { useSelecaoPersistida, vibrar } from "./hooks";
 
 const CHAVE_CACHE_ESTADOS = "estados_reprodutivos";
-
-function vibrar(padrao: number | number[]) {
-  try { navigator.vibrate?.(padrao); } catch { /* sem suporte — segue sem vibrar */ }
-}
 
 /** Todo o estado do Passo 1; o Passo 2 de cada tela lê daqui `marcadas`, `confirmadas` e o resumo da origem. */
 export function useQuemServico(opts: { modo: ModoServico; animais: readonly AnimalDaLista[]; chave: string; obrigatorios?: readonly string[] }) {
@@ -48,7 +44,9 @@ export function useQuemServico(opts: { modo: ModoServico; animais: readonly Anim
   const [busca, setBusca] = useState("");
   const selecao = useSelecaoPersistida(opts.chave, opts.obrigatorios);
   const confirmacoes = useSelecaoPersistida(`${opts.chave}_confirmadas`);
-  const [confirmando, setConfirmando] = useState<CandidataServico | null>(null);
+  const [confirmandoManual, setConfirmandoManual] = useState<CandidataServico | null>(null);
+  // Quem já passou pelo sheet nesta abertura (aceitou ou deixou de fora): não pergunta de novo.
+  const [dispensadas, setDispensadas] = useState<Set<string>>(new Set());
   const { toast, mostrar } = useToastLote();
 
   // A busca devolve os dados e `aplicar` os guarda no estado: assim o efeito de abertura só atualiza o estado dentro
@@ -79,11 +77,16 @@ export function useQuemServico(opts: { modo: ModoServico; animais: readonly Anim
   const cardsComAnimais = useMemo(
     () => cardsAgenda.cards.map((c) => {
       const itens = cardsAgenda.itensPorCard[c.id] || [];
-      return { id: c.id, nome: c.nome, n: itens.filter((i) => universo.has(i.numero_matriz)).length, fora: itens.filter((i) => !universo.has(i.numero_matriz)).length };
+      return { id: c.id, nome: c.nome, n: itens.filter((i) => universo.has(i.numero_matriz)).length };
     }).filter((c) => c.n > 0),
     [cardsAgenda.cards, cardsAgenda.itensPorCard, universo],
   );
-  const foraDosCards = cardsComAnimais.filter((c) => cardsSel.has(c.id)).reduce((m, c) => Math.max(m, c.fora), 0);
+  // Animais dos cards tocados que não são candidatas (sem repetir quem está em dois cards).
+  const foraDosCards = useMemo(() => {
+    const fora = new Set<string>();
+    cardsSel.forEach((id) => (cardsAgenda.itensPorCard[id] || []).forEach((i) => { if (!universo.has(i.numero_matriz)) fora.add(i.numero_matriz); }));
+    return fora.size;
+  }, [cardsSel, cardsAgenda.itensPorCard, universo]);
 
   const naOrigem = useMemo(
     () => recortarPorOrigem(candidatas, { origem, lotes: lotesSel, numerosAgenda }),
@@ -98,39 +101,55 @@ export function useQuemServico(opts: { modo: ModoServico; animais: readonly Anim
   const outrasSituacoes = useMemo(() => (busca.trim() ? existeEmOutraSituacao(candidatas, visiveis, busca) : []), [candidatas, visiveis, busca]);
   const emBloco = useMemo(() => marcaveisEmBloco(visiveis, situacao), [visiveis, situacao]);
 
-  const sel = useMemo(() => (estados ? podarSelecao(selecao.sel, universo) : selecao.sel), [selecao.sel, universo, estados]);
+  // O que VALE hoje: a marca guardada (rascunho de ontem, animal da ficha) passa pelas regras de agora — vaca travada ou que
+  // exige confirmação sem ter sido confirmada não conta, mesmo marcada. Sem a situação carregada, não se decide nada.
+  const efetiva = useMemo(
+    () => (estados ? selecaoEfetiva(selecao.sel, confirmacoes.sel, candidatas) : { sel: selecao.sel, confirmadas: confirmacoes.sel }),
+    [estados, selecao.sel, confirmacoes.sel, candidatas],
+  );
+  const sel = efetiva.sel;
   const marcadas = useMemo(() => candidatas.filter((c) => sel.has(c.numero)), [candidatas, sel]);
-  const confirmadas = useMemo(() => marcadas.filter((c) => confirmacoes.sel.has(c.numero)), [marcadas, confirmacoes.sel]);
+  const confirmadas = useMemo(() => marcadas.filter((c) => efetiva.confirmadas.has(c.numero)), [marcadas, efetiva.confirmadas]);
   const fora = contarForaDoFiltro(sel, visiveis.map((c) => c.numero));
+  // Animal que veio de outra tela e exige confirmação: o sheet abre na entrada, em vez de ele já chegar marcado.
+  const trazidos = opts.obrigatorios ?? [];
+  const confirmando = confirmandoManual ?? (estados ? proximaConfirmacaoPendente(trazidos, efetiva.confirmadas, dispensadas, candidatas) : null);
 
+  function fecharConfirmacao() {
+    if (confirmando) setDispensadas((d) => new Set([...d, confirmando.numero]));
+    setConfirmandoManual(null);
+  }
   function alternar(c: CandidataServico) {
-    if (c.status.travada) { vibrar(18); mostrar(c.status.curto ?? "Esta vaca não pode ser marcada agora."); return; }
+    // Desmarcar é sempre possível, mesmo de vaca que ficou travada depois de marcada.
     if (sel.has(c.numero)) {
-      selecao.definir(alternarItem(selecao.sel, c.numero));
-      if (confirmacoes.sel.has(c.numero)) confirmacoes.definir(alternarItem(confirmacoes.sel, c.numero));
+      selecao.definir((a) => { const n = new Set(a); n.delete(c.numero); return n; });
+      confirmacoes.definir((a) => { const n = new Set(a); n.delete(c.numero); return n; });
       return;
     }
-    if (c.status.confirmar) { setConfirmando(c); return; }
-    selecao.definir(alternarItem(selecao.sel, c.numero));
+    if (c.status.travada) { vibrar(18); mostrar(c.status.curto ?? "Esta vaca não pode ser marcada agora."); return; }
+    if (c.status.confirmar) { setConfirmandoManual(c); return; }
+    selecao.definir((a) => new Set([...a, c.numero]));
   }
   function aceitarConfirmacao() {
     if (!confirmando) return;
-    selecao.definir(new Set([...selecao.sel, confirmando.numero]));
-    confirmacoes.definir(new Set([...confirmacoes.sel, confirmando.numero]));
-    setConfirmando(null);
+    const n = confirmando.numero;
+    selecao.definir((a) => new Set([...a, n]));
+    confirmacoes.definir((a) => new Set([...a, n]));
+    setDispensadas((d) => new Set([...d, n]));
+    setConfirmandoManual(null);
   }
   function marcarEmBloco() {
     const ids = emBloco.map((c) => c.numero);
-    selecao.definir(definirVarios(selecao.sel, ids, !todosMarcados(sel, ids)));
+    const marcar = !todosMarcados(sel, ids);
+    selecao.definir((a) => definirVarios(a, ids, marcar));
   }
-  /** Tira da seleção (e das confirmações) o que acabou de ser lançado. */
+  /** Tira da seleção (e das confirmações) quem acabou de ser lançado — pode ser chamado de dentro do laço de envio. */
   function removerDaSelecao(numeros: readonly string[]) {
     const fora = new Set(numeros);
-    selecao.definir(new Set([...selecao.sel].filter((n) => !fora.has(n))));
-    confirmacoes.definir(new Set([...confirmacoes.sel].filter((n) => !fora.has(n))));
+    selecao.definir((a) => new Set([...a].filter((n) => !fora.has(n))));
+    confirmacoes.definir((a) => new Set([...a].filter((n) => !fora.has(n))));
   }
   function ocultar(numeros: readonly string[]) { setOcultos((o) => new Set([...o, ...numeros])); }
-  function tirarUma(numero: string) { removerDaSelecao([numero]); }
   function verEmTodas() { setSituacao("todas"); setOrigem("animais"); }
 
   return {
@@ -138,8 +157,8 @@ export function useQuemServico(opts: { modo: ModoServico; animais: readonly Anim
     origem, setOrigem, situacao, setSituacao, lotesSel, setLotesSel, cardsSel, setCardsSel, busca, setBusca,
     cardsAgenda, cardsComAnimais, foraDosCards, numerosAgenda,
     candidatas, naOrigem, contagens, visiveis, grupos, opcoesLote, outrasSituacoes, emBloco,
-    sel, marcadas, confirmadas, confirmacoes, fora, rascunho: selecao.sel.size > 0,
-    alternar, marcarEmBloco, removerDaSelecao, ocultar, tirarUma, verEmTodas, aceitarConfirmacao, confirmando, setConfirmando,
+    sel, marcadas, confirmadas, confirmadasSet: efetiva.confirmadas, fora, rascunho: sel.size > 0,
+    alternar, marcarEmBloco, removerDaSelecao, ocultar, verEmTodas, aceitarConfirmacao, confirmando, fecharConfirmacao,
     toast, mostrar,
   };
 }
@@ -211,7 +230,7 @@ export function QuemServico({ q, quando, onContinuar }: { q: QuemServicoEstado; 
       )}
 
       {q.carregando && <NotaLote>Carregando as vacas…</NotaLote>}
-      <div aria-live="polite">
+      <div>
         {!q.carregando && !q.grupos.length && (
           <VazioLote>
             {q.origem === "lotes" && !q.lotesSel.size ? "Toque em um ou mais lotes."
@@ -234,10 +253,10 @@ export function QuemServico({ q, quando, onContinuar }: { q: QuemServicoEstado; 
       <BarraContinuar n={q.marcadas.length} fora={q.fora} onContinuar={onContinuar} />
 
       {q.confirmando && (
-        <SheetLote titulo={`${q.confirmando.numero}${q.confirmando.nome ? ` ${q.confirmando.nome}` : ""}: marcar mesmo assim?`} onFechar={() => q.setConfirmando(null)}>
+        <SheetLote titulo={`${q.confirmando.numero}${q.confirmando.nome ? ` ${q.confirmando.nome}` : ""}: marcar mesmo assim?`} onFechar={q.fecharConfirmacao}>
           <p>{q.confirmando.status.texto}</p>
           <div className="dois">
-            <button type="button" className="lote-cta" onClick={() => q.setConfirmando(null)}>Deixar de fora</button>
+            <button type="button" className="lote-cta" onClick={q.fecharConfirmacao}>Deixar de fora</button>
             <button type="button" className="lote-cta risco" onClick={q.aceitarConfirmacao}>Marcar mesmo assim</button>
           </div>
         </SheetLote>
@@ -249,7 +268,7 @@ export function QuemServico({ q, quando, onContinuar }: { q: QuemServicoEstado; 
 
 function CartaoVaca({ c, q }: { c: CandidataServico; q: QuemServicoEstado }) {
   const marcada = q.sel.has(c.numero);
-  const confirmada = marcada && q.confirmacoes.sel.has(c.numero);
+  const confirmada = marcada && q.confirmadas.some((x) => x.numero === c.numero);
   const bits: string[] = [];
   if (c.del != null) bits.push(`DEL ${c.del}`);
   if (c.estado === "apta" || c.estado === "atrasada") bits.push(c.diasIA != null ? `última IA há ${c.diasIA} d` : "sem IA neste ciclo");

@@ -4,8 +4,8 @@ import {
   agruparCandidatasPorLote, agruparSugestoesPorDestino, alternarItem, codigoDoGrupo, contagemDepois, contagemPorLote, contagensPorSituacao,
   contarForaDoFiltro, corpoServico, dataBr, dataCurta, dataPorExtenso, definirVarios, destinoSugeridoPara, dosesQueFaltam, dosesQueSobram,
   etapasComData, existeEmOutraSituacao, interpretarRespostaMover, lerRecusaAptidao, lotesComCandidatas, marcaveisEmBloco, montarCandidatas,
-  origemDoEnvio, passaFiltro, podarSelecao, projetarMovimentacao, recortarPorOrigem, somarDiasIso, soAnimais, statusServico, textoMarcados,
-  todosMarcados, usoPorTouro, adultosParaLoteDeBezerras,
+  origemDoEnvio, passaFiltro, podarSelecao, projetarMovimentacao, recortarPorOrigem, somarDiasIso, soAnimais, statusServico,
+  todosMarcados, usoPorTouro, adultosParaLoteDeBezerras, selecaoEfetiva, proximaConfirmacaoPendente, protocoloDaVaca, frasePertenceOutraSituacao,
   type AnimalMovivel, type EstadoReproBase, type LoteBasico,
 } from "./lancamentoLote.ts";
 
@@ -17,8 +17,6 @@ test("a seleção persiste: quem fica fora do que se vê continua marcado e é c
   assert.equal(sel.size, 3);
   assert.equal(contarForaDoFiltro(sel, ["1045", "9999"]), 2);
   assert.equal(contarForaDoFiltro(sel, []), 3);
-  assert.equal(textoMarcados(3, 2), "3 marcados (2 fora deste filtro)");
-  assert.equal(textoMarcados(1, 0), "1 marcado");
 });
 
 test("alternar não muda o conjunto original; marcar todos desmarca quando já estão todos", () => {
@@ -251,4 +249,44 @@ test("recusa de aptidão (409) é lida do corpo; outro erro não vira recusa", (
 
 test("sugestões sem lote indicado ficam de fora do agrupamento", () => {
   assert.equal(agruparSugestoesPorDestino([{ numero_matriz: "1", lotes_sugeridos: [] }]).length, 0);
+});
+
+// ── seleção efetiva (B1) ──
+test("marca antiga não fura a regra: travada sai, 'confirmar' sem confirmação sai, confirmada fica", () => {
+  const e2 = new Map<string, EstadoReproBase>([
+    ["1", est("1", "apta")], ["2", est("2", "inseminada", { dias_desde_servico: 5 })], ["3", est("3", "em_protocolo", { protocolo_dia_atual: 4 })],
+    ["4", est("4", "gestante")], ["5", est("5", "pev")],
+  ]);
+  const cs = montarCandidatas(["1", "2", "3", "4", "5", "9"].map((n) => ({ numero: n })), e2, "ia");
+  const r = selecaoEfetiva(new Set(["1", "2", "3", "4", "5", "9"]), new Set(["4"]), cs);
+  assert.deepEqual([...r.sel].sort(), ["1", "4", "5"]);
+  assert.deepEqual([...r.confirmadas], ["4"]);
+  // confirmação de quem nem está marcado não vale
+  assert.equal(selecaoEfetiva(new Set(["1"]), new Set(["4"]), cs).confirmadas.size, 0);
+});
+
+test("vaca trazida da ficha que exige confirmação abre o sheet; some depois de aceita ou dispensada", () => {
+  const e2 = new Map<string, EstadoReproBase>([["2", est("2", "inseminada", { dias_desde_servico: 5 })], ["1", est("1", "apta")]]);
+  const cs = montarCandidatas([{ numero: "1" }, { numero: "2" }], e2, "ia");
+  assert.equal(proximaConfirmacaoPendente(["2"], new Set(), new Set(), cs)?.numero, "2");
+  assert.equal(proximaConfirmacaoPendente(["2"], new Set(["2"]), new Set(), cs), null);
+  assert.equal(proximaConfirmacaoPendente(["2"], new Set(), new Set(["2"]), cs), null);
+  assert.equal(proximaConfirmacaoPendente(["1"], new Set(), new Set(), cs), null);
+});
+
+test("vínculo D11: casa pelo D0 do estado da vaca, nunca pelo protocolo mais antigo", () => {
+  const ativos = [
+    { nome_protocolo: "NOVO", data_d0: "2026-10-06", animais: [{ numero_matriz: "1", pronta_para_inseminar: true }] },
+    { nome_protocolo: "VELHO", data_d0: "2026-09-01", animais: [{ numero_matriz: "1", pronta_para_inseminar: true }] },
+  ];
+  assert.equal(protocoloDaVaca(ativos, "1", "2026-10-06"), "NOVO");
+  assert.equal(protocoloDaVaca(ativos, "1", "2026-09-01"), "VELHO");
+  assert.equal(protocoloDaVaca(ativos, "1", "2026-08-01"), null);
+  assert.equal(protocoloDaVaca(ativos, "1", null), null);
+  assert.equal(protocoloDaVaca(ativos, "2", "2026-10-06"), null);
+});
+
+test("frase de outra situação mantém a caixa do rótulo", () => {
+  const c = montarCandidatas([{ numero: "1", nome: "Mimosa" }], new Map([["1", est("1", "em_protocolo", { protocolo_dia_atual: 7 })]]), "ia")[0];
+  assert.equal(frasePertenceOutraSituacao(c), "1 Mimosa existe, mas está em protocolo · D7.");
 });

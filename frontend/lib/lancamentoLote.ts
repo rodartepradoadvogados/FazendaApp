@@ -55,10 +55,6 @@ export function podarSelecao(sel: ReadonlySet<string>, validos: ReadonlySet<stri
   return novo;
 }
 
-export function textoMarcados(n: number, fora: number): string {
-  return `${n} ${plural(n, "marcado", "marcados")}${fora > 0 ? ` (${fora} fora deste filtro)` : ""}`;
-}
-
 // ── Datas (sempre "AAAA-MM-DD", sem fuso: o dia que a pessoa escolheu é o dia que vale) ─────────────────────────
 
 const SEMANA = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
@@ -282,6 +278,7 @@ export type EstadoReproBase = {
   dias_desde_servico?: number | null;
   dias_gestacao?: number | null;
   protocolo_dia_atual?: number | null;
+  protocolo_d0?: string | null;
 };
 
 export type StatusServico = {
@@ -356,6 +353,8 @@ export type CandidataServico = {
   del: number | null;
   diasIA: number | null;
   estado: string;
+  /** D0 do protocolo IATF em andamento (só quem está em protocolo). */
+  d0: string | null;
   status: StatusServico;
 };
 
@@ -372,7 +371,7 @@ export function montarCandidatas(animais: readonly AnimalDaLista[], estados: Rea
     saida.push({
       numero: a.numero, nome: (a.nome ?? "").trim(), lote: rotuloDoGrupo(a.grupo_primario),
       categoria: a.categoria_abrev || a.categoria_completa || "",
-      del: e.del_dias ?? null, diasIA: e.dias_desde_servico ?? null, estado: e.estado, status,
+      del: e.del_dias ?? null, diasIA: e.dias_desde_servico ?? null, estado: e.estado, d0: e.protocolo_d0 ?? null, status,
     });
   }
   return saida;
@@ -472,7 +471,9 @@ export function existeEmOutraSituacao(todas: readonly CandidataServico[], naList
 
 /** Frase "4521 existe, mas está gestante". */
 export function frasePertenceOutraSituacao(c: CandidataServico): string {
-  return `${c.numero}${c.nome ? ` ${c.nome}` : ""} existe, mas está ${(c.status.chip?.rotulo ?? "em outra situação").toLowerCase()}.`;
+  const rotulo = c.status.chip?.rotulo ?? "em outra situação";
+  // Só a primeira letra desce: "Em protocolo · D7" não vira "em protocolo · d7".
+  return `${c.numero}${c.nome ? ` ${c.nome}` : ""} existe, mas está ${rotulo.charAt(0).toLowerCase()}${rotulo.slice(1)}.`;
 }
 
 /** Texto do resumo de origem no Passo 2 ("Lotes 01, 02"). */
@@ -556,4 +557,40 @@ export function lerRecusaAptidao(status: number | null | undefined, detalhe: unk
     confirmavel: d.confirmavel === true,
     animais: Array.isArray(d.animais) ? d.animais.filter((x): x is string => typeof x === "string") : [],
   };
+}
+
+// ── Seleção efetiva: o que vale HOJE, não o que ficou gravado ──────────────────
+/** A regra "gestante / inseminada recente só entram por confirmação; vaca em protocolo não entra" vale para QUALQUER marca,
+ * inclusive a que veio do rascunho de ontem ou da ficha do animal. Devolve só o que continua valendo: candidata que existe,
+ * não está travada e, se exige confirmação, foi confirmada pela pessoa. */
+export function selecaoEfetiva(
+  marcadas: ReadonlySet<string>, confirmadas: ReadonlySet<string>, candidatas: readonly CandidataServico[],
+): { sel: Set<string>; confirmadas: Set<string> } {
+  const sel = new Set<string>();
+  for (const c of candidatas) {
+    if (!marcadas.has(c.numero) || c.status.travada) continue;
+    if (c.status.confirmar && !confirmadas.has(c.numero)) continue;
+    sel.add(c.numero);
+  }
+  return { sel, confirmadas: new Set([...confirmadas].filter((n) => sel.has(n))) };
+}
+
+/** Primeiro animal, entre os que a pessoa trouxe de outra tela (ficha, diagnóstico), que exige confirmação e ainda não a tem. */
+export function proximaConfirmacaoPendente(
+  trazidos: readonly string[], confirmadas: ReadonlySet<string>, dispensadas: ReadonlySet<string>, candidatas: readonly CandidataServico[],
+): CandidataServico | null {
+  return candidatas.find((c) => trazidos.includes(c.numero) && c.status.confirmar && !confirmadas.has(c.numero) && !dispensadas.has(c.numero)) ?? null;
+}
+
+// ── Vínculo da inseminação com o protocolo IATF (D11) ─────────────────────────
+export type ProtocoloAtivo = {
+  nome_protocolo: string; data_d0?: string | null; animais: { numero_matriz: string; pronta_para_inseminar?: boolean }[];
+};
+
+/** Nome do protocolo cujo D0 é o do estado reprodutivo da vaca. Sem D0 igual não há vínculo (não se adivinha: vincular o
+ * protocolo errado fecharia a etapa errada na Agenda). */
+export function protocoloDaVaca(ativos: readonly ProtocoloAtivo[], numero: string, d0: string | null): string | null {
+  if (!d0) return null;
+  const p = ativos.find((x) => x.data_d0 === d0 && x.animais.some((a) => a.numero_matriz === numero && a.pronta_para_inseminar));
+  return p?.nome_protocolo ?? null;
 }

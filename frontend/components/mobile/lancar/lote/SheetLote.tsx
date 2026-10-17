@@ -25,7 +25,10 @@ export function SheetLote({ titulo, onFechar, children }: { titulo: string; onFe
       else if (!e.shiftKey && document.activeElement === ultimo) { e.preventDefault(); inicio.focus(); }
     }
     document.addEventListener("keydown", aoTeclar);
-    return () => { document.removeEventListener("keydown", aoTeclar); anterior?.focus?.(); };
+    // O app rola dentro do <body>: com a folha aberta o fundo não pode rolar por baixo.
+    const rolagemAntes = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", aoTeclar); document.body.style.overflow = rolagemAntes; anterior?.focus?.(); };
   }, []);
 
   return (

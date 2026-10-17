@@ -178,7 +178,7 @@ export function MobBarraProgresso({ feitos, total, rotulo }: { feitos: number; t
         <span>{rotulo || "Progresso"}</span>
         <span>{feitos} de {total}</span>
       </div>
-      <div className="mob-progresso"><div className="mob-progresso-preenchido" style={{ width: `${pct}%` }} /></div>
+      <div className="mob-progresso" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={feitos} aria-label={rotulo || "Progresso"}><div className="mob-progresso-preenchido" style={{ width: `${pct}%` }} /></div>
     </div>
   );
 }
