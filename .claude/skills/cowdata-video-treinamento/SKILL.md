@@ -17,6 +17,7 @@ description: >
   (Google Drive da conta do escritório, pasta `COWDATA` na raiz do Meu Drive).
   - `COWDATA\Tutoriais\FINANCEIRO\` — vídeos do financeiro (desktop).
   - `COWDATA\Tutoriais\APP - REBANHO\` — Temporada 1 (app Android).
+  - `COWDATA\Tutoriais\APP - LANCAMENTOS\` — Temporada 2 (app Android).
 - O cofre do Obsidian guarda **notas e caminhos**, nunca o vídeo (regra 6 do `00_AGENTES.md`).
 - O repositório guarda o **motor** (código), nunca o MP4.
 
@@ -54,7 +55,7 @@ Nunca diga "salvo" sem confirmação da ferramenta.
 | PROTOCOLOS (1) | lançamento de protocolos |
 
 Mesmo estilo Vox da Temporada 1, com a variação visual da Temporada 2 definida no Ep. 1 (ver "Padrões visuais da
-Temporada 2" abaixo). Pasta de destino: `H:\Meu Drive\COWDATA\Tutoriais\APP - LANÇAMENTOS\`.
+Temporada 2" abaixo). Pasta de destino: `H:\Meu Drive\COWDATA\Tutoriais\APP - LANCAMENTOS\`.
 
 ### Fora das séries de app
 - FINANCEIRO (desktop, motion graphics clássico): apresentação v1 e "Contas a pagar" v2 (1:15).
@@ -89,7 +90,7 @@ Temporada 2" abaixo). Pasta de destino: `H:\Meu Drive\COWDATA\Tutoriais\APP - LA
 - Áudio mono, -14 LUFS, música baixa sob a voz.
 
 ### Padrões visuais da Temporada 2 (Lançamentos) — motor `t2.src.html` + `episodios/t2e1.js`
-- **A tela do celular são capturas do app real** (nada desenhado à mão): Playwright em modo produção (`next build` + `next start`) contra
+- **A tela do celular são capturas do app real** (nada desenhado à mão; scripts em `motor/captura/`, rodar com `captura/rodar.sh`): Playwright em modo produção (`next build` + `next start`) contra
   uma API de mentira com dados fictícios da Fazenda Boa Esperança. Viewport 390×844, `locale pt-BR`, fuso `America/Sao_Paulo`,
   relógio fixo 17/10/2026 10:05, tema claro, `--lang=pt-BR` (senão o campo de data sai mm/dd/aaaa). Capturas em 1440 px de largura
   (1,5× os 960 px do quadro) para o zoom não borrar. O cabeçalho do app tem um nome de fazenda real escrito no layout; a captura
