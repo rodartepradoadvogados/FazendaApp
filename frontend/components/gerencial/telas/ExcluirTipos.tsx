@@ -12,14 +12,13 @@ import React, { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Search } from "lucide-react";
 import { Ajuda, Passo, Selo } from "@/components/gerencial/kit";
 import { agruparTipos, fmtContagem, nomeCurto, type TipoApi } from "@/lib/exclusaoTela";
-import { TIPOS_DESTAQUE, iconeDoTipo } from "./excluirComum";
+import { IconeTipo, TIPOS_DESTAQUE } from "./excluirComum";
 
 function Bloco({ t, cor, onEscolher }: { t: TipoApi; cor: string; onEscolher: (t: TipoApi) => void }) {
-  const Icone = iconeDoTipo(t.id);
   return (
     <button type="button" className="gx-bloco" data-destaque={TIPOS_DESTAQUE.has(t.id) ? "true" : undefined} title={`${t.label}${t.dica ? ` — ${t.dica}` : ""}`}
       style={{ ["--gx-cor" as string]: cor }} onClick={() => onEscolher(t)}>
-      <span className="gx-bloco-ic"><Icone size={17} aria-hidden /></span>
+      <span className="gx-bloco-ic"><IconeTipo id={t.id} size={17} /></span>
       <span className="gx-bloco-nome">{nomeCurto(t)}</span>
       <span className="gx-bloco-n" aria-label={t.contagem == null ? "sem contagem" : `${t.contagem} registros`}>{fmtContagem(t.contagem)}</span>
       <span className="gx-bloco-dica">{t.dica ?? ""}</span>
@@ -45,7 +44,6 @@ export function ExcluirTipos({ tipos, carregando, erro, onEscolher, onRecarregar
   const q = termo.trim();
   const ag = useMemo(() => agruparTipos(tipos, termo), [tipos, termo]);
   const cadVisivel = cadAberto || (q !== "" && ag.cadastros.length > 0);
-  const Todos = ag.todos ? iconeDoTipo(ag.todos.id) : null;
 
   return (
     <Passo n={1} id="ex1-p1" titulo="O que você quer apagar?"
@@ -55,9 +53,9 @@ export function ExcluirTipos({ tipos, carregando, erro, onEscolher, onRecarregar
           <Search size={14} aria-hidden />
           <input type="search" autoFocus value={termo} onChange={(e) => setTermo(e.target.value)} placeholder="Buscar um tipo — diagnóstico, parto, nota…" aria-label="Buscar tipo de lançamento" />
         </div>
-        {ag.todos && Todos && (
+        {ag.todos && (
           <button type="button" className="gx-bloco gx-todos" title={`${ag.todos.label}${ag.todos.dica ? ` — ${ag.todos.dica}` : ""}`} onClick={() => onEscolher(ag.todos!)}>
-            <span className="gx-bloco-ic"><Todos size={22} aria-hidden /></span>
+            <span className="gx-bloco-ic"><IconeTipo id={ag.todos.id} size={22} /></span>
             <span className="gx-bloco-nome">Todos os lançamentos <span style={{ fontWeight: 600, color: "var(--text-muted)" }}>(mais recentes primeiro)</span></span>
             <span className="gx-bloco-n" aria-label={ag.todos.contagem == null ? "sem contagem" : `${ag.todos.contagem} registros`}>{fmtContagem(ag.todos.contagem)}</span>
             <span className="gx-bloco-dica">{ag.todos.dica || "Busca em todos os lançamentos — para quando você não sabe em qual tipo foi lançado."}</span>

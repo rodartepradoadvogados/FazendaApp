@@ -20,7 +20,7 @@ import { useAptidaoServico, useLinhasFemeas } from "@/components/lancamentos/use
 import { Aviso, Ajuda, BarraAcao, BotaoOuro, Faixa, Passo, Pilulas, Selo } from "@/components/gerencial/kit";
 import { Abas, BuscaMatrizes, EstiloRepro, PilulasX } from "@/components/gerencial/telas/ReprodutivoComum";
 import { TabelaFemeas } from "@/components/gerencial/telas/TabelaFemeas";
-import { alterna, alternaAptas, contagemFaixa, ehApta, filtraLinhas, marcavel, ordenaNumero, resumoSelecao } from "@/lib/aptidaoServico";
+import { alterna, alternaAptas, ehApta, filtraLinhas, marcavel, ordenaNumero, resumoSelecao } from "@/lib/aptidaoServico";
 import {
   DIA_INSEMINACAO_PADRAO, diaInseminacao, diaSemana, diasDoMolde, fmtData, hojeIso, nomeProtocoloAuto, nosDoCronograma, type NoTempo,
 } from "@/lib/iatfCronograma";
@@ -184,7 +184,6 @@ export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico =
   }, [linhas]);
   const base = useMemo(() => (origem === "animais" ? linhas : linhas.filter((l) => lotesSel.includes(l.lote))), [origem, linhas, lotesSel]);
   const visiveis = useMemo(() => filtraLinhas(base, busca), [base, busca]);
-  const faixaN = useMemo(() => contagemFaixa(linhas), [linhas]);
 
   const bloqueadasNumeros = useMemo(() => new Set(linhas.filter((l) => !marcavel(l)).map((l) => l.numero)), [linhas]);
   const selEfetiva = useMemo(() => new Set([...sel].filter((n) => !bloqueadasNumeros.has(n))), [sel, bloqueadasNumeros]);
@@ -204,10 +203,7 @@ export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico =
     });
   }
 
-  const nos = useMemo(
-    () => nosDoCronograma(d0, molde ? molde.etapas : null, hormonios),
-    [d0, molde, hormonios],
-  );
+  const nos = nosDoCronograma(d0, molde ? molde.etapas : null, hormonios);
 
   // ── salvar ────────────────────────────────────────────────────────────────────────────────────────────────────
   async function salvar(forcar = false) {

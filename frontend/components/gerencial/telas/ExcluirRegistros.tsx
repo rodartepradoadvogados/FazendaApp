@@ -18,7 +18,7 @@ import { BarraAcao, Campo, Passo, Selo } from "@/components/gerencial/kit";
 import { buscarExclusao } from "@/lib/api";
 import { destinoEditar } from "@/lib/exclusao";
 import {
-  LIMITE_LOTE, alternarPagina, alternarSelecao, botoesPagina, chaveRegistro, dataBr, dataDoRegistro, ordenarRegistros,
+  LIMITE_LOTE, alternarPagina, alternarSelecao, botoesPagina, chaveRegistro, dataBr, dataDoRegistro, mensagemDe, ordenarRegistros,
   paginar, podarSelecao, proximaOrdem, tetoDaBusca, tipoDoRegistro, tituloSemData,
   type ColunaOrdem, type Ordem, type RegistroBusca, type Retorno, type Selecao, type TipoApi,
 } from "@/lib/exclusaoTela";
@@ -98,18 +98,18 @@ export function ExcluirRegistros({
         setLista(r);
         setPagina(1);
         setSel((s) => podarSelecao(s, r, tipo.id));
-      } catch (e: any) {
-        if (eu === seq.current) { setErroBusca(e.message || "Erro na busca"); setLista([]); }
+      } catch (e) {
+        if (eu === seq.current) { setErroBusca(mensagemDe(e, "Erro na busca")); setLista([]); }
       } finally {
         if (eu === seq.current) setBuscando(false);
       }
     }, imediato ? 0 : 250);
     return () => clearTimeout(h);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tipo.id, busca, de, ate, semData, recarga]);
 
-  // Depois de apagar (ou enviar o pedido) a seleção recomeça do zero.
-  useEffect(() => { setSel(new Map()); setAvisoLimite(false); }, [recarga]);
+  // Depois de apagar (ou enviar o pedido) a seleção recomeça do zero (estado derivado: ajusta durante o render).
+  const [recargaVista, setRecargaVista] = useState(recarga);
+  if (recargaVista !== recarga) { setRecargaVista(recarga); setSel(new Map()); setAvisoLimite(false); }
 
   const ordenada = ordenarRegistros(lista, ordem);
   const pag = paginar(ordenada, pagina, tamanho);

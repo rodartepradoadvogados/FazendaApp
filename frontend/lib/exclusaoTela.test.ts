@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   LIMITE_LOTE, agruparTipos, alternarPagina, alternarSelecao, botoesPagina, casaTipo, chaveRegistro, dataDoRegistro,
-  exigencias, fmtContagem, itensDoLote, montarRetorno, nomeCurto, ordenarRegistros, paginar, podarSelecao, proximaOrdem,
+  exigencias, fmtContagem, itensDoLote, mensagemDe, montarRetorno, nomeCurto, ordenarRegistros, paginar, podarSelecao, proximaOrdem,
   tituloSemData, verboDe, type RegistroBusca, type Selecao, type TipoApi,
 } from "./exclusaoTela.ts";
 
@@ -155,4 +155,10 @@ test("retorno: excluído, lote, pedido, já pedido, apoiado", () => {
   assert.match(montarRetorno({ status: "apoiado", solicitado_por: "maria" }, "NF 9").texto, /apoiou o pedido de maria/);
   assert.match(montarRetorno({ status: "apoiado" }, "NF 9").texto, /apoiou o pedido que já existia/);
   assert.equal(montarRetorno({ status: "???" }, "x").tom, "erro");
+});
+
+test("mensagemDe: usa a do erro quando há; senão o texto padrão", () => {
+  assert.equal(mensagemDe(new Error("Falta motivo"), "x"), "Falta motivo");
+  assert.equal(mensagemDe(new Error(""), "padrão"), "padrão");
+  assert.equal(mensagemDe("texto solto", "padrão"), "padrão");
 });

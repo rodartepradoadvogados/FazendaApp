@@ -5,14 +5,14 @@
 //   3 · confirmar POST /exclusoes/confirmar                  (ExcluirConfirmar) — admin exclui na hora; operador GERA PEDIDO
 // As abas Pedidos / Trilha ficam na moldura (Pedidos: admin decide, operador acompanha; Trilha só admin).
 // Props preservadas: `ocultarTipos` (Cadastro esconde "animal"). As telas vivem em components/gerencial/telas/.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   confirmarExclusao, confirmarExclusaoLote, ehAdmin, fetchMeusPedidosExclusao, fetchPendentesExclusao, fetchTiposExclusao,
   impactoExclusao, impactoExclusaoLote,
 } from "@/lib/api";
 import type { ImpactoExclusao } from "@/lib/exclusao";
 import {
-  itensDoLote, montarRetorno, tipoDoRegistro, type RegistroBusca, type ResultadoApi, type Selecao, type TipoApi,
+  itensDoLote, mensagemDe, montarRetorno, tipoDoRegistro, type RegistroBusca, type ResultadoApi, type Selecao, type TipoApi,
 } from "@/lib/exclusaoTela";
 import { MolduraExcluir, type AbaId } from "@/components/gerencial/telas/excluirComum";
 import { ExcluirTipos } from "@/components/gerencial/telas/ExcluirTipos";
@@ -25,28 +25,30 @@ import { TrilhaExclusao } from "./TrilhaExclusao";
 
 export function ExclusaoPage({ ocultarTipos }: { ocultarTipos?: string[] } = {}) {
   const [aba, setAba] = useState<AbaId>("apagar");
-  const [souAdmin, setSouAdmin] = useState(false);
   const [pendentes, setPendentes] = useState(0);
   const [tipos, setTipos] = useState<TipoApi[]>([]);
   const [carregandoTipos, setCarregandoTipos] = useState(true);
   const [erroTipos, setErroTipos] = useState<string | null>(null);
+  const [tentativa, setTentativa] = useState(0);
+  // Papel lido do navegador: no servidor (SSR) vale "não admin" e o cliente corrige sem erro de hidratação.
+  const souAdmin = useSyncExternalStore(() => () => {}, () => ehAdmin(), () => false);
   const [enviando, setEnviando] = useState(false);
   const ex = useExclusao();
   const { estado } = ex;
   const topo = useRef<HTMLDivElement>(null);
   const primeiraEtapa = useRef(true);
 
-  useEffect(() => { setSouAdmin(ehAdmin()); }, []);
-
-  const carregarTipos = useCallback(() => {
-    setCarregandoTipos(true); setErroTipos(null);
+  useEffect(() => {
+    let vivo = true;
     fetchTiposExclusao()
-      .then((t: TipoApi[]) => setTipos(ocultarTipos ? t.filter((x) => !ocultarTipos.includes(x.id)) : t))
-      .catch((e: any) => setErroTipos(e?.message || "falha de rede"))
-      .finally(() => setCarregandoTipos(false));
+      .then((t: TipoApi[]) => { if (vivo) { setTipos(ocultarTipos ? t.filter((x) => !ocultarTipos.includes(x.id)) : t); setErroTipos(null); } })
+      .catch((e) => { if (vivo) setErroTipos(mensagemDe(e, "falha de rede")); })
+      .finally(() => { if (vivo) setCarregandoTipos(false); });
+    return () => { vivo = false; };
+    // `ocultarTipos` é fixo por tela (Cadastro passa ["animal"]); só uma nova tentativa recarrega.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useEffect(() => { carregarTipos(); }, [carregarTipos]);
+  }, [tentativa]);
+  const recarregarTipos = () => { setCarregandoTipos(true); setErroTipos(null); setTentativa((n) => n + 1); };
 
   // Contador da aba Pedidos: admin = pedidos esperando decisão; operador = os seus ainda pendentes.
   useEffect(() => {
@@ -68,7 +70,7 @@ export function ExclusaoPage({ ocultarTipos }: { ocultarTipos?: string[] } = {})
   const calcular = async (alvo: Alvo, pedir: () => Promise<unknown>) => {
     ex.setCarregando(true);
     try { ex.setImpacto(alvo, (await pedir()) as ImpactoExclusao); }
-    catch (e: any) { ex.setErro(e.message || "Erro ao calcular o impacto"); }
+    catch (e) { ex.setErro(mensagemDe(e, "Erro ao calcular o impacto")); }
   };
 
   const apagarUm = (r: RegistroBusca) => {
@@ -95,8 +97,8 @@ export function ExclusaoPage({ ocultarTipos }: { ocultarTipos?: string[] } = {})
         ? await confirmarExclusaoLote(alvo.itens, m, c)
         : await confirmarExclusao(impacto.item.tipo, impacto.item.id, m, c);
       ex.concluido(montarRetorno(r, alvo.registros[0]?.titulo ?? impacto.item.titulo, alvo.lote ? alvo.registros.length : 0));
-    } catch (e: any) {
-      ex.setErro(e.message || "Erro ao excluir");
+    } catch (e) {
+      ex.setErro(mensagemDe(e, "Erro ao excluir"));
     } finally {
       setEnviando(false);
     }
@@ -109,7 +111,7 @@ export function ExclusaoPage({ ocultarTipos }: { ocultarTipos?: string[] } = {})
       <div ref={topo} tabIndex={-1} style={{ outline: "none" }}>
         <div hidden={aba !== "apagar"}>
           {estado.etapa === "tipos" && (
-            <ExcluirTipos tipos={tipos} carregando={carregandoTipos} erro={erroTipos} onEscolher={ex.escolherTipo} onRecarregar={carregarTipos} />
+            <ExcluirTipos tipos={tipos} carregando={carregandoTipos} erro={erroTipos} onEscolher={ex.escolherTipo} onRecarregar={recarregarTipos} />
           )}
           {estado.tipo && estado.etapa !== "tipos" && (
             // Fica montado (só escondido) durante a confirmação: "Voltar" devolve o filtro, a página e as caixas como estavam.

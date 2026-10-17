@@ -33,7 +33,6 @@ type Origem = "animais" | "lotes" | "protocolo";
 
 const ROTULO_CAT: Record<CatTouro, string> = { convencional: "Convencional", sexado: "Sexado", fazenda: "Touro da fazenda" };
 const ROTULO_COB: Record<Cobertura, string> = { cio_natural: "Cio natural", iatf: "IATF", monta_natural: "Monta natural" };
-const CATEGORIAS: CatTouro[] = ["convencional", "sexado", "fazenda"];
 
 const CSS = `
 .fi-grade-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); gap: 1.25rem; align-items: start; }
@@ -69,7 +68,7 @@ export function FormInseminacao({ animais, motivosInaptidao, idadeMinServico = I
   const { nomes: nomesResponsaveis } = usePessoasAtivas();
 
   // IATF: vincular a um lançamento já existente + lançar o D0 retroativo.
-  const [protocoloId, setProtocoloId] = useState("");
+  const [protocoloIdManual, setProtocoloIdManual] = useState("");
   const [autoLancar, setAutoLancar] = useState(false);
   const [lancamentos, setLancamentos] = useState<{ lancamento_id: number; nome_protocolo: string; data_d0: string }[]>([]);
   const [semen, setSemen] = useState<SemenDisponivel | null>(null);
@@ -78,9 +77,8 @@ export function FormInseminacao({ animais, motivosInaptidao, idadeMinServico = I
     animais: { numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null; pronta_para_inseminar?: boolean }[];
   }[]>([]);
 
-  const [sugestao, setSugestao] = useState<SugestaoAcasalamento | null>(null);
-  const [carregandoSugestao, setCarregandoSugestao] = useState(false);
-  const [erroSugestao, setErroSugestao] = useState<string | null>(null);
+  // Resultado da sugestão JÁ amarrado à matriz que a pediu: trocar de matriz descarta o antigo sem precisar de efeito para limpar.
+  const [sugResultado, setSugResultado] = useState<{ numero: string; dados: SugestaoAcasalamento | null; erro: string | null } | null>(null);
   const [sugAberta, setSugAberta] = useState(true);
 
   const [salvando, setSalvando] = useState(false);
@@ -105,6 +103,8 @@ export function FormInseminacao({ animais, motivosInaptidao, idadeMinServico = I
 
   // Vindo da Agenda (link "Ir para Inseminação" do D11) ou do Diagnóstico Negativo: pré-seleciona matriz(es) + IATF.
   // `prefill` (gaveta aberta direto da Agenda) tem prioridade; sem ele, cai na querystring de sempre.
+  /* A querystring é um sistema externo lido uma única vez na montagem: não há como derivá-la no render sem divergir do SSR. */
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     const qs = new URLSearchParams(window.location.search);
     const numeroMatriz = prefill?.numeroMatriz ?? qs.get("numero_matriz");
@@ -113,6 +113,7 @@ export function FormInseminacao({ animais, motivosInaptidao, idadeMinServico = I
     else if (numeroMatriz) { setSel(new Set([numeroMatriz])); setPreMarcadas(new Set([numeroMatriz])); setOrigemPre("agenda"); }
     if (prefill?.protocolo ?? qs.get("protocolo")) { setTipo("iatf"); setOrigem("protocolo"); }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // "Protocolo IATF vigente" = ainda sem inseminação lançada depois do D0; NÃO precisa estar na etapa D11 hoje (a IA pode ser
   // lançada a posteriori, com o hormônio já aplicado há dias).
@@ -158,25 +159,29 @@ export function FormInseminacao({ animais, motivosInaptidao, idadeMinServico = I
   const { pedemConfirmacao } = useMemo(() => resumoSelecao(linhas, selEfetiva), [linhas, selEfetiva]);
   const alvoUnico = nSel === 1 ? alvo[0] : null;
 
-  // Origem "protocolo": quando a seleção pertence a um único lançamento, vincula automaticamente.
-  useEffect(() => {
-    if (origem !== "protocolo") return;
+  // Origem "protocolo": quando a seleção pertence a um único lançamento, vincula automaticamente (derivado, sem efeito).
+  const protocoloId = (() => {
+    if (origem !== "protocolo") return protocoloIdManual;
     const ids = new Set<number>();
     sel.forEach((n) => { const p = protocoloDoAnimal.get(n); if (p) ids.add(p.lancamento_id); });
-    setProtocoloId(ids.size === 1 ? String([...ids][0]) : "");
-  }, [sel, origem, protocoloDoAnimal]);
+    return ids.size === 1 ? String([...ids][0]) : "";
+  })();
 
   // Sugestão de acasalamento: só com UMA matriz. Falha de forma discreta (animal sem genealogia) sem travar o resto.
   useEffect(() => {
-    if (!alvoUnico) { setSugestao(null); setErroSugestao(null); return; }
+    if (!alvoUnico) return;
     let cancelado = false;
-    setCarregandoSugestao(true); setErroSugestao(null);
     fetchSugestaoAcasalamento(alvoUnico)
-      .then((r) => { if (!cancelado) setSugestao(r); })
-      .catch((e) => { if (!cancelado) { setSugestao(null); setErroSugestao(e?.message || "Não foi possível calcular a sugestão de touro para esta matriz."); } })
-      .finally(() => { if (!cancelado) setCarregandoSugestao(false); });
+      .then((r) => { if (!cancelado) setSugResultado({ numero: alvoUnico, dados: r, erro: null }); })
+      .catch((e) => {
+        if (!cancelado) setSugResultado({ numero: alvoUnico, dados: null, erro: e?.message || "Não foi possível calcular a sugestão de touro para esta matriz." });
+      });
     return () => { cancelado = true; };
   }, [alvoUnico]);
+  const sugAtual = alvoUnico && sugResultado?.numero === alvoUnico ? sugResultado : null;
+  const carregandoSugestao = !!alvoUnico && !sugAtual;
+  const sugestao = sugAtual?.dados ?? null;
+  const erroSugestao = sugAtual?.erro ?? null;
 
   // ── touro e estoque de sêmen ──────────────────────────────────────────────────────────────────────────────────
   const tourosDaCategoria = useMemo(() => (semen?.touros ?? []).filter((t) => t.tipo === categoria), [semen, categoria]);
@@ -483,7 +488,7 @@ export function FormInseminacao({ animais, motivosInaptidao, idadeMinServico = I
             <>
               <div className="gv-campo">
                 <label htmlFor="ins-vinculo">Vincular ao protocolo IATF</label>
-                <select id="ins-vinculo" className="rp-select" value={protocoloId} onChange={(e) => setProtocoloId(e.target.value)}>
+                <select id="ins-vinculo" className="rp-select" value={protocoloId} onChange={(e) => setProtocoloIdManual(e.target.value)}>
                   <option value="">Automático (o protocolo pendente do animal)</option>
                   {lancamentos.map((l) => <option key={l.lancamento_id} value={l.lancamento_id}>{l.nome_protocolo}</option>)}
                 </select>

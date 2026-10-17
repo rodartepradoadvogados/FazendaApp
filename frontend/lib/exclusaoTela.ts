@@ -293,3 +293,8 @@ export function exigencias(risco: "baixo" | "medio" | "alto", souAdmin: boolean)
     confirmacao: souAdmin && risco === "alto",
   };
 }
+
+/** Mensagem de um erro capturado (`catch (e)` é `unknown`): a do servidor quando há, senão o texto padrão. */
+export function mensagemDe(e: unknown, padrao: string): string {
+  return e instanceof Error && e.message ? e.message : padrao;
+}

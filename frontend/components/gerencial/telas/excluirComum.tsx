@@ -26,7 +26,10 @@ const ICONES: Record<string, Icone> = {
   lote: Layers, fornecedor: Truck, pessoa: Users, doenca: AlertTriangle, principio_ativo: Pill, motivo_movimentacao: Tags,
   evento_sanitario: ClipboardList, protocolo_sanitario: ClipboardList, safra: Wheat, todos_lancamentos: Layers,
 };
-export const iconeDoTipo = (id: string): Icone => ICONES[id] ?? FileText;
+/** Ícone do tipo como elemento (sem criar componente durante o render). */
+export function IconeTipo({ id, size = 17 }: { id: string; size?: number }) {
+  return React.createElement(ICONES[id] ?? FileText, { size, "aria-hidden": true });
+}
 
 /** Blocos com tinta de ouro: os dois tipos que o dono mais procura (apagar a IA inteira × só o exame). */
 export const TIPOS_DESTAQUE = new Set(["diagnostico", "servico"]);
