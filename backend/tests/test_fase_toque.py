@@ -197,3 +197,54 @@ class TestEndpointEmLote:
         c, _ = client
         cards = [{"id": str(i), "config": {"situacao": "pev"}} for i in range(41)]
         assert c.post("/reproducao/agenda-reprodutiva/cards", json={"cards": cards}).status_code == 422
+
+
+class TestCardsSalvosNoServidor:
+    """Cards configuráveis salvos por fazenda (antes só no localStorage de cada aparelho)."""
+
+    def _cards(self):
+        return [
+            {"id": "c1", "nome": "Inseminadas 30–59 dias", "config": {"situacao": "inseminada", "periodos": [[30, 59]]}},
+            {"id": "c2", "nome": "Gestantes", "config": {"situacao": "gestante", "categoria": "vaca", "lotes": ["05 - Secas"]}},
+        ]
+
+    def test_sem_nada_salvo_devolve_null(self, client):
+        c, _ = client
+        r = c.get("/reproducao/agenda-reprodutiva/cards-config")
+        assert r.status_code == 200 and r.json() == {"cards": None, "atualizado_em": None}
+
+    def test_ida_e_volta_preserva_todos_os_campos_do_card(self, client):
+        c, _ = client
+        r = c.put("/reproducao/agenda-reprodutiva/cards-config", json={"cards": self._cards()})
+        assert r.status_code == 200 and r.json()["total"] == 2
+        lido = c.get("/reproducao/agenda-reprodutiva/cards-config").json()["cards"]
+        assert [x["id"] for x in lido] == ["c1", "c2"]
+        assert lido[0]["config"]["periodos"] == [[30, 59]] and lido[0]["config"]["situacao"] == "inseminada"
+        assert lido[1]["config"]["categoria"] == "vaca" and lido[1]["config"]["lotes"] == ["05 - Secas"]
+        assert lido[1]["config"]["somente_atrasadas"] is False  # o Pydantic completou o padrão
+
+    def test_salvar_de_novo_substitui_a_lista_inteira(self, client):
+        c, _ = client
+        c.put("/reproducao/agenda-reprodutiva/cards-config", json={"cards": self._cards()})
+        c.put("/reproducao/agenda-reprodutiva/cards-config", json={"cards": self._cards()[:1]})
+        assert [x["id"] for x in c.get("/reproducao/agenda-reprodutiva/cards-config").json()["cards"]] == ["c1"]
+
+    def test_lista_vazia_e_diferente_de_nunca_salvou(self, client):
+        c, _ = client
+        c.put("/reproducao/agenda-reprodutiva/cards-config", json={"cards": []})
+        assert c.get("/reproducao/agenda-reprodutiva/cards-config").json()["cards"] == []
+
+    def test_recusa_situacao_invalida_id_repetido_e_nome_vazio_sem_gravar_nada(self, client):
+        c, _ = client
+        ruim = [{"id": "x", "nome": "A", "config": {"situacao": "inexistente"}}]
+        assert c.put("/reproducao/agenda-reprodutiva/cards-config", json={"cards": ruim}).status_code == 422
+        rep = [self._cards()[0], {**self._cards()[1], "id": "c1"}]
+        assert c.put("/reproducao/agenda-reprodutiva/cards-config", json={"cards": rep}).status_code == 422
+        vazio = [{**self._cards()[0], "nome": "  "}]
+        assert c.put("/reproducao/agenda-reprodutiva/cards-config", json={"cards": vazio}).status_code == 422
+        assert c.get("/reproducao/agenda-reprodutiva/cards-config").json()["cards"] is None
+
+    def test_limite_de_cards(self, client):
+        c, _ = client
+        muitos = [{"id": f"c{i}", "nome": f"Card {i}", "config": {"situacao": "pev"}} for i in range(41)]
+        assert c.put("/reproducao/agenda-reprodutiva/cards-config", json={"cards": muitos}).status_code == 422

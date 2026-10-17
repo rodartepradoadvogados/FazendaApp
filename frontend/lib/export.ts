@@ -61,7 +61,15 @@ function corSecao(titulo: string): [number, number, number] {
   return CATEGORIAS.manejo;
 }
 
-export type ColunaExport = { header: string; key: string; width?: number };
+export type ColunaExport = {
+  header: string; key: string;
+  /** Largura em caracteres no Excel. */
+  width?: number;
+  /** Largura em mm no PDF; sem ela a coluna se ajusta ao conteúdo (o que espreme tudo quando há muitas colunas). */
+  larguraPdf?: number;
+  /** Excel: grava o valor como número (ordena e soma) em vez de texto, quando o valor da linha é um number. */
+  numerico?: boolean;
+};
 
 function formatarValor(v: unknown): string {
   if (v == null) return "";
@@ -262,7 +270,36 @@ export async function exportarPDF(
   });
 }
 
-export type SecaoFicha = { titulo: string; colunas: ColunaExport[]; linhas: Record<string, unknown>[]; /** Começa numa página nova (ex.: um extrato por pessoa). */ novaPagina?: boolean };
+export type SecaoFicha = {
+  titulo: string; colunas: ColunaExport[]; linhas: Record<string, unknown>[];
+  /** Começa numa página nova (ex.: um extrato por pessoa). */
+  novaPagina?: boolean;
+  /** Linhas a destacar com fundo dourado claro no PDF e no Excel (ex.: animais ainda dentro do prazo). */
+  destacar?: (linha: Record<string, unknown>) => boolean;
+};
+
+/** Opções extras do PDF em seções — tudo opcional; sem elas o documento sai exatamente como antes. */
+export type OpcoesFichaPDF = {
+  orientacao?: "portrait" | "landscape";
+  /** Faixa de totais logo abaixo do cabeçalho da primeira página. */
+  resumo?: { rotulo: string; valor: string; detalhe?: string }[];
+  /** Linhas de legenda depois da última seção. */
+  legenda?: string[];
+  /** Texto do rodapé; quando informado, todas as páginas ganham o rodapé e "Página X de N". */
+  rodape?: string;
+};
+
+/** Opções extras do Excel em abas — tudo opcional; sem elas o arquivo sai exatamente como antes. */
+export type OpcoesMultiExcel = {
+  /** Complemento da linha "Gerado por…" (ex.: o filtro aplicado). */
+  subtitulo?: string;
+  congelarCabecalho?: boolean;
+  autofiltro?: boolean;
+  legenda?: string[];
+};
+
+const FUNDO_DESTAQUE_RGB: [number, number, number] = [243, 236, 217];
+const FUNDO_DESTAQUE_ARGB = "FFF3ECD9";
 
 /**
  * Excel com várias abas (uma planilha por seção/categoria) — usado quando um
@@ -276,8 +313,16 @@ export async function exportarMultiExcel(
   secoes: SecaoFicha[],
   nomeArquivoBase: string,
   modo: ModoEntregaExport = "baixar",
+  opcoes?: OpcoesMultiExcel,
 ) {
   return comAlertaDeErro(async () => {
+    const blob = await gerarMultiExcelBlob(tituloGeral, secoes, opcoes);
+    await entregarArquivo(blob, `${nomeArquivoBase}_${dataHoje()}.xlsx`, modo);
+  });
+}
+
+/** Monta o .xlsx com uma aba por seção e devolve o arquivo, sem entregá-lo (quem exporta entrega; os testes inspecionam). */
+export async function gerarMultiExcelBlob(tituloGeral: string, secoes: SecaoFicha[], opcoes?: OpcoesMultiExcel): Promise<Blob> {
   const ExcelJS = (await import("exceljs")).default;
   const usuario = getUsuario();
   const wb = new ExcelJS.Workbook();
@@ -309,7 +354,7 @@ export async function exportarMultiExcel(
     ws.getCell(2, 1).alignment = { horizontal: "center" };
 
     ws.mergeCells(3, 1, 3, nCols);
-    ws.getCell(3, 1).value = `Gerado por ${usuario?.nome || "—"} em ${new Date().toLocaleDateString("pt-BR")}`;
+    ws.getCell(3, 1).value = `Gerado por ${usuario?.nome || "—"} em ${new Date().toLocaleDateString("pt-BR")}${opcoes?.subtitulo ? ` · ${opcoes.subtitulo}` : ""}`;
     ws.getCell(3, 1).font = { italic: true, size: 9, color: { argb: "FF888888" } };
     ws.getCell(3, 1).alignment = { horizontal: "center" };
 
@@ -323,12 +368,30 @@ export async function exportarMultiExcel(
     });
 
     secao.linhas.forEach((linha) => {
-      ws.addRow(secao.colunas.map((c) => formatarValor(linha[c.key])));
+      const row = ws.addRow(secao.colunas.map((c) => {
+        const v = linha[c.key];
+        return c.numerico && typeof v === "number" ? v : formatarValor(v);
+      }));
+      if (secao.destacar?.(linha)) {
+        row.eachCell((c) => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: FUNDO_DESTAQUE_ARGB } }; });
+      }
     });
 
     secao.colunas.forEach((c, i) => {
       ws.getColumn(i + 1).width = c.width || Math.max(12, c.header.length + 2);
     });
+
+    if (opcoes?.congelarCabecalho) ws.views = [{ state: "frozen", ySplit: headerRow.number }];
+    if (opcoes?.autofiltro) {
+      ws.autoFilter = { from: { row: headerRow.number, column: 1 }, to: { row: headerRow.number + secao.linhas.length, column: nCols } };
+    }
+    if (opcoes?.legenda?.length) {
+      ws.addRow([]);
+      for (const linha of opcoes.legenda) {
+        const row = ws.addRow([linha]);
+        row.getCell(1).font = { italic: true, size: 9, color: { argb: "FF6B7280" } };
+      }
+    }
   }
 
   if (!wb.worksheets.length) {
@@ -336,9 +399,7 @@ export async function exportarMultiExcel(
   }
 
   const buf = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-  await entregarArquivo(blob, `${nomeArquivoBase}_${dataHoje()}.xlsx`, modo);
-  });
+  return new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
 }
 
 /**
@@ -356,20 +417,57 @@ export async function exportarFichaPDF(
   secoes: SecaoFicha[],
   nomeArquivoBase: string,
   modo: ModoEntregaExport = "baixar",
+  opcoes?: OpcoesFichaPDF,
 ) {
   return comAlertaDeErro(async () => {
+    const blob = await gerarFichaPDFBlob(titulo, subtitulo, secoes, opcoes);
+    await entregarArquivo(blob, `${nomeArquivoBase}_${dataHoje()}.pdf`, modo);
+  });
+}
+
+/** Monta o PDF em seções e devolve o arquivo, sem entregá-lo (quem exporta entrega; os testes e a conferência visual usam). */
+export async function gerarFichaPDFBlob(titulo: string, subtitulo: string, secoes: SecaoFicha[], opcoes?: OpcoesFichaPDF): Promise<Blob> {
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
   const usuario = getUsuario();
   const logo = await carregarLogo();
-  const doc = new jsPDF({ orientation: "portrait" });
+  const doc = new jsPDF({ orientation: opcoes?.orientacao ?? "portrait" });
   const dataStr = new Date().toLocaleDateString("pt-BR");
+  const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
+  const margemInferior = opcoes?.rodape !== undefined ? 16 : 10;
 
   const cabecalho = () => desenharCabecalhoPDF(doc, { titulo, subtitulo, usuario: usuario?.nome, dataStr, logo });
 
   let cursorY = 32;
   let alguma = false;
+
+  // Faixa de totais logo abaixo do cabeçalho da primeira página.
+  if (opcoes?.resumo?.length) {
+    const largura = Math.min(72, (pageWidth - 28) / opcoes.resumo.length);
+    opcoes.resumo.forEach((item, i) => {
+      const x = 14 + i * largura;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(6.5);
+      doc.setTextColor(...COR_MUTED_RGB);
+      doc.text(item.rotulo.toUpperCase(), x, cursorY + 1, { charSpace: 0.4 });
+      doc.setFontSize(14);
+      doc.setTextColor(...COR_GRAFITE_RGB);
+      doc.text(item.valor, x, cursorY + 7.5);
+      if (item.detalhe) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7);
+        doc.setTextColor(...COR_MUTED_RGB);
+        doc.text(item.detalhe, x, cursorY + 11.5);
+      }
+    });
+    cursorY += 15;
+    doc.setDrawColor(...COR_LINHA_RGB);
+    doc.setLineWidth(0.3);
+    doc.line(14, cursorY, pageWidth - 14, cursorY);
+    cursorY += 7;
+  }
+
   for (const secao of secoes) {
     if (!secao.linhas.length) continue;
     const jaTinhaSecao = alguma;
@@ -388,13 +486,23 @@ export async function exportarFichaPDF(
     doc.text(secao.titulo, 18, cursorY);
     cursorY += 4;
 
+    const columnStyles: Record<number, { cellWidth: number }> = {};
+    secao.colunas.forEach((c, i) => { if (c.larguraPdf) columnStyles[i] = { cellWidth: c.larguraPdf }; });
+
     autoTable(doc, {
       ...ESTILO_TABELA,
       head: [colunasMaiusculas(secao.colunas).map((c) => c.header)],
       body: secao.linhas.map((linha) => secao.colunas.map((c) => formatarValor(linha[c.key]))),
       startY: cursorY,
-      margin: { top: 32 },
+      margin: { top: 32, left: 14, right: 14, bottom: margemInferior },
+      columnStyles,
+      rowPageBreak: "avoid",
       didDrawPage: cabecalho,
+      didParseCell: secao.destacar
+        ? (dados) => {
+            if (dados.section === "body" && secao.destacar!(secao.linhas[dados.row.index])) dados.cell.styles.fillColor = FUNDO_DESTAQUE_RGB;
+          }
+        : undefined,
     });
     cursorY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
   }
@@ -406,8 +514,36 @@ export async function exportarFichaPDF(
     doc.text("Nenhum lançamento encontrado para este animal.", 14, 40);
   }
 
-  await entregarArquivo(doc.output("blob"), `${nomeArquivoBase}_${dataHoje()}.pdf`, modo);
-  });
+  if (alguma && opcoes?.legenda?.length) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(...COR_MUTED_RGB);
+    const linhas = opcoes.legenda.flatMap((l) => doc.splitTextToSize(l, pageWidth - 28) as string[]);
+    if (cursorY + linhas.length * 4 > pageHeight - margemInferior) {
+      doc.addPage();
+      cabecalho();
+      cursorY = 32;
+    }
+    linhas.forEach((l, i) => doc.text(l, 14, cursorY - 2 + i * 4));
+  }
+
+  // Rodapé e "Página X de N" (só quando pedido) — depois de saber quantas páginas saíram.
+  if (opcoes?.rodape !== undefined) {
+    const total = doc.getNumberOfPages();
+    for (let i = 1; i <= total; i++) {
+      doc.setPage(i);
+      doc.setDrawColor(...COR_LINHA_RGB);
+      doc.setLineWidth(0.2);
+      doc.line(14, pageHeight - 11, pageWidth - 14, pageHeight - 11);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(...COR_MUTED_RGB);
+      doc.text(opcoes.rodape, 14, pageHeight - 7);
+      doc.text(`Página ${i} de ${total}`, pageWidth - 14, pageHeight - 7, { align: "right" });
+    }
+  }
+
+  return doc.output("blob");
 }
 
 export type LancamentoRecibo = {

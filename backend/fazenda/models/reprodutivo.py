@@ -361,3 +361,24 @@ class RepasseConfig(SQLModel, table=True):
     quem_entra: str = "todas"
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
     atualizado_por_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+
+
+# ---------------------------------------------------------------------------
+# Cards configuráveis da Agenda Reprodutiva — salvos POR FAZENDA
+# ---------------------------------------------------------------------------
+class AgendaReprodutivaCards(SQLModel, table=True):
+    """Os cards que a fazenda montou na Agenda Reprodutiva (situação, lotes, períodos), guardados no servidor.
+
+    Antes ficavam só no `localStorage` de cada navegador/celular, então a exportação e o lançamento do diagnóstico
+    mostravam conjuntos diferentes conforme o aparelho. Uma linha por fazenda; `cards_json` é a lista
+    `[{id, nome, config}]` já validada pelo endpoint. SEM linha = a fazenda nunca salvou nada no servidor (a tela usa os
+    cards padrão ou migra o que o navegador já tinha)."""
+
+    __tablename__ = "agenda_reprodutiva_cards"
+    __table_args__ = (UniqueConstraint("fazenda_id", name="uq_agenda_reprodutiva_cards_fazenda"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    cards_json: str = "[]"
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_por_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
