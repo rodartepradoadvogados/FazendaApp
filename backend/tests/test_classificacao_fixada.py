@@ -2,9 +2,16 @@
 from datetime import date, timedelta
 from types import SimpleNamespace
 
+import pytest
+
 from fazenda.rules import estado_reprodutivo as er
 
 HOJE = date(2026, 10, 17)
+
+
+@pytest.fixture(autouse=True)
+def _fixacao_ativa(monkeypatch):
+    monkeypatch.setattr(er, "CLASSIFICACAO_FIXADA", {"11153": er.GESTANTE})
 
 
 def _calcular(numero: str) -> dict:
@@ -33,3 +40,4 @@ def test_outra_matriz_nao_e_afetada():
     r = _calcular("11154")
     assert r["estado"] == er.ATRASADA
     assert "classificacao_fixada" not in r
+

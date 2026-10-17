@@ -287,3 +287,15 @@ os.environ["FAZENDA_TESTING"] = "1"
 # fuso de Brasília em si é testado com `agora` explícito
 # (tests/test_relatorios_regras_v2.py::test_hoje_local_sao_paulo).
 os.environ.setdefault("FAZENDA_HOJE_LOCAL_RELOGIO", "relogio_local")
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _sem_classificacao_fixada(monkeypatch):
+    """A fixação temporária da matriz 11153 (`estado_reprodutivo.CLASSIFICACAO_FIXADA`) não pode vazar para os demais
+    testes — vários usam o número 11153. `test_classificacao_fixada.py` a reativa de propósito."""
+    from fazenda.rules import estado_reprodutivo
+
+    monkeypatch.setattr(estado_reprodutivo, "CLASSIFICACAO_FIXADA", {})
