@@ -91,11 +91,20 @@ def auditar(
         if not numero:
             continue
         estado_dict = estados.get(numero) or {}
-        estado = estado_dict.get("estado")
+        # Auditar o que a REGRA calcula, não a fixação manual temporária (`CLASSIFICACAO_FIXADA`), que esconderia a causa.
+        estado = estado_dict.get("estado_calculado") or estado_dict.get("estado")
         roteiro = roteiro_por_animal.get(numero, [])
         servicos = servicos_por_animal.get(numero, [])
         partos = partos_por_animal.get(numero, [])
         lactacao_inicio = lactacao_inicio_por_animal.get(numero)
+
+        if estado_dict.get("classificacao_fixada"):
+            achados.append(_achado(
+                numero, estado_dict.get("estado"), roteiro, "classificacao_fixada", "alta",
+                "Classificação fixada manualmente (temporária)",
+                f"O sistema mostra «{estado_dict.get('estado')}» porque o produtor mandou fixar este animal; a regra calcula "
+                f"«{estado}». As causas abaixo explicam a diferença — corrija o dado ou a regra e remova a fixação.",
+            ))
 
         # 1. Prenhez confirmada que o estado não reconhece.
         if estado not in (GESTANTE, INSEMINADA):
@@ -228,5 +237,8 @@ def explicar_animal(
             f"Serviço vigente: {_fmt(_d(_get(v, 'data_servico')))}; exame que vale: {diagnostico_efetivo_do_servico(v) or 'nenhum'}.")
     else:
         passos.append("Nenhum serviço vigente: o animal é classificado só por parto/lactação, idade e peso.")
+    if estado.get("classificacao_fixada"):
+        passos.append(
+            f"ATENÇÃO: o estado «{estado.get('estado')}» está FIXADO manualmente; a regra calcula «{estado.get('estado_calculado') or '—'}».")
     passos.append(f"Estado ao vivo: «{estado.get('estado') or '—'}». Roteiro do veterinário: {', '.join(roteiro) or 'nenhuma lista'}.")
     return {"numero": numero, "estado": estado.get("estado"), "roteiro": roteiro, "linha_do_tempo": linhas, "passos": passos}

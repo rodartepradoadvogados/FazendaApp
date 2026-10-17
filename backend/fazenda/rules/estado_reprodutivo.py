@@ -178,7 +178,7 @@ def diagnostico_efetivo_do_servico(servico: Any) -> str:
     return max(candidatos, key=lambda c: c[0])[1] if candidatos else ""
 
 
-def classificar_animal(
+def _classificar_animal_calculado(
     numero: str,
     *,
     hoje: date,
@@ -381,6 +381,33 @@ def classificar_animal(
             return {**base, "estado": ATRASADA, "aptidao_por_idade": not tem_peso}
         return {**base, "estado": APTA, "aptidao_por_idade": not tem_peso}
     return {**base, "estado": NAO_APTA, "aptidao_por_idade": False}
+
+
+# TEMPORÁRIO (decisão do dono, 17/10/2026): matrizes cuja classificação o produtor mandou FIXAR enquanto a causa de
+# a regra devolver outro estado é investigada. A matriz 11153 está com toque positivo e reconfirmação lançados mas era
+# classificada como "vazia atrasada". Remover a entrada quando a causa for corrigida na regra ou no dado — a aba
+# Histórico › Reprodução › Auditoria (`GET /reproducao/auditoria-classificacao?animal=11153`) mostra o que a regra enxerga.
+# Vale para todas as fazendas (o contexto de fazenda não chega até aqui); número de matriz repetido em outra fazenda
+# herdaria a fixação — por isso a lista é mínima e documentada.
+CLASSIFICACAO_FIXADA: dict[str, str] = {"11153": GESTANTE}
+
+
+def classificar_animal(numero: str, **kwargs: Any) -> dict:
+    """`_classificar_animal_calculado` + a fixação manual temporária de `CLASSIFICACAO_FIXADA`.
+
+    Único ponto de entrada de todas as telas e relatórios (Rebanho, Agenda, indicadores, programa reprodutivo), então a
+    fixação vale em todos ao mesmo tempo. O resultado ganha `classificacao_fixada: True` para a Auditoria avisar que o
+    estado NÃO veio da regra."""
+    resultado = _classificar_animal_calculado(numero, **kwargs)
+    fixado = CLASSIFICACAO_FIXADA.get(str(numero))
+    if fixado is None or resultado.get("estado") == fixado:
+        return resultado
+    return {
+        **resultado,
+        "estado": fixado,
+        "estado_calculado": resultado.get("estado"),
+        "classificacao_fixada": True,
+    }
 
 
 def _d0_protocolo_ativo(aplicacoes_iatf: list[Any], hoje: date) -> date | None:
