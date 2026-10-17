@@ -69,7 +69,10 @@ musica = np.zeros(N)
 
 def add(buf, sig, t0, g=1.0):
     i = int(round(t0 * SR))
-    if i >= N:
+    if i < 0:
+        sig = sig[-i:]
+        i = 0
+    if i >= N or len(sig) == 0:
         return
     j = min(N, i + len(sig))
     buf[i:j] += g * sig[: j - i]
@@ -258,17 +261,50 @@ def clique():
 
 
 fx = np.zeros(N)
-FXG = {"impacto": 0.55, "whoosh": 0.16, "clique": 0.30}
+# efeitos da Temporada 2 (papel/prancheta): rasgo de fita crepe, risco de caneta, toque de tela, batida de carimbo
+def rasgo():
+    n = int(SR * 0.34)
+    t = np.arange(n) / SR
+    s = passa_faixa(rng.standard_normal(n), 1400, 7500) * (0.55 + 0.45 * np.sign(np.sin(2 * np.pi * 95 * t + 3 * np.sin(2 * np.pi * 13 * t))))
+    e = np.minimum(1, t / 0.03) * np.exp(-((t - 0.12) / 0.16) ** 2)
+    return s * e / (np.abs(s * e).max() + 1e-9)
+
+
+def caneta():
+    n = int(SR * 0.36)
+    t = np.arange(n) / SR
+    s = passa_faixa(rng.standard_normal(n), 2200, 6500) * (0.6 + 0.4 * np.sin(2 * np.pi * 28 * t))
+    e = np.minimum(1, t / 0.04) * np.minimum(1, (0.36 - t) / 0.06)
+    return s * e / (np.abs(s * e).max() + 1e-9)
+
+
+def toque():
+    n = int(SR * 0.12)
+    t = np.arange(n) / SR
+    s = np.sin(2 * np.pi * (180 + 90 * np.exp(-t / 0.02)) * t) * np.exp(-t / 0.035) + 0.35 * passa_faixa(rng.standard_normal(n), 1800, 5000) * np.exp(-t / 0.004)
+    return s / (np.abs(s).max() + 1e-9)
+
+
+def carimbo():
+    n = int(SR * 0.42)
+    t = np.arange(n) / SR
+    s = np.sin(2 * np.pi * (70 + 60 * np.exp(-t / 0.03)) * t) * np.exp(-t / 0.11) + 0.8 * passa_faixa(rng.standard_normal(n), 150, 1800) * np.exp(-t / 0.025) + 0.25 * np.sin(2 * np.pi * 430 * t) * np.exp(-t / 0.03)
+    return s / (np.abs(s).max() + 1e-9)
+
+
+FXG = {"impacto": 0.55, "whoosh": 0.16, "clique": 0.30, "rasgo": 0.22, "caneta": 0.11, "toque": 0.30, "carimbo": 0.80}
 for tg, tipo, db in R["fx"]:
     g = FXG[tipo] * 10 ** (db / 20)
     if tipo == "whoosh":
         add(fx, whoosh(), tg - 0.45, g)
     elif tipo == "impacto":
         add(fx, impacto(), tg, g)
+    elif tipo in ("rasgo", "caneta", "toque", "carimbo"):
+        add(fx, {"rasgo": rasgo, "caneta": caneta, "toque": toque, "carimbo": carimbo}[tipo](), tg, g)
     else:
         add(fx, clique(), tg, g)
 
-mix = 0.13 * musica / (np.abs(musica).max() + 1e-9) + 1.0 * voz + 0.55 * fx
+mix = R.get("ganho_musica", 0.13) * musica / (np.abs(musica).max() + 1e-9) + 1.0 * voz + 0.55 * fx
 # fade final curto e corte no total
 fim = int(TOTAL * SR)
 mix = mix[:fim]

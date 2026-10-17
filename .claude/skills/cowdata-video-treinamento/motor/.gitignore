@@ -6,3 +6,4 @@ checks*/
 audio/*.wav
 audio/*.mp3
 *.mp4
+t2e[0-9]*.html
