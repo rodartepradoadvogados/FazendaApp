@@ -69,7 +69,7 @@
 //     bolinha do app agora reflete se o SERVIDOR respondeu, não só a rádio.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useState } from "react";
-import { API, getToken, getFazendaAtual, mensagemErroApi } from "@/lib/api";
+import { API, ErroApi, getToken, getFazendaAtual, mensagemErroApi } from "@/lib/api";
 import {
   garantirPronto, pedirStoragePersistente, idbDisponivel, cabeNoDisco,
   inserirRegistro, lerRegistro, listarResumos, atualizarRegistro, removerRegistro, lerBlob,
@@ -412,7 +412,9 @@ function headersEnvioJson(id: string): Record<string, string> {
 async function resolverRespostaJson(res: RespostaEnvio, mensagemErroPadrao: string): Promise<any> {
   if (!res.ok) {
     const detalhe = await res.json().catch(() => ({}));
-    throw new Error(mensagemErroApi(detalhe.detail) || mensagemErroPadrao);
+    // ErroApi É um Error (mesma `message` de sempre), mas guarda status e `detail`: o lote de IATF precisa do corpo do
+    // 409 de aptidão (quais vacas, se dá para confirmar) para mostrar a recusa em vez de uma frase genérica.
+    throw new ErroApi(mensagemErroApi(detalhe.detail) || mensagemErroPadrao, res.status, detalhe.detail);
   }
   return res.json().catch(() => undefined);
 }
