@@ -218,6 +218,52 @@ class TestOpenRouterToolUse:
         assert tool["role"] == "tool" and tool["tool_call_id"] == "call_1"
         assert "Estrela" in tool["content"]
 
+    def test_modelo_mudo_depois_da_ferramenta_ganha_um_empurrao(self, monkeypatch, engine):
+        # 17/10/2026: o modelo gratuito sob saturação devolveu a tool call,
+        # recebeu o resultado e respondeu VAZIO — o produtor via "(sem
+        # resposta)". O responder dá exatamente um empurrãozinho ("responda
+        # em texto") antes de desistir.
+        monkeypatch.setenv("OPENROUTER_API_KEY", CHAVE_FALSA)
+        payloads = []
+        respostas = iter([
+            _msg_openrouter(None, [_tool_call("buscar_animal", {"numero": "500"})], "tool_calls"),
+            _msg_openrouter(""),                    # mudo depois do resultado da tool
+            _msg_openrouter("O 500 é a Estrela."),  # responde após o empurrão
+        ])
+
+        def falso(url, headers, payload, timeout):
+            payloads.append(json.loads(json.dumps(payload)))
+            return _resp_http(200, next(respostas))
+
+        monkeypatch.setattr(llm, "_enviar_http", falso)
+        with Session(engine) as s:
+            r = responder("quem é o 500?", [], s, _Usuario(), 1)
+        assert r["resposta"] == "O 500 é a Estrela."
+        assert len(payloads) == 3
+        assert payloads[-1]["messages"][-1] == {
+            "role": "user", "content": "Responda agora em texto, com os dados que você já consultou."}
+
+    def test_empurrao_s_o_um_e_mudez_depois_de_tool_nao_gera_bucle(self, monkeypatch, engine):
+        monkeypatch.setenv("OPENROUTER_API_KEY", CHAVE_FALSA)
+        chamadas = []
+        respostas = iter([
+            _msg_openrouter(None, [_tool_call("buscar_animal", {"numero": "500"})], "tool_calls"),
+            _msg_openrouter(""),
+            _msg_openrouter(""),
+            _msg_openrouter(""),
+            _msg_openrouter(""),
+        ])
+
+        def falso(url, headers, payload, timeout):
+            chamadas.append(1)
+            return _resp_http(200, next(respostas))
+
+        monkeypatch.setattr(llm, "_enviar_http", falso)
+        with Session(engine) as s:
+            r = responder("quem é o 500?", [], s, _Usuario(), 1)
+        assert r["resposta"] == "(sem resposta)"
+        assert len(chamadas) == 3  # tool + mudo + 1 empurrão; não continua empurrando
+
     def test_historico_devolvido_e_aceito_na_proxima_pergunta(self, monkeypatch, engine):
         monkeypatch.setenv("OPENROUTER_API_KEY", CHAVE_FALSA)
         respostas = iter([

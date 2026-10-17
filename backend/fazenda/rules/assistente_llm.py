@@ -39,8 +39,13 @@ import threading
 from datetime import datetime, timezone
 
 import httpx
+import time
 
 logger = logging.getLogger(__name__)
+
+# Ponte de tempo dos testes do passador (testes trocam `_mono` por um relógio
+# falso e conferem o orçamento sem esperar 150s reais).
+_mono = time.monotonic
 
 PROVEDOR_OPENROUTER = "openrouter"
 PROVEDOR_ANTHROPIC = "anthropic"
@@ -52,6 +57,17 @@ MODELO_PADRAO = {
 URL_OPENROUTER = "https://openrouter.ai/api/v1/chat/completions"
 MAX_TOKENS = 1536
 TIMEOUT_SEGUNDOS = 90.0
+# Modelo principal saturado (típico de `:free`) não pode segurar o produtor:
+# a primeira tentativa com o principal tem um teto CURTO e, se ele não
+# responder, o passador passa rápido aos reserva. Em medição de 17/10/2026,
+# a cadeia antiga (2 tentativas de 90s no principal antes do primeiro
+# reserva) prendia o chat em "Consultando…" por 3–5 minutos exatamente
+# quando o modelo estava sobrecarregado — o momento em que o reserva MAIS
+# importa. O orçamento total (`ORCAMENTO_TOTAL_S`) é o teto de todas as
+# tentativas somadas: uma pergunta nunca consome mais que isso no provedor;
+# o usuário recebe "indisponível, tente de novo" honesto em vez de hang.
+TIMEOUT_TENTATIVA_PRINCIPAL_S = 40.0
+ORCAMENTO_TOTAL_S = 150.0
 
 MSG_INDISPONIVEL = "O assistente está temporariamente indisponível. Tente novamente em instantes."
 _VARS_CHAVE = ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY")
@@ -308,7 +324,8 @@ def _texto_do_erro(corpo) -> str:
     return ""
 
 
-def _completar_openrouter(system: str, mensagens: list[dict], ferramentas: list[dict], modelo: str) -> dict:
+def _completar_openrouter(system: str, mensagens: list[dict], ferramentas: list[dict], modelo: str,
+                          timeout: float = TIMEOUT_SEGUNDOS) -> dict:
     chave = _chave_do(PROVEDOR_OPENROUTER)
     payload: dict = {
         "model": modelo,
@@ -323,7 +340,7 @@ def _completar_openrouter(system: str, mensagens: list[dict], ferramentas: list[
         "X-Title": "CowData",
     }
     try:
-        resp = _enviar_http(URL_OPENROUTER, headers, payload, TIMEOUT_SEGUNDOS)
+        resp = _enviar_http(URL_OPENROUTER, headers, payload, timeout)
     except httpx.TimeoutException as e:
         raise _com_detalhe(_erro("timeout"), e) from None
     except httpx.HTTPError as e:
@@ -451,16 +468,39 @@ def _modelos_reserva() -> list[str]:
 
 
 def _completar_openrouter_com_reserva(system: str, mensagens: list[dict], ferramentas: list[dict], modelo: str) -> dict:
-    """Tenta o modelo principal (com 1 nova tentativa curta se estiver sobrecarregado)
-    e, se continuar falhando por indisponibilidade/limite, passa pelos modelos reserva.
-    Erros de chave, saldo, modelo inexistente ou configuração NÃO são repetidos."""
+    """Passador com failover RÁPIDO e orçamento de tempo.
+
+    - Modelo principal: até 2 tentativas, cada uma com teto CURTO
+      (`TIMEOUT_TENTATIVA_PRINCIPAL_S`). Modelo `:free` saturado costuma
+      simplesmente não responder — segurar 90s por tentativa antes de
+      entregar ao reserva transformava o chat em "Consultando…" eterno
+      exatamente quando o reserva mais importa (medição 17/10/2026:
+      perguntas idênticas levaram de 9,5s a 120s+ conforme a saturação).
+    - Cada reserva: 1 tentativa com o teto normal, pelo TEMPO QUE RESTAR
+      do orçamento total (`ORCAMENTO_TOTAL_S`).
+    - Estourado o orçamento: para de tentar e devolve o último erro
+      retryável — a recusa honesta em ~2,5min vale mais que um hang de
+      5-10min somando as rodadas de tool-use que vêm depois.
+    - Erros de chave, saldo, modelo inexistente ou configuração NÃO são
+      repetidos nem passados adiante com outra tentativa: não dependem de
+      saturação.
+    """
     modelos = [modelo] + [m for m in _modelos_reserva() if m != modelo]
+    inicio = _mono()
     ultimo: ErroAssistente | None = None
     for i, m in enumerate(modelos):
         tentativas = 2 if i == 0 else 1
         for t in range(tentativas):
+            if i or t:
+                restante = ORCAMENTO_TOTAL_S - (_mono() - inicio)
+                if restante < 15.0:
+                    break  # orçamento esgotado: não abre mais uma chamada de rede
+                teto = TIMEOUT_TENTATIVA_PRINCIPAL_S if i == 0 else TIMEOUT_SEGUNDOS
+                timeout = min(teto, restante)
+            else:
+                timeout = TIMEOUT_TENTATIVA_PRINCIPAL_S
             try:
-                return _completar_openrouter(system, mensagens, ferramentas, m)
+                return _completar_openrouter(system, mensagens, ferramentas, m, timeout=timeout)
             except ErroAssistente as e:
                 ultimo = e
                 if e.tipo not in ERROS_QUE_VALEM_TENTAR_DE_NOVO:

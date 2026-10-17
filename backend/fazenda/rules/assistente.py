@@ -492,11 +492,24 @@ def responder(mensagem: str, historico: list[dict], session: Session, usuario: U
     system = _system_prompt(session, fazenda_id)
     mensagens: list[dict] = [*assistente_llm.limpar_historico(historico), {"role": "user", "content": mensagem}]
 
+    ja_empurrou = False
     for _ in range(MAX_RODADAS_TOOL_USE):
         resposta = assistente_llm.completar(system, mensagens, ferramentas)
         mensagens.append(resposta)
         chamadas = resposta.get("tool_calls") or []
         if not chamadas:
+            conteudo = (resposta.get("content") or "").strip()
+            if not conteudo and not ja_empurrou and any(m.get("role") == "tool" for m in mensagens):
+                # O modelo consultou as ferramentas e voltou MUDO (nem texto,
+                # nem nova tool call) — sintoma observado 17/10/2026 nos
+                # modelos gratuitos sob saturação: o produtor via "(sem
+                # resposta)" e conclui que o chat está quebrado. Um
+                # empurrãozinho só para texto, uma única vez, antes de
+                # desistir.
+                ja_empurrou = True
+                mensagens.append({"role": "user",
+                                  "content": "Responda agora em texto, com os dados que você já consultou."})
+                continue
             return {"resposta": resposta.get("content") or "(sem resposta)", "historico": mensagens}
         for chamada in chamadas:
             resultado = _executar_tool(chamada["name"], chamada["arguments"], session, usuario, fazenda_id)
