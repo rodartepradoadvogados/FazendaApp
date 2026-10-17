@@ -66,12 +66,13 @@ const LACT = ["01", "02", "03"];
 // lateral (~330px) em vez do card cheio de sempre: todo o conteúdo físico de
 // components/lancamentos/* (reprodutivo, produção, sanidade, alimentação,
 // estoque). Financeiro (T4, duas colunas — outro agente mexendo em paralelo)
-// e os demais sub-tipos (Pesagem, Secagem, Indução de lactação, Qualidade do
-// leite, Venda mensal, Animais, Excluir lançamento) ficam de fora de propósito
-// — continuam exatamente como eram, no card cheio abaixo.
+// e os demais sub-tipos (Animais, Excluir lançamento) ficam de fora de propósito
+// — continuam no card cheio abaixo. Pesagem, Secagem, Indução de lactação, Qualidade e Venda mensal
+// entraram na gaveta com o redesenho gerencial (largura de 1320px).
 const GAVETA_LEAFS = new Set([
   "protocolo_iatf", "inseminacao", "diagnostico", "parto", "inducao_cio", "controle",
   "sanidade_aplicacao", "bst", "protocolo_sanitario",
+  "pesagem", "secagem", "inducao_lactacao", "qualidade_leite", "entrega_leite",
   "alimentacao_dieta", "estoque_entradas_saidas", "estoque_ajuste_saldo",
 ]);
 
@@ -123,7 +124,7 @@ const TIPOS_GRUPOS = [
       { id: "inducao_lactacao", label: "Indução de lactação", icon: Syringe, desc: "Lança o protocolo de indução (18 ou 28 dias) em um ou vários animais — gera o cronograma completo na Agenda." },
       { id: "qualidade_leite", label: "Qualidade do leite", icon: Milk, desc: "CCS, CBT, gordura, proteína, sólidos totais e ESD — por vaca ou do tanque (rebanho em lactação)." },
       { id: "entrega_leite", label: "Venda mensal do leite", icon: Milk, desc: "Quantidade entregue ao laticínio no mês — compara com o controle leiteiro e a receita recebida." },
-      { id: "bst", label: "BST", icon: Droplets, desc: "Somatotropina bovina — selecione os animais direto nas tabelas de Aptas/Incluir no próximo BST/Inaptas e lance (aplicar, agendar ou marcar inapta)." },
+      { id: "bst", label: "BST", icon: Droplets, desc: "Somatotropina bovina — quem recebe BST na próxima visita: aplicar, agendar ou marcar inapta." },
     ],
   },
   {
@@ -442,7 +443,7 @@ export default function LancamentosPage() {
           ) : sel === "controle" ? (
             <><strong style={{ color: "var(--text)" }}>Controle leiteiro já grava de verdade.</strong> As pesagens lançadas aqui vão para o banco permanente.</>
           ) : sel === "pesagem" ? (
-            <><strong style={{ color: "var(--text)" }}>Pesagem corporal já grava de verdade.</strong> Os pesos lançados aqui vão para o banco permanente e alimentam o relatório de GMD/GPD logo abaixo.</>
+            <><strong style={{ color: "var(--text)" }}>Pesagem corporal já grava de verdade.</strong> Os pesos lançados aqui vão para o banco permanente e alimentam o relatório de GMD/GPD (aba «Histórico de ganho»).</>
           ) : sel === "exclusao" ? (
             <><strong style={{ color: "var(--text)" }}>Exclusão apaga de verdade.</strong> Administradores excluem na hora; os demais usuários só solicitam, e a exclusão fica pendente de aprovação.</>
           ) : sel === "diagnostico" ? (
@@ -500,11 +501,6 @@ export default function LancamentosPage() {
         <div className="card" ref={cardRef} onChange={verificarSujo}>
           <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
           <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
-          {sel === "pesagem" && <FormPesagemCorporal animais={animais} lotes={lotes} />}
-          {sel === "secagem" && <FormSecagem animais={animais} estoque={estoque} produtos={produtosSanidade} />}
-          {sel === "inducao_lactacao" && <FormInducaoLactacao animais={animais} />}
-          {sel === "qualidade_leite" && <FormQualidadeLeite animais={animais} />}
-          {sel === "entrega_leite" && <FormEntregaLeite />}
           {(sel === "financeiro_despesa" || sel === "financeiro_receita") && avisoPedido && (
             <div role="status" className="card mb-4" style={{ background: "var(--surface-2)", fontSize: "0.84rem" }}>✓ {avisoPedido}</div>
           )}
@@ -642,6 +638,11 @@ export default function LancamentosPage() {
             {sel === "controle" && <FormControle key={formKey} animais={animais} lotesLact={lotesLact} onSalvo={aoSalvarNaGaveta} />}
             {sel === "sanidade_aplicacao" && <FormSanidade key={formKey} animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} onSalvo={aoSalvarNaGaveta} />}
             {sel === "bst" && <BstLancamentoView key={formKey} />}
+            {sel === "pesagem" && <FormPesagemCorporal key={formKey} animais={animais} lotes={lotes} />}
+            {sel === "secagem" && <FormSecagem key={formKey} animais={animais} estoque={estoque} produtos={produtosSanidade} />}
+            {sel === "inducao_lactacao" && <FormInducaoLactacao key={formKey} animais={animais} />}
+            {sel === "qualidade_leite" && <FormQualidadeLeite key={formKey} animais={animais} />}
+            {sel === "entrega_leite" && <FormEntregaLeite key={formKey} />}
             {sel === "protocolo_sanitario" && <FormProtocoloSanitario key={formKey} animais={animais} estoque={estoque} onSalvo={aoSalvarNaGaveta} />}
             {sel === "alimentacao_dieta" && <ConsumoAlimento key={formKey} onSalvo={aoSalvarNaGaveta} />}
             {sel === "estoque_entradas_saidas" && <FormEstoque key={formKey} estoque={estoque} onIrParaFinanceiro={irParaFinanceiroAposEstoque} onSalvo={aoSalvarNaGaveta} />}

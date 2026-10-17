@@ -24,15 +24,14 @@ type ProtocoloLocal = { id: number; nome: string; eh_mastite: boolean; ativo: bo
 type CarenciaCatalogo = { leite_dias: number | null; carne_dias: number | null; proibido_lactacao: boolean; texto: string };
 const TETOS = ["AE", "AD", "PD", "PE"] as const;
 const CLASSIFICACOES_MASTITE = [["clinica", "Clínica"], ["subclinica", "Subclínica"], ["ambiental", "Ambiental"]] as const;
-// ─────────────────────── BST — seleção nas tabelas (Aptas/Incluir no próximo BST/Inaptas) ───────────────────────
+// ─────────────────────── BST — quem recebe na próxima visita (Aptas / Incluir no próximo BST / Inaptas) ───────────────────────
 export function BstLancamentoView() {
   const [dados, setDados] = useState<any | null>(null);
   const carregar = () => fetchAgenda().then(setDados).catch(() => setDados(null));
   useEffect(() => { carregar(); }, []);
   return (
     <>
-      <p style={nota}>BST (somatotropina bovina) — marque os animais direto nas tabelas e lance (aplicar, agendar ou marcar inapta).</p>
-      <PainelLancarBst agenda={dados} onAtualizado={carregar} />
+            <PainelLancarBst agenda={dados} onAtualizado={carregar} />
     </>
   );
 }
