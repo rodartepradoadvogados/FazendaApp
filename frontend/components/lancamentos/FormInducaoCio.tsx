@@ -101,7 +101,7 @@ export function FormInducaoCio({ animais, estoque, motivosInaptidao, onSalvo }: 
     setSalvando(true);
     try {
       const r = await registrarInducaoCio(m.payload);
-      setSucesso(`${r.aplicados} ${r.aplicados === 1 ? "aplicação lançada" : "aplicações lançadas"} com sucesso.${r.avisos?.length ? " " + r.avisos.join(" ") : ""} Cio esperado em ${CIO_DIAS_MIN} a ${CIO_DIAS_MAX} dias — a Agenda vai lembrar de observar.`);
+      setSucesso(`${r.aplicados} ${r.aplicados === 1 ? "aplicação lançada" : "aplicações lançadas"} com sucesso.${r.avisos?.length ? " " + [...new Set<string>(r.avisos)].join(" ") : ""} Cio esperado em ${CIO_DIAS_MIN} a ${CIO_DIAS_MAX} dias — a Agenda vai lembrar de observar.`);
       setSel(new Set()); setLotesSel([]); setObservacao("");
       carregarHistorico();
       onSalvo?.();

@@ -44,6 +44,9 @@ const CSS_PARTO = `
 .pt-raiz .rp-chip:focus-visible { outline: 2px solid var(--ft-ouro); outline-offset: 1px; }
 .pt-raiz .pt-rolagem-lotes { max-height: 40vh; overflow-y: auto; }
 .pt-raiz .pt-detalhe-linha { display: grid; align-items: end; gap: 0.75rem; grid-template-columns: auto repeat(4, minmax(0, 1fr)); }
+.pt-raiz .gv-tabela thead th { white-space: normal; padding-left: 0.4rem; padding-right: 0.4rem; line-height: 1.25; vertical-align: bottom; }
+.pt-raiz .gv-tabela tbody td { padding-left: 0.4rem; padding-right: 0.4rem; }
+.pt-raiz .gv-tabela .rp-sub { white-space: normal; max-width: 8.5rem; }
 .pt-raiz .pt-chk { display: inline-flex; gap: 0.45rem; align-items: center; font-size: 0.82rem; cursor: pointer; min-height: 2rem; }
 .pt-raiz .pt-manuais summary { cursor: pointer; font-weight: 700; color: var(--text); min-height: 1.5rem; }
 .pt-raiz .pt-link-ouro { display: inline-flex; gap: 0.3rem; align-items: center; color: var(--ft-ouro-txt); font-weight: 700; }
@@ -272,7 +275,7 @@ export function TabelaPartos({ linhasVis, modoLote, marc, dados, dataTodas, tipo
                   {!modoLote && (
                     <>
                       <td style={{ minWidth: "8.8rem" }}><input type="date" className="rp-cel" aria-label={`Data do parto de ${g.n}`} disabled={!marcada} value={l.data} onChange={(e) => onMuda(g.n, { data: e.target.value })} /></td>
-                      <td style={{ minWidth: "10.5rem" }}>
+                      <td style={{ minWidth: "9.2rem" }}>
                         <select className="rp-cel" aria-label={`Tipo de parto de ${g.n}`} disabled={!marcada} value={l.tipo} onChange={(e) => onMuda(g.n, { tipo: e.target.value })}>
                           <option value="">Selecione…</option>{TIPOS_PARTO.map((t) => <option key={t}>{t}</option>)}
                         </select>
@@ -280,14 +283,14 @@ export function TabelaPartos({ linhasVis, modoLote, marc, dados, dataTodas, tipo
                       <td style={{ textAlign: "center" }}><input type="checkbox" disabled={!marcada || aborto} checked={l.placenta && !aborto} onChange={(e) => onMuda(g.n, { placenta: e.target.checked })} aria-label={`Retenção de placenta de ${g.n}`} /></td>
                     </>
                   )}
-                  <td style={{ minWidth: "6.5rem" }}><input className="rp-cel" aria-label={`Número da cria de ${g.n}`} disabled={!marcada || aborto} value={aborto ? "" : l.cria} placeholder={aborto ? "sem cria" : "ex.: 483"} onChange={(e) => onMuda(g.n, { cria: e.target.value })} /></td>
+                  <td style={{ minWidth: "5.6rem" }}><input className="rp-cel" aria-label={`Número da cria de ${g.n}`} disabled={!marcada || aborto} value={aborto ? "" : l.cria} placeholder={aborto ? "sem cria" : "ex.: 483"} onChange={(e) => onMuda(g.n, { cria: e.target.value })} /></td>
                   <td style={{ minWidth: "7.5rem" }}>
                     <select className="rp-cel" data-erro={e1 || undefined} aria-invalid={e1 || undefined} aria-label={`Sexo da cria de ${g.n}`} disabled={!marcada || aborto} value={aborto ? "" : l.sexo} onChange={(e) => onMuda(g.n, { sexo: e.target.value as Sexo })}>
                       <option value="">Selecione…</option><option value="F">Fêmea</option><option value="M">Macho</option>
                     </select>
                     {e1 && <span className="rp-erro-txt" role="alert">Informe o sexo da cria</span>}
                   </td>
-                  <td style={{ minWidth: "6rem" }}>
+                  <td style={{ minWidth: "5rem" }}>
                     <select className="rp-cel" aria-label={`Cria baixada de ${g.n}`} disabled={!marcada || aborto || nati} value={baixadaEfetiva(l) && !aborto ? "Sim" : "Não"} onChange={(e) => onMuda(g.n, { baixada: e.target.value === "Sim" })}>
                       <option>Não</option><option>Sim</option>
                     </select>

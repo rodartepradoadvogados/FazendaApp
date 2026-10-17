@@ -618,7 +618,7 @@ export function FormSecagem({
               <thead>
                 <tr>
                   <th scope="col">Produto</th><th scope="col">Via</th><th scope="col" style={DIR}>Dosagem</th><th scope="col">Unidade</th>
-                  <th scope="col">A dosagem é</th><th scope="col" style={DIR}>Total da aplicação</th><th scope="col">Estoque depois</th><th scope="col" aria-label="Remover"></th>
+                  <th scope="col">A dosagem é</th><th scope="col" style={{ ...DIR, whiteSpace: "normal" }}>Total da aplicação</th><th scope="col" style={{ whiteSpace: "normal" }}>Estoque depois</th><th scope="col" aria-label="Remover"></th>
                 </tr>
               </thead>
               <tbody>
@@ -634,7 +634,7 @@ export function FormSecagem({
                   return (
                     <tr key={i}>
                       <td>
-                        <select className="gv-celula-input" style={{ width: "19rem", textAlign: "left" }} aria-label={`Produto ${i + 1}`} value={it.produto} onChange={(e) => escolherProduto(i, e.target.value)}>
+                        <select className="gv-celula-input" style={{ width: "14rem", textAlign: "left" }} aria-label={`Produto ${i + 1}`} value={it.produto} onChange={(e) => escolherProduto(i, e.target.value)}>
                           <option value="" disabled>Selecione…</option>
                           {listaProdutos.map((nome) => {
                             const e = estoque.find((x) => x.nome === nome);

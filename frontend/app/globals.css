@@ -2046,6 +2046,8 @@ tr.st-row-sel td{background:var(--sel-row)}
 .gv-faixa-item[data-tom="atencao"] .gv-faixa-valor { color: var(--ft-ambar); }
 .gv-faixa-item[data-tom="ok"] .gv-faixa-valor { color: var(--ft-verde); }
 .gv-faixa-item[data-tom="alerta"] .gv-faixa-valor { color: var(--ft-verm); }
+/* Gaveta de lançamento aberta = janela modal: o botão flutuante do Assistente fica de fora (cobria o botão "Lançar…" da barra de ação, no canto inferior direito). */
+body[data-gaveta-aberta] .assistente-fab, body[data-gaveta-aberta] .assistente-painel { display: none !important; }
 .gv-tabela-moldura { border: 1px solid var(--border-strong, var(--border)); max-height: var(--gv-altura-tabela, 21rem); overflow: auto; background: var(--surface); }
 .gv-tabela { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
 .gv-tabela thead th { position: sticky; top: 0; z-index: 1; background: var(--thead-bg); color: var(--thead-fg); text-align: left; padding: 0.45rem 0.6rem;

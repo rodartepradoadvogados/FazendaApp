@@ -19,6 +19,7 @@ const TTL_MS = 30_000;
 let cache: Mapa | null = null;
 let cacheEm = 0;
 let emVoo: Promise<Mapa> | null = null;
+const ouvintes = new Set<() => void>();
 
 function carregar(): Promise<Mapa> {
   if (cache && performance.now() - cacheEm < TTL_MS) return Promise.resolve(cache);
@@ -39,6 +40,9 @@ function carregar(): Promise<Mapa> {
  *  são justamente os eventos que mudam o estado reprodutivo. */
 export function invalidarEstadosReprodutivos() {
   cache = null;
+  // Quem já está montado (a tela de Parto/Inseminação continua aberta depois de salvar) recarrega na hora:
+  // sem isso a matriz que acabou de parir seguia na sugestão "a parir hoje" até o formulário ser refeito.
+  ouvintes.forEach((f) => f());
 }
 
 /** Estado reprodutivo AO VIVO por número de animal — substitui a leitura do
@@ -47,8 +51,10 @@ export function useEstadosReprodutivos() {
   const [porNumero, setPorNumero] = useState<Mapa>(() => cache || new Map());
   useEffect(() => {
     let vivo = true;
-    carregar().then((m) => { if (vivo) setPorNumero(m); });
-    return () => { vivo = false; };
+    const buscar = () => carregar().then((m) => { if (vivo) setPorNumero(m); });
+    buscar();
+    ouvintes.add(buscar);
+    return () => { vivo = false; ouvintes.delete(buscar); };
   }, []);
   // Estável enquanto o mapa não muda: as telas usam isto dentro de useMemo.
   const rotuloDe = useCallback((numero: string): string => {

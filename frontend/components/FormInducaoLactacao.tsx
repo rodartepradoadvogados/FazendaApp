@@ -38,7 +38,7 @@ const CSS = `
 .gi-tl { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 0.72rem; font-variant-numeric: tabular-nums; }
 .gi-tl col.gi-rot { width: 16rem; }
 .gi-tl thead th { background: var(--thead-bg); color: var(--thead-fg); font-size: 0.66rem; font-weight: 700; letter-spacing: 0.02em; padding: 0.3rem 0; text-align: center; border-left: 1px solid var(--border); }
-.gi-tl thead tr:nth-child(2) th { font-weight: 400; padding-top: 0; padding-bottom: 0.3rem; font-size: 0.66rem; border-bottom: 1px solid var(--border-strong, var(--border)); }
+.gi-tl thead tr:nth-child(2) th { font-weight: 400; padding-top: 0; padding-bottom: 0.3rem; font-size: 0.62rem; white-space: nowrap; overflow: hidden; border-bottom: 1px solid var(--border-strong, var(--border)); }
 .gi-tl thead th:first-child { text-align: left; padding-left: 0.6rem; border-left: 0; letter-spacing: 0.08em; text-transform: uppercase; }
 .gi-tl thead th.gi-ordenha { box-shadow: inset 0 -2px 0 var(--ft-ouro); }
 .gi-tl tbody th { text-align: left; font-weight: 600; font-size: 0.78rem; padding: 0.3rem 0.6rem; border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -62,7 +62,7 @@ function Cronograma({ p, d0 }: { p: ProtocoloInducao; d0: string }) {
   return (
     <>
       <div className="gi-linhatempo-moldura">
-        <table className="gi-tl" style={{ minWidth: `${16 + dias.length * 2}rem` }}>
+        <table className="gi-tl" style={{ minWidth: `${16 + dias.length * 2.3}rem` }}>
           <colgroup><col className="gi-rot" />{dias.map((d) => <col key={d} />)}</colgroup>
           <thead>
             <tr>
