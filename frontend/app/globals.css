@@ -60,6 +60,10 @@
    adaptar. Variáveis específicas isolam a barra lateral e os "cromados"
    (cabeçalhos de card/tabela) para que possam clarear nos temas claros. */
 :root, :root[data-theme="escuro"] {
+  /* Fase do diagnóstico (a tocar / a reconfirmar / reconfirmada) e selo AINDA NÃO — components/reproducao/FaseToque.tsx.
+     Texto em tons que passam AA no fundo escuro; no claro/misto o ouro-claro (#E0A63C) NÃO passa, daí --ft-ouro-txt. */
+  --ft-ouro: #C9A44C; --ft-ouro-txt: #E4C374; --ft-ouro-tint: rgba(201,164,76,.13); --ft-ouro-glow: rgba(201,164,76,.55);
+  --ft-aco: #7FA6CC; --ft-ambar: #E8A33D; --ft-verde: #5CC08D; --ft-verm: #F0705E;
   color-scheme: dark;
   --vinho:       var(--wine);
   --vinho-light: var(--wine-lt);
@@ -143,6 +147,8 @@
    Trocado do creme original (Direção B) a pedido explícito do usuário —
    mesma estrutura de tokens, só a base neutra deixou de ter viés amarelo. */
 :root[data-theme="claro"] {
+  --ft-ouro: #8A6D2F; --ft-ouro-txt: #765B1B; --ft-ouro-tint: rgba(138,109,47,.10); --ft-ouro-glow: rgba(138,109,47,.40);
+  --ft-aco: #416180; --ft-ambar: #A8560A; --ft-verde: #2E7D52; --ft-verm: #B3301F;
   color-scheme: light;
   --bg:          #F1F1EF;
   --surface:     #FFFFFF;
@@ -197,6 +203,8 @@
 
 /* ── Tema MISTO — conteúdo claro, barra lateral vinho sólido ── */
 :root[data-theme="misto"] {
+  --ft-ouro: #8A6D2F; --ft-ouro-txt: #765B1B; --ft-ouro-tint: rgba(138,109,47,.10); --ft-ouro-glow: rgba(138,109,47,.40);
+  --ft-aco: #416180; --ft-ambar: #A8560A; --ft-verde: #2E7D52; --ft-verm: #B3301F;
   color-scheme: light;
   --bg:          #F1F1EF;
   --surface:     #FFFFFF;
@@ -1104,6 +1112,8 @@ html, body { max-width: 100%; overflow-x: hidden; }
    Tokens isolados em --mob-* para não interferir no site desktop.
    ═══════════════════════════════════════════════════════════════════════════ */
 .mob {
+  --ft-ouro: #8A6D2F; --ft-ouro-txt: #6E5416; --ft-ouro-tint: rgba(138,109,47,.12); --ft-ouro-glow: rgba(138,109,47,.5);
+  --ft-aco: #2A5378; --ft-ambar: #9A5008; --ft-verde: #1C7448; --ft-verm: #B3301F;
   /* claro (padrão; "misto" do site também cai aqui) */
   --mob-bg:        #EFF1F5;
   --mob-surface:   #FFFFFF;
@@ -1171,6 +1181,10 @@ html, body { max-width: 100%; overflow-x: hidden; }
   -webkit-tap-highlight-color: transparent;
 }
 :root[data-theme="escuro"] .mob {
+  /* Fase do diagnóstico (a tocar / a reconfirmar / reconfirmada) e selo AINDA NÃO — components/reproducao/FaseToque.tsx.
+     Texto em tons que passam AA no fundo escuro; no claro/misto o ouro-claro (#E0A63C) NÃO passa, daí --ft-ouro-txt. */
+  --ft-ouro: #C9A44C; --ft-ouro-txt: #E4C374; --ft-ouro-tint: rgba(201,164,76,.13); --ft-ouro-glow: rgba(201,164,76,.55);
+  --ft-aco: #7FA6CC; --ft-ambar: #E8A33D; --ft-verde: #5CC08D; --ft-verm: #F0705E;
   /* escuro OLED — tingido pela paleta ativa (vinho→avermelhado, verde→
      esverdeado), a partir de var(--mob-vinho), que já troca de cor no bloco
      data-paleta="verde" mais abaixo. */
@@ -1964,3 +1978,46 @@ tr.st-row-sel td{background:var(--sel-row)}
 .inline-edit select:disabled { opacity: 0.6; cursor: progress; }
 .inline-edit .inline-edit-ic { position: absolute; right: 0.4rem; pointer-events: none; color: var(--text-muted); opacity: 0.55; transition: opacity 0.12s; }
 .inline-edit:hover .inline-edit-ic, .inline-edit:focus-within .inline-edit-ic { opacity: 1; }
+
+
+/* ── Fase do diagnóstico: P/V/I, situação, selo AINDA NÃO (components/reproducao/FaseToque.tsx) ──────────────────── */
+.ft-res { display: inline-flex; align-items: center; justify-content: center; width: 1.45em; height: 1.45em; border-radius: 50%;
+  font-size: 0.7em; font-weight: 800; border: 1.5px solid currentColor; margin-left: 0.5em; vertical-align: middle; }
+.ft-res.p { color: var(--ft-verde); } .ft-res.v { color: var(--ft-verm); } .ft-res.i { color: var(--ft-ambar); }
+.ft-traco { color: var(--text-muted, var(--mob-muted)); }
+.ft-st { display: inline-block; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 0.12rem 0.5rem; border: 1px solid currentColor; border-radius: 2px; white-space: nowrap; }
+.ft-st-a_tocar { color: var(--ft-aco); } .ft-st-a_reconfirmar { color: var(--ft-ambar); } .ft-st-reconfirmada { color: var(--ft-verde); }
+.ft-selo { display: inline-flex; align-items: center; gap: 0.35em; margin-left: 0.55em; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--ft-ouro-txt); background: var(--ft-ouro-tint); border: 1px solid var(--ft-ouro);
+  border-radius: 2px; padding: 0.12rem 0.5rem; white-space: nowrap; }
+/* Linha AINDA NÃO: contorno dourado fixo + brilho só em cima e embaixo (um brilho por célula deixava manchas verticais
+   entre as colunas); o neon só pulsa quando faltam 3 dias ou menos (a hora está chegando). */
+.ft-linha-ainda > td { background: var(--ft-ouro-tint) !important; border-top: 1px solid var(--ft-ouro); border-bottom: 1px solid var(--ft-ouro);
+  box-shadow: inset 0 6px 8px -6px var(--ft-ouro-glow), inset 0 -6px 8px -6px var(--ft-ouro-glow); }
+.ft-linha-ainda > td:first-child { border-left: 1px solid var(--ft-ouro); }
+.ft-linha-ainda > td:last-child { border-right: 1px solid var(--ft-ouro); }
+.ft-linha-breve > td { animation: ft-pulso-linha 2.8s cubic-bezier(0.16, 1, 0.3, 1) infinite; }
+/* O pulso anima a força do tom dourado (e não a sombra): sombra animada por célula deixava listras verticais. */
+@keyframes ft-pulso-linha {
+  0%, 100% { background-color: var(--ft-ouro-tint); }
+  50% { background-color: color-mix(in srgb, var(--ft-ouro) 26%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) { .ft-linha-breve > td { animation: none; } }
+.ft-cartao-ainda { border: 1px solid var(--ft-ouro) !important; }
+.ft-cartao-breve { animation: ft-pulso 2.8s cubic-bezier(0.16, 1, 0.3, 1) infinite; }
+@media (prefers-reduced-motion: reduce) { .ft-cartao-breve { animation: none; box-shadow: 0 0 8px var(--ft-ouro-glow); } }
+.ft-legenda { display: flex; flex-wrap: wrap; gap: 0.4rem 1.1rem; align-items: center; padding: 0.55rem 0.2rem 0.1rem; font-size: 0.74rem; color: var(--text-muted, var(--mob-muted)); }
+.ft-legenda .ft-res { margin: 0 0.35em 0 0; }
+.ft-pilula { display: inline-flex; align-items: center; gap: 0.55rem; border-radius: 999px; padding: 0.4rem 0.95rem; border: 1px solid var(--border); background: transparent;
+  color: var(--text-muted); font-size: 0.82rem; font-weight: 600; cursor: pointer; }
+.ft-pilula b { font-size: 0.95rem; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+.ft-pilula[aria-pressed="true"] { background: var(--pill-active-bg, var(--surface-2)); border-color: var(--pill-active-border, var(--dourado)); color: var(--pill-active-fg, var(--ft-ouro-txt)); font-weight: 700; }
+.ft-pilula[aria-pressed="true"] b { color: var(--pill-active-fg, var(--ft-ouro-txt)); }
+
+/* Filtro de situação no app (3 botões grandes; o app é sempre marinho/ouro) */
+.ft-botao-mob { min-height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 0.25rem;
+  background: var(--mob-surface); border: 1.5px solid var(--mob-border); color: var(--mob-muted); font-family: inherit; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
+.ft-botao-mob b { font-size: 1.25rem; font-weight: 800; color: var(--mob-text); line-height: 1.05; font-variant-numeric: tabular-nums; }
+.ft-botao-mob[aria-pressed="true"] { background: #0E2A47; border-color: var(--ft-ouro); color: #F2D58A; }
+.ft-botao-mob[aria-pressed="true"] b { color: #F2D58A; }

@@ -1,8 +1,10 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, Settings, Trash2, X } from "lucide-react";
-import { fetchAgendaReprodutivaCard, fetchLotes, type CardAgendaReprodutivaConfig, type ItemCardAgendaReprodutiva, type SituacaoCard } from "@/lib/api";
+import { fetchAgendaReprodutivaCards, fetchLotes, type CardAgendaReprodutivaConfig, type ItemCardAgendaReprodutiva, type ParametrosToque, type SituacaoCard } from "@/lib/api";
 import { GrupoLotePicker } from "@/components/GrupoLotePicker";
+import { CelulaExame, ChipFase, LegendaToque, SeloAindaNao } from "@/components/reproducao/FaseToque";
+import { FASES, ROTULO_FASE_PLURAL, contarPorFase, filtrarPorFases, ordenarNoPrazoPrimeiro, seloBreve, type FaseToque } from "@/lib/fasesToque";
 
 export type CardDef = { id: string; nome: string; config: CardAgendaReprodutivaConfig };
 
@@ -170,34 +172,52 @@ function PainelEdicao({
   );
 }
 
-/** Tabela de resultado de um card configurável — usada tanto na área de
- * tabelas abertas (ver TabelasCardsConfiguraveis) quanto, em tese, em
- * qualquer outro lugar que precise listar os mesmos itens. Estilo compacto
- * (classe .tabela-compacta, ver app/globals.css) para caber bem numa coluna
- * de ~50% da largura da tela quando duas tabelas estão lado a lado —
- * cabeçalhos abreviados com o nome completo no atributo title. */
-function TabelaResultado({ itens }: { itens: ItemCardAgendaReprodutiva[] }) {
+/** Tabela de resultado de um card configurável — usada na área de tabelas abertas (ver TabelasCardsConfiguraveis).
+ * Estilo compacto (classe .tabela-compacta, ver app/globals.css) para caber numa coluna de ~50% da tela quando duas
+ * tabelas estão lado a lado; cabeçalhos abreviados com o nome completo no atributo title.
+ * Inseminadas e gestantes ganham as colunas Toque/confirmação e Retoque/reconfirmação (data + P/V/I, "–" se ainda não
+ * houve) e a Situação (a tocar / a reconfirmar / reconfirmada, com o selo AINDA NÃO em ouro quando está no prazo). */
+function TabelaResultado({ itens, situacao }: { itens: ItemCardAgendaReprodutiva[]; situacao: SituacaoCard }) {
   const fmtDia = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
   if (itens.length === 0) return <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", padding: "0.5rem 0" }}>Nenhum animal nesta combinação.</p>;
+  const comExames = situacao === "inseminada" || situacao === "gestante";
+  const gestante = situacao === "gestante";
   return (
     <div style={{ overflowX: "auto" }}>
       <table className="tabela-compacta">
         <thead>
           <tr>
-            <th>Matriz</th><th>Categoria</th><th>Lote</th><th>DEL</th>
-            <th title="Dias de gestação">D. gest.</th>
-            <th title="Dias desde o serviço">D. serviço</th>
-            <th title="Parto previsto">Parto prev.</th>
+            <th scope="col">Matriz</th><th scope="col">Categoria</th><th scope="col">Lote</th><th scope="col">DEL</th>
+            {gestante && <th scope="col" title="Dias de gestação">D. gest.</th>}
+            <th scope="col" title="Dias desde o serviço">{comExames ? "Dias da IA" : "D. serviço"}</th>
+            {gestante && <th scope="col" title="Parto previsto">Parto prev.</th>}
+            {comExames && <th scope="col" title="Data e resultado do toque">Toque / confirmação</th>}
+            {comExames && <th scope="col" title="Data e resultado do retoque">Retoque / reconfirmação</th>}
+            {comExames && <th scope="col">Situação</th>}
           </tr>
         </thead>
         <tbody>
-          {itens.map((it) => (
-            <tr key={it.numero_matriz}>
-              <td>{it.numero_matriz}</td><td>{it.categoria ?? "—"}</td><td>{it.lote_atual ?? "—"}</td>
-              <td>{it.del_dias ?? "—"}</td><td>{it.dias_gestacao ?? "—"}</td><td>{it.dias_desde_servico ?? "—"}</td>
-              <td>{fmtDia(it.parto_previsto)}</td>
-            </tr>
-          ))}
+          {itens.map((it) => {
+            const ainda = !!it.ainda_nao;
+            const reconfirmado = !!it.data_reconfirmacao || !!it.diagnostico_reconfirmacao;
+            const classe = ainda ? `ft-linha-ainda${seloBreve(it.dias_para_prazo) ? " ft-linha-breve" : ""}` : undefined;
+            return (
+              <tr key={it.numero_matriz} className={classe}>
+                <td style={{ fontWeight: 700 }}>{it.numero_matriz}</td><td>{it.categoria ?? "—"}</td><td>{it.lote_atual ?? "—"}</td>
+                <td>{it.del_dias ?? "—"}</td>
+                {gestante && <td>{it.dias_gestacao ?? "—"}</td>}
+                <td>{it.dias_desde_servico ?? "—"}</td>
+                {gestante && <td>{fmtDia(it.parto_previsto)}</td>}
+                {comExames && <td><CelulaExame data={it.data_diagnostico} diagnostico={it.diagnostico} /></td>}
+                {comExames && <td>{reconfirmado ? <CelulaExame data={it.data_reconfirmacao} diagnostico={it.diagnostico_reconfirmacao} /> : <CelulaExame data={null} diagnostico={null} />}</td>}
+                {comExames && (
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <ChipFase fase={it.fase} />{ainda && <SeloAindaNao dias={it.dias_para_prazo} prazoTipo={it.prazo_tipo} />}
+                  </td>
+                )}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -214,9 +234,10 @@ function TabelaResultado({ itens }: { itens: ItemCardAgendaReprodutiva[] }) {
 export function useCardsAgendaReprodutivaConfiguraveis(dataRef?: string) {
   const [cards, setCards] = useState<CardDef[]>(carregarCards);
   const [opcoesLote, setOpcoesLote] = useState<string[]>([]);
-  const [contagens, setContagens] = useState<Record<string, number>>({});
+  const [itensPorCard, setItensPorCard] = useState<Record<string, ItemCardAgendaReprodutiva[]>>({});
+  const [parametros, setParametros] = useState<ParametrosToque | null>(null);
+  const [fases, setFases] = useState<Set<FaseToque>>(new Set());
   const [abertos, setAbertos] = useState<Set<string>>(new Set());
-  const [itensAbertos, setItensAbertos] = useState<Record<string, ItemCardAgendaReprodutiva[]>>({});
   const [editando, setEditando] = useState<string | null | "novo">(null);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -228,34 +249,31 @@ export function useCardsAgendaReprodutivaConfiguraveis(dataRef?: string) {
     try { window.localStorage.setItem(CHAVE_STORAGE, JSON.stringify(cards)); } catch { /* storage indisponível — não impede o uso da tela */ }
   }, [cards]);
 
+  // Um POST só para todos os cards: o servidor calcula o estado do rebanho uma vez. As tabelas e as contagens
+  // saem dos mesmos itens, então o filtro de situação atualiza tudo ao vivo, sem nova chamada.
   useEffect(() => {
     let cancelado = false;
     setErro(null);
-    Promise.all(cards.map((c) =>
-      fetchAgendaReprodutivaCard(c.config, dataRef).then((r) => [c.id, r.total] as const).catch(() => [c.id, null] as const),
-    )).then((pares) => {
-      if (cancelado) return;
-      const novo: Record<string, number> = {};
-      let algumErro = false;
-      for (const [id, total] of pares) { if (total === null) algumErro = true; else novo[id] = total; }
-      setContagens(novo);
-      if (algumErro) setErro("Alguns cards não puderam ser calculados agora.");
-    });
+    if (cards.length === 0) { setItensPorCard({}); return; }
+    fetchAgendaReprodutivaCards(cards.map((c) => ({ id: c.id, config: c.config })), dataRef)
+      .then((r) => {
+        if (cancelado) return;
+        const novo: Record<string, ItemCardAgendaReprodutiva[]> = {};
+        for (const c of cards) novo[c.id] = r.resultados[c.id]?.itens ?? [];
+        setItensPorCard(novo);
+        setParametros(r.parametros);
+      })
+      .catch(() => { if (!cancelado) setErro("Os cards não puderam ser calculados agora."); });
     return () => { cancelado = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cards, dataRef]);
 
   const toggle = (id: string) => {
-    setAbertos((s) => {
-      const n = new Set(s);
-      if (n.has(id)) { n.delete(id); } else {
-        n.add(id);
-        const card = cards.find((c) => c.id === id);
-        if (card) fetchAgendaReprodutivaCard(card.config, dataRef).then((r) => setItensAbertos((v) => ({ ...v, [id]: r.itens }))).catch(() => {});
-      }
-      return n;
-    });
+    setAbertos((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   };
+
+  const alternarFase = (f: FaseToque) => setFases((s) => { const n = new Set(s); if (n.has(f)) n.delete(f); else n.add(f); return n; });
+  const limparFases = () => setFases(new Set());
 
   const salvarCard = (nome: string, config: CardAgendaReprodutivaConfig) => {
     if (editando === "novo") {
@@ -277,8 +295,23 @@ export function useCardsAgendaReprodutivaConfiguraveis(dataRef?: string) {
     return cards.find((c) => c.id === editando) ?? null;
   }, [editando, cards]);
 
+  // Com o filtro de situação ligado, contagens e tabelas mostram só quem está naquela(s) fase(s); no prazo primeiro.
+  const itensAbertos = useMemo(() => {
+    const r: Record<string, ItemCardAgendaReprodutiva[]> = {};
+    for (const [id, itens] of Object.entries(itensPorCard)) r[id] = ordenarNoPrazoPrimeiro(filtrarPorFases(itens, fases));
+    return r;
+  }, [itensPorCard, fases]);
+  const contagens = useMemo(() => {
+    const r: Record<string, number> = {};
+    for (const [id, itens] of Object.entries(itensAbertos)) r[id] = itens.length;
+    return r;
+  }, [itensAbertos]);
+  const contagensFase = useMemo(() => contarPorFase(itensPorCard), [itensPorCard]);
+  const filtroAtivo = fases.size > 0;
+
   return {
-    cards, opcoesLote, contagens, abertos, itensAbertos, editando, erro,
+    cards, opcoesLote, contagens, abertos, itensAbertos, editando, erro, parametros,
+    fases, filtroAtivo, contagensFase, alternarFase, limparFases,
     setEditando, toggle, salvarCard, removerCard, cardEditando,
   };
 }
@@ -306,17 +339,15 @@ export function useCardsAgendaReprodutivaLeitura(dataRef?: string, habilitado: b
     let cancelado = false;
     setCarregando(true);
     setErro(null);
-    Promise.all(cards.map((c) =>
-      fetchAgendaReprodutivaCard(c.config, dataRef).then((r) => [c.id, r.itens] as const).catch(() => [c.id, null] as const),
-    )).then((pares) => {
-      if (cancelado) return;
-      const novo: Record<string, ItemCardAgendaReprodutiva[]> = {};
-      let algumErro = false;
-      for (const [id, itens] of pares) { if (itens === null) algumErro = true; else novo[id] = itens; }
-      setItensPorCard(novo);
-      if (algumErro) setErro("Alguns cards não puderam ser calculados agora.");
-      setCarregando(false);
-    });
+    fetchAgendaReprodutivaCards(cards.map((c) => ({ id: c.id, config: c.config })), dataRef)
+      .then((r) => {
+        if (cancelado) return;
+        const novo: Record<string, ItemCardAgendaReprodutiva[]> = {};
+        for (const c of cards) novo[c.id] = r.resultados[c.id]?.itens ?? [];
+        setItensPorCard(novo);
+        setCarregando(false);
+      })
+      .catch(() => { if (!cancelado) { setErro("Os cards não puderam ser calculados agora."); setCarregando(false); } });
     return () => { cancelado = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataRef, habilitado]);
@@ -331,7 +362,10 @@ export function useCardsAgendaReprodutivaLeitura(dataRef?: string, habilitado: b
  * recebe o mesmo estado (state lifting: quem guarda `abertos`/`itensAbertos`
  * é o hook acima, chamado uma única vez em AgendaVeterinario.tsx). */
 export function GradeCardsConfiguraveis({ estado }: { estado: CardsAgendaReprodutivaConfiguraveisState }) {
-  const { cards, opcoesLote, contagens, abertos, editando, erro, setEditando, toggle, salvarCard, removerCard, cardEditando } = estado;
+  const { cards, opcoesLote, contagens, abertos, editando, erro, filtroAtivo, setEditando, toggle, salvarCard, removerCard, cardEditando } = estado;
+  const remover = (id: string, nome: string) => {
+    if (window.confirm(`Remover o card "${nome}"? A configuração dele será perdida neste navegador.`)) removerCard(id);
+  };
 
   return (
     <div className="mb-4">
@@ -356,14 +390,17 @@ export function GradeCardsConfiguraveis({ estado }: { estado: CardsAgendaReprodu
         {cards.map((c) => {
           const n = contagens[c.id];
           const aberto = abertos.has(c.id);
+          // Com o filtro de situação ligado, um card sem ninguém naquela situação fica esmaecido (não some da grade).
+          const vazioNoFiltro = filtroAtivo && n === 0;
           return (
-            <div key={c.id} className="flex items-center gap-2" style={{ border: "1px solid " + (aberto ? "var(--dourado)" : "var(--border)"), borderRadius: "var(--r-sm)", background: "var(--surface-2)", padding: "0.4rem 0.6rem" }}>
-              <button onClick={() => toggle(c.id)} className="flex items-center gap-2" style={{ background: "transparent", border: "none", color: "var(--text)", cursor: "pointer", fontSize: "0.82rem" }}>
-                {aberto ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            <div key={c.id} className="flex items-center gap-2" title={vazioNoFiltro ? "Sem animais nesta situação" : undefined}
+              style={{ border: "1px " + (vazioNoFiltro ? "dashed " : "solid ") + (aberto ? "var(--dourado)" : "var(--border)"), borderRadius: "var(--r-sm)", background: "var(--surface-2)", padding: "0.4rem 0.6rem", opacity: vazioNoFiltro ? 0.5 : 1 }}>
+              <button onClick={() => toggle(c.id)} aria-expanded={aberto} className="flex items-center gap-2" style={{ background: "transparent", border: "none", color: "var(--text)", cursor: "pointer", fontSize: "0.82rem" }}>
+                {aberto ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
                 <span style={{ fontWeight: 700 }}>{n ?? "…"}</span> {c.nome}
               </button>
-              <button onClick={() => setEditando(c.id)} title="Editar card" style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><Settings size={13} /></button>
-              <button onClick={() => removerCard(c.id)} title="Remover card" style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><Trash2 size={13} /></button>
+              <button onClick={() => setEditando(c.id)} title="Editar card" aria-label={`Editar card ${c.nome}`} style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><Settings size={13} aria-hidden="true" /></button>
+              <button onClick={() => remover(c.id, c.nome)} title="Remover card" aria-label={`Remover card ${c.nome}`} style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><Trash2 size={13} aria-hidden="true" /></button>
             </div>
           );
         })}
@@ -382,23 +419,54 @@ export function GradeCardsConfiguraveis({ estado }: { estado: CardsAgendaReprodu
  * "sobra" sozinha numa coluna na última linha (não dá span-2) para manter a
  * grade simples e regular. */
 export function TabelasCardsConfiguraveis({ estado }: { estado: CardsAgendaReprodutivaConfiguraveisState }) {
-  const { cards, abertos, itensAbertos, toggle } = estado;
+  const { cards, abertos, itensAbertos, toggle, parametros } = estado;
   const cardsAbertos = cards.filter((c) => abertos.has(c.id));
   if (cardsAbertos.length === 0) return null;
+  // Tabelas com Toque/Retoque/Situação são largas: uma por linha, para a Situação (e o selo AINDA NÃO) nunca ficar
+  // atrás de rolagem horizontal. As demais (PEV, vazias…) continuam em duas colunas.
+  const comExames = cardsAbertos.some((c) => c.config.situacao === "inseminada" || c.config.situacao === "gestante");
 
   return (
     <div className="mb-4">
-      <div className={cardsAbertos.length > 1 ? "grid grid-cols-1 lg:grid-cols-2 gap-3" : ""}>
+      <div className={cardsAbertos.length > 1 && !comExames ? "grid grid-cols-1 lg:grid-cols-2 gap-3" : "flex flex-col gap-3"}>
         {cardsAbertos.map((c) => (
           <div key={c.id} className="card">
             <div className="flex items-center justify-between mb-2">
               <span style={{ fontWeight: 700, fontSize: "0.85rem" }}>{c.nome}</span>
               <button onClick={() => toggle(c.id)} title="Fechar tabela" style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><X size={15} /></button>
             </div>
-            <TabelaResultado itens={itensAbertos[c.id] ?? []} />
+            <TabelaResultado itens={itensAbertos[c.id] ?? []} situacao={c.config.situacao} />
           </div>
         ))}
       </div>
+      {comExames && <LegendaToque parametros={parametros} />}
+    </div>
+  );
+}
+
+/** Filtro de situação do diagnóstico — A tocar / A reconfirmar / Reconfirmadas. Multi-seleção; sem nenhuma escolhida
+ * vale "todos". Fica entre a grade de cards e as tabelas: muda as contagens dos cards e o que as tabelas mostram, ao
+ * vivo (os itens já vieram de uma chamada só). Os números dos botões contam animais, não linhas. */
+export function FiltroSituacaoDiagnostico({ estado }: { estado: CardsAgendaReprodutivaConfiguraveisState }) {
+  const { fases, filtroAtivo, contagensFase, alternarFase, limparFases, itensAbertos, abertos } = estado;
+  const linhasVisiveis = Object.entries(itensAbertos).filter(([id]) => abertos.has(id)).reduce((a, [, itens]) => a + itens.length, 0);
+  const listas = abertos.size;
+  return (
+    <div className="flex items-center gap-3 mb-3" style={{ flexWrap: "wrap", padding: "0.5rem 0", borderBottom: "1px solid var(--border)" }} data-testid="filtro-situacao-diagnostico">
+      <span style={{ fontSize: "0.7rem", fontWeight: 600, letterSpacing: "0.13em", textTransform: "uppercase", color: "var(--text-muted)" }}>Situação</span>
+      <div className="flex items-center gap-2" role="group" aria-label="Filtrar por situação do diagnóstico" style={{ flexWrap: "wrap" }}>
+        {FASES.map((f) => (
+          <button key={f} type="button" className="ft-pilula" aria-pressed={fases.has(f)} onClick={() => alternarFase(f)}>
+            {ROTULO_FASE_PLURAL[f]}<b>{contagensFase[f]}</b>
+          </button>
+        ))}
+      </div>
+      {filtroAtivo && <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem", padding: "0.25rem 0.6rem" }} onClick={limparFases}>Limpar filtro</button>}
+      <span style={{ marginLeft: "auto", fontSize: "0.8rem", color: "var(--text-muted)" }} aria-live="polite">
+        {filtroAtivo
+          ? `Mostrando ${linhasVisiveis} animais em ${listas} ${listas === 1 ? "lista aberta" : "listas abertas"}`
+          : "Escolha uma situação para filtrar os cards e as tabelas"}
+      </span>
     </div>
   );
 }
