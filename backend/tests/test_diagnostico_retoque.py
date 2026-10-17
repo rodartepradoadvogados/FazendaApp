@@ -190,8 +190,15 @@ class TestRegistrarDiagnostico:
         assert r.status_code == 200
         assert r.json()["retoque"] is True
 
-    def test_metodo_cio_de_repasse_persistido(self, client):
-        r = client.post("/reproducao/diagnostico", json={
+    def test_metodo_cio_de_repasse_persistido(self, client_com_engine):
+        # Só fazenda que usa adesivo (Parâmetros) tem esse método.
+        from fazenda.models import RepasseConfig
+        c, engine = client_com_engine
+        with Session(engine) as s:
+            s.add(Servico(numero_matriz="401", data_servico=date(2026, 6, 1), ult_ocorrencia=1))
+            s.add(RepasseConfig(fazenda_id=None, usar=True))
+            s.commit()
+        r = c.post("/reproducao/diagnostico", json={
             "numero_matriz": "401", "data_diagnostico": "2026-07-01", "resultado": "negativo",
             "metodo": "Cio de repasse",
         })

@@ -1,460 +1,426 @@
 "use client";
-import React, { useEffect, useMemo, useState } from "react";
+// Lançamento do diagnóstico de gestação — origem → situação → animais → resultado. Só entra aqui quem tem diagnóstico a
+// lançar (a tocar, a reconfirmar, reconfirmadas); vazia, PEV, apta e "a descartar" nunca aparecem. A classificação e o
+// prazo AINDA NÃO vêm do backend (rules/fase_toque.py, GET /reproducao/diagnostico/candidatas): a mesma conta da Agenda
+// Reprodutiva, então as duas telas não discordam. O AINDA NÃO só informa; nunca impede o lançamento.
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle } from "lucide-react";
-import { fetchAgendaVeterinario, fetchUltimoDiagnostico, salvarDiagnostico, LISTAS_AGENDA_VETERINARIO } from "@/lib/api";
-import type { AgendaVetResposta } from "@/lib/api";
-import { AnimalRow } from "@/components/AnimalModal";
-import { AnimalPickerModal } from "@/components/AnimalPickerModal";
-import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
+import { fetchCandidatasDiagnostico, salvarDiagnostico, type CandidatasDiagnostico, type ItemCardAgendaReprodutiva } from "@/lib/api";
 import { useCardsAgendaReprodutivaLeitura } from "@/components/CardsAgendaReprodutivaConfiguraveis";
+import { CelulaExame, LegendaToque, SeloAindaNao } from "@/components/reproducao/FaseToque";
 import { useToast } from "@/components/Toast";
-import { TabBar } from "@/components/ui";
-import { Campo, inputStyle, codigoGrupo } from "@/components/lancamentos/comumForms";
+import { Campo, inputStyle } from "@/components/lancamentos/comumForms";
 import { PopupVinculoFinanceiro, type OrigemPopupVinculo } from "@/components/lancamentos/PopupVinculoFinanceiro";
-import { PopupAborto } from "@/components/lancamentos/PopupAborto";
-import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
+import { invalidarEstadosReprodutivos } from "@/lib/estadoReprodutivo";
+import { FASES, ROTULO_FASE_PLURAL, seloBreve, type FaseToque } from "@/lib/fasesToque";
+import {
+  NOTA_RESULTADO, NOTA_SITUACAO, RESULTADOS_POR_SITUACAO, agruparPorLote, alternarTodasNoPrazo, avisoAindaNao, buscarItens,
+  filtrarPorOrigem, loteDe, mensagemResultado, metodosDisponiveis, pedeMetodo, resumoSelecao, selecaoPadrao, todasNoPrazoMarcadas,
+  type FalhaDeSalvamento, type OrigemSelecao, type ResultadoDiagnostico,
+} from "@/lib/diagnosticoLancamento";
 
-const fmtDiaBr = (iso: string | null | undefined) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
+const SEM_ANIMAIS: CandidatasDiagnostico["situacoes"] = { a_tocar: [], a_reconfirmar: [], reconfirmada: [] };
 
-// Das listas de LISTAS_AGENDA_VETERINARIO, só estas duas continuam fixas —
-// as demais (inseminadas por período, novilhas/vacas gestantes etc.) hoje têm
-// equivalente nos cards configuráveis da Agenda Reprodutiva (Insights >
-// Agenda do veterinário, ver CardsAgendaReprodutivaConfiguraveis.tsx) e por
-// isso saem daqui: mesma lista fixa que AgendaVeterinario.tsx mantém em
-// LISTAS (ver comentário lá) — sem isso, este formulário mostraria categorias
-// "fantasma" que a tela de origem não mostra mais.
-const CHAVES_FIXAS_AGENDA_VET = new Set(["vazias_por_diagnostico", "pendentes_classificacao"]);
+const hojeIso = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 
-// Resumo do último diagnóstico da matriz selecionada — toque, retoque
-// (reconfirmação) ou perda de prenhez, o que tiver acontecido por último.
-function resumoUltimoDiagnostico(s: any): string {
-  if (!s) return "Sem diagnóstico anterior registrado.";
-  if (s.data_perda_prenhez) {
-    const motivo = s.motivo_perda_prenhez === "aborto" ? "Aborto" : s.motivo_perda_prenhez === "natimorto" ? "Natimorto" : "Perda de prenhez";
-    return `Última perda de prenhez: ${motivo}, em ${fmtDiaBr(s.data_perda_prenhez)}.`;
-  }
-  if (s.data_reconfirmacao) {
-    return `Último diagnóstico: retoque (reconfirmação) em ${fmtDiaBr(s.data_reconfirmacao)} — resultado ${s.diagnostico_reconfirmacao || "—"}.`;
-  }
-  if (s.data_diagnostico) {
-    return `Último diagnóstico: toque em ${fmtDiaBr(s.data_diagnostico)} — resultado ${s.diagnostico || "—"}.`;
-  }
-  return "Sem diagnóstico anterior registrado.";
+const ORIGENS: { id: OrigemSelecao; rotulo: string; titulo: string }[] = [
+  { id: "animais", rotulo: "Animais", titulo: "Escolher animal por animal" },
+  { id: "lotes", rotulo: "Lotes", titulo: "Escolher um ou mais lotes — já vêm marcados os que estão no prazo" },
+  { id: "agenda", rotulo: "Agenda do veterinário", titulo: "Escolher a partir dos cards da Agenda do veterinário — mesma lista do roteiro" },
+];
+
+const rotuloSecao: React.CSSProperties = {
+  fontSize: "0.7rem", fontWeight: 600, letterSpacing: "0.13em", textTransform: "uppercase", color: "var(--text-muted)",
+  display: "flex", alignItems: "center", gap: "0.55rem",
+};
+const numeroPasso: React.CSSProperties = {
+  display: "inline-flex", alignItems: "center", justifyContent: "center", width: "1.35rem", height: "1.35rem", borderRadius: "50%",
+  border: "1.5px solid var(--ft-ouro)", color: "var(--ft-ouro-txt)", fontSize: "0.72rem", fontWeight: 800,
+};
+const passo: React.CSSProperties = { display: "flex", flexDirection: "column", gap: "0.6rem", padding: "0.95rem 0", borderTop: "1px solid var(--border)" };
+const notaTxt: React.CSSProperties = { fontSize: "0.76rem", lineHeight: 1.5, color: "var(--text-muted)", margin: 0 };
+
+function Passo({ n, id, titulo, direita, children }: { n: number; id: string; titulo: string; direita?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section style={n === 1 ? { ...passo, borderTop: 0, paddingTop: 0 } : passo} aria-labelledby={id}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.75rem" }}>
+        <div id={id} style={rotuloSecao}><span style={numeroPasso} aria-hidden="true">{n}</span>{titulo}</div>
+        {direita}
+      </div>
+      {children}
+    </section>
+  );
 }
 
-export function FormDiagnostico({ animais, ultServico, onSalvo }: { animais: AnimalRow[]; ultServico: Record<string, string>; onSalvo?: () => void }) {
-  const { porNumero, rotuloDe } = useEstadosReprodutivos();
+export function FormDiagnostico({ onSalvo, onIrParaInseminacao }: {
+  onSalvo?: () => void;
+  /** Depois de salvar Negativo: abre o lançamento de inseminação já com estes animais marcados. */
+  onIrParaInseminacao?: (numeros: string[]) => void;
+}) {
   const toast = useToast();
-  // Lista as matrizes servidas (inseminadas ou prenhes a reconfirmar) — estado ao vivo.
-  // Enquanto o estado ao vivo não chegou (ou a requisição falhou) cai no texto do
-  // CSV: melhor um filtro desatualizado do que um formulário sem nenhum animal.
-  const servidas = useMemo(() => {
-    if (!porNumero.size) return animais.filter((a) => a.sit_rep === "Ins." || a.sit_rep === "Ges.");
-    return animais.filter((a) => {
-      const estado = porNumero.get(a.numero)?.estado;
-      return estado === "inseminada" || estado === "gestante";
-    });
-  }, [animais, porNumero]);
-  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
-  const toggle = (n: string) => setSelecionados((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  const [cand, setCand] = useState<CandidatasDiagnostico | null>(null);
+  const [carregando, setCarregando] = useState(true);
+  const [erroCarga, setErroCarga] = useState<string | null>(null);
 
-  // Vindo da Agenda Reprodutiva ("Registrar toque"/"Registrar DG antecipado"/
-  // "Lançar toque/retoque"): pré-seleciona a matriz — mesmo padrão de
-  // FormInseminacao.tsx para "Ir para Inseminação".
-  useEffect(() => {
-    const numeroMatriz = new URLSearchParams(window.location.search).get("numero_matriz");
-    if (numeroMatriz) setSelecionados(new Set([numeroMatriz]));
-  }, []);
+  const [origem, setOrigem] = useState<OrigemSelecao>("animais");
+  const [situacao, setSituacao] = useState<FaseToque>("a_tocar");
+  const [lotesSel, setLotesSel] = useState<Set<string>>(new Set());
+  const [cardsSel, setCardsSel] = useState<Set<string>>(new Set());
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [busca, setBusca] = useState("");
 
-  // Animal(is), lote(s) ou Agenda do veterinário — dentro de lote/agenda, pode
-  // escolher mais de um; a lista de animais mostrada é sempre a das servidas
-  // dentro do(s) lote(s)/categoria(s) escolhido(s).
-  const [vinculo, setVinculo] = useState<"animal" | "lote" | "agenda">("animal");
-  const [lotesSelecionados, setLotesSelecionados] = useState<string[]>([]);
-  const codigosLotesServidas = useMemo(
-    () => Array.from(new Set(servidas.map((a) => codigoGrupo(a.grupo_primario)).filter((c): c is string => !!c))).sort(),
-    [servidas]
-  );
-  const animaisDoLote = useMemo(() => {
-    const cods = new Set(lotesSelecionados);
-    return servidas.filter((a) => { const c = codigoGrupo(a.grupo_primario); return c && cods.has(c); });
-  }, [servidas, lotesSelecionados]);
-  // Ao escolher lote(s), começa com todas as servidas do(s) lote(s) marcadas;
-  // a janela suspensa abaixo permite desmarcar animal a animal.
-  const [selLote, setSelLote] = useState<Set<string>>(new Set());
-  const toggleLote = (n: string) => setSelLote((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
-  useEffect(() => {
-    setSelLote(new Set(animaisDoLote.map((a) => a.numero)));
-  }, [lotesSelecionados.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [resultadoEscolhido, setResultado] = useState<ResultadoDiagnostico | "">("");
+  const [data, setData] = useState(hojeIso);
+  const [metodoEscolhido, setMetodo] = useState("");
 
-  // Agenda do veterinário: busca as listas sob demanda (1ª vez que o modo é
-  // aberto) e deixa marcar uma ou mais categorias — a lista de animais é a
-  // exata que aparece na agenda, com a janela suspensa permitindo ajustar.
-  // Duas origens, hoje: (1) as duas listas ainda fixas de fetchAgendaVeterinario
-  // (vazias_por_diagnostico, pendentes_classificacao — ver CHAVES_FIXAS_AGENDA_VET)
-  // e (2) os cards 100% configuráveis que o usuário montou em Insights >
-  // Agenda do veterinário (useCardsAgendaReprodutivaLeitura — mesmo
-  // localStorage "agendaReprodutivaCardsV1" lido por AgendaVeterinario.tsx),
-  // já que sem isso um card renomeado/customizado lá fica invisível aqui.
-  const [agendaVet, setAgendaVet] = useState<AgendaVetResposta | null>(null);
-  const [agendaCarregando, setAgendaCarregando] = useState(false);
-  const [categoriasAgenda, setCategoriasAgenda] = useState<string[]>([]);
-  useEffect(() => {
-    if (vinculo === "agenda" && !agendaVet && !agendaCarregando) {
-      setAgendaCarregando(true);
-      fetchAgendaVeterinario().then(setAgendaVet).catch(() => {}).finally(() => setAgendaCarregando(false));
-    }
-  }, [vinculo, agendaVet, agendaCarregando]);
-  const cardsAgenda = useCardsAgendaReprodutivaLeitura(undefined, vinculo === "agenda");
-  const [cardsSelecionados, setCardsSelecionados] = useState<string[]>([]);
-  const toggleCardAgenda = (id: string) => setCardsSelecionados((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
-  const numerosDaAgenda = useMemo(() => {
-    const s = new Set<string>();
-    if (agendaVet) categoriasAgenda.forEach((cat) => (agendaVet.listas[cat] || []).forEach((item) => s.add(item.numero_matriz)));
-    cardsSelecionados.forEach((id) => (cardsAgenda.itensPorCard[id] || []).forEach((item) => s.add(item.numero_matriz)));
-    return s;
-  }, [agendaVet, categoriasAgenda, cardsSelecionados, cardsAgenda.itensPorCard]);
-  const animaisDaAgenda = useMemo(() => {
-    const nums = numerosDaAgenda;
-    return animais.filter((a) => nums.has(a.numero));
-  }, [animais, numerosDaAgenda]);
-  const [selAgenda, setSelAgenda] = useState<Set<string>>(new Set());
-  const toggleAgenda = (n: string) => setSelAgenda((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
-  useEffect(() => {
-    setSelAgenda(new Set(animaisDaAgenda.map((a) => a.numero)));
-  }, [Array.from(numerosDaAgenda).sort().join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const numerosAlvo = useMemo(
-    () => (vinculo === "lote" ? selLote : vinculo === "agenda" ? selAgenda : selecionados),
-    [vinculo, selLote, selAgenda, selecionados]
-  );
-
-  // Ao selecionar exatamente uma matriz, mostra o resumo do diagnóstico
-  // anterior dela (data, resultado e se foi toque/retoque/perda) — em seleção
-  // múltipla (lote/agenda) não há um único "último diagnóstico" para mostrar.
-  const [numeroUltimo, setNumeroUltimo] = useState<string | null>(null);
-  const [ultimoServicoAnimal, setUltimoServicoAnimal] = useState<any | null>(null);
-  useEffect(() => {
-    if (numerosAlvo.size !== 1) { setNumeroUltimo(null); setUltimoServicoAnimal(null); return; }
-    const numero = Array.from(numerosAlvo)[0];
-    setNumeroUltimo(numero);
-    fetchUltimoDiagnostico(numero).then(setUltimoServicoAnimal).catch(() => setUltimoServicoAnimal(null));
-  }, [Array.from(numerosAlvo).sort().join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Fila de popups de aborto — o backend detecta quando o lançamento é o 3º
-  // diagnóstico sobre a mesma prenhez (toque + retoque já confirmados) e
-  // devolve aborto_detectado: true em vez de sobrescrever o toque anterior.
-  const [abortosPendentes, setAbortosPendentes] = useState<string[]>([]);
-
-  const [data, setData] = useState("");
-  const [metodo, setMetodo] = useState("");
-  const [resultado, setResultado] = useState("");
   const [salvando, setSalvando] = useState(false);
+  const [progresso, setProgresso] = useState<{ feitos: number; total: number } | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
-  // Popup de vínculo financeiro — a data do diagnóstico coincide com a data
-  // da visita reprodutiva/D0 do protocolo (ver PopupVinculoFinanceiro).
+  const [negativosSalvos, setNegativosSalvos] = useState<string[]>([]);
   const [popupOrigem, setPopupOrigem] = useState<OrigemPopupVinculo | null>(null);
-  // Snapshot do que foi salvo — usado só se o usuário clicar "Cancelar" no
-  // popup, pra restaurar a seleção/data/resultado e poder editar e reenviar.
-  const [dadosParaCancelar, setDadosParaCancelar] = useState<{ numeros: Set<string>; data: string; metodo: string; resultado: string } | null>(null);
+  // Quem falhou ao salvar: volta marcado depois da recarga (o recorte recalculado não pode desfazer isso). Fica numa
+  // referência + um contador que dispara o efeito uma única vez — zerar um estado reexecutaria o efeito e refaria a
+  // marcação padrão por cima.
+  const falhasParaMarcar = useRef<Set<string> | null>(null);
+  const [rodadaFalhas, setRodadaFalhas] = useState(0);
 
-  function cancelarDiagnostico() {
-    if (dadosParaCancelar) {
-      setVinculo("animal");
-      setSelecionados(dadosParaCancelar.numeros);
-      setLotesSelecionados([]);
-      setCategoriasAgenda([]);
-      setCardsSelecionados([]);
-      setData(dadosParaCancelar.data);
-      setMetodo(dadosParaCancelar.metodo);
-      setResultado(dadosParaCancelar.resultado);
+  // Vindo da Agenda ("Registrar toque", "Lançar toque/retoque"): abre já na situação do animal, com ele marcado.
+  const preMarcar = useRef<string | null>(null);
+  const prefillAplicado = useRef(false);
+  useEffect(() => { preMarcar.current = new URLSearchParams(window.location.search).get("numero_matriz"); }, []);
+
+  const carregar = useCallback(async () => {
+    setErroCarga(null);
+    try {
+      const r = await fetchCandidatasDiagnostico();
+      setCand(r);
+      return r;
+    } catch (e) {
+      setErroCarga(e instanceof Error && e.message ? e.message : "Erro ao carregar os animais do diagnóstico");
+      return null;
+    } finally {
+      setCarregando(false);
     }
-    setSucesso(null);
-    setErro("Diagnóstico cancelado — ajuste os dados e salve novamente.");
-    setPopupOrigem(null);
-    setDadosParaCancelar(null);
-  }
+  }, []);
+  useEffect(() => { carregar(); }, [carregar]);
 
-  // Animais selecionados com menos de 30 dias desde a última inseminação/cobertura.
-  const animaisComAviso = useMemo(() => {
-    if (!data) return [];
-    return Array.from(numerosAlvo).filter((n) => {
-      const us = ultServico[n];
-      if (!us) return false;
-      const dias = (new Date(data + "T00:00:00").getTime() - new Date(us + "T00:00:00").getTime()) / 86400000;
-      return dias >= 0 && dias < 30;
-    });
-  }, [numerosAlvo, data, ultServico]);
+  // Primeira carga: se veio um animal da Agenda, vai para a situação dele; senão, para a primeira situação com animais.
+  useEffect(() => {
+    if (!cand || prefillAplicado.current) return;
+    prefillAplicado.current = true;
+    const numero = preMarcar.current;
+    const fase = numero ? FASES.find((f) => cand.situacoes[f].some((i) => i.numero_matriz === numero)) : undefined;
+    if (fase) { setSituacao(fase); return; }
+    preMarcar.current = null;
+    const primeira = FASES.find((f) => cand.totais[f] > 0);
+    if (primeira) setSituacao(primeira);
+  }, [cand]);
+
+  const cardsAgenda = useCardsAgendaReprodutivaLeitura(undefined, origem === "agenda");
+
+  const todos = useMemo(() => cand?.situacoes ?? SEM_ANIMAIS, [cand]);
+  const numerosDaAgenda = useMemo(() => {
+    const s = new Set<string>();
+    cardsSel.forEach((id) => (cardsAgenda.itensPorCard[id] || []).forEach((i) => s.add(i.numero_matriz)));
+    return s;
+  }, [cardsSel, cardsAgenda.itensPorCard]);
+
+  const porSituacao = useMemo(() => {
+    const o = {} as Record<FaseToque, ItemCardAgendaReprodutiva[]>;
+    for (const f of FASES) o[f] = filtrarPorOrigem(todos[f], origem, lotesSel, numerosDaAgenda);
+    return o;
+  }, [todos, origem, lotesSel, numerosDaAgenda]);
+
+  const daOrigem = porSituacao[situacao];
+  const visiveis = useMemo(() => buscarItens(daOrigem, busca), [daOrigem, busca]);
+  const grupos = useMemo(() => agruparPorLote(visiveis), [visiveis]);
+
+  // Lotes disponíveis na situação aberta (com a contagem de quem está nela).
+  const opcoesLote = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const i of todos[situacao]) m.set(loteDe(i), (m.get(loteDe(i)) ?? 0) + 1);
+    return [...m.entries()].sort(([a], [b]) => a.localeCompare(b, "pt-BR", { numeric: true }));
+  }, [todos, situacao]);
+
+  // Cards da Agenda que têm animais nesta situação (PEV, vazias e a descartar nunca entram: não estão aqui).
+  const cardsComAnimais = useMemo(() => {
+    const nesta = new Set(todos[situacao].map((i) => i.numero_matriz));
+    return cardsAgenda.cards
+      .map((c) => ({ id: c.id, nome: c.nome, n: (cardsAgenda.itensPorCard[c.id] || []).filter((i) => nesta.has(i.numero_matriz)).length }))
+      .filter((c) => c.n > 0);
+  }, [cardsAgenda.cards, cardsAgenda.itensPorCard, todos, situacao]);
+
+  // Marcação inicial sempre que muda o recorte (origem, situação, lotes, cards ou os próprios animais).
+  const chaveRecorte = `${origem}|${situacao}|${[...lotesSel].sort().join(",")}|${[...cardsSel].sort().join(",")}|${daOrigem.map((i) => i.numero_matriz).join(",")}`;
+  useEffect(() => {
+    const falhas = falhasParaMarcar.current;
+    if (falhas) {
+      falhasParaMarcar.current = null;
+      setSel(new Set([...falhas].filter((n) => daOrigem.some((i) => i.numero_matriz === n))));
+      return;
+    }
+    let inicial = selecaoPadrao(daOrigem, origem, situacao);
+    const pre = preMarcar.current;
+    if (pre && daOrigem.some((i) => i.numero_matriz === pre)) { inicial = new Set([pre]); preMarcar.current = null; }
+    setSel(inicial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chaveRecorte, rodadaFalhas]);
+
+  // O resultado escolhido tem de existir na situação aberta (trocou de situação, escolhe de novo) e o método, na lista
+  // do resultado (Cio de repasse só com adesivo e só para Negativo): valores derivados, sem efeito para "limpar".
+  const resultado: ResultadoDiagnostico | "" =
+    resultadoEscolhido && RESULTADOS_POR_SITUACAO[situacao].some((r) => r.valor === resultadoEscolhido) ? resultadoEscolhido : "";
+  const metodos = metodosDisponiveis(!!cand?.usa_adesivo, resultado);
+  const metodo = metodos.includes(metodoEscolhido) ? metodoEscolhido : "";
+
+  const { marcados, ainda } = useMemo(() => resumoSelecao(daOrigem, sel), [daOrigem, sel]);
+  const nSel = marcados.length;
+  const opcaoEscolhida = resultado ? RESULTADOS_POR_SITUACAO[situacao].find((r) => r.valor === resultado) : undefined;
+  const alternarSet = (set: ReadonlySet<string>, v: string) => {
+    const s = new Set(set);
+    if (s.has(v)) s.delete(v); else s.add(v);
+    return s;
+  };
+  const alternar = (n: string) => setSel((p) => alternarSet(p, n));
 
   async function salvar() {
-    setErro(null); setSucesso(null);
-    if (!numerosAlvo.size || !data || !resultado) { setErro("Selecione ao menos uma matriz, a data e o resultado do diagnóstico."); return; }
-    setSalvando(true);
-    // Loop por animal: registra quais salvaram e quais falharam, para não perder
-    // o trabalho já feito nem a seleção dos que precisam de nova tentativa.
-    const salvos: string[] = [];
-    const falhados: string[] = [];
-    const servicoIds: number[] = [];
-    // Animais em que o backend detectou o 3º lançamento sobre a mesma
-    // prenhez (toque + retoque já confirmados) — não é um novo toque, é
-    // interpretado como aborto (ver registrar_diagnostico no backend).
-    const abortos: string[] = [];
-    // Guardados para restaurar a tela caso o usuário cancele no popup de
-    // vínculo financeiro (ver onCancelarDiagnostico) — o resto do fluxo já
-    // limpa esses campos assim que salva com sucesso.
-    const numerosSalvos = new Set(numerosAlvo);
+    setErro(null); setSucesso(null); setNegativosSalvos([]);
+    if (!nSel || !resultado || !data) { setErro("Marque ao menos um animal e escolha o resultado e a data do diagnóstico."); return; }
+    const numeros = marcados.map((i) => i.numero_matriz);
+    const metodoEnviado = pedeMetodo(situacao, resultado) && metodo ? metodo : undefined;
     const dataSalva = data;
-    const metodoSalvo = metodo;
     const resultadoSalvo = resultado;
-    try {
-      for (const numero of numerosAlvo) {
-        try {
-          const r = await salvarDiagnostico({ numero_matriz: numero, data_diagnostico: data, resultado: resultado as any, metodo: metodo || undefined });
-          if (r?.aborto_detectado) {
-            abortos.push(numero);
-          } else if (r?.id) {
-            servicoIds.push(r.id);
-          }
-          salvos.push(numero);
-        } catch {
-          falhados.push(numero);
-        }
+    setSalvando(true);
+    setProgresso({ feitos: 0, total: numeros.length });
+    const salvos: string[] = [];
+    const falhas: FalhaDeSalvamento[] = [];
+    const servicoIds: number[] = [];
+    // Um animal por chamada: quem falhou fica marcado para tentar de novo, e o que já salvou não se perde.
+    for (const numero of numeros) {
+      try {
+        const r = await salvarDiagnostico({ numero_matriz: numero, data_diagnostico: dataSalva, resultado: resultadoSalvo, metodo: metodoEnviado });
+        salvos.push(numero);
+        if (r?.id && resultadoSalvo !== "aborto") servicoIds.push(r.id);
+      } catch (e) {
+        falhas.push({ numero, motivo: e instanceof Error && e.message ? e.message : "erro ao salvar" });
       }
-      if (abortos.length) {
-        setAbortosPendentes((p) => [...p, ...abortos]);
-      } else if (!falhados.length && servicoIds.length) {
-        setPopupOrigem({ tipo: "servico", ids: servicoIds, produto: "Diagnóstico de gestação — visita reprodutiva", data, responsavel: null });
-        setDadosParaCancelar({ numeros: numerosSalvos, data: dataSalva, metodo: metodoSalvo, resultado: resultadoSalvo });
-      }
-      if (falhados.length) {
-        // Sucesso parcial: passa para seleção individual só com quem falhou, para reenviar.
-        setVinculo("animal"); setLotesSelecionados([]); setCategoriasAgenda([]); setCardsSelecionados([]); setSelecionados(new Set(falhados));
-        if (salvos.length) {
-          setSucesso(`Salvos: ${salvos.length}.`);
-          setErro(`Falharam: ${falhados.join(", ")} — tente novamente só esses.`);
-        } else {
-          setErro(`Nenhum diagnóstico salvo. Falharam: ${falhados.join(", ")} — tente novamente.`);
-        }
-      } else {
-        const msg = abortos.length
-          ? `${abortos.length} animal(is) já tinham prenhez confirmada duas vezes (toque + retoque) — lançamento registrado como aborto (perda de prenhez): ${abortos.join(", ")}.`
-          : resultado === "retoque"
-          ? `Diagnóstico salvo para ${salvos.length} animal(is). Entraram na agenda para retoque.`
-          : `Diagnóstico salvo para ${salvos.length} animal(is).`;
-        setSucesso(msg);
-        // Confirmação flutuante, além do texto que fica na tela (`sucesso`
-        // acima) — some sozinha, não exige ler/fechar nada pra continuar.
-        toast(salvos.length > 1 ? `Diagnóstico salvo para ${salvos.length} animais.` : "Diagnóstico salvo.");
-        setSelecionados(new Set()); setLotesSelecionados([]); setCategoriasAgenda([]); setCardsSelecionados([]); setData(""); setMetodo(""); setResultado("");
-        onSalvo?.();
-      }
-    } catch (e: any) {
-      setErro(e.message || "Erro ao salvar diagnóstico");
-    } finally {
-      setSalvando(false);
+      setProgresso({ feitos: salvos.length + falhas.length, total: numeros.length });
     }
+    invalidarEstadosReprodutivos();
+    await carregar();
+    setSalvando(false);
+    setProgresso(null);
+    const msg = mensagemResultado(salvos.length, falhas, resultadoSalvo === "aborto" ? "Aborto" : "Diagnóstico");
+    setSucesso(msg.ok);
+    setErro(msg.erro);
+    if (salvos.length) toast(salvos.length > 1 ? `Diagnóstico salvo para ${salvos.length} animais.` : "Diagnóstico salvo.");
+    if (falhas.length) {
+      // Fica só quem falhou, marcado, para tentar de novo.
+      preMarcar.current = null;
+      falhasParaMarcar.current = new Set(falhas.map((f) => f.numero));
+      setRodadaFalhas((r) => r + 1);
+      return;
+    }
+    setResultado(""); setMetodo("");
+    if (resultadoSalvo === "negativo") setNegativosSalvos(salvos);
+    if (servicoIds.length) setPopupOrigem({ tipo: "servico", ids: servicoIds, produto: "Diagnóstico de gestação — visita reprodutiva", data: dataSalva, responsavel: null });
+    onSalvo?.();
   }
+
+  const textoSalvar = salvando && progresso ? `Salvando ${progresso.feitos} de ${progresso.total}…` : `Salvar${nSel ? ` (${nSel})` : ""}`;
+  const semSalvar = salvando || nSel === 0 || !resultado || !data;
+  const nomeSituacao = ROTULO_FASE_PLURAL[situacao];
 
   return (
     <>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
-      <Campo label="Matriz / novilha (servidas) — animal(is), lote(s) ou Agenda do veterinário" full>
-        <TabBar<"animal" | "lote" | "agenda">
-          abas={[
-            { id: "animal", label: "Animal(is)", title: "Selecionar matrizes/novilhas individualmente" },
-            { id: "lote", label: "Lote(s)", title: "Selecionar um ou mais lotes — mostra as servidas de cada lote escolhido" },
-            { id: "agenda", label: "Agenda do veterinário", title: "Selecionar a partir das listas da Agenda do veterinário — mesma classificação usada no roteiro do dia" },
-          ]}
-          ativa={vinculo}
-          onChange={setVinculo}
-        />
-        {vinculo === "animal" && (
-          <AnimalPickerModal
-            animais={servidas} selecionados={selecionados} onToggle={toggle}
-            titulo="Escolher matriz / novilha servida"
-            colunas={[
-              { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
-              { header: "Lote", render: (a) => a.grupo_primario || "—" },
-              { header: "Sit. rep.", render: (a) => rotuloDe(a.numero) },
-              { header: "Última IA/cobertura", render: (a) => ultServico[a.numero] ? new Date(ultServico[a.numero] + "T00:00:00").toLocaleDateString("pt-BR") : "—" },
-            ]}
-          />
-        )}
-        {vinculo === "lote" && (
-          <div style={{ marginTop: "0.5rem" }}>
-            <LotePicker
-              opcoes={opcoesLoteDeAnimais(servidas, codigosLotesServidas)}
-              selecionados={lotesSelecionados}
-              onChange={setLotesSelecionados}
-              placeholder="Selecionar lote(s)…"
-            />
-            {lotesSelecionados.length > 0 && (
-              <div style={{ marginTop: "0.6rem" }}>
-                <AnimalPickerModal
-                  animais={animaisDoLote} selecionados={selLote} onToggle={toggleLote}
-                  titulo="Ajustar servidas do(s) lote(s) selecionado(s)"
-                  placeholder="Ajustar servidas do(s) lote(s)…"
-                  colunas={[
-                    { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
-                    { header: "Lote", render: (a) => a.grupo_primario || "—" },
-                    { header: "Sit. rep.", render: (a) => rotuloDe(a.numero) },
-                    { header: "Última IA/cobertura", render: (a) => ultServico[a.numero] ? new Date(ultServico[a.numero] + "T00:00:00").toLocaleDateString("pt-BR") : "—" },
-                  ]}
-                />
-                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
-                  {selLote.size} de {animaisDoLote.length} servida(s) no(s) lote(s) selecionado(s) — desmarque na janela acima para excluir alguma.
-                </p>
-              </div>
-            )}
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        <Passo n={1} id="dg-p1" titulo="De onde vêm os animais">
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Origem da seleção">
+            {ORIGENS.map((o) => (
+              <button key={o.id} type="button" className="ft-pilula" aria-pressed={origem === o.id} title={o.titulo} onClick={() => setOrigem(o.id)}>
+                {o.rotulo}
+              </button>
+            ))}
           </div>
-        )}
-        {vinculo === "agenda" && (
-          <div style={{ marginTop: "0.5rem" }}>
-            {(agendaCarregando || cardsAgenda.carregando) && <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Carregando agenda do veterinário…</p>}
-            {cardsAgenda.erro && <p style={{ fontSize: "0.75rem", color: "var(--red)" }}>{cardsAgenda.erro}</p>}
-            {cardsAgenda.cards.length === 0 && !cardsAgenda.carregando && (
-              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Sem cards configurados ainda — veja Insights &gt; Agenda do veterinário.</p>
-            )}
-            <div className="flex flex-wrap gap-2">
-              {/* Cards configuráveis do usuário (mesmos de Insights > Agenda do
-                  veterinário) — renomeados/customizados lá, aparecem aqui do
-                  mesmo jeito. Enquanto carrega, mostra "…" no lugar da contagem
-                  em vez de esconder o card, pra não sumir e reaparecer. */}
-              {cardsAgenda.cards.map((c) => {
-                const itens = cardsAgenda.itensPorCard[c.id];
-                if (!cardsAgenda.carregando && (itens?.length ?? 0) === 0) return null;
-                const ativo = cardsSelecionados.includes(c.id);
-                return (
-                  <button key={c.id} type="button"
-                    onClick={() => toggleCardAgenda(c.id)}
-                    style={{
-                      fontSize: "0.75rem", padding: "0.3rem 0.65rem", borderRadius: "999px", cursor: "pointer",
-                      border: "1px solid " + (ativo ? "var(--dourado)" : "var(--border)"),
-                      background: ativo ? "var(--dourado)" : "transparent",
-                      color: ativo ? "#1a1a1a" : "var(--text-muted)", fontWeight: ativo ? 700 : 400,
-                    }}>
-                    {c.nome} ({itens?.length ?? "…"})
-                  </button>
-                );
-              })}
-              {/* As duas listas que continuam fixas (não são situação
-                  reprodutiva — ver CHAVES_FIXAS_AGENDA_VET). */}
-              {agendaVet && LISTAS_AGENDA_VETERINARIO.filter((l) => CHAVES_FIXAS_AGENDA_VET.has(l.chave) && (agendaVet.totais[l.chave] || 0) > 0).map((l) => {
-                const ativa = categoriasAgenda.includes(l.chave);
-                return (
-                  <button key={l.chave} type="button"
-                    onClick={() => setCategoriasAgenda((p) => ativa ? p.filter((c) => c !== l.chave) : [...p, l.chave])}
-                    style={{
-                      fontSize: "0.75rem", padding: "0.3rem 0.65rem", borderRadius: "999px", cursor: "pointer",
-                      border: "1px solid " + (ativa ? "var(--dourado)" : "var(--border)"),
-                      background: ativa ? "var(--dourado)" : "transparent",
-                      color: ativa ? "#1a1a1a" : "var(--text-muted)", fontWeight: ativa ? 700 : 400,
-                    }}>
-                    {l.rotulo} ({agendaVet.totais[l.chave]})
-                  </button>
-                );
-              })}
+          {origem === "lotes" && (
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Lotes">
+              {opcoesLote.length === 0 && <p style={notaTxt}>Nenhum lote com animais nesta situação.</p>}
+              {opcoesLote.map(([lote, n]) => (
+                <button key={lote} type="button" className="ft-pilula" aria-pressed={lotesSel.has(lote)} onClick={() => setLotesSel((p) => alternarSet(p, lote))}>
+                  {lote}<b>{n}</b>
+                </button>
+              ))}
             </div>
-            {(categoriasAgenda.length > 0 || cardsSelecionados.length > 0) && (
-              <div style={{ marginTop: "0.6rem" }}>
-                <AnimalPickerModal
-                  animais={animaisDaAgenda} selecionados={selAgenda} onToggle={toggleAgenda}
-                  titulo="Ajustar animais da(s) categoria(s) selecionada(s)"
-                  placeholder="Ajustar animais da agenda do veterinário…"
-                  colunas={[
-                    { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
-                    { header: "Lote", render: (a) => a.grupo_primario || "—" },
-                    { header: "Sit. rep.", render: (a) => rotuloDe(a.numero) },
-                    { header: "Última IA/cobertura", render: (a) => ultServico[a.numero] ? new Date(ultServico[a.numero] + "T00:00:00").toLocaleDateString("pt-BR") : "—" },
-                  ]}
-                />
-                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
-                  {selAgenda.size} de {animaisDaAgenda.length} animal(is) na(s) categoria(s) selecionada(s) — desmarque na janela acima para excluir algum.
-                </p>
+          )}
+          {origem === "agenda" && (
+            <>
+              {cardsAgenda.carregando && <p style={notaTxt}>Carregando os cards da Agenda do veterinário…</p>}
+              {cardsAgenda.erro && <p role="alert" style={{ ...notaTxt, color: "var(--red)" }}>{cardsAgenda.erro}</p>}
+              <div className="flex flex-wrap gap-2" role="group" aria-label="Cards da Agenda do veterinário">
+                {cardsComAnimais.map((c) => (
+                  <button key={c.id} type="button" className="ft-pilula" aria-pressed={cardsSel.has(c.id)} onClick={() => setCardsSel((p) => alternarSet(p, c.id))}>
+                    {c.nome}<b>{c.n}</b>
+                  </button>
+                ))}
               </div>
+              {!cardsAgenda.carregando && cardsComAnimais.length === 0 && (
+                <p style={notaTxt}>Nenhum card configurado tem animais nesta situação. Veja Insights › Agenda reprodutiva.</p>
+              )}
+              <p style={notaTxt}>Só aparecem os cards com animais servidos. PEV, Vazias, Vazias atrasadas e A descartar não entram no diagnóstico.</p>
+            </>
+          )}
+        </Passo>
+
+        <Passo n={2} id="dg-p2" titulo="Situação do animal">
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Situação">
+            {FASES.map((f) => (
+              <button key={f} type="button" className="ft-pilula" aria-pressed={situacao === f} onClick={() => setSituacao(f)}>
+                {ROTULO_FASE_PLURAL[f]}<b>{porSituacao[f].length}</b>
+              </button>
+            ))}
+          </div>
+          <p style={notaTxt}>{NOTA_SITUACAO[situacao](cand?.parametros ?? null)}</p>
+        </Passo>
+
+        <Passo n={3} id="dg-p3" titulo="Animais" direita={
+          <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }} aria-live="polite">
+            {nSel} de {daOrigem.length} {nSel === 1 ? "marcado" : "marcados"}
+          </span>
+        }>
+          <input type="search" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar matriz ou lote" aria-label="Buscar matriz ou lote" style={inputStyle} />
+          {carregando && <p style={notaTxt}>Carregando os animais…</p>}
+          {erroCarga && <p role="alert" style={{ ...notaTxt, color: "var(--red)" }}>{erroCarga}</p>}
+          {!carregando && !erroCarga && visiveis.length === 0 && (
+            <p style={notaTxt}>
+              {origem === "lotes" && lotesSel.size === 0 ? "Marque um ou mais lotes acima."
+                : origem === "agenda" && cardsSel.size === 0 ? "Marque um ou mais cards da Agenda acima."
+                : busca ? "Nenhum animal bate com a busca."
+                : `Nenhum animal em “${nomeSituacao}”.`}
+            </p>
+          )}
+          {visiveis.length > 0 && (
+            <div style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", maxHeight: "21rem", overflow: "auto" }}>
+              <table className="tabela-compacta" style={{ width: "100%" }}>
+                <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
+                  <tr>
+                    <th scope="col" style={{ width: "2.4rem" }}>
+                      <input type="checkbox" checked={todasNoPrazoMarcadas(visiveis, sel)} onChange={() => setSel(alternarTodasNoPrazo(visiveis, sel))}
+                        aria-label="Selecionar todas as que estão no prazo" disabled={situacao === "reconfirmada" || !visiveis.some((i) => !i.ainda_nao)} style={{ width: "1.05rem", height: "1.05rem" }} />
+                    </th>
+                    <th scope="col">Matriz</th><th scope="col">Categoria</th><th scope="col" title="Dias desde a inseminação">Dias da IA</th>
+                    <th scope="col" title="Data e resultado do toque">Toque</th><th scope="col" title="Data e resultado do retoque">Retoque</th><th scope="col">Prazo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {grupos.map((g) => (
+                    <React.Fragment key={g.lote}>
+                      <tr><th scope="rowgroup" colSpan={7} style={{ textAlign: "left", background: "var(--surface-2)", color: "var(--text-muted)", fontSize: "0.66rem", letterSpacing: "0.1em", textTransform: "uppercase", padding: "0.3rem 0.5rem" }}>{g.lote} · {g.itens.length}</th></tr>
+                      {g.itens.map((it) => {
+                        const esperando = !!it.ainda_nao;
+                        const reconf = !!it.data_reconfirmacao || !!it.diagnostico_reconfirmacao;
+                        const classe = esperando ? `ft-linha-ainda${seloBreve(it.dias_para_prazo) ? " ft-linha-breve" : ""}` : undefined;
+                        return (
+                          <tr key={it.numero_matriz} className={classe}>
+                            <td><input type="checkbox" checked={sel.has(it.numero_matriz)} onChange={() => alternar(it.numero_matriz)} aria-label={`Selecionar ${it.numero_matriz}`} style={{ width: "1.05rem", height: "1.05rem" }} /></td>
+                            <td style={{ fontWeight: 800 }}>{it.numero_matriz}</td>
+                            <td>{it.categoria ?? "—"}</td>
+                            <td style={{ fontVariantNumeric: "tabular-nums" }}>{it.dias_desde_servico ?? "—"}</td>
+                            <td><CelulaExame data={it.data_diagnostico} diagnostico={it.diagnostico} /></td>
+                            <td>{reconf ? <CelulaExame data={it.data_reconfirmacao} diagnostico={it.diagnostico_reconfirmacao} /> : <CelulaExame data={null} diagnostico={null} />}</td>
+                            <td style={{ whiteSpace: "nowrap" }}>
+                              {esperando ? <SeloAindaNao dias={it.dias_para_prazo} prazoTipo={it.prazo_tipo} /> : <span style={{ fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--ft-verde)" }}>No prazo</span>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <LegendaToque parametros={cand?.parametros} />
+          <p style={notaTxt}>“Selecionar todas” marca só as que estão no prazo. As marcadas com AINDA NÃO podem ser lançadas mesmo assim, uma a uma.</p>
+        </Passo>
+
+        <Passo n={4} id="dg-p4" titulo="Resultado">
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "0.5rem" }} role="group" aria-label="Resultado do diagnóstico">
+            {RESULTADOS_POR_SITUACAO[situacao].map((r) => {
+              const ativo = resultado === r.valor;
+              return (
+                <button key={r.valor} type="button" aria-pressed={ativo} onClick={() => setResultado(r.valor)}
+                  style={{
+                    display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "0.15rem", textAlign: "left", minHeight: "3.6rem", padding: "0.65rem 0.8rem",
+                    borderRadius: "var(--r-sm)", cursor: "pointer", color: "var(--text)",
+                    border: `1px solid ${ativo ? "var(--ft-ouro)" : "var(--border)"}`, background: ativo ? "var(--ft-ouro-tint)" : "var(--surface)",
+                    boxShadow: ativo ? "inset 0 0 0 1px var(--ft-ouro)" : "none",
+                  }}>
+                  <b style={{ fontSize: "0.85rem" }}>{r.nome}</b>
+                  <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{r.dica}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3" style={{ maxWidth: "36rem" }}>
+            <Campo label="Data do diagnóstico"><input type="date" style={inputStyle} value={data} onChange={(e) => setData(e.target.value)} /></Campo>
+            {pedeMetodo(situacao, resultado) && (
+              <Campo label="Método">
+                <select style={inputStyle} value={metodo} onChange={(e) => setMetodo(e.target.value)}>
+                  <option value="">Não informar</option>
+                  {metodos.map((m) => <option key={m} value={m}>{m === "Cio de repasse" ? "Cio de repasse (adesivo pintado)" : m}</option>)}
+                </select>
+              </Campo>
             )}
           </div>
-        )}
-      </Campo>
+          <p style={notaTxt}>{resultado ? NOTA_RESULTADO[resultado] : "Escolha o resultado para ver o que acontece com os animais."}</p>
+          {metodo === "Cio de repasse" && (
+            <p style={notaTxt}><strong>Cio de repasse:</strong> a vaca voltou ao cio com o adesivo pintado; ninguém a examinou, por isso só vale para Negativo.</p>
+          )}
+          {ainda > 0 && (
+            <div role="status" style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", padding: "0.6rem 0.8rem", border: "1px solid var(--ft-ouro)", background: "var(--ft-ouro-tint)", borderRadius: "var(--r-sm)", fontSize: "0.78rem", color: "var(--ft-ouro-txt)" }}>
+              <AlertTriangle size={15} style={{ marginTop: "0.1rem", flexShrink: 0 }} aria-hidden="true" />
+              <span>{avisoAindaNao(ainda)}</span>
+            </div>
+          )}
+        </Passo>
 
-      {numeroUltimo && (
-        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
-          <strong>{numeroUltimo}:</strong> {resumoUltimoDiagnostico(ultimoServicoAnimal)}
-        </p>
-      )}
-      </div>
-
-      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Data do diagnóstico"><input type="date" style={inputStyle} value={data} onChange={(e) => setData(e.target.value)} /></Campo>
-        <Campo label="Método">
-          <select style={inputStyle} value={metodo} onChange={(e) => setMetodo(e.target.value)}>
-            <option value="" disabled>Selecione…</option><option>Palpação</option><option>Ultrassom</option><option>Cio de repasse</option>
-          </select>
-        </Campo>
-        <Campo label="Resultado" full>
-          <select style={inputStyle} value={resultado} onChange={(e) => setResultado(e.target.value)}>
-            <option value="" disabled>Selecione…</option>
-            <option value="retoque">Positivo — marcar para retoque (segue em observação para reconfirmar)</option>
-            <option value="reconfirmada">Positivo — reconfirmada (prenhez confirmada)</option>
-            <option value="negativo">Negativo (vazia)</option>
-            <option value="indefinido">Indefinido (inconclusivo — reavaliar)</option>
-          </select>
-        </Campo>
-      </div>
-      {metodo === "Cio de repasse" && (
-        <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
-          <strong>Cio de repasse:</strong> a vaca retornou ao cio após a inseminação. Detecção esperada — scratch (adesivo) aplicado por volta de 14 dias após a última IA/monta e cio natural observado entre 15 e 28 dias após o scratch.
-        </p>
-      )}
-
-      {animaisComAviso.length > 0 && (
-        <div className="mt-3" style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", background: "rgba(217,119,6,0.12)", border: "1px solid var(--amber)", borderRadius: "var(--r-sm)", padding: "0.6rem 0.8rem" }}>
-          <AlertTriangle size={16} style={{ color: "var(--amber)", marginTop: "0.1rem" }} />
-          <span style={{ fontSize: "0.8rem" }}>
-            {animaisComAviso.length} animal(is) com menos de 30 dias da última inseminação/cobertura: {animaisComAviso.join(", ")}. Deseja confirmar mesmo assim?
-          </span>
+        {/* Barra fixa no fim da gaveta: o que vai ser salvo, o botão e o retorno do último salvamento (inclusive o atalho
+            "Lançar inseminação"), sempre à vista, mesmo com a lista longa. */}
+        <div style={{
+          position: "sticky", bottom: "-0.9rem", margin: "0 -0.9rem -0.9rem", zIndex: 2,
+          borderTop: "1px solid var(--border)", background: "var(--surface-2)",
+        }}>
+          {(erro || sucesso || (negativosSalvos.length > 0 && onIrParaInseminacao)) && (
+            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap", padding: "0.55rem 0.9rem", borderBottom: "1px solid var(--border)" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem", flex: 1, minWidth: "14rem" }}>
+                {sucesso && <span role="status" style={{ color: "var(--green-light)", fontSize: "0.8rem" }}>✓ {sucesso}</span>}
+                {erro && <span role="alert" style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</span>}
+              </div>
+              {negativosSalvos.length > 0 && onIrParaInseminacao && (
+                <button type="button" className="btn-primary-gold" onClick={() => onIrParaInseminacao(negativosSalvos)}>
+                  Lançar inseminação para {negativosSalvos.length === 1 ? "este animal" : `estas ${negativosSalvos.length} vacas`}
+                </button>
+              )}
+            </div>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: "0.9rem", flexWrap: "wrap", padding: "0.75rem 0.9rem" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.1rem" }} aria-live="polite">
+              <span style={{ fontSize: "0.85rem", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{nSel} {nSel === 1 ? "animal" : "animais"} · {nomeSituacao}</span>
+              <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                {opcaoEscolhida ? `Resultado: ${opcaoEscolhida.nome}${resultado === "negativo" ? " · depois de salvar você poderá lançar a inseminação" : ""}` : "Falta escolher o resultado"}
+              </span>
+            </div>
+            <span style={{ flex: 1 }} />
+            <button type="button" className="btn-primary-gold" onClick={salvar} disabled={semSalvar}>{textoSalvar}</button>
+          </div>
         </div>
-      )}
-      {resultado === "negativo" && (
-        <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
-          Ao confirmar, os animais ficam como <strong>vazia</strong> e serão colocados para observação na próxima visita reprodutiva.
-        </p>
-      )}
-      {resultado === "retoque" && (
-        <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
-          Os animais entram na <strong>agenda para retoque</strong>, no dia da próxima visita reprodutiva.
-        </p>
-      )}
-      {resultado === "indefinido" && (
-        <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
-          Resultado <strong>inconclusivo</strong> — a matriz <strong>não</strong> vira vazia; segue para nova avaliação.
-        </p>
-      )}
-      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
-      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
-      <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
-      </div>
-      </div>
       </div>
 
-      {popupOrigem && (
-        <PopupVinculoFinanceiro
-          origem={popupOrigem}
-          onFechar={() => { setPopupOrigem(null); setDadosParaCancelar(null); }}
-          onCancelar={cancelarDiagnostico}
-        />
-      )}
-
-      {abortosPendentes.length > 0 && (
-        <PopupAborto
-          numeroMatriz={abortosPendentes[0]}
-          onFechar={() => setAbortosPendentes((p) => p.slice(1))}
-        />
-      )}
+      {popupOrigem && <PopupVinculoFinanceiro origem={popupOrigem} onFechar={() => setPopupOrigem(null)} />}
     </>
   );
 }

@@ -31,7 +31,7 @@ export function FormInseminacao({ animais, motivosInaptidao, idadeMinServico = I
   // app/lancamentos/page.tsx e backend/fazenda/rules/aptidao.py).
   motivosInaptidao?: Map<string, string>;
   idadeMinServico?: number;
-  prefill?: { numeroMatriz?: string | null; protocolo?: string | null };
+  prefill?: { numeroMatriz?: string | null; numeros?: string[]; protocolo?: string | null };
   onSalvo?: () => void;
 }) {
   const { rotuloDe } = useEstadosReprodutivos();
@@ -149,7 +149,9 @@ export function FormInseminacao({ animais, motivosInaptidao, idadeMinServico = I
   useEffect(() => {
     const qs = new URLSearchParams(window.location.search);
     const numeroMatriz = prefill?.numeroMatriz ?? qs.get("numero_matriz");
-    if (numeroMatriz) setSel(new Set([numeroMatriz]));
+    // `numeros`: vários animais de uma vez (diagnóstico Negativo → "Lançar inseminação para estas N vacas").
+    if (prefill?.numeros?.length) setSel(new Set(prefill.numeros));
+    else if (numeroMatriz) setSel(new Set([numeroMatriz]));
     if (prefill?.protocolo ?? qs.get("protocolo")) { setTipo("iatf"); setOrigemSelecao("protocolo"); }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

@@ -35,6 +35,8 @@ from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 from fazenda.rules.parto import (
     TIPO_PARTO_ABORTO, TIPO_PARTO_NATIMORTO, TIPO_PARTO_NORMAL, eh_parto_produtivo, proxima_ordem_parto,
 )
+from fazenda.rules.fase_toque import FASES as FASES_TOQUE
+from fazenda.rules.repasse import usa_adesivo_vigente
 from fazenda.rules.parametros import (
     dias_atraso_apos_aptidao_novilha, get_param, idade_apta_min_meses, idade_max_1a_cobertura_meses, peso_apta_min,
     pev_dias as pev_dias_param,
@@ -872,6 +874,38 @@ def agenda_reprodutiva_cards(
 
 
 
+@router.get("/diagnostico/candidatas")
+def candidatas_ao_diagnostico(
+    data: date | None = None,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Quem pode entrar no lançamento do diagnóstico de gestação, já separado por situação (a regra única é
+    `rules/fase_toque.py`): `a_tocar`, `a_reconfirmar` e `reconfirmada`. Só estes três grupos: vazia, PEV, apta,
+    atrasada e "a descartar" não têm diagnóstico a lançar e nunca aparecem aqui.
+
+    Cada item traz o mesmo que os cards da Agenda Reprodutiva (lote, categoria, dias da IA, toque e retoque com data e
+    resultado, fase, AINDA NÃO e dias que faltam), então a tela do lançamento e a Agenda nunca discordam. `parametros`
+    são os Dias para toque / Dias para reconfirmação da fazenda; `usa_adesivo` diz se o método "Cio de repasse" existe."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    hoje = data or date.today()
+    animais, estados = _estados_da_agenda(session, fazenda_id, hoje)
+    params = _parametros_toque()
+    grupos: dict[str, list[dict]] = {fase: [] for fase in FASES_TOQUE}
+    for situacao in ("inseminada", "gestante"):
+        resposta = _resposta_card(CardAgendaReprodutivaIn(situacao=situacao), animais, estados, params)
+        for item in resposta["itens"]:
+            if item.get("fase") in grupos:
+                grupos[item["fase"]].append(item)
+    return {
+        "data_referencia": hoje.isoformat(),
+        "parametros": params,
+        "usa_adesivo": usa_adesivo_vigente(session),
+        "situacoes": grupos,
+        "totais": {fase: len(itens) for fase, itens in grupos.items()},
+    }
+
+
 class CardSalvoIn(BaseModel):
     """Um card como a tela o guarda: id estável (criado no navegador), nome e a configuração dos 4 eixos."""
 
@@ -1307,8 +1341,8 @@ def indicadores_mensais_analise(
 class DiagnosticoIn(BaseModel):
     numero_matriz: str
     data_diagnostico: date
-    resultado: str  # "retoque" | "reconfirmada" | "negativo" | "indefinido"
-    metodo: str | None = None  # Palpação | Ultrassom | Cio de repasse
+    resultado: str  # "retoque" | "reconfirmada" | "negativo" | "indefinido" | "aborto"
+    metodo: str | None = None  # Palpação | Ultrassom | Cio de repasse (só fazenda com adesivo, só resultado negativo)
 
 
 @router.post("/diagnostico")
@@ -1337,8 +1371,23 @@ def registrar_diagnostico(
     "bem-sucedido" (relato do produtor, ago/2026).
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if dados.resultado not in ("retoque", "reconfirmada", "negativo", "indefinido"):
+    if dados.resultado not in ("retoque", "reconfirmada", "negativo", "indefinido", "aborto"):
         raise HTTPException(status_code=400, detail="Resultado inválido")
+
+    # "Cio de repasse" é o método de quem NÃO examinou a vaca: o adesivo foi pintado, ela voltou ao cio, logo não
+    # está prenha. Só existe em fazenda que usa adesivo (Parâmetros › Reinseminação e observação de cio) e só com
+    # resultado negativo — as telas já não o oferecem fora disso; aqui fecha a porta de trás.
+    if dados.metodo == "Cio de repasse":
+        if dados.resultado != "negativo":
+            raise HTTPException(status_code=400, detail="O método Cio de repasse só vale para o resultado Negativo")
+        if not usa_adesivo_vigente(session):
+            raise HTTPException(
+                status_code=400,
+                detail="A fazenda não usa adesivo de detecção de cio (Parâmetros › Reinseminação e observação de cio)",
+            )
+
+    if dados.resultado == "aborto":
+        return _registrar_aborto_pelo_diagnostico(session, dados, fazenda_id)
 
     # Prioriza o serviço ainda em aberto (sem diagnóstico) — evita gravar por
     # engano num serviço antigo já diagnosticado quando a matriz tem mais de
@@ -1372,7 +1421,10 @@ def registrar_diagnostico(
     # ex.: vacas 149/215) — perda de prenhez só faz sentido quando o novo
     # resultado é adverso (negativo/indefinido); um novo positivo é apenas
     # uma reconfirmação redundante, sem slot para gravar, mas SEM perda.
-    if servico.diagnostico is not None and servico.diagnostico_reconfirmacao is not None and servico.data_perda_prenhez is None:
+    # Reconfirmação INDEFINIDA (inconclusiva) não conta: ela não resolveu nada, o slot continua livre para o exame
+    # que vem depois (positivo/negativo) — senão esse exame cairia aqui e seria descartado sem gravar.
+    reconfirmacao_resolvida = (servico.diagnostico_reconfirmacao or "").strip().upper() in {"POSITIVO", "NEGATIVO"}
+    if servico.diagnostico is not None and reconfirmacao_resolvida and servico.data_perda_prenhez is None:
         se_perdeu = dados.resultado in ("negativo", "indefinido")
         if se_perdeu:
             servico.data_perda_prenhez = dados.data_diagnostico
@@ -1389,15 +1441,21 @@ def registrar_diagnostico(
     # novo toque. "retoque"/"indefinido" continuam sempre gravando no toque
     # (marcar/manter para reconfirmar), mesmo re-selecionados sobre um
     # serviço já retoque=True — idempotente, não perde dado nenhum.
+    diag_toque = (servico.diagnostico or "").strip().upper()
     eh_2o_exame = (
-        dados.resultado in ("reconfirmada", "negativo")
-        and (servico.diagnostico or "").strip().upper() in {"POSITIVO", "NEGATIVO", "INDEFINIDO"}
+        dados.resultado in ("reconfirmada", "negativo") and diag_toque in {"POSITIVO", "NEGATIVO", "INDEFINIDO"}
+    ) or (
+        # Indefinido sobre um toque POSITIVO é a reconfirmação inconclusiva: grava no retoque e PRESERVA o 1º toque
+        # (antes sobrescrevia o positivo com INDEFINIDO e apagava o histórico).
+        dados.resultado == "indefinido" and diag_toque == "POSITIVO"
     )
 
     if eh_2o_exame:
         servico.data_reconfirmacao = dados.data_diagnostico
-        servico.diagnostico_reconfirmacao = "POSITIVO" if dados.resultado == "reconfirmada" else "NEGATIVO"
-        servico.retoque = False
+        servico.diagnostico_reconfirmacao = {"reconfirmada": "POSITIVO", "negativo": "NEGATIVO"}.get(
+            dados.resultado, "INDEFINIDO")
+        # Indefinido continua marcado para retoque: o lembrete de reconfirmação segue na agenda.
+        servico.retoque = dados.resultado == "indefinido"
     else:
         servico.data_diagnostico = dados.data_diagnostico
         # Mesma allow-list do PUT /servicos/{id} (achado 65): `dados.metodo` é
@@ -1429,6 +1487,32 @@ def registrar_diagnostico(
     session.commit()
     session.refresh(servico)
     return servico.model_dump()
+
+
+def _registrar_aborto_pelo_diagnostico(session: Session, dados: "DiagnosticoIn", fazenda_id: int | None) -> dict:
+    """Resultado "Aborto" do lançamento de diagnóstico: grava a perda de prenhez no serviço que originou a gestação,
+    com a data do diagnóstico e o MOTIVO EM ABERTO — é o que cria a pendência "Cadastrar motivo da perda de
+    prenhez" na Agenda (quem viu o aborto no toque não sabe, ainda, se foi aborto, natimorto ou outro).
+    Mesmo carimbo de `POST /reproducao/encerramento-gestacao` (o aborto do Parto/Nascimento), sem criar `Parto` nem
+    abrir lactação: isso continua sendo decisão de quem lança o aborto em Parto/Nascimento."""
+    query = select(Servico).where(Servico.numero_matriz == dados.numero_matriz)
+    if fazenda_id is not None:
+        query = query.where(Servico.fazenda_id == fazenda_id)
+    if session.exec(query).first() is None:
+        raise HTTPException(status_code=404, detail=f"Nenhum serviço encontrado para a matriz {dados.numero_matriz}")
+    servico = _carimbar_perda_no_servico_vigente(
+        session, numero_matriz=dados.numero_matriz, data_perda=dados.data_diagnostico, motivo=None,
+        partos_anteriores=_partos_da_matriz(session, dados.numero_matriz, fazenda_id), fazenda_id=fazenda_id,
+    )
+    if servico is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"A matriz {dados.numero_matriz} não tem prenhez confirmada para registrar aborto",
+        )
+    regras_lactacao.sincronizar_categoria_do_animal(session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id)
+    session.commit()
+    session.refresh(servico)
+    return {**servico.model_dump(), "perda_registrada": True}
 
 
 class ReconfirmacaoIn(BaseModel):
@@ -2044,7 +2128,7 @@ def encerrar_gestacao(
 
 
 def _carimbar_perda_no_servico_vigente(
-    session: Session, *, numero_matriz: str, data_perda: date, motivo: str,
+    session: Session, *, numero_matriz: str, data_perda: date, motivo: str | None,
     partos_anteriores: list[Parto], fazenda_id: int | None,
 ) -> Servico | None:
     """Grava a perda de prenhez no serviço que ORIGINOU a gestação perdida.
