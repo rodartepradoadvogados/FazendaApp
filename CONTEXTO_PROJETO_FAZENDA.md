@@ -53,7 +53,7 @@ Encoding dos CSV: **Windows-1252 (Latin-1)**, separador `;`, decimal com vírgul
 - **Gestação por raça:** Holandês 280, Girolando ~287, Gir/Zebu/GO 295 dias. Parto provável = DT SERVIÇO da prenhez + gestação.
 - **Pré-parto:** 35 dias antes do parto provável (vacas e novilhas prenhas).
 - **Secagem:** 60 dias antes do parto provável — **somente vaca em lactação (que já pariu); novilha de 1ª cria não seca.**
-- **Scratch (adesivo):** 14 dias após o **último** serviço (novo cio zera o anterior). **Diagnóstico NEGATIVO cancela o scratch** (a inseminação não conta).
+- **Scratch (adesivo):** só para fazenda que usa adesivo (Parâmetros › Reinseminação e observação de cio); aviso na Agenda N dias (configurável; vazio = não avisa) após o **último** serviço (novo cio zera o anterior; fazenda da Estreito: 14). **Diagnóstico NEGATIVO cancela o scratch** (a inseminação não conta).
 - **PEV:** 45 dias (liberação para inseminar).
 - **IATF:** protocolo D0/D7/D9 + IA no D11. D0: 1 implante (Sincrogest ou CIDR) + 2ml Sincrodiol (Benzoato) + 2,5ml Sincroforte (Buserelina). D7: 2ml Estron (Cloprostenol). D9: 2ml Estron + 1ml SincroCP (Cipionato). **Candidatas** = vazias aptas/atrasadas (e diagnosticadas negativo). **O implante costuma ser o gargalo de estoque.**
 - **BST (Lactotropin/Boostin):** a cada 12 dias (próxima 02/07/2026), **só lactantes (grupos 01/02/03) com DEL ≥ 60 e faltando > 15 dias para secar.** Listar quem NÃO recebe.

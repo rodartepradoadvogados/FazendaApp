@@ -2544,7 +2544,7 @@ function AgendaConteudo() {
   const totalConcluidos = inducaoConcluidosPeriodo.length + realizadosGenericos.length;
   const pendencias = agenda?.pendencias || { n: 0, mais_antiga_dias: null };
   const aindaCalculando = !projAtual;
-  const linkConfigRepasse = "/protocolos?aba=cadastro&tipo=sanitario&sub=preventivo";
+  const linkConfigRepasse = "/parametros";
 
   const renderPainel = () => (
     <div id="ag2-painel-painel" role="tabpanel" aria-labelledby="ag2-tab-painel">

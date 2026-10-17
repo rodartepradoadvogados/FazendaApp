@@ -694,7 +694,11 @@ def dias_reinseminacao_referencia() -> int:
 
 
 def usa_adesivo_deteccao_cio() -> bool:
-    return get_param_bool("usa_adesivo_deteccao_cio", False)
+    """A fazenda usa adesivo de detecção de cio de repasse? Quem decide é a chave mestra de Parâmetros › Reinseminação e
+    observação de cio, guardada na configuração de repasse (`rules/repasse.py`); sem ela, o parâmetro antigo."""
+    from fazenda.rules.repasse import usa_adesivo_vigente
+
+    return usa_adesivo_vigente()
 
 
 def dias_adesivo_cio_min() -> int:
