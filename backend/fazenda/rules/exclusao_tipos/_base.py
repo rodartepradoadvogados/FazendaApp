@@ -45,6 +45,17 @@ def _dentro_periodo(data_ref, data_inicio: str, data_fim: str) -> bool:
     return True
 
 
+def recentes_primeiro(out: list[dict], limite: int = 200) -> list[dict]:
+    """Os mais recentes primeiro, de verdade: pela data do registro (`_data`), não pelo texto do título.
+
+    O título de um item com data é "<matriz> — dd/mm/aaaa"; ordenar por ele agrupa por número de matriz e corta em
+    `limite`, e o lançamento de hoje de um animal "11153" some atrás de qualquer matriz de número maior (o diagnóstico
+    de hoje não aparecia, e a lista mostrava fim de 2023 a 2024). Sem `_data`, desempata pelo título como antes."""
+    from datetime import date
+
+    return sorted(out, key=lambda x: (x.get("_data") or date.min, x["titulo"]), reverse=True)[:limite]
+
+
 @dataclass
 class TipoExclusao:
     """Um tipo de exclusão "plugável" no motor genérico de

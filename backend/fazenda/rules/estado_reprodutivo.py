@@ -163,6 +163,21 @@ def data_em_que_ficou_apta(
     return max(data_idade_ok, data_peso_ok)
 
 
+def diagnostico_efetivo_do_servico(servico: Any) -> str:
+    """O diagnóstico que VALE num serviço: o exame de DATA MAIS RECENTE entre o toque (`diagnostico`) e a reconfirmação
+    (`diagnostico_reconfirmacao`) — nunca "a reconfirmação sempre vence" (ver o comentário em `classificar_animal`).
+    Sem data em algum dos lados (dado legado), o lado com data conhecida vence; sem data nenhuma, o 1º toque desempata.
+    Devolve "" sem nenhum exame. Compartilhado com a auditoria de classificação (`rules/auditoria_classificacao.py`)."""
+    diagnostico = (_get(servico, "diagnostico") or "").strip().upper()
+    reconfirmacao = (_get(servico, "diagnostico_reconfirmacao") or "").strip().upper()
+    candidatos: list[tuple[date, str]] = []
+    if diagnostico:
+        candidatos.append((_d(_get(servico, "data_diagnostico")) or date.min, diagnostico))
+    if reconfirmacao:
+        candidatos.append((_d(_get(servico, "data_reconfirmacao")) or date.min, reconfirmacao))
+    return max(candidatos, key=lambda c: c[0])[1] if candidatos else ""
+
+
 def classificar_animal(
     numero: str,
     *,
@@ -266,12 +281,7 @@ def classificar_animal(
         diagnostico_reconfirmacao = (_get(ultimo_servico, "diagnostico_reconfirmacao") or "").strip().upper()
         data_diagnostico = _d(_get(ultimo_servico, "data_diagnostico"))
         data_reconfirmacao = _d(_get(ultimo_servico, "data_reconfirmacao"))
-        candidatos_diagnostico: list[tuple[date, str]] = []
-        if diagnostico:
-            candidatos_diagnostico.append((data_diagnostico or date.min, diagnostico))
-        if diagnostico_reconfirmacao:
-            candidatos_diagnostico.append((data_reconfirmacao or date.min, diagnostico_reconfirmacao))
-        diagnostico_efetivo = max(candidatos_diagnostico, key=lambda c: c[0])[1] if candidatos_diagnostico else ""
+        diagnostico_efetivo = diagnostico_efetivo_do_servico(ultimo_servico)
         perdeu = _d(_get(ultimo_servico, "data_perda_prenhez")) is not None
         base["diagnostico"] = diagnostico or None
         base["data_diagnostico"] = data_diagnostico.isoformat() if data_diagnostico else None

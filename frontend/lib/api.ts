@@ -2251,6 +2251,28 @@ export async function fetchCandidatasDiagnostico(data?: string): Promise<Candida
   return res.json();
 }
 
+export type AchadoAuditoria = {
+  numero: string; estado: string | null; roteiro: string[]; codigo: string; severidade: "alta" | "media";
+  titulo: string; explicacao: string; causa?: string; servico_id?: number | null;
+};
+export type FichaAuditoriaAnimal = {
+  numero: string; estado: string | null; roteiro: string[];
+  linha_do_tempo: { data: string | null; tipo: "servico" | "parto" | "lactacao"; texto: string; servico_id?: number | null }[];
+  passos: string[];
+};
+export type AuditoriaClassificacao = {
+  data_referencia: string; total_animais: number; total_achados: number; animais_com_achado: number;
+  resumo: Record<string, number>; achados: AchadoAuditoria[]; animal?: FichaAuditoriaAnimal;
+};
+
+/** Auditoria da classificação reprodutiva (só administrador): onde o estado de um animal não bate com os dados dele. */
+export async function fetchAuditoriaClassificacao(animal?: string): Promise<AuditoriaClassificacao> {
+  const qs = animal ? `?animal=${encodeURIComponent(animal)}` : "";
+  const res = await authFetch(`${API}/reproducao/auditoria-classificacao${qs}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao auditar a classificação"); }
+  return res.json();
+}
+
 export type AgendaVetItem = {
   numero_matriz: string; categoria: string; peso: number | null;
   lote_atual: string | null;

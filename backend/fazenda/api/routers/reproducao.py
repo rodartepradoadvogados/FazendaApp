@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
+from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaReprodutivaCards,
@@ -35,6 +35,7 @@ from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 from fazenda.rules.parto import (
     TIPO_PARTO_ABORTO, TIPO_PARTO_NATIMORTO, TIPO_PARTO_NORMAL, eh_parto_produtivo, proxima_ordem_parto,
 )
+from fazenda.rules.auditoria_classificacao import auditar as _auditar_classificacao, explicar_animal as _explicar_animal
 from fazenda.rules.fase_toque import FASES as FASES_TOQUE
 from fazenda.rules.repasse import usa_adesivo_vigente
 from fazenda.rules.parametros import (
@@ -904,6 +905,73 @@ def candidatas_ao_diagnostico(
         "situacoes": grupos,
         "totais": {fase: len(itens) for fase, itens in grupos.items()},
     }
+
+
+@router.get("/auditoria-classificacao")
+def auditoria_classificacao(
+    animal: str | None = None,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Auditoria (só administrador, só leitura): onde a classificação reprodutiva de um animal não bate com os dados dele
+    ou com a outra leitura do sistema (estado ao vivo × roteiro do veterinário). Ver `rules/auditoria_classificacao.py`
+    para os achados e as causas. Com `?animal=NUMERO`, devolve também a linha do tempo e o passo a passo daquele animal."""
+    from fazenda.rules.agenda_veterinario import _categoria as _categoria_vet
+
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    hoje = date.today()
+    animais, estados = _estados_da_agenda(session, fazenda_id, hoje)
+
+    q_serv = select(Servico)
+    q_part = select(Parto)
+    q_lact = select(Lactacao)
+    if fazenda_id is not None:
+        q_serv, q_part, q_lact = (q.where(m.fazenda_id == fazenda_id) for q, m in ((q_serv, Servico), (q_part, Parto), (q_lact, Lactacao)))
+    servicos_por_animal: dict[str, list] = {}
+    for s in session.exec(q_serv).all():
+        servicos_por_animal.setdefault(s.numero_matriz, []).append(s)
+    partos_por_animal: dict[str, list[date]] = {}
+    for p in session.exec(q_part).all():
+        if p.data_parto:
+            partos_por_animal.setdefault(p.numero_matriz, []).append(p.data_parto)
+    lactacao_inicio: dict[str, date] = {}
+    for lact in session.exec(q_lact).all():
+        if lact.data_inicio and not (lact.data_fim is not None and lact.data_fim <= hoje):
+            if lact.numero_matriz not in lactacao_inicio or lact.data_inicio > lactacao_inicio[lact.numero_matriz]:
+                lactacao_inicio[lact.numero_matriz] = lact.data_inicio
+
+    listas = agenda_veterinario(data=None, session=session, fazenda_id=fazenda_id)["listas"]
+    roteiro: dict[str, list[str]] = {}
+    for nome, itens in listas.items():
+        if nome == "observacao_cio":  # subconjunto de "inseminadas_1_29"
+            continue
+        for item in itens:
+            roteiro.setdefault(item["numero_matriz"], []).append(nome)
+
+    # O roteiro não classifica bezerras nem animais marcados "a descartar": fora deles a comparação não faz sentido.
+    auditaveis = [a for a in animais if not a.get("a_descartar") and _categoria_vet(a) != "bezerra"]
+    achados = _auditar_classificacao(
+        animais=auditaveis, servicos_por_animal=servicos_por_animal, partos_por_animal=partos_por_animal,
+        lactacao_inicio_por_animal=lactacao_inicio, estados=estados, roteiro_por_animal=roteiro, hoje=hoje,
+    )
+    ordem = {"alta": 0, "media": 1}
+    achados.sort(key=lambda a: (ordem.get(a["severidade"], 9), a["codigo"], chave_numero(a["numero"])))
+    resumo: dict[str, int] = {}
+    for a in achados:
+        resumo[a["codigo"]] = resumo.get(a["codigo"], 0) + 1
+    resposta: dict = {
+        "data_referencia": hoje.isoformat(), "total_animais": len(auditaveis), "total_achados": len(achados),
+        "animais_com_achado": len({a["numero"] for a in achados}), "resumo": resumo, "achados": achados[:2000],
+    }
+    if animal:
+        if animal not in estados:
+            raise HTTPException(status_code=404, detail=f"Animal {animal} não encontrado entre as fêmeas ativas da fazenda")
+        resposta["animal"] = _explicar_animal(
+            animal, servicos=servicos_por_animal.get(animal, []), partos=sorted(partos_por_animal.get(animal, [])),
+            lactacao_inicio=lactacao_inicio.get(animal), estado=estados.get(animal), roteiro=roteiro.get(animal, []), hoje=hoje,
+        )
+    return resposta
 
 
 class CardSalvoIn(BaseModel):

@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from fazenda.models import EntregaLeiteMensal, PesagemCorporal
-from fazenda.rules.exclusao_tipos._base import TipoExclusao, _br, _contem, _dentro_periodo
+from fazenda.rules.exclusao_tipos._base import TipoExclusao, _br, _contem, _dentro_periodo, recentes_primeiro
 
 
 def _data_competencia(competencia: str | None) -> date | None:
@@ -47,7 +47,7 @@ def _buscar_entrega_leite(
             "subtitulo": f"{r.quantidade_litros:g} L",
             "_data": data_ref,
         })
-    return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+    return recentes_primeiro(out)
 
 
 def _alvos_entrega_leite(id_: str, session: Session | None = None, fazenda_id: int | None = None) -> tuple[list[str], list]:
@@ -78,7 +78,7 @@ def _buscar_pesagem_corporal(
             "subtitulo": subtitulo,
             "_data": p.data_pesagem,
         })
-    return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+    return recentes_primeiro(out)
 
 
 def _alvos_pesagem_corporal(id_: str, session: Session | None = None, fazenda_id: int | None = None) -> tuple[list[str], list]:

@@ -7,7 +7,8 @@ import HistoricoServicos, { type Foco } from "@/components/reproducao/HistoricoS
 import HistoricoPartos from "@/components/reproducao/HistoricoPartos";
 import HistoricoSecagens from "@/components/reproducao/HistoricoSecagens";
 import HistoricoCiclosIatf from "@/components/reproducao/HistoricoCiclosIatf";
-import { ABAS_VISAO, type AbaVisao } from "@/app/reproducao/page";
+import AuditoriaClassificacao from "@/components/reproducao/AuditoriaClassificacao";
+import { ABAS_VISAO, abasVisaoVisiveis, type AbaVisao } from "@/app/reproducao/page";
 import {
   ABAS_PRODUCAO, ProducaoLeiteira, RelatoriosBstView, RelatoriosPesagemView,
   HistoricoInducaoLactacao, HistoricoSecagensProducao, EquivalenteMaduroView,
@@ -31,14 +32,14 @@ export default function HistoricoPage() {
   useEffect(() => { setAnimaisSelReproducao(new Set()); setAnimaisSelProducao(new Set()); }, [aba]);
 
   const subNavTree: SubNavNode[] = useMemo(() => [
-    ...(temReproducao ? [{ id: "reproducao", label: "Reprodução", icon: Heart, children: ABAS_VISAO.map((v) => ({ id: v.id, label: v.label, icon: v.icon })) }] : []),
+    ...(temReproducao ? [{ id: "reproducao", label: "Reprodução", icon: Heart, children: abasVisaoVisiveis().map((v) => ({ id: v.id, label: v.label, icon: v.icon })) }] : []),
     ...(temProducao ? [{ id: "producao", label: "Produção", icon: Milk, children: ABAS_PRODUCAO.map((a) => ({ id: a.id, label: a.label, icon: a.icon })) }] : []),
   ], [temReproducao, temProducao]);
 
   const activeId = aba === "reproducao" ? abaVisao : abaProducao;
   const onSelect = useCallback((id: string) => {
     if (id === "reproducao" || id === "producao") { setAba(id); return; }
-    if (ABAS_VISAO.some((v) => v.id === id)) { setAba("reproducao"); setAbaVisao(id as AbaVisao); return; }
+    if (abasVisaoVisiveis().some((v) => v.id === id)) { setAba("reproducao"); setAbaVisao(id as AbaVisao); return; }
     if (ABAS_PRODUCAO.some((a) => a.id === id)) { setAba("producao"); setAbaProducao(id as AbaProducao); return; }
   }, []);
   useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId, onSelect }), [subNavTree, activeId, onSelect]));
@@ -67,6 +68,7 @@ export default function HistoricoPage() {
         {abaVisao === "partos" ? <HistoricoPartos />
           : abaVisao === "secagens" ? <HistoricoSecagens />
           : abaVisao === "ciclos_iatf" ? <HistoricoCiclosIatf />
+          : abaVisao === "auditoria" ? <AuditoriaClassificacao />
           : <HistoricoServicos foco={visaoAtiva.foco as Foco} titulo={visaoAtiva.titulo} descricao={visaoAtiva.descricao}
               animaisSel={animaisSelReproducao} setAnimaisSel={setAnimaisSelReproducao} />}
       </div>

@@ -26,7 +26,7 @@ from fazenda.rules import exclusao_risco
 from fazenda.rules.parametros import exclusao_v2_ativa
 from fazenda.rules.exclusao_impacto import Bloqueio, ExclusaoBloqueada, Impacto, Linha
 from fazenda.rules.exclusao_tipos import REGISTRO
-from fazenda.rules.exclusao_tipos._base import _br, _contem, _dentro_periodo
+from fazenda.rules.exclusao_tipos._base import _br, _contem, _dentro_periodo, recentes_primeiro
 from fazenda.rules.farmacia_multi_principio import checar_e_desvincular_exclusao_principio
 from fazenda.rules.vale_item import eh_item_de_vale
 from fazenda.rules.supabase_storage import excluir_arquivo
@@ -88,7 +88,7 @@ router = APIRouter(prefix="/exclusoes", tags=["exclusoes"])
 
 TIPOS = [
     {"id": "animal", "label": "Animal (ficha)"},
-    {"id": "servico", "label": "Serviço / IA (inclui diagnóstico)"},
+    {"id": "servico", "label": "Serviço / IA (a inseminação inteira)"},
     {"id": "parto", "label": "Parto / nascimento"},
     {"id": "controle", "label": "Controle leiteiro"},
     {"id": "sanidade", "label": "Sanidade"},
@@ -117,7 +117,8 @@ TIPOS = [
 # continua sendo o texto exibido na linha.
 META_TIPOS: dict[str, dict] = {
     "animal": {"dominio": "reb", "plural": "animais", "dica": "Apaga a ficha e todo o histórico."},
-    "servico": {"dominio": "reb", "plural": "serviços", "dica": "A inseminação anterior volta a valer."},
+    "servico": {"dominio": "reb", "plural": "serviços", "dica": "Apaga a inseminação inteira, com o diagnóstico dela; a anterior volta a valer."},
+    "diagnostico": {"dominio": "reb", "plural": "diagnósticos", "dica": "Desfaz só o exame (toque, retoque ou perda); a inseminação fica."},
     "parto": {"dominio": "reb", "plural": "partos", "dica": "Remove a lactação e a cria gerada."},
     "controle": {"dominio": "reb", "plural": "controles leiteiros", "dica": "Some o registro de produção."},
     "sanidade": {"dominio": "san", "plural": "sanidades", "dica": "O remédio volta ao estoque."},
@@ -159,7 +160,7 @@ META_CONTAR = {
 # Tipos "de lançamento" (têm data) reunidos na busca combinada "todos_lancamentos" —
 # serve para achar algo que não constou em nenhuma das opções específicas acima.
 SUBTIPOS_TODOS = [
-    "servico", "parto", "controle", "sanidade",
+    "servico", "diagnostico", "parto", "controle", "sanidade",
     "protocolo_sanitario_lancamento", "protocolo_iatf_lancamento",
     "evento_manual", "financeiro", "compra_animal", "compra_semen", "venda_animal",
 ]
@@ -246,7 +247,7 @@ def _buscar_um(
             if _contem(termo, s.numero_matriz, s.reprodutor, s.diagnostico, s.tipo_servico)
             and _dentro_periodo(s.data_servico, data_inicio, data_fim)
         ]
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "parto":
         query = select(Parto)
@@ -263,7 +264,7 @@ def _buscar_um(
             for p in rows
             if _contem(termo, p.numero_matriz, p.tipo_parto) and _dentro_periodo(p.data_parto, data_inicio, data_fim)
         ]
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "controle":
         query = select(ControleLeiteiro)
@@ -280,7 +281,7 @@ def _buscar_um(
             for c in rows
             if _contem(termo, c.numero_matriz) and _dentro_periodo(c.data_controle, data_inicio, data_fim)
         ]
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "sanidade":
         query = select(Sanidade)
@@ -297,7 +298,7 @@ def _buscar_um(
             for s in rows
             if _contem(termo, s.numero_matriz, s.produto) and _dentro_periodo(s.data_aplicacao, data_inicio, data_fim)
         ]
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "protocolo_sanitario_lancamento":
         protocolos = {p.id: p.nome for p in session.exec(select(ProtocoloSanitario).where(ProtocoloSanitario.fazenda_id == fazenda_id)).all()} if fazenda_id is not None else {p.id: p.nome for p in session.exec(select(ProtocoloSanitario)).all()}
@@ -326,7 +327,7 @@ def _buscar_um(
                 "subtitulo": f"{realizadas}/{len(aps)} etapa(s) realizada(s)" + (f" · {l.observacao}" if l.observacao else ""),
                 "_data": l.data_inicio,
             })
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "protocolo_iatf_lancamento":
         query = select(ProtocoloIatfLancamento)
@@ -351,7 +352,7 @@ def _buscar_um(
                 "subtitulo": f"{len(matrizes)} animal(is) · {realizadas}/{len(aps)} etapa(s) realizada(s)",
                 "_data": l.data_d0,
             })
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "financeiro":
         query = select(ContaGerencial)
@@ -391,7 +392,7 @@ def _buscar_um(
             if _contem(termo, c.numero_animal, c.vendedor, c.numero_lancamento_gerado, c.gta)
             and _dentro_periodo(c.data_compra, data_inicio, data_fim)
         ]
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "venda_animal":
         query = select(VendaAnimal)
@@ -410,7 +411,7 @@ def _buscar_um(
             if _contem(termo, v.numero_animal, v.comprador, v.numero_lancamento_gerado, v.gta)
             and _dentro_periodo(v.data_venda, data_inicio, data_fim)
         ]
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "compra_semen":
         query = select(CompraSemen)
@@ -428,7 +429,7 @@ def _buscar_um(
             if _contem(termo, c.touro_nome, c.naab, c.vendedor, c.numero_lancamento_gerado)
             and _dentro_periodo(c.data_compra, data_inicio, data_fim)
         ]
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "estoque":
         query = select(Estoque)
@@ -456,7 +457,7 @@ def _buscar_um(
             for ev in rows
             if _contem(termo, ev.descricao, ev.numero_animal) and _dentro_periodo(ev.data_evento, data_inicio, data_fim)
         ]
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "lote":
         query = select(Lote)
@@ -1910,7 +1911,8 @@ def _confirmar_lote(dados: ExclusaoIn, user, session: Session, fazenda_id: int |
         itens_lote.extend(itens)
         alvos_lote.extend(alvos)
 
-    if not alvos_lote:
+    # `itens_lote` e não `alvos_lote`: um item que só DESFAZ um campo (ex.: diagnóstico) não tem objeto a apagar.
+    if not itens_lote:
         raise HTTPException(status_code=409, detail={"bloqueia": bloqueados})
 
     titulo_lote = f"Lote de {len(dados.itens)} item(ns)"
