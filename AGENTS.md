@@ -46,6 +46,10 @@ Projetos-Obsidian/
 - Leia `README.md`, `CONTEXTO_PROJETO_FAZENDA.md`, `PRODUCT.md` e `DESIGN.md` antes de alterar código.
 - Os CSV/XLSM na raiz são dados reais da fazenda (Ideagri): não os reescreva e não os copie para o cofre.
 - Decisões de arquitetura do Milk ficam em `04_CowData/Milk/Sessoes/` (nota com prefixo `ADR_`).
+- **Vídeos e arquivos produzidos do CowData** ficam em `H:\Meu Drive\COWDATA` (tutoriais em `COWDATA\Tutoriais\`).
+  Para vídeo de treinamento/tutorial, siga a skill `cowdata-video-treinamento` (plano de temporadas e motor em
+  `.claude/skills/cowdata-video-treinamento/`). Vídeo que não puder ser salvo: disponibilize para download e avise
+  **ATENÇÃO: AÇÃO NECESSÁRIA - SALVAR VÍDEO** com o destino exato.
 
 ## Fim de sessão e comunicação
 

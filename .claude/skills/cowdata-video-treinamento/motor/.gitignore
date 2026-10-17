@@ -1,0 +1,8 @@
+# gerados localmente — não versionar
+assets/*.png
+ep[0-9]*.html
+q*/
+checks*/
+audio/*.wav
+audio/*.mp3
+*.mp4
