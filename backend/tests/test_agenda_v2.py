@@ -22,7 +22,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import fazenda.database as database
 from fazenda.models import (
     AgendaManual, Animal, CalendarioSanitario, ContratoFazenda, ContratoFazendaModulo, CronogramaSanitario,
-    CronogramaSanitarioAnimal, Estoque, EventoSanitario, Fazenda, Pedido, RepasseConfig, Servico,
+    CronogramaSanitarioAnimal, Estoque, EventoSanitario, Fazenda, ParametroFazenda, Pedido, RepasseConfig, Servico,
 )
 from fazenda.models.planos import MODULOS_COMERCIAIS
 from fazenda.rules.parametros import fazenda_atual
@@ -41,6 +41,9 @@ def ctx(monkeypatch):
             s.add(ContratoFazenda(fazenda_id=fid, status="ativo"))
             for modulo in MODULOS_COMERCIAIS:
                 s.add(ContratoFazendaModulo(fazenda_id=fid, modulo=modulo, preco=0.0, ativo=True))
+        # fazenda que usa adesivo (chave mestra de Parâmetros); sem ela o repasse não é projetado
+        s.add(ParametroFazenda(chave="usa_adesivo_deteccao_cio", fazenda_id=None, grupo="reinseminacao_cio",
+                               label="Utiliza adesivos para detecção de cio de repasse?", valor="true", tipo="bool"))
         s.commit()
 
     def _sess():
