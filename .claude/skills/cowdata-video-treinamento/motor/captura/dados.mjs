@@ -3,7 +3,8 @@ function rng(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t
 const r = rng(20261017);
 const NOMES = `Estrela Mimosa Boneca Pérola Serena Pintada Bonita Faceira Graúna Jóia Garoa Princesa Aurora Violeta Margarida Flor Cereja Malhada Caramelo Chiquita Dengosa Fumaça Gaivota Hortênsia Iracema Jabuticaba Kiara Lavanda Moranga Naná Orquídea Palmira Quitéria Rosinha Safira Tereza Uirapuru Vitória Xuxa Zulmira Açucena Brisa Canela Dalila Esperança Fidalga Guiomar Helena Ipê Janaína Lua Maravilha Neblina Ondina Papoula Quimera Rainha Sereia Tulipa Urca Vênus Alvorada Bela Cigana Doçura Eva Florinda Girassol Hera Íris Jurema Lolita Melodia Nuvem Olinda Pitanga Querida Ruiva Sinhá Tigresa Umbela Valentina Alegria Baunilha Cotia Diamante Esmeralda Ferrugem Galega Heloísa Ingá Jandira Lindoia Mariposa Nega Oliveira Pagu Rubi Sabiá Tapioca Ubirajara Violeta2 Zeferina Acácia Bambina Cecília Doralice Elvira Filó Glória Hilda Iolanda Judite Lourdes Madalena Neusa Odete Prenda Rita Socorro Teresinha Vanda Zilda Amora Bromélia Cacau Dama Encanto Fada Gardênia Harmonia Inês Jasmim Lírio Marfim Neve Opala Pérola2 Réstia Safra Trigueira Urtiga Vaidosa Xaxá Yara Zabumba Alecrim Boêmia Camélia Dália Estação Frésia Gioconda Hortelã Iara Jacira Kátia Lavínia Mangueira Nectarina Oásis Petúnia Quaresma Romã Sálvia Tâmara Ursula Verbena Wanda Ximena Yasmin Zínia Abelha Borboleta Cotovia Dourada Estrelinha Formosa Galinha2 Harpia Ilusão Joaninha Lagoa Mariana Névoa Ostra Pomba Quinquilharia Rolinha Saudade Tempestade Umbu Vagalume Zefa Amada Branquinha Clarice Diva Edite Fartura Gentil Hera2 Ivete Jussara Laura Mel Noêmia Olga Penha Rosália Sol Tina Uva Vera Wilma Alma Berenice Chuvisco Donzela Elis Fiama Gema Hebe Isadora Julieta Lara Márcia Nilza Ofélia Paloma Quênia Regina Sandra Telma Ursa Vilma Zoraide Aldeia Barroca Cascata Duna Enseada Fonte Gruta Horizonte Ilha Jangada Lagoinha Mata Nascente Oca Pradaria Quebrada Restinga Serra Trilha Vale Várzea Aroeira Buriti Cajá Dendê Embaúba Figueira Goiaba Hibisco Imbé Jaca Louro Manga Nogueira`.split(/\s+/).filter(n=>n && !/\d/.test(n));
 // séries (T1) + as duas vacas novas do episódio
-const EP4 = process.env.EP === "t2e4"; // Ep. 4: parto (herda tudo do Ep. 3; acrescenta no 05 - Pré-parto as matrizes 3654 Dolores e 5611 Lucinda)
+const EP5 = process.env.EP === "t2e5"; // Ep. 5: protocolo de IATF (herda o Ep. 4 e aplica o parto: 3654 Dolores → 01 - Alta, nasce a 4712; 6 atrasadas; 1 vaca em protocolo D7)
+const EP4 = process.env.EP === "t2e4" || EP5; // Ep. 4: parto (herda tudo do Ep. 3; acrescenta no 05 - Pré-parto as matrizes 3654 Dolores e 5611 Lucinda)
 const EP3 = process.env.EP === "t2e3" || EP4; // Ep. 3: diagnóstico de gestação (mesmos lotes do Ep. 2 + 9 vacas "a tocar")
 const EP2 = process.env.EP === "t2e2" || EP3; // Ep. 2: lotes DEPOIS da troca do Ep. 1 (3990, 4033 e 4078 já no 02 - Média)
 // Ep. 3: as 9 vacas inseminadas há ~30 dias que aparecem em "A tocar" (brinco, nome, lote, dias desde a IA, DEL, plano do episódio)
@@ -112,4 +113,23 @@ if (EP3) {
     candidatasEp3.a_reconfirmar.push(item(num, ia, { estado: "gestante", dias_gestacao: ia, fase: "a_reconfirmar", diagnostico: "POSITIVO", data_diagnostico: iso(ia - 31), retoque: true })); });
   gestantes.slice(6, 20).forEach((num, i) => { const ia = 75 + i * 6; estadosEp2[num].gest = ia;
     candidatasEp3.reconfirmada.push(item(num, ia, { estado: "gestante", dias_gestacao: ia, fase: "reconfirmada", diagnostico: "POSITIVO", data_diagnostico: iso(ia - 31), diagnostico_reconfirmacao: "POSITIVO", data_reconfirmacao: iso(ia - 62), retoque: true })); });
+}
+
+// ── Ep. 5: o rebanho DEPOIS do parto do Ep. 4 (249 animais) e a situação para o Protocolo IATF ──
+// 01 - Alta 40 · 05 - Pré-parto 11 · 07 - Bezerras 59. Atrasadas = 6 (como no Ep. 2). Uma vaca do 03 - Baixa está em protocolo (D0 10/10, hoje D7).
+export const EP5_INFO = {};
+if (EP5) {
+  const mae = animais.find((a) => a.numero === "3654");
+  mae.grupo_primario = "01 - Alta"; mae.categoria_abrev = "Vaca"; mae.categoria_completa = "Vaca em lactação"; mae.del_dias = 1;
+  estadosEp2["3654"] = { estado: "nao_apta", gest: null, ia: null };
+  animais.push({ numero: "4712", nome: null, grupo_primario: "07 - Bezerras", categoria_abrev: "Bezerra", categoria_completa: "Bezerra", sexo: "F", del_dias: null, eh_semen: false, raca: "Holandesa" });
+  estadosEp2["4712"] = { estado: "nao_apta", gest: null, ia: null };
+  // a 6ª atrasada: a primeira gestante gerada do 01 - Alta (nem fixa nem "a tocar") vira vaca vazia com DEL alto
+  const fixas = new Set(Object.values(FIXAS).flat().map((x) => x[0]));
+  const nova = animais.find((a) => a.grupo_primario === "01 - Alta" && !fixas.has(a.numero) && estadosEp2[a.numero]?.estado === "gestante");
+  estadosEp2[nova.numero] = { estado: "atrasada", gest: null, ia: null }; nova.del_dias = 168;
+  // vaca em protocolo: a primeira apta gerada do 03 - Baixa
+  const prot = animais.find((a) => a.grupo_primario === "03 - Baixa" && !fixas.has(a.numero) && estadosEp2[a.numero]?.estado === "apta");
+  estadosEp2[prot.numero] = { estado: "em_protocolo", gest: null, ia: null, prot: 7, d0: "2026-10-10" };
+  EP5_INFO.atrasadaNova = nova.numero; EP5_INFO.protocolo = prot.numero;
 }

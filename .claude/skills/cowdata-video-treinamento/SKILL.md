@@ -51,10 +51,10 @@ usuário conferir em Propriedades que o arquivo baixado está completo.
 | 2 | Lotes (Composição, Indicadores, Exportar PDF / Compartilhar) | 0:56 |
 | 3 | Listas do painel (Gestantes, Inseminadas, PEV, Vazias, Aptas, Atrasadas, IA atual, Parto previsto, Secagens, DEL/Produção, IEP, Ver Animal) | 1:30 |
 
-### Temporada 2 — Lançamentos (app Android) — EM ANDAMENTO (Ep. 1 em 2026-10-17, Ep. 2, Ep. 3 e Ep. 4 em 2026-10-18), ~11 episódios
+### Temporada 2 — Lançamentos (app Android) — EM ANDAMENTO (Ep. 1 em 2026-10-17, Ep. 2 a Ep. 5 em 2026-10-18), ~11 episódios
 | Bloco | Episódios |
 |---|---|
-| REPRODUTIVOS (4) | lançamento de inseminação — **Ep. 2 CONCLUÍDO** (`APP-Lancamentos_Ep2_Inseminacao-em-lote.mp4`, 1:04) · diagnóstico — **Ep. 3 CONCLUÍDO** (`APP-Lancamentos_Ep3_Diagnostico-de-gestacao.mp4`, 1:05) · parto — **Ep. 4 CONCLUÍDO** (`APP-Lancamentos_Ep4_Parto.mp4`, 1:02) · protocolo de IATF |
+| REPRODUTIVOS (4) | lançamento de inseminação — **Ep. 2 CONCLUÍDO** (`APP-Lancamentos_Ep2_Inseminacao-em-lote.mp4`, 1:04) · diagnóstico — **Ep. 3 CONCLUÍDO** (`APP-Lancamentos_Ep3_Diagnostico-de-gestacao.mp4`, 1:05) · parto — **Ep. 4 CONCLUÍDO** (`APP-Lancamentos_Ep4_Parto.mp4`, 1:02) · protocolo de IATF — **Ep. 5 CONCLUÍDO** (`APP-Lancamentos_Ep5_Protocolo-IATF.mp4`, 1:01) |
 | PRODUÇÃO (3) | controle leiteiro · pesagem corporal + secagem (um episódio) · BST |
 | SANIDADE (2) | aplicação — curativa e preventiva no mesmo episódio · protocolo sanitário (curativo) |
 | ALIMENTAÇÃO (1) | lançamento e sobra de cocho |
@@ -132,6 +132,11 @@ Temporada 2" abaixo). Pasta de destino: `H:\Meu Drive\COWDATA\Tutoriais\APP - LA
   3654 Dolores e 5611 Lucinda; `POST /reproducao/parto` devolve `crias_criadas` e põe a cria na lista, `/producao/sugestao-lote-evento` (mãe → 01 - Alta, Bezerra → 07 - Bezerras) e `/sanidade/colostragem`).
   O Parto é um formulário de UM animal, sem barra fixa (barTop = topo da navegação) e os modais são estáticos (`position:fixed`). Cuidado de rolagem: uma captura alta só rola até o próprio máximo — troque de estado
   ANTES de rolar além dele (senão a imagem salta na troca). Anotação presa a um alvo que vai sair da tela por rolagem precisa terminar antes da rolagem. O nome "Serena" já é da 4210 (Eps. 1–3): a matriz do parto é 3654 Dolores.
+
+- **Ep. 5 (Protocolo de IATF)**: `episodios/t2e5.js`, `tl_t2e5.py` → `audio/tl_t2e5.json`, captura em `captura/capturar_t2e5.mjs` (`EP=t2e5 node stub-api.mjs` **e** `EP=t2e5 node capturar_t2e5.mjs`: o `dados.mjs` também lê `EP`).
+  O stub herda o Ep. 4 e aplica o parto (3654 Dolores → 01 - Alta, nasce a 4712: 249 animais), sobe as atrasadas a 6, põe a 3054 Baunilha "em protocolo" (D0 10/10, D7 hoje) e serve `protocolo_dia_atual`/`protocolo_d0`
+  em `/indicadores/estados-reprodutivos` e o POST único `/reproducao/protocolo-iatf`. A vaca travada aparece pela busca (em "Todas" a lista passa de 100 cartões). Rascunho salvo empurra a página 21,5 px: a rolagem das capturas
+  depois de marcar soma isso. Quando o diagrama do papel (`EP.diag`) sai e o título volta, esconda o título (`EP.oculta`) durante o fade, senão o título anterior reaparece por cima.
 
 ### Ambiente
 `quadros.mjs` usa o Playwright de `/opt/node-tools` e o Chromium de `/opt/pw-browsers` (sessão na
