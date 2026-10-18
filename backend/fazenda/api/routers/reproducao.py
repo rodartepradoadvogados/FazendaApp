@@ -3076,9 +3076,10 @@ def registrar_servico(
     _exigir_aptidao(
         session, animal, data=dados.data_servico, fazenda_id=fazenda_id, forcar=dados.forcar,
     )
-    # Mesma regra de `/servico-lote`: sem `protocolo` o lançamento é cio natural / monta natural, e matriz em protocolo IATF
-    # vigente não recebe um segundo ciclo (é por esta rota que o app de campo lança). Com `protocolo` é a IA do próprio IATF.
-    if not dados.protocolo:
+    # Monta natural de matriz em protocolo IATF vigente cria um segundo ciclo (como em `/servico-lote`). Aqui só a MONTA é
+    # barrada: o app de campo lança a IA do D11 por esta rota SEM `protocolo`, e uma IA depois do D0 é justamente o que
+    # fecha o protocolo — recusá-la quebraria a inseminação do IATF no campo.
+    if not dados.protocolo and dados.tipo_servico == "Monta natural":
         _exigir_fora_de_protocolo_vigente(
             session, [dados.numero_matriz], fazenda_id=fazenda_id, a_partir_de=dados.data_servico,
             acao="lance como IATF (vincula e fecha o protocolo) ou remova-a do protocolo antes de lançar cio natural / monta natural.",
