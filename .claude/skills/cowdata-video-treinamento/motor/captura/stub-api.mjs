@@ -1,13 +1,15 @@
 // API de mentira para filmar as telas reais (dados fictícios, Fazenda Boa Esperança). Aplica POST /movimentacoes/mover.
 import http from "node:http";
-import { animais, lotes, SEED_MOTIVOS, estadosEp2, candidatasEp3, DATA_REF } from "./dados.mjs";
-const EP6 = process.env.EP === "t2e6"; // Ep. 6: controle leiteiro (herda o Ep. 5)
+import { animais, lotes, SEED_MOTIVOS, estadosEp2, candidatasEp3, DATA_REF, pesagensRel, secagemLista, ESTOQUE7 } from "./dados.mjs";
+const EP7 = process.env.EP === "t2e7"; // Ep. 7: pesagem corporal e secagem (herda o Ep. 6)
+const EP6 = process.env.EP === "t2e6" || EP7; // Ep. 6: controle leiteiro (herda o Ep. 5)
 const EP5 = process.env.EP === "t2e5" || EP6; // Ep. 5: protocolo de IATF (herda o Ep. 4)
 const EP4 = process.env.EP === "t2e4" || EP5; // Ep. 4: parto (herda o Ep. 3)
 const EP3 = process.env.EP === "t2e3" || EP4; // Ep. 3: diagnóstico de gestação (usa também os estados e o estoque do Ep. 2)
 const EP2 = process.env.EP === "t2e2" || EP3; // Ep. 2: inseminação em lote
 const INICIAL = EP2 ? { est: structuredClone(estadosEp2), semen: structuredClone(globalThis.__SEMEN), cand: structuredClone(candidatasEp3) } : null;
 const ANIMAIS0 = EP4 ? structuredClone(animais) : null; // Ep. 4: o parto acrescenta a cria à lista; /__reset volta ao início
+const REL0 = EP7 ? structuredClone(pesagensRel) : null, SEC0 = EP7 ? structuredClone(secagemLista.animais) : null, EST0 = EP7 ? structuredClone(ESTOQUE7) : null; // Ep. 7: /__reset volta ao início
 const cfg = { atraso: 0, falhar: [] }; // POST /__cfg {atraso: ms por envio, falhar: [brincos que falham 1 vez]}
 const log = [];
 const estadoDe = (a) => {
@@ -39,6 +41,7 @@ http.createServer(async (req, res) => {
   if (p === "/movimentacoes/sugestoes") return send({ total: 0, lotes_com_criterio: 0, sugestoes: [] });
   if (p === "/indicadores/estados-reprodutivos") return send({ data_referencia: "2026-10-17", animais: animais.map(estadoDe), contagem: {}, parametros: {} });
   if (EP4 && p === "/__reset") { animais.splice(0, animais.length, ...structuredClone(ANIMAIS0)); }
+  if (EP7 && p === "/__reset") { pesagensRel.splice(0, pesagensRel.length, ...structuredClone(REL0)); secagemLista.animais.splice(0, secagemLista.animais.length, ...structuredClone(SEC0)); secagemLista.ultima_secagem = null; ESTOQUE7.splice(0, ESTOQUE7.length, ...structuredClone(EST0)); }
   if (EP2 && p === "/__reset") { for (const k of Object.keys(estadosEp2)) estadosEp2[k] = structuredClone(INICIAL.est[k]); globalThis.__SEMEN = structuredClone(INICIAL.semen); if (EP3) for (const k of Object.keys(candidatasEp3)) candidatasEp3[k] = structuredClone(INICIAL.cand[k]); cfg.atraso = 0; cfg.falhar = []; return send({ ok: true }); }
   if (EP4 && p === "/producao/sugestao-lote-evento" && req.method === "POST") { // mãe recém-parida → 01 - Alta; cria Bezerra → 07 - Bezerras
     const b = await corpo(req); log.push({ p, b });
@@ -59,6 +62,30 @@ http.createServer(async (req, res) => {
     return send({ touros: t, totais: { convencional: tot("convencional"), sexado: tot("sexado") }, minimos: { convencional: 5, sexado: 3 }, abaixo_minimo: { convencional: false, sexado: false } });
   }
   if (EP2 && p === "/reproducao/protocolo-iatf/ativos") return send([]);
+  if (EP7) { // Ep. 7: pesagem corporal e secagem
+    if (p === "/producao/pesagens/relatorio") return send({ linhas: pesagensRel });
+    if (p === "/producao/pesagens" && req.method === "POST") { // grava a nova "última pesagem" de cada animal
+      const b = await corpo(req); log.push({ p, b });
+      if (cfg.atraso) await new Promise((ok) => setTimeout(ok, cfg.atraso));
+      for (const e of b.entradas || []) { const l = pesagensRel.find((x) => x.numero_matriz === e.numero_matriz); if (l) { l.ultima_data = b.data_pesagem; l.ultima_peso = e.peso_kg; l.num_pesagens++; } }
+      return send({ ok: true, criados: (b.entradas || []).length });
+    }
+    if (p === "/producao/secagem-lista") return send(secagemLista);
+    if (p === "/producao/secagem-info") { const l = secagemLista.animais.find((x) => x.numero_matriz === u.searchParams.get("numero_matriz")); return send(l ? { del_atual: l.del_atual, data_prevista_secagem: l.data_prevista_secagem, deve_secar: l.deve_secar, motivo_exclusao: null, dias_gestacao: l.dias_gestacao } : { del_atual: null, data_prevista_secagem: null, deve_secar: null, motivo_exclusao: null, dias_gestacao: null }); }
+    if (p === "/producao/secagem" && req.method === "POST") { // sugere o 04 - Secas; a vaca sai da lista de lactação
+      const b = await corpo(req); log.push({ p, b });
+      if (cfg.atraso) await new Promise((ok) => setTimeout(ok, cfg.atraso));
+      const i = secagemLista.animais.findIndex((x) => x.numero_matriz === b.numero_matriz); if (i >= 0) secagemLista.animais.splice(i, 1);
+      secagemLista.ultima_secagem = b.data_secagem;
+      for (const pr of b.produtos || []) { const it = ESTOQUE7.find((x) => x.nome === pr.produto); if (it && b.aplicado) it.quantidade -= pr.quantidade; }
+      return send({ ok: true, lote_sugerido: { codigo: "04", nome: "Secas", rotulo: "04 - Secas" }, avisos: [] });
+    }
+    if (p === "/estoque/") return send({ itens: ESTOQUE7 });
+    if (p === "/sanidade/aplicacoes") return send({ aplicacoes: [] });
+    if (p === "/estoque/medicamentos") return send([]);
+    if (p === "/cadastro/pessoas") return send([]);
+    if (p === "/parametros/transferencia-lote-automatica") return send({ automatica: false });
+  }
   if (EP6 && p === "/producao/controles" && req.method === "POST") { const b = await corpo(req); log.push({ p, b }); if (cfg.atraso) await new Promise((ok) => setTimeout(ok, cfg.atraso)); return send({ ok: true, criados: (b.entradas || []).length }); }
   if (EP5 && p === "/reproducao/protocolo-iatf" && req.method === "POST") { // Ep. 5: um único POST com o lote inteiro; as vacas passam a "em protocolo · D0"
     const b = await corpo(req); log.push({ p, b });

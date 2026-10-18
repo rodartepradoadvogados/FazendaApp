@@ -3,7 +3,8 @@ function rng(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t
 const r = rng(20261017);
 const NOMES = `Estrela Mimosa Boneca Pérola Serena Pintada Bonita Faceira Graúna Jóia Garoa Princesa Aurora Violeta Margarida Flor Cereja Malhada Caramelo Chiquita Dengosa Fumaça Gaivota Hortênsia Iracema Jabuticaba Kiara Lavanda Moranga Naná Orquídea Palmira Quitéria Rosinha Safira Tereza Uirapuru Vitória Xuxa Zulmira Açucena Brisa Canela Dalila Esperança Fidalga Guiomar Helena Ipê Janaína Lua Maravilha Neblina Ondina Papoula Quimera Rainha Sereia Tulipa Urca Vênus Alvorada Bela Cigana Doçura Eva Florinda Girassol Hera Íris Jurema Lolita Melodia Nuvem Olinda Pitanga Querida Ruiva Sinhá Tigresa Umbela Valentina Alegria Baunilha Cotia Diamante Esmeralda Ferrugem Galega Heloísa Ingá Jandira Lindoia Mariposa Nega Oliveira Pagu Rubi Sabiá Tapioca Ubirajara Violeta2 Zeferina Acácia Bambina Cecília Doralice Elvira Filó Glória Hilda Iolanda Judite Lourdes Madalena Neusa Odete Prenda Rita Socorro Teresinha Vanda Zilda Amora Bromélia Cacau Dama Encanto Fada Gardênia Harmonia Inês Jasmim Lírio Marfim Neve Opala Pérola2 Réstia Safra Trigueira Urtiga Vaidosa Xaxá Yara Zabumba Alecrim Boêmia Camélia Dália Estação Frésia Gioconda Hortelã Iara Jacira Kátia Lavínia Mangueira Nectarina Oásis Petúnia Quaresma Romã Sálvia Tâmara Ursula Verbena Wanda Ximena Yasmin Zínia Abelha Borboleta Cotovia Dourada Estrelinha Formosa Galinha2 Harpia Ilusão Joaninha Lagoa Mariana Névoa Ostra Pomba Quinquilharia Rolinha Saudade Tempestade Umbu Vagalume Zefa Amada Branquinha Clarice Diva Edite Fartura Gentil Hera2 Ivete Jussara Laura Mel Noêmia Olga Penha Rosália Sol Tina Uva Vera Wilma Alma Berenice Chuvisco Donzela Elis Fiama Gema Hebe Isadora Julieta Lara Márcia Nilza Ofélia Paloma Quênia Regina Sandra Telma Ursa Vilma Zoraide Aldeia Barroca Cascata Duna Enseada Fonte Gruta Horizonte Ilha Jangada Lagoinha Mata Nascente Oca Pradaria Quebrada Restinga Serra Trilha Vale Várzea Aroeira Buriti Cajá Dendê Embaúba Figueira Goiaba Hibisco Imbé Jaca Louro Manga Nogueira`.split(/\s+/).filter(n=>n && !/\d/.test(n));
 // séries (T1) + as duas vacas novas do episódio
-const EP6 = process.env.EP === "t2e6"; // Ep. 6: controle leiteiro (herda o Ep. 5; acrescenta em_lactacao nos animais e status_lactacao nos lotes)
+const EP7 = process.env.EP === "t2e7"; // Ep. 7: pesagem corporal e secagem (herda o Ep. 6; acrescenta idade_meses, pesagens anteriores e a lista de secagem)
+const EP6 = process.env.EP === "t2e6" || EP7; // Ep. 6: controle leiteiro (herda o Ep. 5; acrescenta em_lactacao nos animais e status_lactacao nos lotes)
 const EP5 = process.env.EP === "t2e5" || EP6; // Ep. 5: protocolo de IATF (herda o Ep. 4 e aplica o parto: 3654 Dolores → 01 - Alta, nasce a 4712; 6 atrasadas; 1 vaca em protocolo D7)
 const EP4 = process.env.EP === "t2e4" || EP5; // Ep. 4: parto (herda tudo do Ep. 3; acrescenta no 05 - Pré-parto as matrizes 3654 Dolores e 5611 Lucinda)
 const EP3 = process.env.EP === "t2e3" || EP4; // Ep. 3: diagnóstico de gestação (mesmos lotes do Ep. 2 + 9 vacas "a tocar")
@@ -137,3 +138,48 @@ if (EP5) {
 
 // ── Ep. 6: controle leiteiro. Só as vacas dos lotes 01–03 têm lactação aberta (111 de 249); secas, pré-parto, novilhas e bezerras não (filtro real "só vacas em lactação") ──
 if (EP6) for (const a of animais) a.em_lactacao = ["01","02","03"].includes((a.grupo_primario || "").slice(0, 2));
+
+// ── Ep. 7: Pesagem corporal e Secagem ──
+// idade_meses em todos os animais; relatório de pesagem (última pesagem de cada animal: novilhas em 17/09, 30 dias antes de hoje; 12 bezerras em 12/08,
+// há mais de 60 dias); lista de secagem das 111 vacas em lactação, com 3 vacas a até 30 dias (Hilda, Melodia, Iolanda: gestação ~220 dias).
+export const pesagensRel = [];            // linhas de GET /producao/pesagens/relatorio
+export const secagemLista = { hoje: "2026-10-17", ultima_secagem: null, animais: [] }; // sem "última secagem": o valor "09/10/2026" é cortado pela faixa do app (390 px)
+export const SECAGEM_PLANO = [["3338", 221], ["2305", 217], ["3013", 214]]; // [brinco, dias de gestação]: parto previsto aos 283 dias, secagem 60 dias antes
+export const ESTOQUE7 = [
+  { nome: "Antibiótico secagem (bisnaga)", quantidade: 20, unidade: "unidade", categoria: "Medicamento", ativo: true, estocavel: true, finalidade: "secagem" },
+  { nome: "Selante de teto", quantidade: 24, unidade: "unidade", categoria: "Medicamento", ativo: true, estocavel: true, finalidade: "secagem" },
+  { nome: "Ocitocina injetável", quantidade: 180, unidade: "ml", categoria: "Medicamento", ativo: true, estocavel: true },
+  { nome: "Vermífugo oral", quantidade: 60, unidade: "ml", categoria: "Medicamento", ativo: true, estocavel: true },
+];
+if (EP7) {
+  const r7 = rng(20261019);
+  const FAIXA_IDADE = { "01": [30, 78], "02": [32, 80], "03": [34, 84], "04": [36, 84], "05": [26, 40], "06": [13, 22], "07": [1, 9] };
+  for (const a of animais) { const [lo, hi] = FAIXA_IDADE[a.grupo_primario.slice(0, 2)]; a.idade_meses = lo + Math.floor(r7() * (hi - lo + 1)); }
+  const porNum = (n) => animais.find((a) => a.numero === n);
+  // novilhas: as quatro primeiras da tabela (ordem numérica) têm pesos conhecidos do roteiro: 312→330, 298→315, 340→336 (perdeu), 305→322
+  const novilhas = animais.filter((a) => a.grupo_primario === "06 - Novilhas").sort((a, b) => a.numero.localeCompare(b.numero, "pt-BR", { numeric: true }));
+  const PESO_ANT = [312, 298, 340, 305], IDADE_FIXA = [17, 15, 19, 16];
+  const dataMais = (iso, d) => new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10) + d)).toISOString().slice(0, 10);
+  novilhas.forEach((a, i) => {
+    if (i < 4) a.idade_meses = IDADE_FIXA[i];
+    const peso = i < 4 ? PESO_ANT[i] : Math.round(110 + a.idade_meses * 11 + (r7() - 0.5) * 30);
+    const np = 3 + Math.floor(r7() * 3), dias = 150 + Math.floor(r7() * 60), gmd = 0.55 + r7() * 0.3;
+    pesagensRel.push({ numero_matriz: a.numero, grupo_primario: a.grupo_primario, primeira_data: dataMais("2026-09-17", -dias), primeira_peso: Math.round(peso - gmd * dias),
+      ultima_data: "2026-09-17", ultima_peso: peso, gmd_kg_dia: +gmd.toFixed(3), gpd_kg_dia: +(gmd * 0.97).toFixed(3), num_pesagens: np });
+  });
+  animais.filter((a) => a.grupo_primario === "07 - Bezerras").slice(0, 12).forEach((a) => {
+    const peso = 60 + a.idade_meses * 18, gmd = 0.7 + r7() * 0.25, dias = 70;
+    pesagensRel.push({ numero_matriz: a.numero, grupo_primario: a.grupo_primario, primeira_data: dataMais("2026-08-12", -dias), primeira_peso: Math.round(peso - gmd * dias),
+      ultima_data: "2026-08-12", ultima_peso: peso, gmd_kg_dia: +gmd.toFixed(3), gpd_kg_dia: +(gmd * 0.98).toFixed(3), num_pesagens: 2 });
+  });
+  // secagem: as 3 vacas do plano ganham DEL coerente com a gestação (~300 dias); as demais gestantes ficam com secagem prevista depois dos 30 dias
+  for (const [n] of SECAGEM_PLANO) porNum(n).del_dias = 296 + (Number(n) % 17);
+  for (const a of animais.filter((x) => x.em_lactacao)) {
+    const plano = SECAGEM_PLANO.find((p) => p[0] === a.numero);
+    const e = estadosEp2[a.numero];
+    const gest = plano ? plano[1] : e?.estado === "gestante" ? Math.min(e.gest || 0, 186) : null;
+    const dias = gest == null ? null : 283 - 60 - gest;
+    secagemLista.animais.push({ numero_matriz: a.numero, grupo_primario: a.grupo_primario, del_atual: a.del_dias, dias_gestacao: gest,
+      data_prevista_secagem: dias == null ? null : dataMais("2026-10-17", dias), dias_para_secagem: dias, deve_secar: dias == null ? null : true, motivo_exclusao: null });
+  }
+}

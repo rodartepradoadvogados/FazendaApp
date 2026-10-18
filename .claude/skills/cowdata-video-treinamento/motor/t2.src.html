@@ -100,16 +100,27 @@ for(const[id,nome]of Object.entries(EP.imgs)){
   let h=`<img class="n" src="shots/${nome}.png">`;
   if(m.tall)h+=`<div class="mid" style="top:${m.hdr}px;height:${m.barTop-m.hdr}px"><img class="t" src="shots/${nome}_tall.png" style="top:-${m.hdr}px"></div>`;
   d.innerHTML=h;d.style.display='none';K.ui.appendChild(d);telas[id]={el:d,m,t:d.querySelector('img.t'),max:m.tall?Math.max(0,m.tall.h-69-m.barTop):0};
+  // m.hz = recortes do conteúdo de uma moldura de tabela em posições de rolagem horizontal (Ep. 7): o motor arrasta a tabela de lado por cima da imagem alta.
+  // EP.hscroll[id](t) = deslocamento em px CSS (0..S); a moldura rola junto com a página (mesmo translateY da imagem alta).
+  if(m.tall&&m.hz){const z=m.hz,mid=d.querySelector('.mid');const w=document.createElement('div');w.style.cssText=`position:absolute;left:${z.box.x}px;top:${z.box.y-m.hdr}px;width:${z.box.w}px;height:${z.box.h}px;overflow:hidden`;
+    const wi=document.createElement('div');wi.style.cssText=`position:absolute;left:0;top:0;width:${z.sw}px;height:${z.box.h}px`;
+    for(const sh of z.shots){const im=document.createElement('img');im.src='shots/'+sh.img;im.style.cssText=`position:absolute;left:${sh.sl}px;top:0;width:${z.box.w}px;height:${z.box.h}px`;wi.appendChild(im);}
+    w.appendChild(wi);mid.appendChild(w);telas[id].hz=w;telas[id].hzi=wi;}
 }
 const scroll=(id,t)=>{const f=EP.rolagem[id];if(!f||!telas[id])return 0;return cl(f(t),0,telas[id].max);};
 window.__scroll=scroll;
+const hscroll=(id,t)=>{const f=EP.hscroll&&EP.hscroll[id];const T=telas[id];if(!f||!T||!T.hz)return 0;return cl(f(t),0,T.m.hz.S);};
+window.__hscroll=hscroll;
 function telaAtual(t){
   let i=0;while(i+1<EP.telas.length&&t>=EP.telas[i+1][0])i++;
-  const[t0,id,dir]=EP.telas[i];const p=dir?io(lin(t,t0,t0+0.5)):1;const prev=i>0?EP.telas[i-1][1]:null;
-  for(const k in telas)telas[k].el.style.display='none';
-  const cur=telas[id];cur.el.style.display='block';cur.el.style.zIndex=2;cur.el.style.transform=`translateX(${(1-p)*390*dir}px)`;
-  if(prev&&p<1&&prev!==id){const pv=telas[prev];pv.el.style.display='block';pv.el.style.zIndex=1;pv.el.style.transform=`translateX(${-p*120*dir}px)`;}
-  for(const k in telas){if(telas[k].t&&telas[k].el.style.display!=='none')telas[k].t.style.transform=`translateY(${-scroll(k,t)}px)`;}
+  const[t0,id,dir,,fd]=EP.telas[i];const p=dir?io(lin(t,t0,t0+0.5)):1;const prev=i>0?EP.telas[i-1][1]:null;
+  // 5º campo (Ep. 7): duração de uma dissolvência entre dois estados da mesma tela quando a página muda de altura (ex.: o formulário se esvazia depois de salvar)
+  const pf=fd?io(lin(t,t0,t0+fd)):1;
+  for(const k in telas){telas[k].el.style.display='none';telas[k].el.style.opacity=1;}
+  const cur=telas[id];cur.el.style.display='block';cur.el.style.zIndex=2;cur.el.style.transform=`translateX(${(1-p)*390*dir}px)`;cur.el.style.opacity=pf;
+  if(prev&&(p<1||pf<1)&&prev!==id){const pv=telas[prev];pv.el.style.display='block';pv.el.style.zIndex=1;pv.el.style.transform=`translateX(${-p*120*dir}px)`;}
+  for(const k in telas){if(telas[k].t&&telas[k].el.style.display!=='none'){telas[k].t.style.transform=`translateY(${-scroll(k,t)}px)`;
+    if(telas[k].hz){telas[k].hz.style.transform=`translateY(${-scroll(k,t)}px)`;telas[k].hzi.style.transform=`translateX(${-hscroll(k,t)}px)`;}}}
   return i;
 }
 function camera(t){const C=EP.cam;let k=0;while(k+1<C.length&&t>=C[k+1][0])k++;const c=C[k],n=C[k+1];
@@ -139,10 +150,10 @@ function anotacoes(t,z,iTela){let h='',notas='';
     if(t<t0||t>=t1+0.2)continue;
     // regra de limpeza: toda anotação morre exatamente no quadro da próxima troca de tela
     const prox=EP.telas.find(e=>e[0]>t0+1e-6&&!e[3]); /* e[3]=1: troca só de estado da mesma tela (ex.: marcar um cartão): a anotação continua */ if(prox&&t>=prox[0])continue;
-    const rol=op.scr?scroll(op.scr,t):0;
+    const rol=op.scr?scroll(op.scr,t):0,hrol=op.hx?hscroll(op.hx,t):0;   // hx = estado cuja tabela rola de lado (Ep. 7)
     const cor=op.c||"#2E7D52";const p=op.fixo?1:oc(lin(t,t0,t0+0.38)),s=lin(t,t1,t1+0.2);const seed=i*97+Math.floor(t*12);
-    if(tipo==='marca'){const pm=io(lin(t,t0,t0+0.5));h+=`<rect x="${(bx-6)*U}" y="${(by-rol+SBH-3)*U}" width="${(bw+12)*U*pm}" height="${(bh+6)*U}" rx="5" fill="${cor}" fill-opacity="${.5*(1-s)}" style="mix-blend-mode:multiply"/>`;continue;}
-    const d=traco(tipo,bx*U,(by-rol+SBH)*U,bw*U,bh*U,seed);
+    if(tipo==='marca'){const pm=io(lin(t,t0,t0+0.5));h+=`<rect x="${(bx-6-hrol)*U}" y="${(by-rol+SBH-3)*U}" width="${(bw+12)*U*pm}" height="${(bh+6)*U}" rx="5" fill="${cor}" fill-opacity="${.5*(1-s)}" style="mix-blend-mode:multiply"/>`;continue;}
+    const d=traco(tipo,(bx-hrol)*U,(by-rol+SBH)*U,bw*U,bh*U,seed);
     h+=`<path d="${d}" pathLength="1" fill="none" stroke="${cor}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" stroke-dasharray="1 1" stroke-dashoffset="${(1-p)+s}"/>`;
     if(op.txt){const q=mola(t-t0-0.2,13,.5);notas+=`<div class="nota" style="left:${op.nx*U}px;top:${(op.ny-rol+SBH)*U}px;color:${cor};transform:scale(${cl(q,0,1.2)/z}) rotate(-5deg);opacity:${1-s}">${op.txt}</div>`;}}
   X(K.anot,h);X(K.notas,notas);}

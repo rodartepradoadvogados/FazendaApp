@@ -35,12 +35,13 @@ for produzido e não puder ser salvo na pasta acima — por esse ou qualquer out
 
 Nunca diga "salvo" sem confirmação da ferramenta.
 
-**Sempre entregue duas versões** (pedido do dono em 2026-10-18): o download pela conversa de arquivos de ~35 MB
-chegou truncado no computador do usuário — o MP4 abria com a duração cheia (índice +faststart no começo) e travava
-após poucos segundos. Envie a completa (CRF 18) **e** a leve `<nome>_leve.mp4` (`-c:v libx264 -preset slow -crf 26
--profile:v high -level 4.1 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart`, ~11–14 MB), confira que ambas
-decodificam inteiras (`ffmpeg -v error -i X -f null -`) e informe o **tamanho exato em bytes** de cada uma, para o
-usuário conferir em Propriedades que o arquivo baixado está completo.
+**Entregue só a versão leve** (pedido do dono em 2026-10-18, a partir do Ep. 7 da T2): o download pela conversa de
+arquivos de ~35 MB chegou truncado no computador do usuário — o MP4 abria com a duração cheia (índice +faststart no
+começo) e travava após poucos segundos. A entrega é `<nome>_leve.mp4` (`-c:v libx264 -preset slow -crf 26
+-profile:v high -level 4.1 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart`, ~10–15 MB; a completa CRF 18 só
+como intermediária, se o pipeline precisar, e não é enviada). Confira que decodifica inteira
+(`ffmpeg -v error -i X -f null -`) e informe o **tamanho exato em bytes**, para o usuário conferir em Propriedades que o
+arquivo baixado está completo. (Eps. 4–6 da T2 saíram em duas versões, completa + leve.)
 
 ## 3. Séries e episódios
 
@@ -51,11 +52,11 @@ usuário conferir em Propriedades que o arquivo baixado está completo.
 | 2 | Lotes (Composição, Indicadores, Exportar PDF / Compartilhar) | 0:56 |
 | 3 | Listas do painel (Gestantes, Inseminadas, PEV, Vazias, Aptas, Atrasadas, IA atual, Parto previsto, Secagens, DEL/Produção, IEP, Ver Animal) | 1:30 |
 
-### Temporada 2 — Lançamentos (app Android) — EM ANDAMENTO (Ep. 1 em 2026-10-17, Ep. 2 a Ep. 6 em 2026-10-18), ~11 episódios
+### Temporada 2 — Lançamentos (app Android) — EM ANDAMENTO (Ep. 1 em 2026-10-17, Ep. 2 a Ep. 7 em 2026-10-18), ~11 episódios
 | Bloco | Episódios |
 |---|---|
 | REPRODUTIVOS (4) | lançamento de inseminação — **Ep. 2 CONCLUÍDO** (`APP-Lancamentos_Ep2_Inseminacao-em-lote.mp4`, 1:04) · diagnóstico — **Ep. 3 CONCLUÍDO** (`APP-Lancamentos_Ep3_Diagnostico-de-gestacao.mp4`, 1:05) · parto — **Ep. 4 CONCLUÍDO** (`APP-Lancamentos_Ep4_Parto.mp4`, 1:02) · protocolo de IATF — **Ep. 5 CONCLUÍDO** (`APP-Lancamentos_Ep5_Protocolo-IATF.mp4`, 1:01) |
-| PRODUÇÃO (3) | controle leiteiro — **Ep. 6 CONCLUÍDO** (`APP-Lancamentos_Ep6_Controle-leiteiro.mp4`, 0:56) · pesagem corporal + secagem (um episódio) · BST |
+| PRODUÇÃO (3) | controle leiteiro — **Ep. 6 CONCLUÍDO** (`APP-Lancamentos_Ep6_Controle-leiteiro.mp4`, 0:56) · pesagem corporal + secagem — **Ep. 7 CONCLUÍDO** (`APP-Lancamentos_Ep7_Pesagem-e-secagem.mp4`, 1:07) · BST |
 | SANIDADE (2) | aplicação — curativa e preventiva no mesmo episódio · protocolo sanitário (curativo) |
 | ALIMENTAÇÃO (1) | lançamento e sobra de cocho |
 | MOVIMENTAR (1) | troca de lotes — **Ep. 1 CONCLUÍDO** (`APP-Lancamentos_Ep1_Troca-de-lotes.mp4`, 1:01) |
@@ -140,6 +141,8 @@ Temporada 2" abaixo). Pasta de destino: `H:\Meu Drive\COWDATA\Tutoriais\APP - LA
 
 - **Ep. 6 (Controle leiteiro)**: `episodios/t2e6.js`, `tl_t2e6.py` → `audio/tl_t2e6.json`, captura em `captura/capturar_t2e6.mjs` (`EP=t2e6 node stub-api.mjs` **e** `EP=t2e6 node capturar_t2e6.mjs`). O stub herda o Ep. 5; `dados.mjs` marca `em_lactacao` (true só nos lotes 01–03: 111 de 249) e `status_lactacao` nos lotes, e `POST /producao/controles` responde ok.
   O formulário não tem barra fixa (barTop = topo da navegação); o campo numérico mostra "18.4" com ponto (não vírgula). A página do lote (40 cartões) passa de 5300 px CSS: na escala cheia a captura estoura ~16000 px, então a parte do lote roda em contexto novo com `DSF_LOTE` (2,8; `novoContexto(browser, h, dsf)`), em uma captura alta só, que o motor rola do 1º cartão até o Salvar. O aviso "Lançamento salvo." persiste na tela: capture o lote num contexto SEM salvar a vaca antes, senão o aviso aparece antes do Salvar. Depois de salvar a página cresce (aviso) — a rolagem da tela "salvo" sobe mais 57 px dentro do mesmo estado. Duas frases da locução são partidas numa pausa real da voz (`silencedetect`) em `tl_t2e6.py` para dar tempo de digitar/preencher (o total = fim da voz + folgas). Diagrama do papel com seta tracejada até o campo vazio: a posição do campo na tela vem de `camera(t)` e da rolagem no mesmo instante.
+
+- **Ep. 7 (Pesagem corporal e secagem)**: `episodios/t2e7.js`, `tl_t2e7.py` → `audio/tl_t2e7.json`, captura em `captura/capturar_t2e7.mjs` (`EP=t2e7 node stub-api.mjs` **e** `EP=t2e7 node capturar_t2e7.mjs`; o stub herda o Ep. 6 e serve relatório de pesagem, `secagem-lista`, `/producao/secagem`, `/estoque/`). As duas telas são tabelas LARGAS (8–9 colunas) numa moldura com rolagem de lado: a captura guarda, por estado, a página alta (viewport = altura do documento, a barra sticky `.gv-barra` fica no fim) e `hz` = recortes da moldura em várias posições de rolagem; o motor ganhou `EP.hscroll[estado](t)` (arrasta a tabela de lado) e a opção `hx` nas anotações. Digitar num campo rola a moldura: volte-a a 0 antes de medir. Quem rola é o BODY. Quinto campo de `EP.telas` = dissolvência (página que muda de altura). Os tempos do plano ficam 0,1–0,5 s adiantados em relação à voz: `tl_t2e7.py` remapeia as âncoras por frase e recorta a voz nos silêncios medidos. Com 2 vacas marcadas a data fica com a prevista da 1ª; "Motivo de rotina" real = "Rotina parto". A faixa do topo do app (390 px) sobrepõe/corta datas longas (defeito do app, não do vídeo).
 
 ### Ambiente
 `quadros.mjs` usa o Playwright de `/opt/node-tools` e o Chromium de `/opt/pw-browsers` (sessão na
