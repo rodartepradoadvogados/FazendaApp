@@ -221,6 +221,7 @@ def _resumo_relatorio_personalizado(
         peso_por_animal=peso_por_animal, lotes=lotes, aplicacoes_iatf=aplicacoes_iatf,
         controles=[c.model_dump() for c in session.exec(query_controles).all()],
         secagens=[sg.model_dump() for sg in session.exec(query_secagens).all()],
+        inicio_lactacao_por_animal=_inicio_lactacao_abertas(session, fazenda_id, hoje),
     )
     rep = ind.get("reproducao", {})
 
@@ -281,6 +282,21 @@ def _resumo_relatorio_personalizado(
         "percentual_nascimento_femea_pct": round(100 * femeas / total_crias, 1) if total_crias else None,
         "taxa_cura_pct": round(100 * curadas / len(avaliadas), 1) if avaliadas else None,
     }
+
+
+def _inicio_lactacao_abertas(session: Session, fazenda_id: int | None, hoje: date) -> dict[str, date]:
+    """{numero_matriz: início da Lactacao aberta em `hoje`} — leva a lactação sem `Parto` (indução, aborto com abertura)
+    para o "DEL médio" ao vivo; ver `producao_leiteira.del_dias_ao_vivo`."""
+    query = select(Lactacao)
+    if fazenda_id is not None:
+        query = query.where(Lactacao.fazenda_id == fazenda_id)
+    abertas: dict[str, date] = {}
+    for lact in session.exec(query).all():
+        if lact.data_inicio is None or lact.data_inicio > hoje or (lact.data_fim is not None and lact.data_fim <= hoje):
+            continue
+        if lact.numero_matriz not in abertas or lact.data_inicio >= abertas[lact.numero_matriz]:
+            abertas[lact.numero_matriz] = lact.data_inicio
+    return abertas
 
 
 def _contexto_calculo(
@@ -371,6 +387,7 @@ def calcular_indicadores_fazenda(session: Session, fazenda_id: int | None, data:
     return calcular_indicadores(
         animais, servicos, partos, data_ref=data, peso_por_animal=peso_por_animal,
         lotes=lotes, aplicacoes_iatf=aplicacoes_iatf, controles=controles, secagens=secagens,
+        inicio_lactacao_por_animal=_inicio_lactacao_abertas(session, fazenda_id, data),
     )
 
 

@@ -572,6 +572,16 @@ def agenda_veterinario(
     for p in session.exec(query_partos).all():
         if p.data_parto and (p.numero_matriz not in ultimo_parto_por_animal or p.data_parto > ultimo_parto_por_animal[p.numero_matriz]):
             ultimo_parto_por_animal[p.numero_matriz] = p.data_parto
+    # Lactação aberta sem Parto (indução, aborto com abertura) é o "parto virtual" da matriz: DEL projetado e PEV da vazia
+    # contam dela quando for mais nova que o último parto (matriz 422: parto de 2025, indução em 2026).
+    query_lactacoes_abertas = select(Lactacao).where(Lactacao.data_fim == None)  # noqa: E711
+    if fazenda_id is not None:
+        query_lactacoes_abertas = query_lactacoes_abertas.where(Lactacao.fazenda_id == fazenda_id)
+    for lact in session.exec(query_lactacoes_abertas).all():
+        if lact.data_inicio and lact.data_inicio <= hoje and (
+            lact.numero_matriz not in ultimo_parto_por_animal or lact.data_inicio > ultimo_parto_por_animal[lact.numero_matriz]
+        ):
+            ultimo_parto_por_animal[lact.numero_matriz] = lact.data_inicio
 
     query_secagens = select(Secagem).where(Secagem.motivo == "rotina")
     if fazenda_id is not None:

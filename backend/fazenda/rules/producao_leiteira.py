@@ -19,7 +19,10 @@ from sqlmodel import Session, select
 from fazenda.models import Animal, ControleLeiteiro
 
 
-def del_dias_ao_vivo(del_dias_congelado: int | None, ult_parto: date | None, ult_secagem: date | None, hoje: date) -> int | None:
+def del_dias_ao_vivo(
+    del_dias_congelado: int | None, ult_parto: date | None, ult_secagem: date | None, hoje: date,
+    inicio_lactacao: date | None = None,
+) -> int | None:
     """DEL (dias em lactação) AO VIVO a partir do parto mais recente lançado no
     app — `Animal.del_dias` é zerado no instante do parto (ver registrar_parto)
     mas fica congelado dali em diante, só voltando a bater com a realidade no
@@ -33,12 +36,23 @@ def del_dias_ao_vivo(del_dias_congelado: int | None, ult_parto: date | None, ult
     Produção) chamam esta mesma função em vez de cada um recalcular por
     conta própria; antes o card usava o campo congelado direto e divergia da
     lista de animais, que já era ao vivo — ver o histórico documentado no
-    item (c) da correção do painel de produção."""
-    if ult_parto is None:
+    item (c) da correção do painel de produção.
+
+    `inicio_lactacao`: data de início da `Lactacao` ABERTA da matriz (ver
+    `fazenda.rules.lactacao`). Existe para a lactação que não tem `Parto` por
+    trás — indução de lactação (matriz 422) e aborto com abertura —, que
+    "conta como um parto" para o DEL. A âncora é a mais recente entre o último
+    parto produtivo e o início da lactação (mesma regra de
+    `estado_reprodutivo.classificar_animal`): sem isso, a vaca com parto em
+    2025, secagem depois e uma indução mais nova ficava com DEL None, porque a
+    secagem "fechava" um parto que a indução já tinha substituído. Parto real
+    mais novo que a lactação continua vencendo."""
+    ancora = max((d for d in (ult_parto, inicio_lactacao) if d is not None), default=None)
+    if ancora is None:
         return del_dias_congelado
-    if ult_secagem and ult_secagem >= ult_parto:
+    if ult_secagem and ult_secagem >= ancora:
         return None
-    return (hoje - ult_parto).days
+    return (hoje - ancora).days
 
 
 def ultimo_controle_por_animal(

@@ -912,8 +912,13 @@ def calcular_indicadores(
     aplicacoes_iatf: list[dict] | None = None,
     controles: list[dict] | None = None,
     secagens: list[dict] | None = None,
+    inicio_lactacao_por_animal: dict[str, date] | None = None,
 ) -> dict:
     """Calcula o painel de indicadores a partir dos dados carregados.
+
+    `inicio_lactacao_por_animal` (numero_matriz -> início da `Lactacao` aberta)
+    leva a lactação sem `Parto` (indução, aborto com abertura) para o "DEL
+    médio" ao vivo — ver `producao_leiteira.del_dias_ao_vivo`.
 
     `peso_por_animal` (numero_matriz -> peso_kg da pesagem corporal mais
     recente) é opcional — sem ele, "aptas" (novilhas nulíparas com peso
@@ -1160,6 +1165,7 @@ def calcular_indicadores(
             ultimo_parto_por_matriz.get(numero),
             ultima_secagem_por_matriz.get(numero),
             hoje,
+            inicio_lactacao=(inicio_lactacao_por_animal or {}).get(numero),
         )
         if del_vivo is None:
             continue
