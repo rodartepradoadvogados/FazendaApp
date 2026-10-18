@@ -3,7 +3,8 @@ function rng(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t
 const r = rng(20261017);
 const NOMES = `Estrela Mimosa Boneca Pérola Serena Pintada Bonita Faceira Graúna Jóia Garoa Princesa Aurora Violeta Margarida Flor Cereja Malhada Caramelo Chiquita Dengosa Fumaça Gaivota Hortênsia Iracema Jabuticaba Kiara Lavanda Moranga Naná Orquídea Palmira Quitéria Rosinha Safira Tereza Uirapuru Vitória Xuxa Zulmira Açucena Brisa Canela Dalila Esperança Fidalga Guiomar Helena Ipê Janaína Lua Maravilha Neblina Ondina Papoula Quimera Rainha Sereia Tulipa Urca Vênus Alvorada Bela Cigana Doçura Eva Florinda Girassol Hera Íris Jurema Lolita Melodia Nuvem Olinda Pitanga Querida Ruiva Sinhá Tigresa Umbela Valentina Alegria Baunilha Cotia Diamante Esmeralda Ferrugem Galega Heloísa Ingá Jandira Lindoia Mariposa Nega Oliveira Pagu Rubi Sabiá Tapioca Ubirajara Violeta2 Zeferina Acácia Bambina Cecília Doralice Elvira Filó Glória Hilda Iolanda Judite Lourdes Madalena Neusa Odete Prenda Rita Socorro Teresinha Vanda Zilda Amora Bromélia Cacau Dama Encanto Fada Gardênia Harmonia Inês Jasmim Lírio Marfim Neve Opala Pérola2 Réstia Safra Trigueira Urtiga Vaidosa Xaxá Yara Zabumba Alecrim Boêmia Camélia Dália Estação Frésia Gioconda Hortelã Iara Jacira Kátia Lavínia Mangueira Nectarina Oásis Petúnia Quaresma Romã Sálvia Tâmara Ursula Verbena Wanda Ximena Yasmin Zínia Abelha Borboleta Cotovia Dourada Estrelinha Formosa Galinha2 Harpia Ilusão Joaninha Lagoa Mariana Névoa Ostra Pomba Quinquilharia Rolinha Saudade Tempestade Umbu Vagalume Zefa Amada Branquinha Clarice Diva Edite Fartura Gentil Hera2 Ivete Jussara Laura Mel Noêmia Olga Penha Rosália Sol Tina Uva Vera Wilma Alma Berenice Chuvisco Donzela Elis Fiama Gema Hebe Isadora Julieta Lara Márcia Nilza Ofélia Paloma Quênia Regina Sandra Telma Ursa Vilma Zoraide Aldeia Barroca Cascata Duna Enseada Fonte Gruta Horizonte Ilha Jangada Lagoinha Mata Nascente Oca Pradaria Quebrada Restinga Serra Trilha Vale Várzea Aroeira Buriti Cajá Dendê Embaúba Figueira Goiaba Hibisco Imbé Jaca Louro Manga Nogueira`.split(/\s+/).filter(n=>n && !/\d/.test(n));
 // séries (T1) + as duas vacas novas do episódio
-const EP3 = process.env.EP === "t2e3"; // Ep. 3: diagnóstico de gestação (mesmos lotes do Ep. 2 + 9 vacas "a tocar")
+const EP4 = process.env.EP === "t2e4"; // Ep. 4: parto (herda tudo do Ep. 3; acrescenta no 05 - Pré-parto as matrizes 3654 Dolores e 5611 Lucinda)
+const EP3 = process.env.EP === "t2e3" || EP4; // Ep. 3: diagnóstico de gestação (mesmos lotes do Ep. 2 + 9 vacas "a tocar")
 const EP2 = process.env.EP === "t2e2" || EP3; // Ep. 2: lotes DEPOIS da troca do Ep. 1 (3990, 4033 e 4078 já no 02 - Média)
 // Ep. 3: as 9 vacas inseminadas há ~30 dias que aparecem em "A tocar" (brinco, nome, lote, dias desde a IA, DEL, plano do episódio)
 export const TOCAR3 = [
@@ -17,6 +18,7 @@ const FIXAS = EP2 ? {
   "03 - Baixa": [["1450","Bonita",262]],
   "04 - Secas": [["1388","Graúna",0]],
   "06 - Novilhas": [["1210","Faceira",0]],
+  ...(EP4 ? { "05 - Pré-parto": [["3654","Dolores",0],["5611","Lucinda",0]] } : {}),
 } : {
   "01 - Alta": [["4521","Estrela",142],["3877","Mimosa",75],["4102","Boneca",96],["3990","Pérola",201],["4210","Serena",28],["1502","Jóia",88],["4033","Garoa",236],["4078","Princesa",254]],
   "02 - Média": [["1045","Pintada",187]],
@@ -41,6 +43,7 @@ for (const [lote, total] of Object.entries(TOTAIS)) {
     let n; do { n = String(lo + Math.floor(r()*(hi-lo+1))); } while (nums.has(n)); nums.add(n);
     lista.push({numero:n,nome:pool[pi++],del:d1? d0+Math.floor(r()*(d1-d0)) : 0});
   }
+  if (EP4 && lote === "05 - Pré-parto") { r(); r(); pi += 2; } // as 2 fixas substituem 2 geradas: consome o mesmo tanto de sorteio/nome, para os lotes seguintes ficarem idênticos aos do Ep. 3
   for (const a of lista) animais.push({ numero:a.numero, nome:a.nome, grupo_primario:lote, categoria_abrev:CAT[lote], categoria_completa:lote.startsWith("01")||lote.startsWith("02")||lote.startsWith("03")?"Vaca em lactação":CAT[lote], sexo:"F", del_dias:a.del||null, eh_semen:false, raca:"Holandesa" });
 }
 export const lotes = Object.keys(TOTAIS).map((rot,i)=>({id:i+1,codigo:rot.slice(0,2),nome:rot.slice(5),rotulo:rot,ativo:true}));
@@ -84,6 +87,8 @@ if (EP2) {
     { nome: "ORION", tipo: "convencional", doses: 12 }, { nome: "ATLAS", tipo: "convencional", doses: 9 }, { nome: "JAGUAR", tipo: "convencional", doses: 6 },
     { nome: "ATLAS", tipo: "sexado", doses: 8 }, { nome: "VULCÃO", tipo: "sexado", doses: 3 } ] };
 }
+
+if (EP4) { estadosEp2["3654"].gest = 276; estadosEp2["5611"].gest = 272; } // gestantes a termo
 
 // ── Ep. 3: candidatas ao diagnóstico (GET /reproducao/diagnostico/candidatas) ──
 // A tocar = as 9 de TOCAR3 (7 no prazo + 2 AINDA NÃO, prazo de 30 dias); A reconfirmar = 6 e Reconfirmadas = 14, sorteadas entre as gestantes.

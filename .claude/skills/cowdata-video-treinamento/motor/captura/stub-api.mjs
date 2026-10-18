@@ -1,9 +1,11 @@
 // API de mentira para filmar as telas reais (dados fictícios, Fazenda Boa Esperança). Aplica POST /movimentacoes/mover.
 import http from "node:http";
 import { animais, lotes, SEED_MOTIVOS, estadosEp2, candidatasEp3, DATA_REF } from "./dados.mjs";
-const EP3 = process.env.EP === "t2e3"; // Ep. 3: diagnóstico de gestação (usa também os estados e o estoque do Ep. 2)
+const EP4 = process.env.EP === "t2e4"; // Ep. 4: parto (herda o Ep. 3)
+const EP3 = process.env.EP === "t2e3" || EP4; // Ep. 3: diagnóstico de gestação (usa também os estados e o estoque do Ep. 2)
 const EP2 = process.env.EP === "t2e2" || EP3; // Ep. 2: inseminação em lote
 const INICIAL = EP2 ? { est: structuredClone(estadosEp2), semen: structuredClone(globalThis.__SEMEN), cand: structuredClone(candidatasEp3) } : null;
+const ANIMAIS0 = EP4 ? structuredClone(animais) : null; // Ep. 4: o parto acrescenta a cria à lista; /__reset volta ao início
 const cfg = { atraso: 0, falhar: [] }; // POST /__cfg {atraso: ms por envio, falhar: [brincos que falham 1 vez]}
 const log = [];
 const estadoDe = (a) => {
@@ -34,7 +36,21 @@ http.createServer(async (req, res) => {
   if (p === "/movimentacoes/motivos") return send(SEED_MOTIVOS);
   if (p === "/movimentacoes/sugestoes") return send({ total: 0, lotes_com_criterio: 0, sugestoes: [] });
   if (p === "/indicadores/estados-reprodutivos") return send({ data_referencia: "2026-10-17", animais: animais.map(estadoDe), contagem: {}, parametros: {} });
+  if (EP4 && p === "/__reset") { animais.splice(0, animais.length, ...structuredClone(ANIMAIS0)); }
   if (EP2 && p === "/__reset") { for (const k of Object.keys(estadosEp2)) estadosEp2[k] = structuredClone(INICIAL.est[k]); globalThis.__SEMEN = structuredClone(INICIAL.semen); if (EP3) for (const k of Object.keys(candidatasEp3)) candidatasEp3[k] = structuredClone(INICIAL.cand[k]); cfg.atraso = 0; cfg.falhar = []; return send({ ok: true }); }
+  if (EP4 && p === "/producao/sugestao-lote-evento" && req.method === "POST") { // mãe recém-parida → 01 - Alta; cria Bezerra → 07 - Bezerras
+    const b = await corpo(req); log.push({ p, b });
+    const cria = /^Bezerr/.test(b.categoria_abrev || "");
+    return send({ lote_sugerido: cria ? { codigo: "07", nome: "Bezerras", rotulo: "07 - Bezerras" } : { codigo: "01", nome: "Alta", rotulo: "01 - Alta" } });
+  }
+  if (EP4 && p === "/reproducao/parto" && req.method === "POST") {
+    const b = await corpo(req); log.push({ p, b });
+    if (cfg.atraso) await new Promise((ok) => setTimeout(ok, cfg.atraso));
+    const criadas = (b.crias || []).filter((c) => c.numero && c.nasceu_viva !== false).map((c) => c.numero);
+    for (const c of b.crias || []) if (c.numero && !animais.some((a) => a.numero === c.numero)) animais.push({ numero: c.numero, nome: null, grupo_primario: null, categoria_abrev: c.sexo === "F" ? "Bezerra" : "Bezerro", categoria_completa: c.sexo === "F" ? "Bezerra" : "Bezerro", sexo: c.sexo, del_dias: null, eh_semen: false, raca: "Holandesa" });
+    return send({ ok: true, numero_matriz: b.numero_matriz, crias_criadas: criadas });
+  }
+  if (EP4 && p === "/sanidade/colostragem" && req.method === "POST") { const b = await corpo(req); log.push({ p, b }); return send({ ok: true }); }
   if (p === "/__cfg" && req.method === "POST") { Object.assign(cfg, await corpo(req)); return send(cfg); }
   if (EP2 && p === "/cadastro/estoque-semen/disponivel") {
     const t = globalThis.__SEMEN.touros; const tot = (k) => t.filter((x) => x.tipo === k).reduce((n, x) => n + x.doses, 0);
