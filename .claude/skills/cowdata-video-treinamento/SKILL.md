@@ -44,10 +44,10 @@ Nunca diga "salvo" sem confirmação da ferramenta.
 | 2 | Lotes (Composição, Indicadores, Exportar PDF / Compartilhar) | 0:56 |
 | 3 | Listas do painel (Gestantes, Inseminadas, PEV, Vazias, Aptas, Atrasadas, IA atual, Parto previsto, Secagens, DEL/Produção, IEP, Ver Animal) | 1:30 |
 
-### Temporada 2 — Lançamentos (app Android) — EM ANDAMENTO (Ep. 1 concluído em 2026-10-17), ~11 episódios
+### Temporada 2 — Lançamentos (app Android) — EM ANDAMENTO (Ep. 1 em 2026-10-17, Ep. 2 em 2026-10-18), ~11 episódios
 | Bloco | Episódios |
 |---|---|
-| REPRODUTIVOS (4) | lançamento de inseminação · diagnóstico · parto · protocolo de IATF |
+| REPRODUTIVOS (4) | lançamento de inseminação — **Ep. 2 CONCLUÍDO** (`APP-Lancamentos_Ep2_Inseminacao-em-lote.mp4`, 1:04) · diagnóstico · parto · protocolo de IATF |
 | PRODUÇÃO (3) | controle leiteiro · pesagem corporal + secagem (um episódio) · BST |
 | SANIDADE (2) | aplicação — curativa e preventiva no mesmo episódio · protocolo sanitário (curativo) |
 | ALIMENTAÇÃO (1) | lançamento e sobra de cocho |
@@ -109,6 +109,12 @@ Temporada 2" abaixo). Pasta de destino: `H:\Meu Drive\COWDATA\Tutoriais\APP - LA
   `node dump_t2.mjs` (beats/camadas) → `audio/roteiro_t2.py` → `audio/trilha_app.py` → `audio/norm.sh` → `HTML=<saida>/t2e1.html node quadros.mjs`
   em 4 faixas → ffmpeg `-crf 18 -pix_fmt yuv420p -movflags +faststart`, AAC mono. Voz do HeyGen pode vir como MP3 com extensão .wav:
   converter com ffmpeg antes de passar ao `trilha_app.py`.
+
+- **Ep. 2 (Inseminação em lote)**: `episodios/t2e2.js`, `tl_t2e2.py` → `audio/tl_t2e2.json`, captura em `captura/capturar_t2e2.mjs`
+  (stub e dados trocam de variante com `EP=t2e2 node stub-api.mjs`: lotes depois do Ep. 1, estados reprodutivos, estoque de sêmen, `/__reset`, `/__cfg` para
+  atrasar o envio e fazer uma vaca falhar na 1ª tentativa). Capturas altas limitadas a 2500 px CSS (a imagem não pode passar de ~16000 px). Regra de zoom:
+  centrado e ≤ 1,18 (a tela tem 390 px e a câmera mostra ~439/zoom px de largura; acima disso os cartões são cortados nas bordas).
+  As pausas naturais da locução já dão o ritmo: em `tl_*.py` a folga só ACRESCENTA tempo (o total = fim da voz + LEAD + folgas + cauda).
 
 ### Ambiente
 `quadros.mjs` usa o Playwright de `/opt/node-tools` e o Chromium de `/opt/pw-browsers` (sessão na

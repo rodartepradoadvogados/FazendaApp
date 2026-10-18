@@ -1,9 +1,13 @@
 // API de mentira para filmar as telas reais (dados fictícios, Fazenda Boa Esperança). Aplica POST /movimentacoes/mover.
 import http from "node:http";
-import { animais, lotes, SEED_MOTIVOS } from "./dados.mjs";
+import { animais, lotes, SEED_MOTIVOS, estadosEp2 } from "./dados.mjs";
+const EP2 = process.env.EP === "t2e2"; // Ep. 2: inseminação em lote
+const INICIAL = EP2 ? { est: structuredClone(estadosEp2), semen: structuredClone(globalThis.__SEMEN) } : null;
+const cfg = { atraso: 0, falhar: [] }; // POST /__cfg {atraso: ms por envio, falhar: [brincos que falham 1 vez]}
 const log = [];
 const estadoDe = (a) => {
   const g = a.grupo_primario;
+  if (EP2) { const x = estadosEp2[a.numero]; return { numero: a.numero, estado: x.estado, categoria: a.categoria_abrev, lote: g, del_dias: a.del_dias, data_ultimo_parto: null, dias_gestacao: x.gest || null, parto_previsto: null, data_servico: null, tipo_servico: null, protocolo: null, dias_desde_servico: x.ia ?? null }; }
   const e = { numero: a.numero, estado: "apta", categoria: a.categoria_abrev, lote: g, del_dias: a.del_dias, data_ultimo_parto: null, dias_gestacao: null, parto_previsto: null, data_servico: null, tipo_servico: null, protocolo: null, dias_desde_servico: null };
   if (g.startsWith("04") || g.startsWith("05")) { e.estado = "gestante"; e.dias_gestacao = 230; }
   else if (g.startsWith("06") || g.startsWith("07")) e.estado = "nao_apta";
@@ -29,6 +33,22 @@ http.createServer(async (req, res) => {
   if (p === "/movimentacoes/motivos") return send(SEED_MOTIVOS);
   if (p === "/movimentacoes/sugestoes") return send({ total: 0, lotes_com_criterio: 0, sugestoes: [] });
   if (p === "/indicadores/estados-reprodutivos") return send({ data_referencia: "2026-10-17", animais: animais.map(estadoDe), contagem: {}, parametros: {} });
+  if (EP2 && p === "/__reset") { for (const k of Object.keys(estadosEp2)) estadosEp2[k] = structuredClone(INICIAL.est[k]); globalThis.__SEMEN = structuredClone(INICIAL.semen); cfg.atraso = 0; cfg.falhar = []; return send({ ok: true }); }
+  if (p === "/__cfg" && req.method === "POST") { Object.assign(cfg, await corpo(req)); return send(cfg); }
+  if (EP2 && p === "/cadastro/estoque-semen/disponivel") {
+    const t = globalThis.__SEMEN.touros; const tot = (k) => t.filter((x) => x.tipo === k).reduce((n, x) => n + x.doses, 0);
+    return send({ touros: t, totais: { convencional: tot("convencional"), sexado: tot("sexado") }, minimos: { convencional: 5, sexado: 3 }, abaixo_minimo: { convencional: false, sexado: false } });
+  }
+  if (EP2 && p === "/reproducao/protocolo-iatf/ativos") return send([]);
+  if (EP2 && p === "/reproducao/servico" && req.method === "POST") {
+    const b = await corpo(req); log.push({ p, b });
+    if (cfg.atraso) await new Promise((ok) => setTimeout(ok, cfg.atraso));
+    const i = cfg.falhar.indexOf(b.numero_matriz);
+    if (i >= 0) { cfg.falhar.splice(i, 1); return send({}, 503); } // falha só na 1ª tentativa
+    const x = estadosEp2[b.numero_matriz]; if (x) { x.estado = "inseminada"; x.ia = 0; x.gest = null; }
+    const t = globalThis.__SEMEN.touros.find((y) => y.nome === b.reprodutor && y.tipo === b.tipo_semen); if (t && t.doses > 0) t.doses--;
+    return send({ ok: true, numero_matriz: b.numero_matriz });
+  }
   if (p === "/movimentacoes/mover" && req.method === "POST") {
     const b = await corpo(req); log.push({ p, b });
     const nao = (b.animais || []).filter((n) => !animais.some((a) => a.numero === n)); let movidos = 0;
