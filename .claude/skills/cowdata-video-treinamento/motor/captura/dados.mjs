@@ -3,7 +3,8 @@ function rng(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t
 const r = rng(20261017);
 const NOMES = `Estrela Mimosa Boneca Pérola Serena Pintada Bonita Faceira Graúna Jóia Garoa Princesa Aurora Violeta Margarida Flor Cereja Malhada Caramelo Chiquita Dengosa Fumaça Gaivota Hortênsia Iracema Jabuticaba Kiara Lavanda Moranga Naná Orquídea Palmira Quitéria Rosinha Safira Tereza Uirapuru Vitória Xuxa Zulmira Açucena Brisa Canela Dalila Esperança Fidalga Guiomar Helena Ipê Janaína Lua Maravilha Neblina Ondina Papoula Quimera Rainha Sereia Tulipa Urca Vênus Alvorada Bela Cigana Doçura Eva Florinda Girassol Hera Íris Jurema Lolita Melodia Nuvem Olinda Pitanga Querida Ruiva Sinhá Tigresa Umbela Valentina Alegria Baunilha Cotia Diamante Esmeralda Ferrugem Galega Heloísa Ingá Jandira Lindoia Mariposa Nega Oliveira Pagu Rubi Sabiá Tapioca Ubirajara Violeta2 Zeferina Acácia Bambina Cecília Doralice Elvira Filó Glória Hilda Iolanda Judite Lourdes Madalena Neusa Odete Prenda Rita Socorro Teresinha Vanda Zilda Amora Bromélia Cacau Dama Encanto Fada Gardênia Harmonia Inês Jasmim Lírio Marfim Neve Opala Pérola2 Réstia Safra Trigueira Urtiga Vaidosa Xaxá Yara Zabumba Alecrim Boêmia Camélia Dália Estação Frésia Gioconda Hortelã Iara Jacira Kátia Lavínia Mangueira Nectarina Oásis Petúnia Quaresma Romã Sálvia Tâmara Ursula Verbena Wanda Ximena Yasmin Zínia Abelha Borboleta Cotovia Dourada Estrelinha Formosa Galinha2 Harpia Ilusão Joaninha Lagoa Mariana Névoa Ostra Pomba Quinquilharia Rolinha Saudade Tempestade Umbu Vagalume Zefa Amada Branquinha Clarice Diva Edite Fartura Gentil Hera2 Ivete Jussara Laura Mel Noêmia Olga Penha Rosália Sol Tina Uva Vera Wilma Alma Berenice Chuvisco Donzela Elis Fiama Gema Hebe Isadora Julieta Lara Márcia Nilza Ofélia Paloma Quênia Regina Sandra Telma Ursa Vilma Zoraide Aldeia Barroca Cascata Duna Enseada Fonte Gruta Horizonte Ilha Jangada Lagoinha Mata Nascente Oca Pradaria Quebrada Restinga Serra Trilha Vale Várzea Aroeira Buriti Cajá Dendê Embaúba Figueira Goiaba Hibisco Imbé Jaca Louro Manga Nogueira`.split(/\s+/).filter(n=>n && !/\d/.test(n));
 // séries (T1) + as duas vacas novas do episódio
-const EP5 = process.env.EP === "t2e5"; // Ep. 5: protocolo de IATF (herda o Ep. 4 e aplica o parto: 3654 Dolores → 01 - Alta, nasce a 4712; 6 atrasadas; 1 vaca em protocolo D7)
+const EP6 = process.env.EP === "t2e6"; // Ep. 6: controle leiteiro (herda o Ep. 5; acrescenta em_lactacao nos animais e status_lactacao nos lotes)
+const EP5 = process.env.EP === "t2e5" || EP6; // Ep. 5: protocolo de IATF (herda o Ep. 4 e aplica o parto: 3654 Dolores → 01 - Alta, nasce a 4712; 6 atrasadas; 1 vaca em protocolo D7)
 const EP4 = process.env.EP === "t2e4" || EP5; // Ep. 4: parto (herda tudo do Ep. 3; acrescenta no 05 - Pré-parto as matrizes 3654 Dolores e 5611 Lucinda)
 const EP3 = process.env.EP === "t2e3" || EP4; // Ep. 3: diagnóstico de gestação (mesmos lotes do Ep. 2 + 9 vacas "a tocar")
 const EP2 = process.env.EP === "t2e2" || EP3; // Ep. 2: lotes DEPOIS da troca do Ep. 1 (3990, 4033 e 4078 já no 02 - Média)
@@ -47,7 +48,7 @@ for (const [lote, total] of Object.entries(TOTAIS)) {
   if (EP4 && lote === "05 - Pré-parto") { r(); r(); pi += 2; } // as 2 fixas substituem 2 geradas: consome o mesmo tanto de sorteio/nome, para os lotes seguintes ficarem idênticos aos do Ep. 3
   for (const a of lista) animais.push({ numero:a.numero, nome:a.nome, grupo_primario:lote, categoria_abrev:CAT[lote], categoria_completa:lote.startsWith("01")||lote.startsWith("02")||lote.startsWith("03")?"Vaca em lactação":CAT[lote], sexo:"F", del_dias:a.del||null, eh_semen:false, raca:"Holandesa" });
 }
-export const lotes = Object.keys(TOTAIS).map((rot,i)=>({id:i+1,codigo:rot.slice(0,2),nome:rot.slice(5),rotulo:rot,ativo:true}));
+export const lotes = Object.keys(TOTAIS).map((rot,i)=>({id:i+1,codigo:rot.slice(0,2),nome:rot.slice(5),rotulo:rot,ativo:true,...(EP6?{status_lactacao:rot.startsWith("01")||rot.startsWith("02")||rot.startsWith("03")?"lactacao":rot.startsWith("04")||rot.startsWith("05")?"seca":"outro"}:{})}));
 export const SEED_MOTIVOS = ["Crescimento","Desmama","Aptidão","Inseminação","Pré-parto","Pós-parto","Aumento de DEL e/ou produção","Final de DEL ou queda de produção","Tratamento/doença","Secagem","Nascimento","Outro motivo"];
 
 // ── Ep. 2: situação reprodutiva de cada animal (a tela de Inseminação lê de /indicadores/estados-reprodutivos) ──
@@ -133,3 +134,6 @@ if (EP5) {
   estadosEp2[prot.numero] = { estado: "em_protocolo", gest: null, ia: null, prot: 7, d0: "2026-10-10" };
   EP5_INFO.atrasadaNova = nova.numero; EP5_INFO.protocolo = prot.numero;
 }
+
+// ── Ep. 6: controle leiteiro. Só as vacas dos lotes 01–03 têm lactação aberta (111 de 249); secas, pré-parto, novilhas e bezerras não (filtro real "só vacas em lactação") ──
+if (EP6) for (const a of animais) a.em_lactacao = ["01","02","03"].includes((a.grupo_primario || "").slice(0, 2));

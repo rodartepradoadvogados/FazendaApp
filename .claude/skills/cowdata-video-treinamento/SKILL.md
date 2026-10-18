@@ -51,11 +51,11 @@ usuário conferir em Propriedades que o arquivo baixado está completo.
 | 2 | Lotes (Composição, Indicadores, Exportar PDF / Compartilhar) | 0:56 |
 | 3 | Listas do painel (Gestantes, Inseminadas, PEV, Vazias, Aptas, Atrasadas, IA atual, Parto previsto, Secagens, DEL/Produção, IEP, Ver Animal) | 1:30 |
 
-### Temporada 2 — Lançamentos (app Android) — EM ANDAMENTO (Ep. 1 em 2026-10-17, Ep. 2 a Ep. 5 em 2026-10-18), ~11 episódios
+### Temporada 2 — Lançamentos (app Android) — EM ANDAMENTO (Ep. 1 em 2026-10-17, Ep. 2 a Ep. 6 em 2026-10-18), ~11 episódios
 | Bloco | Episódios |
 |---|---|
 | REPRODUTIVOS (4) | lançamento de inseminação — **Ep. 2 CONCLUÍDO** (`APP-Lancamentos_Ep2_Inseminacao-em-lote.mp4`, 1:04) · diagnóstico — **Ep. 3 CONCLUÍDO** (`APP-Lancamentos_Ep3_Diagnostico-de-gestacao.mp4`, 1:05) · parto — **Ep. 4 CONCLUÍDO** (`APP-Lancamentos_Ep4_Parto.mp4`, 1:02) · protocolo de IATF — **Ep. 5 CONCLUÍDO** (`APP-Lancamentos_Ep5_Protocolo-IATF.mp4`, 1:01) |
-| PRODUÇÃO (3) | controle leiteiro · pesagem corporal + secagem (um episódio) · BST |
+| PRODUÇÃO (3) | controle leiteiro — **Ep. 6 CONCLUÍDO** (`APP-Lancamentos_Ep6_Controle-leiteiro.mp4`, 0:56) · pesagem corporal + secagem (um episódio) · BST |
 | SANIDADE (2) | aplicação — curativa e preventiva no mesmo episódio · protocolo sanitário (curativo) |
 | ALIMENTAÇÃO (1) | lançamento e sobra de cocho |
 | MOVIMENTAR (1) | troca de lotes — **Ep. 1 CONCLUÍDO** (`APP-Lancamentos_Ep1_Troca-de-lotes.mp4`, 1:01) |
@@ -137,6 +137,9 @@ Temporada 2" abaixo). Pasta de destino: `H:\Meu Drive\COWDATA\Tutoriais\APP - LA
   O stub herda o Ep. 4 e aplica o parto (3654 Dolores → 01 - Alta, nasce a 4712: 249 animais), sobe as atrasadas a 6, põe a 3054 Baunilha "em protocolo" (D0 10/10, D7 hoje) e serve `protocolo_dia_atual`/`protocolo_d0`
   em `/indicadores/estados-reprodutivos` e o POST único `/reproducao/protocolo-iatf`. A vaca travada aparece pela busca (em "Todas" a lista passa de 100 cartões). Rascunho salvo empurra a página 21,5 px: a rolagem das capturas
   depois de marcar soma isso. Quando o diagrama do papel (`EP.diag`) sai e o título volta, esconda o título (`EP.oculta`) durante o fade, senão o título anterior reaparece por cima.
+
+- **Ep. 6 (Controle leiteiro)**: `episodios/t2e6.js`, `tl_t2e6.py` → `audio/tl_t2e6.json`, captura em `captura/capturar_t2e6.mjs` (`EP=t2e6 node stub-api.mjs` **e** `EP=t2e6 node capturar_t2e6.mjs`). O stub herda o Ep. 5; `dados.mjs` marca `em_lactacao` (true só nos lotes 01–03: 111 de 249) e `status_lactacao` nos lotes, e `POST /producao/controles` responde ok.
+  O formulário não tem barra fixa (barTop = topo da navegação); o campo numérico mostra "18.4" com ponto (não vírgula). A página do lote (40 cartões) passa de 5300 px CSS: na escala cheia a captura estoura ~16000 px, então a parte do lote roda em contexto novo com `DSF_LOTE` (2,8; `novoContexto(browser, h, dsf)`), em uma captura alta só, que o motor rola do 1º cartão até o Salvar. O aviso "Lançamento salvo." persiste na tela: capture o lote num contexto SEM salvar a vaca antes, senão o aviso aparece antes do Salvar. Depois de salvar a página cresce (aviso) — a rolagem da tela "salvo" sobe mais 57 px dentro do mesmo estado. Duas frases da locução são partidas numa pausa real da voz (`silencedetect`) em `tl_t2e6.py` para dar tempo de digitar/preencher (o total = fim da voz + folgas). Diagrama do papel com seta tracejada até o campo vazio: a posição do campo na tela vem de `camera(t)` e da rolagem no mesmo instante.
 
 ### Ambiente
 `quadros.mjs` usa o Playwright de `/opt/node-tools` e o Chromium de `/opt/pw-browsers` (sessão na
