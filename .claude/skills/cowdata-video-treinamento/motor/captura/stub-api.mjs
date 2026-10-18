@@ -1,7 +1,8 @@
 // API de mentira para filmar as telas reais (dados fictícios, Fazenda Boa Esperança). Aplica POST /movimentacoes/mover.
 import http from "node:http";
 import { animais, lotes, SEED_MOTIVOS, estadosEp2, candidatasEp3, DATA_REF } from "./dados.mjs";
-const EP4 = process.env.EP === "t2e4"; // Ep. 4: parto (herda o Ep. 3)
+const EP5 = process.env.EP === "t2e5"; // Ep. 5: protocolo de IATF (herda o Ep. 4)
+const EP4 = process.env.EP === "t2e4" || EP5; // Ep. 4: parto (herda o Ep. 3)
 const EP3 = process.env.EP === "t2e3" || EP4; // Ep. 3: diagnóstico de gestação (usa também os estados e o estoque do Ep. 2)
 const EP2 = process.env.EP === "t2e2" || EP3; // Ep. 2: inseminação em lote
 const INICIAL = EP2 ? { est: structuredClone(estadosEp2), semen: structuredClone(globalThis.__SEMEN), cand: structuredClone(candidatasEp3) } : null;
@@ -10,7 +11,7 @@ const cfg = { atraso: 0, falhar: [] }; // POST /__cfg {atraso: ms por envio, fal
 const log = [];
 const estadoDe = (a) => {
   const g = a.grupo_primario;
-  if (EP2) { const x = estadosEp2[a.numero]; return { numero: a.numero, estado: x.estado, categoria: a.categoria_abrev, lote: g, del_dias: a.del_dias, data_ultimo_parto: null, dias_gestacao: x.gest || null, parto_previsto: null, data_servico: null, tipo_servico: null, protocolo: null, dias_desde_servico: x.ia ?? null }; }
+  if (EP2) { const x = estadosEp2[a.numero]; return { numero: a.numero, estado: x.estado, categoria: a.categoria_abrev, lote: g, del_dias: a.del_dias, data_ultimo_parto: null, dias_gestacao: x.gest || null, parto_previsto: null, data_servico: null, tipo_servico: null, protocolo: null, dias_desde_servico: x.ia ?? null, protocolo_dia_atual: x.prot ?? null, protocolo_d0: x.d0 ?? null }; }
   const e = { numero: a.numero, estado: "apta", categoria: a.categoria_abrev, lote: g, del_dias: a.del_dias, data_ultimo_parto: null, dias_gestacao: null, parto_previsto: null, data_servico: null, tipo_servico: null, protocolo: null, dias_desde_servico: null };
   if (g.startsWith("04") || g.startsWith("05")) { e.estado = "gestante"; e.dias_gestacao = 230; }
   else if (g.startsWith("06") || g.startsWith("07")) e.estado = "nao_apta";
@@ -57,6 +58,12 @@ http.createServer(async (req, res) => {
     return send({ touros: t, totais: { convencional: tot("convencional"), sexado: tot("sexado") }, minimos: { convencional: 5, sexado: 3 }, abaixo_minimo: { convencional: false, sexado: false } });
   }
   if (EP2 && p === "/reproducao/protocolo-iatf/ativos") return send([]);
+  if (EP5 && p === "/reproducao/protocolo-iatf" && req.method === "POST") { // Ep. 5: um único POST com o lote inteiro; as vacas passam a "em protocolo · D0"
+    const b = await corpo(req); log.push({ p, b });
+    if (cfg.atraso) await new Promise((ok) => setTimeout(ok, cfg.atraso));
+    for (const n of b.animais || []) { const x = estadosEp2[n]; if (x) { x.estado = "em_protocolo"; x.prot = 0; x.d0 = b.data_d0; x.gest = null; x.ia = null; } }
+    return send({ ok: true, protocolo: "IATF " + b.data_d0, animais: b.animais });
+  }
   if (EP3 && p === "/reproducao/diagnostico/candidatas") {
     const c = candidatasEp3;
     return send({ data_referencia: DATA_REF, parametros: { dias_toque: 30, dias_reconfirmacao: 60 }, usa_adesivo: false, situacoes: c, totais: { a_tocar: c.a_tocar.length, a_reconfirmar: c.a_reconfirmar.length, reconfirmada: c.reconfirmada.length } });
