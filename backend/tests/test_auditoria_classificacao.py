@@ -104,7 +104,10 @@ class TestAuditoria:
         assert next(x for x in corpo["achados"] if x["codigo"] == "reconfirmada_nao_gestante")["causa"] == "sem_data"
         assert "datas_incoerentes" not in _codigos(corpo, "11153")  # as datas dos exames em si estão coerentes
 
-    def test_lactacao_aberta_depois_do_servico_sem_parto_e_apontada_e_os_classificadores_divergem(self, client):
+    def test_lactacao_aberta_depois_do_servico_sem_parto_e_apontada_e_os_classificadores_concordam(self, client):
+        # Desde o PR #930 (matriz 422) o roteiro do veterinário também ancora na Lactacao aberta sem Parto, como o
+        # estado ao vivo: os dois concordam (não é mais "classificadores_divergem"); a prenhez sem parto que a explique
+        # continua apontada.
         c, engine = client
         _animal(engine, "11153")
         _prenha_reconfirmada(engine, "11153", dias_servico=150)
@@ -113,7 +116,7 @@ class TestAuditoria:
             s.commit()
         corpo = _auditar(c)
         codigos = _codigos(corpo, "11153")
-        assert "reconfirmada_nao_gestante" in codigos and "classificadores_divergem" in codigos
+        assert "reconfirmada_nao_gestante" in codigos and "classificadores_divergem" not in codigos
         a = next(x for x in corpo["achados"] if x["codigo"] == "reconfirmada_nao_gestante")
         assert a["causa"] == "lactacao_sem_parto" and "lactação aberta" in a["explicacao"]
 

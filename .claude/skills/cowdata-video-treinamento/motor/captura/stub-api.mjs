@@ -1,7 +1,8 @@
 // API de mentira para filmar as telas reais (dados fictícios, Fazenda Boa Esperança). Aplica POST /movimentacoes/mover.
 import http from "node:http";
 import { animais, lotes, SEED_MOTIVOS, estadosEp2, candidatasEp3, DATA_REF } from "./dados.mjs";
-const EP5 = process.env.EP === "t2e5"; // Ep. 5: protocolo de IATF (herda o Ep. 4)
+const EP6 = process.env.EP === "t2e6"; // Ep. 6: controle leiteiro (herda o Ep. 5)
+const EP5 = process.env.EP === "t2e5" || EP6; // Ep. 5: protocolo de IATF (herda o Ep. 4)
 const EP4 = process.env.EP === "t2e4" || EP5; // Ep. 4: parto (herda o Ep. 3)
 const EP3 = process.env.EP === "t2e3" || EP4; // Ep. 3: diagnóstico de gestação (usa também os estados e o estoque do Ep. 2)
 const EP2 = process.env.EP === "t2e2" || EP3; // Ep. 2: inseminação em lote
@@ -58,6 +59,7 @@ http.createServer(async (req, res) => {
     return send({ touros: t, totais: { convencional: tot("convencional"), sexado: tot("sexado") }, minimos: { convencional: 5, sexado: 3 }, abaixo_minimo: { convencional: false, sexado: false } });
   }
   if (EP2 && p === "/reproducao/protocolo-iatf/ativos") return send([]);
+  if (EP6 && p === "/producao/controles" && req.method === "POST") { const b = await corpo(req); log.push({ p, b }); if (cfg.atraso) await new Promise((ok) => setTimeout(ok, cfg.atraso)); return send({ ok: true, criados: (b.entradas || []).length }); }
   if (EP5 && p === "/reproducao/protocolo-iatf" && req.method === "POST") { // Ep. 5: um único POST com o lote inteiro; as vacas passam a "em protocolo · D0"
     const b = await corpo(req); log.push({ p, b });
     if (cfg.atraso) await new Promise((ok) => setTimeout(ok, cfg.atraso));
