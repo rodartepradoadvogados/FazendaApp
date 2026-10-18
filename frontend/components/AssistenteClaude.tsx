@@ -64,6 +64,7 @@ export default function AssistenteClaude() {
       <button
         onClick={() => setAberto((v) => !v)}
         title="Assistente Virtual (protótipo)"
+        className="assistente-fab"
         style={{
           position: "fixed", bottom: "1.5rem", right: "1.5rem", zIndex: 70,
           width: "3.2rem", height: "3.2rem", borderRadius: "50%", border: "none",
@@ -76,7 +77,7 @@ export default function AssistenteClaude() {
       </button>
 
       {aberto && (
-        <div style={{
+        <div className="assistente-painel" style={{
           position: "fixed", bottom: "5.2rem", right: "1.5rem", zIndex: 70,
           width: "24rem", maxWidth: "calc(100vw - 2rem)", height: "30rem", maxHeight: "calc(100vh - 8rem)",
           background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)",

@@ -608,6 +608,7 @@ class TestProtocoloIatf:
         # com clique para ver quem foi inseminado nesse grupo).
         assert item["animais"] == [{
             "numero_matriz": "500", "etapa_atual": "Concluído", "data_etapa_atual": None, "d0_confirmado": True,
+            "tem_etapa_confirmada": True,  # alimenta o "Remover" da tela Em andamento
             "pronta_para_inseminar": True,  # hormônio todo aplicado, nenhum Serviço lançado ainda
         }]
 

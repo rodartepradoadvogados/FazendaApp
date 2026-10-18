@@ -66,12 +66,13 @@ const LACT = ["01", "02", "03"];
 // lateral (~330px) em vez do card cheio de sempre: todo o conteúdo físico de
 // components/lancamentos/* (reprodutivo, produção, sanidade, alimentação,
 // estoque). Financeiro (T4, duas colunas — outro agente mexendo em paralelo)
-// e os demais sub-tipos (Pesagem, Secagem, Indução de lactação, Qualidade do
-// leite, Venda mensal, Animais, Excluir lançamento) ficam de fora de propósito
-// — continuam exatamente como eram, no card cheio abaixo.
+// e os demais sub-tipos (Animais, Excluir lançamento) ficam de fora de propósito
+// — continuam no card cheio abaixo. Pesagem, Secagem, Indução de lactação, Qualidade e Venda mensal
+// entraram na gaveta com o redesenho gerencial (largura de 1320px).
 const GAVETA_LEAFS = new Set([
   "protocolo_iatf", "inseminacao", "diagnostico", "parto", "inducao_cio", "controle",
   "sanidade_aplicacao", "bst", "protocolo_sanitario",
+  "pesagem", "secagem", "inducao_lactacao", "qualidade_leite", "entrega_leite",
   "alimentacao_dieta", "estoque_entradas_saidas", "estoque_ajuste_saldo",
 ]);
 
@@ -123,7 +124,7 @@ const TIPOS_GRUPOS = [
       { id: "inducao_lactacao", label: "Indução de lactação", icon: Syringe, desc: "Lança o protocolo de indução (18 ou 28 dias) em um ou vários animais — gera o cronograma completo na Agenda." },
       { id: "qualidade_leite", label: "Qualidade do leite", icon: Milk, desc: "CCS, CBT, gordura, proteína, sólidos totais e ESD — por vaca ou do tanque (rebanho em lactação)." },
       { id: "entrega_leite", label: "Venda mensal do leite", icon: Milk, desc: "Quantidade entregue ao laticínio no mês — compara com o controle leiteiro e a receita recebida." },
-      { id: "bst", label: "BST", icon: Droplets, desc: "Somatotropina bovina — selecione os animais direto nas tabelas de Aptas/Incluir no próximo BST/Inaptas e lance (aplicar, agendar ou marcar inapta)." },
+      { id: "bst", label: "BST", icon: Droplets, desc: "Somatotropina bovina — quem recebe BST na próxima visita: aplicar, agendar ou marcar inapta." },
     ],
   },
   {
@@ -191,6 +192,8 @@ export default function LancamentosPage() {
   const [gavetaAberta, setGavetaAberta] = useState(false);
   const [formKey, setFormKey] = useState(0);
   const [mensagemSalva, setMensagemSalva] = useState<string | null>(null);
+  // Tela nova de Excluir lançamento (flag `exclusao_v2` da fazenda) traz moldura, título e aviso próprios: o título/aviso da página saem.
+  const [exclusaoV2, setExclusaoV2] = useState(false);
   // Pré-preenchimento vindo do card "Pedidos em aberto" (Financeiro > Lançar)
   // — mesmo mecanismo/shape que app/pedidos/page.tsx já usa no ícone "$
   // Lançar em Financeiro" (ver PrefillPedido em components/FormFinanceiro.tsx).
@@ -434,7 +437,7 @@ export default function LancamentosPage() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Entrada de dados direto no sistema — escolha o tipo e preencha.</p>
       </div>
 
-      <div className="card mb-4" style={{ display: "flex", gap: "0.6rem", alignItems: "flex-start", background: "rgba(94,26,46,0.18)" }}>
+      {!(sel === "exclusao" && exclusaoV2) && <div className="card mb-4" style={{ display: "flex", gap: "0.6rem", alignItems: "flex-start", background: "rgba(94,26,46,0.18)" }}>
         <Info size={16} style={{ color: "var(--dourado-light)", marginTop: "0.15rem", flexShrink: 0 }} />
         <p style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
           {sel === "financeiro_despesa" || sel === "financeiro_receita" ? (
@@ -442,7 +445,7 @@ export default function LancamentosPage() {
           ) : sel === "controle" ? (
             <><strong style={{ color: "var(--text)" }}>Controle leiteiro já grava de verdade.</strong> As pesagens lançadas aqui vão para o banco permanente.</>
           ) : sel === "pesagem" ? (
-            <><strong style={{ color: "var(--text)" }}>Pesagem corporal já grava de verdade.</strong> Os pesos lançados aqui vão para o banco permanente e alimentam o relatório de GMD/GPD logo abaixo.</>
+            <><strong style={{ color: "var(--text)" }}>Pesagem corporal já grava de verdade.</strong> Os pesos lançados aqui vão para o banco permanente e alimentam o relatório de GMD/GPD (aba «Histórico de ganho»).</>
           ) : sel === "exclusao" ? (
             <><strong style={{ color: "var(--text)" }}>Exclusão apaga de verdade.</strong> Administradores excluem na hora; os demais usuários só solicitam, e a exclusão fica pendente de aprovação.</>
           ) : sel === "diagnostico" ? (
@@ -477,7 +480,7 @@ export default function LancamentosPage() {
             <><strong style={{ color: "var(--text)" }}>Indução de cio já grava de verdade.</strong> Gera histórico (sem tocar em Servico/Protocolo IATF) e um lembrete "Observar cio" na Agenda entre 2 e 5 dias depois da aplicação — some sozinho assim que a inseminação for lançada.</>
           ) : null}
         </p>
-      </div>
+      </div>}
 
       {(sel === "sanidade_aplicacao" || sel === "protocolo_sanitario") && (
         <div role="note" className="card mb-4" style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap", borderLeft: "3px solid var(--dourado)" }}>
@@ -498,13 +501,10 @@ export default function LancamentosPage() {
         </div>
       ) : (
         <div className="card" ref={cardRef} onChange={verificarSujo}>
-          <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
-          <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
-          {sel === "pesagem" && <FormPesagemCorporal animais={animais} lotes={lotes} />}
-          {sel === "secagem" && <FormSecagem animais={animais} estoque={estoque} produtos={produtosSanidade} />}
-          {sel === "inducao_lactacao" && <FormInducaoLactacao animais={animais} />}
-          {sel === "qualidade_leite" && <FormQualidadeLeite animais={animais} />}
-          {sel === "entrega_leite" && <FormEntregaLeite />}
+          {!(sel === "exclusao" && exclusaoV2) && <>
+            <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
+          </>}
           {(sel === "financeiro_despesa" || sel === "financeiro_receita") && avisoPedido && (
             <div role="status" className="card mb-4" style={{ background: "var(--surface-2)", fontSize: "0.84rem" }}>✓ {avisoPedido}</div>
           )}
@@ -597,7 +597,7 @@ export default function LancamentosPage() {
           {sel === "comprar_semen" && <CompraSemenForm />}
           {sel === "vender_animal" && <CompraVendaAnimalForm modo="venda" animais={animais} />}
           {sel === "baixar_animal" && <BaixarAnimal />}
-          {sel === "exclusao" && <FormExclusao />}
+          {sel === "exclusao" && <FormExclusao onV2={setExclusaoV2} />}
         </div>
       )}
 
@@ -642,6 +642,11 @@ export default function LancamentosPage() {
             {sel === "controle" && <FormControle key={formKey} animais={animais} lotesLact={lotesLact} onSalvo={aoSalvarNaGaveta} />}
             {sel === "sanidade_aplicacao" && <FormSanidade key={formKey} animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} onSalvo={aoSalvarNaGaveta} />}
             {sel === "bst" && <BstLancamentoView key={formKey} />}
+            {sel === "pesagem" && <FormPesagemCorporal key={formKey} animais={animais} lotes={lotes} />}
+            {sel === "secagem" && <FormSecagem key={formKey} animais={animais} estoque={estoque} produtos={produtosSanidade} />}
+            {sel === "inducao_lactacao" && <FormInducaoLactacao key={formKey} animais={animais} />}
+            {sel === "qualidade_leite" && <FormQualidadeLeite key={formKey} animais={animais} />}
+            {sel === "entrega_leite" && <FormEntregaLeite key={formKey} />}
             {sel === "protocolo_sanitario" && <FormProtocoloSanitario key={formKey} animais={animais} estoque={estoque} onSalvo={aoSalvarNaGaveta} />}
             {sel === "alimentacao_dieta" && <ConsumoAlimento key={formKey} onSalvo={aoSalvarNaGaveta} />}
             {sel === "estoque_entradas_saidas" && <FormEstoque key={formKey} estoque={estoque} onIrParaFinanceiro={irParaFinanceiroAposEstoque} onSalvo={aoSalvarNaGaveta} />}

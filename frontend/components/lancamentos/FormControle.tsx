@@ -1,365 +1,392 @@
 "use client";
+// Lançamentos › Produção › Controle leiteiro — três jeitos de lançar (por vaca, por lote, planilha), sempre numa TABELA com
+// o contexto da decisão (DEL, último controle, variação) e a barra fixa no pé (resumo + retorno + Salvar em ouro).
+//  • Quem entra: vacas com lactação ABERTA (flag `em_lactacao` da API; sem ela, lote de lactação ou DEL > 0). Por lote, só as
+//    `em_lactacao !== false`: o servidor recusa o lote inteiro se uma entrada não tiver lactação aberta.
+//  • Ordenha em branco = null (nunca 0); só vai a vaca com ao menos 1 ordenha; 2 ou 3 ordenhas; data padrão = hoje.
+//  • POST /producao/controles { data_controle, entradas: [{ numero_matriz, ordenhas }] }. Planilha: modelo por animal/lote,
+//    pré-visualização editável (nada salvo até confirmar), erros de leitura (contagem + 5 primeiras + "e mais N").
+//  • "Último controle" e "Variação" vêm de `producao_kg`/`producao_data` da API de animais (controle mais recente da vaca);
+//    dado congelado do Ideagri não entra na variação. Enter avança de campo (só front); Tab continua.
 import React, { useMemo, useState } from "react";
-import { Download, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, Download, Trash2 } from "lucide-react";
 import {
-  baixarModeloControleLeiteiro, criarControlesLeiteiros,
-  preVisualizarControleLeiteiroPlanilha, confirmarControleLeiteiroPlanilha, type LinhaControleLeiteiroPreview,
+  baixarModeloControleLeiteiro, confirmarControleLeiteiroPlanilha, criarControlesLeiteiros,
+  preVisualizarControleLeiteiroPlanilha, type LinhaControleLeiteiroPreview,
 } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
-import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import { Campo, inputStyle, lbl, nota } from "@/components/lancamentos/comumForms";
-import { SelectAnimal } from "@/components/lancamentos/_shared";
+import { Ajuda, Aviso, BarraAcao, BotaoOuro, Campo, Faixa, Passo, Pilulas, Selo } from "@/components/gerencial/kit";
+import { LinhaGrupo, RotuloMini, aoApertarEnter, dataBR, nb } from "@/components/gerencial/telas/utilProducao";
+import { BOTAO_COM_ICONE, DicaEnter, EscolhaArquivo, EstadoVazio, NotaInfo } from "@/components/gerencial/telas/pecasProducao";
+import { casaBusca } from "@/lib/busca";
+import {
+  agruparPorLote, faixaControle, hojeLocalIso, jaTemControleNaData, mensagemDoErro, montarEntradasControle, numOuNull, resumoErros,
+  totalDaVaca, vacaEmLactacao, vacasDoLoteParaControle, variacaoControle,
+} from "@/lib/producaoLancamento";
 
-// Planilha (Excel/.xlsx ou CSV) de controle leiteiro (por animal ou por
-// lote): baixa o modelo, o usuário preenche fora do app e reanexa aqui —
-// mas em vez de salvar direto ao enviar, mostra as linhas lidas numa
-// tabela editável para revisar/corrigir antes de confirmar de fato.
-function RevisarPlanilhaControleLeiteiro() {
+type Modo = "vaca" | "lote" | "planilha";
+type Coluna = "numero" | "del" | "ult" | "total";
+type Retorno = { tipo: "ok" | "erro"; texto: string } | null;
+
+const ALTURA_TABELA = { ["--gv-altura-tabela" as string]: "40rem" } as React.CSSProperties;
+const DIR = { textAlign: "right" as const };
+const MAX_RESULTADOS_BUSCA = 8;
+
+function Ordenavel({ rotulo, col, sort, onSort }: {
+  rotulo: string; col: Coluna; sort: { col: Coluna; asc: boolean }; onSort: (c: Coluna) => void;
+}) {
+  const ativo = sort.col === col;
+  const esquerda = col === "numero";
+  return (
+    <th scope="col" aria-sort={ativo ? (sort.asc ? "ascending" : "descending") : "none"} style={{ textAlign: esquerda ? "left" : "right" }}>
+      <button type="button" onClick={() => onSort(col)} style={{
+        all: "unset", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "0.2rem", color: "inherit", font: "inherit",
+        letterSpacing: "inherit", textTransform: "inherit", minHeight: "1.5rem",
+      }}>
+        {rotulo}{ativo && (sort.asc ? <ArrowUp size={11} aria-hidden="true" /> : <ArrowDown size={11} aria-hidden="true" />)}
+      </button>
+    </th>
+  );
+}
+
+function CelulaVariacao({ total, vaca, data }: { total: number | null; vaca: AnimalRow; data: string }) {
+  if (jaTemControleNaData(vaca, data)) {
+    return <Selo tom="info" titulo="Esta vaca já tem controle nesta data: lançar de novo substitui o registro do dia">Já lançada nesta data</Selo>;
+  }
+  const v = variacaoControle(total, vaca, data);
+  if (!v) return <span style={{ color: "var(--text-muted)" }}>—</span>;
+  return (
+    <Selo tom={v.conferir ? "atencao" : "neutro"} titulo={`Variação de ${nb(v.pct, 0)}% sobre o último controle (${nb(vaca.producao_kg ?? 0)} kg)`}>
+      {v.pct >= 0 ? "▲" : "▼"} {nb(Math.abs(v.pct), 0)}%{v.conferir ? " · conferir" : ""}
+    </Selo>
+  );
+}
+
+export function FormControle({ animais, lotesLact, onSalvo }: { animais: AnimalRow[]; lotesLact: string[]; onSalvo?: () => void }) {
+  const [hoje] = useState(hojeLocalIso);
+  const [modo, setModo] = useState<Modo>("lote");
+  const [nOrd, setNOrd] = useState<2 | 3>(2);
+  const [data, setData] = useState(hoje);
+  const [lotesSel, setLotesSel] = useState<string[]>([]);
+  const [busca, setBusca] = useState("");
+  const [valores, setValores] = useState<Record<string, string[]>>({});
+  const [sort, setSort] = useState<{ col: Coluna; asc: boolean }>({ col: "numero", asc: true });
+  const [salvando, setSalvando] = useState(false);
+  const [retorno, setRetorno] = useState<Retorno>(null);
+
+  // Planilha: ler → revisar/corrigir → confirmar (nada é salvo antes do "Confirmar").
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [lendo, setLendo] = useState(false);
   const [linhas, setLinhas] = useState<LinhaControleLeiteiroPreview[] | null>(null);
   const [errosLeitura, setErrosLeitura] = useState<string[]>([]);
-  const [erro, setErro] = useState<string | null>(null);
-  const [salvando, setSalvando] = useState(false);
-  const [resultado, setResultado] = useState<{ criados: number } | null>(null);
+  const [salvandoPlanilha, setSalvandoPlanilha] = useState(false);
+
+  const vacasLact = useMemo(() => animais.filter((a) => vacaEmLactacao(a, lotesLact)), [animais, lotesLact]);
+  const faixa = useMemo(() => faixaControle(vacasLact, hoje), [vacasLact, hoje]);
+  const doLote = useMemo(() => vacasDoLoteParaControle(animais, lotesSel), [animais, lotesSel]);
+  const contagemPorLote = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const l of lotesLact) m.set(l, vacasDoLoteParaControle(animais, [l]).vacas.length);
+    return m;
+  }, [animais, lotesLact]);
+
+  const temValor = (n: string) => (valores[n] ?? []).slice(0, nOrd).some((v) => v.trim() !== "");
+  const totalDe = (n: string) => totalDaVaca(valores[n], nOrd);
+
+  // O que está na tabela é o que será salvo: por lote, as vacas dos lotes marcados; por vaca, o resultado da busca MAIS
+  // quem já tem ordenha digitada (trocar a busca nunca esconde — e nunca perde — o que foi digitado).
+  const base: AnimalRow[] = useMemo(() => {
+    if (modo === "lote") return doLote.vacas;
+    if (modo !== "vaca") return [];
+    const achadas = busca.trim() ? vacasLact.filter((v) => casaBusca(v.numero, busca)).slice(0, MAX_RESULTADOS_BUSCA) : [];
+    const digitadas = vacasLact.filter((v) => (valores[v.numero] ?? []).slice(0, nOrd).some((x) => x.trim() !== ""));
+    return Array.from(new Map([...achadas, ...digitadas].map((v) => [v.numero, v])).values());
+  }, [modo, doLote, busca, vacasLact, valores, nOrd]);
+
+  const grupos = useMemo(() => {
+    const chave = (v: AnimalRow): number | string => {
+      if (sort.col === "del") return v.del_dias ?? -1;
+      if (sort.col === "ult") return v.producao_kg ?? -1;
+      if (sort.col === "total") return totalDaVaca(valores[v.numero], nOrd) ?? -1;
+      return v.numero;
+    };
+    const ordenada = [...base].sort((a, b) => {
+      const x = chave(a), y = chave(b);
+      const c = typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), "pt-BR", { numeric: true });
+      return sort.asc ? c : -c;
+    });
+    return agruparPorLote(ordenada, (v) => v.grupo_primario);
+  }, [base, sort, valores, nOrd]);
+
+  const comPesagem = base.filter((v) => temValor(v.numero));
+  const totalLote = comPesagem.reduce((s, v) => s + (totalDe(v.numero) ?? 0), 0);
+  const media = comPesagem.length ? totalLote / comPesagem.length : 0;
+  const totalPlanilha = (linhas ?? []).reduce((s, l) => s + (l.total_kg ?? 0), 0);
+
+  const ordenar = (c: Coluna) => setSort((p) => ({ col: c, asc: p.col === c ? !p.asc : true }));
+  const alternarLote = (id: string) => setLotesSel((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  function setOrdenha(numero: string, i: number, v: string) {
+    setValores((p) => { const arr = [...(p[numero] ?? ["", "", ""])]; arr[i] = v; return { ...p, [numero]: arr }; });
+  }
+  function trocarModo(m: Modo) { setModo(m); setRetorno(null); }
+
+  async function salvar() {
+    setRetorno(null);
+    // Ordenha em branco vira `null` (não lançada), nunca `0`: um 0 gravado como ordenha real puxaria a média para baixo.
+    const entradas = montarEntradasControle(base.map((v) => v.numero), valores, nOrd);
+    if (!entradas.length) {
+      setRetorno({ tipo: "erro", texto: modo === "vaca" ? "Selecione a vaca e informe ao menos uma ordenha." : "Informe a pesagem de ao menos uma vaca do lote." });
+      return;
+    }
+    setSalvando(true);
+    try {
+      const r = await criarControlesLeiteiros({ data_controle: data, entradas });
+      const kg = entradas.reduce((s, e) => s + e.ordenhas.reduce<number>((a, x) => a + (x ?? 0), 0), 0);
+      setRetorno({ tipo: "ok", texto: `${r.criados} ${r.criados === 1 ? "pesagem lançada" : "pesagens lançadas"} em ${dataBR(data)} · ${nb(kg)} kg` });
+      setValores((p) => { const n = { ...p }; entradas.forEach((e) => { delete n[e.numero_matriz]; }); return n; });
+      onSalvo?.();
+    } catch (e) {
+      setRetorno({ tipo: "erro", texto: mensagemDoErro(e, "Erro ao lançar controle leiteiro") });
+    } finally {
+      setSalvando(false);
+    }
+  }
 
   async function lerPlanilha() {
     if (!arquivo) return;
-    setLendo(true); setErro(null); setResultado(null);
+    setLendo(true); setRetorno(null);
     try {
       const r = await preVisualizarControleLeiteiroPlanilha(arquivo);
-      setLinhas(r.linhas);
-      setErrosLeitura(r.erros);
-    } catch (e: any) {
-      setErro(e.message || "Erro ao ler a planilha");
+      setLinhas(r.linhas); setErrosLeitura(r.erros);
+    } catch (e) {
+      setRetorno({ tipo: "erro", texto: mensagemDoErro(e, "Erro ao ler a planilha") });
     } finally {
       setLendo(false);
     }
   }
-
-  function atualizarLinha(idx: number, patch: Partial<LinhaControleLeiteiroPreview>) {
-    setLinhas((prev) => (prev ? prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)) : prev));
-  }
-  function removerLinha(idx: number) {
-    setLinhas((prev) => (prev ? prev.filter((_, i) => i !== idx) : prev));
-  }
-
-  async function confirmar() {
+  const atualizarLinha = (idx: number, patch: Partial<LinhaControleLeiteiroPreview>) =>
+    setLinhas((p) => (p ? p.map((l, i) => (i === idx ? { ...l, ...patch } : l)) : p));
+  const removerLinha = (idx: number) => setLinhas((p) => (p ? p.filter((_, i) => i !== idx) : p));
+  async function confirmarPlanilha() {
     if (!linhas || !linhas.length) return;
-    setSalvando(true); setErro(null);
+    setSalvandoPlanilha(true); setRetorno(null);
     try {
       const r = await confirmarControleLeiteiroPlanilha(linhas);
-      setResultado(r);
+      setRetorno({ tipo: "ok", texto: `${r.criados} lançamento(s) salvo(s) com sucesso.` });
       setLinhas(null); setArquivo(null); setErrosLeitura([]);
-    } catch (e: any) {
-      setErro(e.message || "Erro ao salvar");
+      onSalvo?.();
+    } catch (e) {
+      setRetorno({ tipo: "erro", texto: mensagemDoErro(e, "Erro ao salvar o controle leiteiro") });
     } finally {
-      setSalvando(false);
+      setSalvandoPlanilha(false);
     }
   }
+  const baixarModelo = (m: "animal" | "lote") =>
+    baixarModeloControleLeiteiro(m).catch(() => setRetorno({ tipo: "erro", texto: "Erro ao baixar o modelo." }));
 
-  const num = (v: string) => (v.trim() === "" ? null : Number(v));
+  const nomeModo = modo === "vaca" ? "Por vaca" : modo === "lote" ? "Por lote" : "Planilha";
+  const erros = resumoErros(errosLeitura, 5);
+  const colunas = 5 + nOrd;
+  const aviso = retorno && (
+    <span role={retorno.tipo === "erro" ? "alert" : "status"} style={{ color: retorno.tipo === "erro" ? "var(--ft-verm)" : "var(--ft-verde)" }}>
+      {retorno.tipo === "ok" ? "✓ " : ""}{retorno.texto}
+    </span>
+  );
 
   return (
-    <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
-      <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.5rem" }}>
-        Importar de planilha (Excel ou CSV)
-      </p>
+    <div style={{ display: "flex", flexDirection: "column", fontSize: "0.85rem", color: "var(--text)" }}>
+      <Faixa itens={[
+        { rotulo: "Vacas em lactação", valor: faixa.vacas },
+        { rotulo: "Último controle", valor: faixa.ultimoControle ? dataBR(faixa.ultimoControle) : "—" },
+        { rotulo: "Média do último controle", valor: faixa.mediaUltimo != null ? <>{nb(faixa.mediaUltimo)} <small style={{ fontSize: "0.7rem", fontWeight: 600 }}>kg/vaca</small></> : "—" },
+        { rotulo: "Sem controle há mais de 30 dias", valor: faixa.semControle, tom: faixa.semControle ? "atencao" : undefined },
+      ]} />
 
-      {!linhas && (
+      <Passo n={1} id="cl-p1" titulo="Como lançar">
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: "1.5rem" }}>
+          <div className="gv-campo">
+            <RotuloMini>Modalidade</RotuloMini>
+            <Pilulas<Modo> rotulo="Modalidade" valor={modo} onChange={trocarModo} opcoes={[
+              { id: "vaca", nome: "Por vaca", titulo: "Uma vaca de cada vez" },
+              { id: "lote", nome: "Por lote", titulo: "Todas as vacas de um ou mais lotes numa tabela" },
+              { id: "planilha", nome: "Planilha (Excel / CSV)", titulo: "Importar o controle preenchido fora do app" },
+            ]} />
+          </div>
+          {modo !== "planilha" && (
+            <>
+              <div className="gv-campo">
+                <RotuloMini>Nº de ordenhas</RotuloMini>
+                <Pilulas<"2" | "3"> rotulo="Número de ordenhas" valor={String(nOrd) as "2" | "3"} onChange={(i) => setNOrd(i === "3" ? 3 : 2)}
+                  opcoes={[{ id: "2", nome: "2 ordenhas" }, { id: "3", nome: "3 ordenhas" }]} />
+              </div>
+              <Campo rotulo="Data do controle" id="cl-data"><input type="date" value={data} onChange={(e) => setData(e.target.value)} /></Campo>
+            </>
+          )}
+        </div>
+        {modo === "vaca" && <Ajuda>Digite o número para achar a vaca em lactação; a DEL e o último controle aparecem na própria linha.</Ajuda>}
+        {modo === "planilha" && <Ajuda>Na planilha, a data de cada vaca vem do arquivo. Antes de salvar você revisa e corrige o que foi lido.</Ajuda>}
+      </Passo>
+
+      {modo !== "planilha" && (
+        <Passo n={2} id="cl-p2" titulo={modo === "vaca" ? "Vaca em lactação" : "Vacas em lactação por lote"} direita={<DicaEnter avanca="a próxima ordenha / vaca" />}>
+          {modo === "lote" ? (
+            <Pilulas<string> rotulo="Lotes" valor={lotesSel} onChange={alternarLote}
+              opcoes={lotesLact.map((l) => ({ id: l, nome: l, n: contagemPorLote.get(l) ?? 0 }))} />
+          ) : (
+            <div className="gv-campo" style={{ maxWidth: "22rem" }}>
+              <label htmlFor="cl-busca">Buscar vaca pelo número</label>
+              <input id="cl-busca" type="search" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="ex.: 11153" />
+            </div>
+          )}
+          <NotaInfo>
+            {modo === "lote" && lotesSel.length > 0 && doLote.foraDaLactacao > 0
+              ? `${doLote.foraDaLactacao} animal(is) do lote fora da lista por não ter lactação aberta (secas, novilhas, machos). `
+              : "Só aparecem vacas com lactação aberta. "}
+            O servidor recusa o lançamento de quem não tem lactação aberta; se a vaca pariu e não aparece, lance o parto antes.
+          </NotaInfo>
+
+          {base.length === 0 ? (
+            <EstadoVazio>
+              {modo === "lote" ? (lotesSel.length ? "Nenhuma vaca em lactação neste lote." : "Marque um ou mais lotes acima para listar as vacas.")
+                : busca.trim() ? "Nenhuma vaca em lactação com esse número." : "Digite o número da vaca para listá-la."}
+            </EstadoVazio>
+          ) : (
+            <div className="gv-tabela-moldura" style={ALTURA_TABELA}>
+              <table className="gv-tabela">
+                <thead>
+                  <tr>
+                    <Ordenavel rotulo="Nº" col="numero" sort={sort} onSort={ordenar} />
+                    <Ordenavel rotulo="DEL" col="del" sort={sort} onSort={ordenar} />
+                    <Ordenavel rotulo="Último controle" col="ult" sort={sort} onSort={ordenar} />
+                    {Array.from({ length: nOrd }, (_, i) => <th key={i} scope="col" style={DIR}>{i + 1}ª ordenha (kg)</th>)}
+                    <Ordenavel rotulo="Total da vaca" col="total" sort={sort} onSort={ordenar} />
+                    <th scope="col">Variação</th>
+                  </tr>
+                </thead>
+                <tbody onKeyDown={aoApertarEnter}>
+                  {grupos.map(([lote, vs]) => (
+                    <React.Fragment key={lote}>
+                      <LinhaGrupo colSpan={colunas} titulo={lote} n={vs.length} />
+                      {vs.map((v) => {
+                        const t = totalDe(v.numero);
+                        return (
+                          <tr key={v.numero} className={temValor(v.numero) ? "gv-linha-marcada" : undefined}>
+                            <td className="gv-forte gv-num">{v.numero}</td>
+                            <td className="gv-num gv-dir">{v.del_dias ?? "—"}</td>
+                            <td className="gv-num gv-dir" style={{ color: "var(--text-muted)" }}
+                              title={v.producao_origem === "congelado" ? "Dado congelado do Ideagri: não anda mais" : undefined}>
+                              {v.producao_kg != null
+                                ? <>{nb(v.producao_kg)} kg{v.producao_data ? ` · ${dataBR(v.producao_data, true)}` : ""}{v.producao_origem === "congelado" ? " (Ideagri)" : ""}</>
+                                : "—"}
+                            </td>
+                            {Array.from({ length: nOrd }, (_, i) => (
+                              <td key={i} className="gv-dir">
+                                <input className="gv-celula-input" type="number" inputMode="decimal" step="0.1" min="0" data-nav=""
+                                  aria-label={`${i + 1}ª ordenha da vaca ${v.numero}, em kg`} placeholder="kg"
+                                  value={(valores[v.numero] ?? [])[i] ?? ""} onChange={(e) => setOrdenha(v.numero, i, e.target.value)} />
+                              </td>
+                            ))}
+                            <td className="gv-num gv-dir gv-forte">{t !== null ? nb(t) : "—"}</td>
+                            <td><CelulaVariacao total={t} vaca={v} data={data} /></td>
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <Ajuda>“▲▼” compara o total do dia com o último controle da vaca; variação de 25% ou mais vem marcada “conferir” para pegar erro de digitação. Em branco = ordenha não lançada (nunca 0).</Ajuda>
+        </Passo>
+      )}
+
+      {modo === "planilha" && (
         <>
-          <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
-            <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => baixarModeloControleLeiteiro("animal").catch(() => setErro("Erro ao baixar o modelo."))}>
-              <Download size={13} /> Modelo por animal
-            </button>
-            <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => baixarModeloControleLeiteiro("lote").catch(() => setErro("Erro ao baixar o modelo."))}>
-              <Download size={13} /> Modelo por lote
-            </button>
-          </div>
-          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
-            Baixe o modelo, preencha fora do app e anexe aqui — antes de salvar, você revisa e pode corrigir os valores lidos.
-          </p>
-          <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-            <input type="file" accept=".xlsx,.xlsm,.csv" onChange={(e) => { setArquivo(e.target.files?.[0] || null); setResultado(null); setErro(null); }} style={{ fontSize: "0.8rem" }} />
-            <button type="button" className="btn-primary" disabled={!arquivo || lendo} onClick={lerPlanilha}>{lendo ? "Lendo…" : "Ler planilha"}</button>
-          </div>
+          <Passo n={2} id="cl-p2" titulo="Planilha preenchida">
+            <div className="gv-linha">
+              <button type="button" className="btn-ghost" style={BOTAO_COM_ICONE} onClick={() => baixarModelo("animal")}><Download size={13} aria-hidden="true" /> Modelo por animal</button>
+              <button type="button" className="btn-ghost" style={BOTAO_COM_ICONE} onClick={() => baixarModelo("lote")}><Download size={13} aria-hidden="true" /> Modelo por lote</button>
+              <span className="gv-espaco" style={{ flex: 1 }} />
+              <button type="button" className="btn-primary" disabled={!arquivo || lendo || !!linhas} onClick={lerPlanilha}>{lendo ? "Lendo…" : "Ler planilha"}</button>
+            </div>
+            <EscolhaArquivo id="cl-arquivo" arquivo={arquivo} aceita=".xlsx,.xlsm,.csv"
+              onEscolher={(f) => { setArquivo(f); setLinhas(null); setErrosLeitura([]); setRetorno(null); }}
+              detalhe={linhas ? `${linhas.length} linhas lidas${errosLeitura.length ? ` · ${errosLeitura.length} ignoradas` : ""}` : undefined} />
+            <Ajuda>Baixe o modelo, preencha fora do app e anexe aqui — antes de salvar, você revisa e pode corrigir os valores lidos.</Ajuda>
+          </Passo>
+          {linhas && (
+            <Passo n={3} id="cl-p3" titulo="Revise o que foi lido" direita={<Selo tom="info">Nada foi salvo ainda</Selo>}>
+              {errosLeitura.length > 0 && (
+                <Aviso>
+                  <AlertTriangle size={15} aria-hidden="true" style={{ marginTop: "0.1rem", flexShrink: 0 }} />
+                  <span>
+                    <b>{errosLeitura.length} {errosLeitura.length === 1 ? "linha da planilha não pôde ser lida e foi ignorada" : "linhas da planilha não puderam ser lidas e foram ignoradas"}.</b>
+                    {erros.resto > 0 ? ` Primeiras ${erros.primeiras.length}:` : ""}
+                    <span style={{ display: "block", marginTop: "0.2rem", color: "var(--text)" }}>{erros.primeiras.join(" · ")}</span>
+                    {erros.resto > 0 && <span style={{ display: "block", color: "var(--text-muted)" }}>e mais {erros.resto}. Corrija na planilha e leia de novo, se precisar delas.</span>}
+                  </span>
+                </Aviso>
+              )}
+              <div className="gv-tabela-moldura" style={ALTURA_TABELA}>
+                <table className="gv-tabela">
+                  <thead>
+                    <tr>
+                      <th scope="col">Nº</th><th scope="col">Data</th>
+                      <th scope="col" style={DIR}>1ª ordenha (kg)</th><th scope="col" style={DIR}>2ª ordenha (kg)</th><th scope="col" style={DIR}>3ª ordenha (kg)</th>
+                      <th scope="col" style={DIR}>Total (kg)</th><th scope="col" aria-label="Remover linha" style={{ width: "2.5rem" }}></th>
+                    </tr>
+                  </thead>
+                  <tbody onKeyDown={aoApertarEnter}>
+                    {linhas.map((l, idx) => (
+                      <tr key={`${l.numero_matriz}-${idx}`}>
+                        <td className="gv-forte gv-num">{l.numero_matriz}</td>
+                        <td><input className="gv-celula-input" style={{ width: "8.5rem", textAlign: "left" }} type="date" value={l.data_controle} data-nav=""
+                          aria-label={`Data da vaca ${l.numero_matriz}`} onChange={(e) => atualizarLinha(idx, { data_controle: e.target.value })} /></td>
+                        {(["ordenha1_kg", "ordenha2_kg", "ordenha3_kg", "total_kg"] as const).map((campo, i) => (
+                          <td key={campo} className="gv-dir">
+                            <input className="gv-celula-input" type="number" inputMode="decimal" step="0.1" data-nav=""
+                              aria-label={`${campo === "total_kg" ? "Total" : `${i + 1}ª ordenha`} da vaca ${l.numero_matriz}`}
+                              value={l[campo] ?? ""} onChange={(e) => atualizarLinha(idx, { [campo]: numOuNull(e.target.value) })} />
+                          </td>
+                        ))}
+                        <td className="gv-dir">
+                          <button type="button" className="btn-ghost" style={BOTAO_COM_ICONE} aria-label={`Remover a linha da vaca ${l.numero_matriz}`} title="Remover esta linha" onClick={() => removerLinha(idx)}>
+                            <Trash2 size={13} aria-hidden="true" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!linhas.length && <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1rem" }}>Nenhuma linha restante.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </Passo>
+          )}
         </>
       )}
 
-      {resultado && (
-        <p style={{ fontSize: "0.78rem", marginTop: "0.6rem", color: "var(--green-light)" }}>
-          {resultado.criados} lançamento(s) salvo(s) com sucesso.
-        </p>
-      )}
-      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.5rem" }}>{erro}</p>}
-
-      {linhas && (
-        <div className="mt-2">
-          {errosLeitura.length > 0 && (
-            <p style={{ fontSize: "0.76rem", color: "var(--amber)", marginBottom: "0.5rem" }}>
-              {errosLeitura.length} linha(s) da planilha não puderam ser lidas e foram ignoradas:
-              <span style={{ display: "block", color: "var(--text-muted)" }}>{errosLeitura.slice(0, 5).join("; ")}</span>
-            </p>
-          )}
-          <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
-            Revise os valores lidos abaixo — edite o que precisar antes de confirmar. Nada foi salvo ainda.
-          </p>
-          <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
-            <table className="fazenda-table" style={{ margin: 0 }}>
-              <thead>
-                <tr>
-                  <th>Nº</th><th>Data</th>
-                  <th style={{ textAlign: "right" }}>1ª ordenha (kg)</th>
-                  <th style={{ textAlign: "right" }}>2ª ordenha (kg)</th>
-                  <th style={{ textAlign: "right" }}>3ª ordenha (kg)</th>
-                  <th style={{ textAlign: "right" }}>Total (kg)</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {linhas.map((l, idx) => (
-                  <tr key={idx}>
-                    <td style={{ fontWeight: 700 }}>{l.numero_matriz}</td>
-                    <td>
-                      <input type="date" style={inputStyle} value={l.data_controle}
-                        onChange={(e) => atualizarLinha(idx, { data_controle: e.target.value })} />
-                    </td>
-                    <td><input type="number" inputMode="decimal" style={{ ...inputStyle, textAlign: "right" }}
-                      value={l.ordenha1_kg ?? ""} onChange={(e) => atualizarLinha(idx, { ordenha1_kg: num(e.target.value) })} /></td>
-                    <td><input type="number" inputMode="decimal" style={{ ...inputStyle, textAlign: "right" }}
-                      value={l.ordenha2_kg ?? ""} onChange={(e) => atualizarLinha(idx, { ordenha2_kg: num(e.target.value) })} /></td>
-                    <td><input type="number" inputMode="decimal" style={{ ...inputStyle, textAlign: "right" }}
-                      value={l.ordenha3_kg ?? ""} onChange={(e) => atualizarLinha(idx, { ordenha3_kg: num(e.target.value) })} /></td>
-                    <td><input type="number" inputMode="decimal" style={{ ...inputStyle, textAlign: "right" }}
-                      value={l.total_kg ?? ""} onChange={(e) => atualizarLinha(idx, { total_kg: num(e.target.value) })} /></td>
-                    <td>
-                      <button type="button" className="btn-ghost" title="Remover esta linha" onClick={() => removerLinha(idx)}>
-                        <Trash2 size={13} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {!linhas.length && <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1rem" }}>Nenhuma linha restante.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex items-center gap-2 mt-3">
-            <button type="button" className="btn-primary" disabled={!linhas.length || salvando} onClick={confirmar}>
-              {salvando ? "Salvando…" : `Confirmar e salvar (${linhas.length})`}
-            </button>
-            <button type="button" className="btn-ghost" onClick={() => { setLinhas(null); setErrosLeitura([]); }}>Cancelar</button>
-          </div>
-        </div>
-      )}
+      <BarraAcao
+        retorno={aviso || undefined}
+        resumo={modo === "planilha"
+          ? (linhas ? `${linhas.length} lançamentos prontos · total ${nb(totalPlanilha)} kg` : "Nenhuma planilha lida ainda")
+          : `${comPesagem.length} com pesagem de ${base.length} · total ${nb(totalLote)} kg · média ${nb(media)} kg/vaca`}
+        detalhe={modo === "planilha"
+          ? (linhas ? "Planilha · confira os valores acima antes de confirmar" : "Escolha o arquivo e clique em “Ler planilha”")
+          : `${nomeModo} · ${nOrd} ordenhas · ${data ? dataBR(data) : "sem data"} · só vai quem tem ao menos 1 ordenha`}
+        secundaria={modo === "planilha" && linhas ? (
+          <button type="button" className="btn-ghost" onClick={() => { setLinhas(null); setErrosLeitura([]); }}>Cancelar</button>
+        ) : undefined}
+        acao={modo === "planilha" ? (
+          <BotaoOuro onClick={confirmarPlanilha} desabilitado={!linhas?.length || salvandoPlanilha}>
+            {salvandoPlanilha ? "Salvando…" : `Confirmar e salvar (${linhas?.length ?? 0})`}
+          </BotaoOuro>
+        ) : (
+          <BotaoOuro onClick={salvar} desabilitado={!comPesagem.length || salvando || !data}>
+            {salvando ? "Salvando…" : `Salvar (${comPesagem.length})`}
+          </BotaoOuro>
+        )}
+      />
     </div>
   );
 }
-
-// Upload de planilha (Excel/.xlsx ou CSV) — usado tanto em Controle leiteiro
-// (por animal ou por lote, um botão de modelo cada) quanto em Qualidade do
-// leite (um modelo só). O parser do backend identifica o formato sozinho.
-export function FormControle({ animais, lotesLact, onSalvo }: { animais: AnimalRow[]; lotesLact: string[]; onSalvo?: () => void }) {
-  const [modo, setModo] = useState<"vaca" | "lote" | "planilha">("vaca");
-  const [vaca, setVaca] = useState("");
-  const [lote, setLote] = useState("");
-  const [nOrd, setNOrd] = useState(2);
-  const [ord, setOrd] = useState<string[]>(["", "", ""]);
-  const [porVaca, setPorVaca] = useState<Record<string, string[]>>({});
-  const [dataControle, setDataControle] = useState(() => new Date().toISOString().slice(0, 10));
-  const [salvando, setSalvando] = useState(false);
-  const [erro, setErro] = useState<string | null>(null);
-  const [sucesso, setSucesso] = useState<string | null>(null);
-
-  const del = useMemo(() => animais.find((a) => a.numero === vaca)?.del_dias ?? null, [animais, vaca]);
-  /**
-   * Quem está em lactação — FONTE ÚNICA: a flag `em_lactacao` que a API de
-   * animais devolve, calculada da `Lactacao` aberta hoje (ver
-   * backend/fazenda/rules/lactacao.py). É o MESMO critério que o backend usa
-   * para aceitar ou recusar o lançamento, então a lista aqui não pode mais
-   * discordar do que acontece ao salvar.
-   *
-   * O critério antigo era um OU de duas heurísticas que discordavam entre si:
-   * "está num lote 01/02/03" (depende de alguém ter movido a vaca de lote) OU
-   * "del_dias > 0" (campo CONGELADO, que nasce 0 no instante do parto). Uma
-   * vaca que pariu ontem falhava nas duas e sumia da lista; uma vaca seca que
-   * ninguém tirou do lote 02 continuava aparecendo.
-   *
-   * `em_lactacao === undefined` (front novo contra backend antigo) cai no
-   * critério antigo, para a tela não ficar vazia durante o deploy.
-   */
-  const animaisLact = useMemo(
-    () => animais.filter((a) => (
-      a.em_lactacao !== undefined
-        ? a.em_lactacao
-        : (a.grupo_primario && lotesLact.includes(a.grupo_primario)) || ((a.del_dias ?? 0) > 0)
-    )),
-    [animais, lotesLact],
-  );
-  const total = ord.slice(0, nOrd).reduce((s, v) => s + (Number(v) || 0), 0);
-
-  // Vacas do lote selecionado — abre a listagem individual pra pesagem de cada
-  // uma. Só as EM LACTAÇÃO: o lote pode ter uma vaca já seca que ninguém
-  // moveu ainda, e o backend recusa o lote inteiro se uma entrada dele não
-  // tiver lactação aberta (ver POST /producao/controles).
-  const numerosDoLote = useMemo(() => (lote ? animais.filter((a) => a.grupo_primario === lote) : []), [animais, lote]);
-  const vacasDoLote = useMemo(
-    () => numerosDoLote.filter((a) => a.em_lactacao !== false),
-    [numerosDoLote],
-  );
-  const foraDeLactacaoNoLote = numerosDoLote.length - vacasDoLote.length;
-  const ordVacas = useOrdenacao(vacasDoLote);
-  const setOrdVaca = (numero: string, idx: number, valor: string) =>
-    setPorVaca((p) => { const arr = [...(p[numero] || ["", "", ""])]; arr[idx] = valor; return { ...p, [numero]: arr }; });
-  const totalVaca = (numero: string) => (porVaca[numero] || []).slice(0, nOrd).reduce((s, v) => s + (Number(v) || 0), 0);
-  const totalLote = vacasDoLote.reduce((s, a) => s + totalVaca(a.numero), 0);
-
-  function limpar() {
-    setOrd(["", "", ""]);
-    setPorVaca({});
-  }
-
-  async function salvar() {
-    setErro(null); setSucesso(null);
-    // Ordenha em branco vira `null` (não lançada), nunca `0` — um `0` gravado
-    // como se fosse ordenha real puxaria a média de manhã/noite para baixo.
-    const ordenhaOuNull = (v: string) => (v.trim() === "" ? null : Number(v));
-    const entradas = modo === "vaca"
-      ? (vaca ? [{ numero_matriz: vaca, ordenhas: ord.slice(0, nOrd).map(ordenhaOuNull) }] : [])
-      : vacasDoLote.map((a) => ({ numero_matriz: a.numero, ordenhas: (porVaca[a.numero] || []).slice(0, nOrd).map(ordenhaOuNull) }))
-          .filter((e) => e.ordenhas.some((v) => v !== null));
-    if (!entradas.length) { setErro(modo === "vaca" ? "Selecione a vaca e informe ao menos uma ordenha." : "Informe a pesagem de ao menos uma vaca do lote."); return; }
-    setSalvando(true);
-    try {
-      const r = await criarControlesLeiteiros({ data_controle: dataControle, entradas });
-      setSucesso(`${r.criados} ${r.criados === 1 ? "pesagem" : "pesagens"} lançada${r.criados === 1 ? "" : "s"} com sucesso.`);
-      limpar();
-      onSalvo?.();
-    } catch (e: any) {
-      setErro(e.message || "Erro ao lançar controle leiteiro");
-    } finally {
-      setSalvando(false);
-    }
-  }
-
-  return (
-    <>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Modalidade">
-          <select style={inputStyle} value={modo} onChange={(e) => { setModo(e.target.value as any); setErro(null); setSucesso(null); }}>
-            <option value="vaca">Por vaca</option>
-            <option value="lote">Por lote</option>
-            <option value="planilha">Importar de planilha</option>
-          </select>
-        </Campo>
-        {modo !== "planilha" && (
-          <Campo label="Nº de ordenhas">
-            <select style={inputStyle} value={nOrd} onChange={(e) => setNOrd(Number(e.target.value))}>
-              <option value={2}>2 ordenhas</option>
-              <option value={3}>3 ordenhas</option>
-            </select>
-          </Campo>
-        )}
-        {modo === "vaca" && (
-          <>
-            <Campo label="Vaca (só em lactação)"><SelectAnimal animais={animaisLact} value={vaca} onChange={setVaca} placeholder="Selecione a vaca em lactação…" /></Campo>
-            <Campo label="DEL (automático)"><input style={{ ...inputStyle, opacity: 0.8 }} value={del != null ? `${del} dias` : "—"} readOnly /></Campo>
-          </>
-        )}
-        {modo === "lote" && (
-          <Campo label="Lote">
-            <select style={inputStyle} value={lote} onChange={(e) => setLote(e.target.value)}>
-              <option value="">Selecione…</option>
-              {lotesLact.map((l) => <option key={l} value={l}>{l}</option>)}
-            </select>
-          </Campo>
-        )}
-        {modo !== "planilha" && (
-          <Campo label="Data do controle"><input type="date" style={inputStyle} value={dataControle} onChange={(e) => setDataControle(e.target.value)} /></Campo>
-        )}
-      </div>
-      </div>
-
-      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
-      {modo === "planilha" && (
-        <RevisarPlanilhaControleLeiteiro />
-      )}
-
-      {modo !== "planilha" && (modo === "vaca" ? (
-        <div className="mt-3">
-          <label style={lbl}>Quilos por ordenha</label>
-          <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
-            {Array.from({ length: nOrd }, (_, i) => (
-              <div key={i}>
-                <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{i + 1}ª ordenha</span>
-                <input type="number" inputMode="decimal" style={{ ...inputStyle, width: "7rem" }} value={ord[i]}
-                  onChange={(e) => setOrd((p) => { const n = [...p]; n[i] = e.target.value; return n; })} placeholder="kg" />
-              </div>
-            ))}
-            <div>
-              <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Total do dia</span>
-              <div style={{ ...inputStyle, width: "7rem", fontWeight: 700, color: "var(--green-light)" }}>{total.toFixed(1)} kg</div>
-            </div>
-          </div>
-        </div>
-      ) : lote ? (
-        <div className="card mt-3" style={{ padding: 0 }}>
-          <div className="card-header m-3 flex items-center justify-between">
-            <span>
-              Vacas do lote {lote} ({vacasDoLote.length})
-              {foraDeLactacaoNoLote > 0 && (
-                <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 400 }}>
-                  {" "}· {foraDeLactacaoNoLote} fora da lista por não ter lactação aberta
-                </span>
-              )}
-            </span>
-            <span style={{ fontSize: "0.78rem", color: "var(--green-light)", fontWeight: 700 }}>Total do lote: {totalLote.toFixed(1)} kg</span>
-          </div>
-          <div className="overflow-x-auto" style={{ maxHeight: "460px" }}>
-            <table className="fazenda-table" style={{ margin: 0 }}>
-              <thead>
-                <tr>
-                  <ThOrdenavel label="Nº" campo="numero" coluna={ordVacas.coluna} dir={ordVacas.dir} ordenar={ordVacas.ordenar} />
-                  <ThOrdenavel label="DEL" campo="del_dias" coluna={ordVacas.coluna} dir={ordVacas.dir} ordenar={ordVacas.ordenar} />
-                  {Array.from({ length: nOrd }, (_, i) => <th key={i} style={{ textAlign: "right" }}>{i + 1}ª ordenha (kg)</th>)}
-                  <th style={{ textAlign: "right" }}>Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ordVacas.linhasOrdenadas.map((a) => (
-                  <tr key={a.numero}>
-                    <td style={{ fontWeight: 700 }}>{a.numero}</td>
-                    <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{a.del_dias ?? "—"}</td>
-                    {Array.from({ length: nOrd }, (_, i) => (
-                      <td key={i}>
-                        <input type="number" inputMode="decimal" style={{ ...inputStyle, textAlign: "right" }}
-                          value={(porVaca[a.numero] || [])[i] || ""} onChange={(e) => setOrdVaca(a.numero, i, e.target.value)} placeholder="kg" />
-                      </td>
-                    ))}
-                    <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green-light)" }}>{totalVaca(a.numero).toFixed(1)}</td>
-                  </tr>
-                ))}
-                {!vacasDoLote.length && <tr><td colSpan={nOrd + 3} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1rem" }}>Nenhuma vaca neste lote.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ) : (
-        <p style={nota}>Selecione um lote para ver a listagem de vacas e lançar a pesagem individual de todas de uma vez.</p>
-      ))}
-
-      {modo !== "planilha" && erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
-      {modo !== "planilha" && sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
-
-      {modo !== "planilha" && (
-        <div className="flex items-center gap-3 mt-4">
-          <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
-        </div>
-      )}
-      </div>
-      </div>
-    </>
-  );
-}
-

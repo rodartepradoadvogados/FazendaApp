@@ -73,7 +73,9 @@ export function GavetaLancamento({
     if (!aberto) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
+    // Marca o corpo: o botão flutuante do Assistente some enquanto a gaveta está aberta (ver globals.css): cobria o "Lançar…".
+    document.body.dataset.gavetaAberta = "1";
+    return () => { document.body.style.overflow = prev; delete document.body.dataset.gavetaAberta; };
   }, [aberto]);
 
   // Esc — pela pilha de overlays: só o da frente reage, e só se `fecharComEsc`.

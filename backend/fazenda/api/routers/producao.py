@@ -1111,6 +1111,11 @@ def criar_entrega_leite(
     # competência e sobrescrevia litros/unidade dela; não encontrando, criava
     # uma entrega órfã. Como a competência é "AAAA-MM", a colisão entre
     # clientes é o caso normal — todo mundo fecha o mesmo mês.
+    # Mesmas validações do PUT (a tela já bloqueia, mas o servidor é quem manda; a fila offline do app também chega aqui).
+    if not _REGEX_COMPETENCIA.match(dados.competencia):
+        raise HTTPException(status_code=400, detail="Competência inválida — use o formato AAAA-MM.")
+    if dados.quantidade_litros <= 0:
+        raise HTTPException(status_code=400, detail="Quantidade entregue deve ser maior que zero.")
     existente_query = select(EntregaLeiteMensal).where(EntregaLeiteMensal.competencia == dados.competencia)
     if fazenda_id is not None:
         existente_query = existente_query.where(EntregaLeiteMensal.fazenda_id == fazenda_id)
@@ -1489,6 +1494,73 @@ def info_secagem(
         "motivo_exclusao": motivo_exclusao,
         "dias_gestacao": dias_gestacao,
         "lote_sugerido": _lote_das_secas(session, numero_matriz=numero_matriz, fazenda_id=fazenda_id),
+    }
+
+
+@router.get("/secagem-lista")
+def lista_secagem(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """A tela de Secagem em UMA chamada: uma linha por vaca EM LACTAÇÃO (lactação
+    aberta hoje) com DEL, dias de gestação e a data prevista de secagem.
+
+    É a mesma conta de `/secagem-info` (serviço positivo VIGENTE + base de gestação de
+    Parâmetros − período seco; novilha de 1ª cria não seca), só que para o rebanho todo, para a
+    tabela não precisar de uma chamada por vaca. Vaca sem prenhez confirmada vem com os campos
+    de previsão em `null` (a tela diz "sem prenhez confirmada"; não impede secar).
+    """
+    from fazenda.rules.gestation import dias_gestacao_secagem_pre_parto
+    from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
+
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    hoje = date.today()
+    query_animais = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    query_servicos = select(Servico)
+    query_partos = select(Parto)
+    query_secagens = select(Secagem)
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+        query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
+        query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+        query_secagens = query_secagens.where(Secagem.fazenda_id == fazenda_id)
+    animais = [a for a in session.exec(query_animais).all() if not a.eh_semen and a.sexo != "M"]
+    abertas = regras_lactacao.em_lactacao_por_matriz(
+        session, {a.numero for a in animais}, data=hoje, fazenda_id=fazenda_id,
+    )
+    vigentes = servicos_positivos_vigentes(session.exec(query_servicos).all(), session.exec(query_partos).all())
+
+    gestacao_por_raca: dict[str | None, int] = {}  # uma leitura de parâmetro por raça, não por vaca
+    linhas = []
+    for a in animais:
+        lact = abertas.get(a.numero)
+        if lact is None:
+            continue
+        linha = {
+            "numero_matriz": a.numero, "grupo_primario": a.grupo_primario,
+            "del_atual": (hoje - lact.data_inicio).days,
+            "dias_gestacao": None, "data_prevista_secagem": None, "dias_para_secagem": None,
+            "deve_secar": None, "motivo_exclusao": None,
+        }
+        servico = vigentes.get(a.numero)
+        if servico is not None and servico.data_servico:
+            if a.raca not in gestacao_por_raca:
+                gestacao_por_raca[a.raca] = dias_gestacao_secagem_pre_parto(a.raca)
+            parto_base = servico.data_servico + timedelta(days=gestacao_por_raca[a.raca])
+            res = calcular_secagem(a.numero, parto_base, servico.ordem_parto, True)
+            linha.update({
+                "dias_gestacao": max(0, (hoje - servico.data_servico).days),
+                "data_prevista_secagem": res.data_secagem.isoformat(),
+                "dias_para_secagem": (res.data_secagem - hoje).days,
+                "deve_secar": res.deve_secar, "motivo_exclusao": res.motivo_exclusao,
+            })
+        linhas.append(linha)
+    linhas.sort(key=lambda l: chave_numero(l["numero_matriz"]))
+    datas = [s.data_secagem for s in session.exec(query_secagens).all() if s.data_secagem]
+    return {
+        "hoje": hoje.isoformat(),
+        "ultima_secagem": max(datas).isoformat() if datas else None,
+        "animais": linhas,
     }
 
 
@@ -1990,6 +2062,9 @@ def listar_inducao_lactacao_ativos(
             })
         ativos.append({
             "lancamento_id": lanc.id,
+            # protocolo_id: a tela "Em andamento" (FormInducaoLactacao) casa com o molde (GET /protocolos-inducao-lactacao)
+            # para mostrar o que é a etapa (produto/dose), o dia do protocolo e a data de início da ordenha.
+            "protocolo_id": lanc.protocolo_id,
             "nome_protocolo": lanc.nome_protocolo,
             "data_d0": lanc.data_d0.isoformat(),
             "animais": animais_status,

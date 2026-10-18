@@ -26,7 +26,7 @@ from fazenda.rules import exclusao_risco
 from fazenda.rules.parametros import exclusao_v2_ativa
 from fazenda.rules.exclusao_impacto import Bloqueio, ExclusaoBloqueada, Impacto, Linha
 from fazenda.rules.exclusao_tipos import REGISTRO
-from fazenda.rules.exclusao_tipos._base import _br, _contem, _dentro_periodo
+from fazenda.rules.exclusao_tipos._base import _br, _contem, _dentro_periodo, recentes_primeiro
 from fazenda.rules.farmacia_multi_principio import checar_e_desvincular_exclusao_principio
 from fazenda.rules.vale_item import eh_item_de_vale
 from fazenda.rules.supabase_storage import excluir_arquivo
@@ -61,6 +61,7 @@ from fazenda.models import (
     Lote,
     MotivoMovimentacao,
     MovimentoEstoque,
+    MovimentoLote,
     Parto,
     PesagemCorporal,
     Pessoa,
@@ -88,7 +89,7 @@ router = APIRouter(prefix="/exclusoes", tags=["exclusoes"])
 
 TIPOS = [
     {"id": "animal", "label": "Animal (ficha)"},
-    {"id": "servico", "label": "Serviço / IA (inclui diagnóstico)"},
+    {"id": "servico", "label": "Serviço / IA (a inseminação inteira)"},
     {"id": "parto", "label": "Parto / nascimento"},
     {"id": "controle", "label": "Controle leiteiro"},
     {"id": "sanidade", "label": "Sanidade"},
@@ -117,7 +118,8 @@ TIPOS = [
 # continua sendo o texto exibido na linha.
 META_TIPOS: dict[str, dict] = {
     "animal": {"dominio": "reb", "plural": "animais", "dica": "Apaga a ficha e todo o histórico."},
-    "servico": {"dominio": "reb", "plural": "serviços", "dica": "A inseminação anterior volta a valer."},
+    "servico": {"dominio": "reb", "plural": "serviços / IA", "dica": "Apaga a IA inteira, com o diagnóstico dela."},
+    "diagnostico": {"dominio": "reb", "plural": "diagnósticos de gestação", "dica": "Desfaz só o exame; a inseminação fica."},
     "parto": {"dominio": "reb", "plural": "partos", "dica": "Remove a lactação e a cria gerada."},
     "controle": {"dominio": "reb", "plural": "controles leiteiros", "dica": "Some o registro de produção."},
     "sanidade": {"dominio": "san", "plural": "sanidades", "dica": "O remédio volta ao estoque."},
@@ -132,12 +134,24 @@ META_TIPOS: dict[str, dict] = {
     "compra_semen": {"dominio": "fin", "plural": "compras de sêmen", "dica": "Apaga a compra; o estoque volta."},
     "venda_animal": {"dominio": "fin", "plural": "vendas de animal", "dica": "Apaga a venda e o lançamento financeiro."},
     "estoque": {"dominio": "est", "plural": "movimentos de estoque", "dica": "O estoque volta ao valor anterior."},
-    "evento_manual": {"dominio": "cad", "plural": "eventos da agenda", "dica": "Some o evento da agenda."},
+    "evento_manual": {"dominio": "reb", "plural": "eventos da agenda", "dica": "Some o evento da agenda."},
     "lote": {"dominio": "cad", "plural": "lotes", "dica": "Os animais do lote ficam sem lote.", "cadastro": True},
     "fornecedor": {"dominio": "cad", "plural": "fornecedores", "dica": "As notas continuam, mas perdem a ligação.", "cadastro": True},
     "motivo_movimentacao": {"dominio": "cad", "plural": "motivos de movimentação", "dica": "Cadastro auxiliar.", "cadastro": True},
     "pessoa": {"dominio": "pes", "plural": "pessoas", "dica": "Só sai se não tiver folha nem vale.", "cadastro": True},
     "principio_ativo": {"dominio": "cad", "plural": "princípios ativos", "dica": "Cadastro auxiliar.", "cadastro": True},
+    # Tipos do REGISTRO (rules/exclusao_tipos/*) — antes chegavam sem dominio/plural/dica e a tela os jogava em "Outros".
+    "movimento_lote": {"dominio": "reb", "plural": "movimentações de lote", "dica": "O animal volta ao lote anterior."},
+    "secagem": {"dominio": "reb", "plural": "secagens", "dica": "A lactação é reaberta."},
+    "pesagem_corporal": {"dominio": "reb", "plural": "pesagens", "dica": "Some o peso lançado."},
+    "exame_resultado": {"dominio": "san", "plural": "resultados de exame", "dica": "Some o resultado lançado."},
+    "entrega_leite": {"dominio": "fin", "plural": "entregas de leite", "dica": "Some a entrega do mês."},
+    "movimento_estoque": {"dominio": "est", "plural": "entradas e saídas manuais", "dica": "O saldo volta ao anterior."},
+    "diaria": {"dominio": "pes", "plural": "diárias", "dica": "Some a diária lançada."},
+    "diaria_pagamento": {"dominio": "pes", "plural": "pagamentos de diária", "dica": "O pagamento volta a pendente."},
+    "empreitada": {"dominio": "pes", "plural": "empreitadas", "dica": "Some a empreitada lançada."},
+    "contrato": {"dominio": "pes", "plural": "contratos", "dica": "Some o contrato lançado."},
+    "safra": {"dominio": "cad", "plural": "safras", "dica": "Some a safra e o que dela depende.", "cadastro": True},
     "todos_lancamentos": {"dominio": "todos", "plural": "lançamentos", "dica": "Busca em todos os lançamentos."},
 }
 
@@ -154,12 +168,44 @@ META_CONTAR = {
     "lote": Lote,
     "fornecedor": Fornecedor,
     "doenca": Doenca,
+    # Tipos de tabela única e escopo igual ao da lista de /buscar (tela "Excluir lançamento" mostra o número no bloco).
+    "servico": Servico,
+    "parto": Parto,
+    "controle": ControleLeiteiro,
+    "sanidade": Sanidade,
+    "protocolo_sanitario_lancamento": ProtocoloSanitarioLancamento,
+    "protocolo_iatf_lancamento": ProtocoloIatfLancamento,
+    "calendario_sanitario": CalendarioSanitario,
+    "motivo_movimentacao": MotivoMovimentacao,
+    "principio_ativo": PrincipioAtivo,
+    "evento_sanitario": EventoSanitario,
+    "protocolo_sanitario": ProtocoloSanitario,
+    "pesagem_corporal": PesagemCorporal,
+    "secagem": Secagem,
+    "movimento_lote": MovimentoLote,
 }
+
+
+def _contar_diagnosticos(session: Session, fid: int | None) -> int:
+    """Quantos EXAMES existem (toque + retoque + perda de prenhez): cada `Servico` pode ter até 3, o mesmo critério de
+    `_exames_do_servico` (rules/exclusao_tipos/rebanho.py) — por isso não cabe em META_CONTAR (uma tabela = uma contagem)."""
+    total = 0
+    condicoes = (
+        or_(Servico.data_diagnostico.is_not(None), and_(Servico.diagnostico.is_not(None), Servico.diagnostico != "")),
+        or_(Servico.data_reconfirmacao.is_not(None), and_(Servico.diagnostico_reconfirmacao.is_not(None), Servico.diagnostico_reconfirmacao != "")),
+        Servico.data_perda_prenhez.is_not(None),
+    )
+    for cond in condicoes:
+        q = select(func.count()).select_from(Servico).where(cond)
+        if fid is not None:
+            q = q.where(Servico.fazenda_id == fid)
+        total += session.exec(q).one()
+    return total
 
 # Tipos "de lançamento" (têm data) reunidos na busca combinada "todos_lancamentos" —
 # serve para achar algo que não constou em nenhuma das opções específicas acima.
 SUBTIPOS_TODOS = [
-    "servico", "parto", "controle", "sanidade",
+    "servico", "diagnostico", "parto", "controle", "sanidade",
     "protocolo_sanitario_lancamento", "protocolo_iatf_lancamento",
     "evento_manual", "financeiro", "compra_animal", "compra_semen", "venda_animal",
 ]
@@ -187,7 +233,9 @@ def tipos(
         meta = META_TIPOS.get(t["id"], {})
         t.update(meta)
         modelo = META_CONTAR.get(t["id"])
-        if modelo is not None:
+        if t["id"] == "diagnostico":
+            t["contagem"] = _contar_diagnosticos(session, fid)
+        elif modelo is not None:
             q = select(func.count()).select_from(modelo)
             if fid is not None:
                 q = q.where(modelo.fazenda_id == fid)
@@ -246,7 +294,7 @@ def _buscar_um(
             if _contem(termo, s.numero_matriz, s.reprodutor, s.diagnostico, s.tipo_servico)
             and _dentro_periodo(s.data_servico, data_inicio, data_fim)
         ]
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "parto":
         query = select(Parto)
@@ -263,7 +311,7 @@ def _buscar_um(
             for p in rows
             if _contem(termo, p.numero_matriz, p.tipo_parto) and _dentro_periodo(p.data_parto, data_inicio, data_fim)
         ]
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "controle":
         query = select(ControleLeiteiro)
@@ -280,7 +328,7 @@ def _buscar_um(
             for c in rows
             if _contem(termo, c.numero_matriz) and _dentro_periodo(c.data_controle, data_inicio, data_fim)
         ]
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "sanidade":
         query = select(Sanidade)
@@ -297,7 +345,7 @@ def _buscar_um(
             for s in rows
             if _contem(termo, s.numero_matriz, s.produto) and _dentro_periodo(s.data_aplicacao, data_inicio, data_fim)
         ]
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "protocolo_sanitario_lancamento":
         protocolos = {p.id: p.nome for p in session.exec(select(ProtocoloSanitario).where(ProtocoloSanitario.fazenda_id == fazenda_id)).all()} if fazenda_id is not None else {p.id: p.nome for p in session.exec(select(ProtocoloSanitario)).all()}
@@ -326,7 +374,7 @@ def _buscar_um(
                 "subtitulo": f"{realizadas}/{len(aps)} etapa(s) realizada(s)" + (f" · {l.observacao}" if l.observacao else ""),
                 "_data": l.data_inicio,
             })
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "protocolo_iatf_lancamento":
         query = select(ProtocoloIatfLancamento)
@@ -351,7 +399,7 @@ def _buscar_um(
                 "subtitulo": f"{len(matrizes)} animal(is) · {realizadas}/{len(aps)} etapa(s) realizada(s)",
                 "_data": l.data_d0,
             })
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "financeiro":
         query = select(ContaGerencial)
@@ -391,7 +439,7 @@ def _buscar_um(
             if _contem(termo, c.numero_animal, c.vendedor, c.numero_lancamento_gerado, c.gta)
             and _dentro_periodo(c.data_compra, data_inicio, data_fim)
         ]
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "venda_animal":
         query = select(VendaAnimal)
@@ -410,7 +458,7 @@ def _buscar_um(
             if _contem(termo, v.numero_animal, v.comprador, v.numero_lancamento_gerado, v.gta)
             and _dentro_periodo(v.data_venda, data_inicio, data_fim)
         ]
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "compra_semen":
         query = select(CompraSemen)
@@ -428,7 +476,7 @@ def _buscar_um(
             if _contem(termo, c.touro_nome, c.naab, c.vendedor, c.numero_lancamento_gerado)
             and _dentro_periodo(c.data_compra, data_inicio, data_fim)
         ]
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "estoque":
         query = select(Estoque)
@@ -456,7 +504,7 @@ def _buscar_um(
             for ev in rows
             if _contem(termo, ev.descricao, ev.numero_animal) and _dentro_periodo(ev.data_evento, data_inicio, data_fim)
         ]
-        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+        return recentes_primeiro(out)
 
     if tipo == "lote":
         query = select(Lote)
@@ -551,6 +599,13 @@ def _buscar_um(
     raise HTTPException(status_code=400, detail=f"Tipo inválido: {tipo}")
 
 
+def _expor_data(item: dict) -> None:
+    """Troca o `_data` interno (usado só para ordenar) por `data` (AAAA-MM-DD) na resposta — a tabela da tela mostra e
+    ordena por ela. Registro sem data (cadastros, alguns tipos) devolve `data: null`."""
+    d = item.pop("_data", None)
+    item["data"] = str(d)[:10] if d else None
+
+
 @router.get("/buscar")
 def buscar(
     tipo: str = Query(...),
@@ -569,7 +624,7 @@ def buscar(
     if tipo != "todos_lancamentos":
         out = _buscar_um(tipo, termo, data_inicio, data_fim, session, fazenda_id=fazenda_id)
         for item in out:
-            item.pop("_data", None)
+            _expor_data(item)
         return out
 
     combinados: list[dict] = []
@@ -580,7 +635,7 @@ def buscar(
 
     combinados.sort(key=lambda x: x.get("_data") or date.min, reverse=True)
     for item in combinados:
-        item.pop("_data", None)
+        _expor_data(item)
     return combinados[:300]
 
 
@@ -1728,6 +1783,46 @@ class ExclusaoIn(BaseModel):
 _CAMPOS_SENSIVEIS = ("cpf", "senha", "password", "token", "documento")
 
 
+def _reversoes_do_tipo(session: Session, tipo: str, id_: str) -> list[Linha]:
+    """Linhas de `reverter` dos tipos cujo `alvos` não devolve objetos para `_descrever_reversoes` olhar.
+
+    `diagnostico` DESFAZ um exame dentro do `Servico` (nenhuma linha é apagada), então `alvos` devolve `[]` e o impacto
+    ficava sem a consequência real: a situação reprodutiva do animal muda. A situação (a tocar / a reconfirmar /
+    reconfirmada) é derivada dos campos do `Servico` (`rules/fase_toque.py`), então não há evento de Agenda a remover.
+    Chamada logo depois de `_alvos` (que já desfez o exame na sessão), tanto na prévia quanto na confirmação, para o
+    risco ser o mesmo nas duas."""
+    if tipo != "diagnostico":
+        return []
+    try:
+        sid, exame = id_.split(":", 1)
+        s = session.get(Servico, int(sid))
+    except (ValueError, TypeError):
+        return []
+    if s is None:
+        return []
+    matriz = s.numero_matriz
+    ia = _br(s.data_servico)
+    if exame == "toque":
+        return [Linha(
+            titulo=f"Situação reprodutiva de {matriz}",
+            consequencia=f"Volta a «a tocar»: a inseminação de {ia} continua e o animal reaparece na lista de diagnóstico.",
+            chip="Mexe na reprodução",
+        )]
+    if exame == "reconfirmacao":
+        return [Linha(
+            titulo=f"Situação reprodutiva de {matriz}",
+            consequencia=f"Volta a «a reconfirmar»: o toque de {_br(s.data_diagnostico)} continua valendo.",
+            chip="Mexe na reprodução",
+        )]
+    if exame == "perda":
+        return [Linha(
+            titulo=f"Situação reprodutiva de {matriz}",
+            consequencia="A perda de prenhez sai e a prenhez volta a valer.",
+            chip="Mexe na reprodução",
+        )]
+    return []
+
+
 def _montar_impacto(tipo: str, id_: str, session: Session, fazenda_id: int | None) -> Impacto:
     """Impacto estruturado de UM item. Captura bloqueio (`ExclusaoBloqueada`) e
     devolve no bloco `bloqueia` em vez de estourar 400."""
@@ -1740,7 +1835,7 @@ def _montar_impacto(tipo: str, id_: str, session: Session, fazenda_id: int | Non
         item["titulo"] = itens[0]
     impacto = Impacto(item=item, apagar=[Linha(titulo=s, consequencia="") for s in itens])
     reverter, avisos = _descrever_reversoes(session, objetos, fazenda_id)
-    impacto.reverter = reverter
+    impacto.reverter = reverter + _reversoes_do_tipo(session, tipo, id_)
     impacto.avisos = avisos
     _forcar_risco_do_tipo(impacto, tipo)
     impacto.risco = exclusao_risco.calcular(impacto)
@@ -1910,7 +2005,8 @@ def _confirmar_lote(dados: ExclusaoIn, user, session: Session, fazenda_id: int |
         itens_lote.extend(itens)
         alvos_lote.extend(alvos)
 
-    if not alvos_lote:
+    # `itens_lote` e não `alvos_lote`: um item que só DESFAZ um campo (ex.: diagnóstico) não tem objeto a apagar.
+    if not itens_lote:
         raise HTTPException(status_code=409, detail={"bloqueia": bloqueados})
 
     titulo_lote = f"Lote de {len(dados.itens)} item(ns)"
@@ -1919,10 +2015,15 @@ def _confirmar_lote(dados: ExclusaoIn, user, session: Session, fazenda_id: int |
         apagar=[Linha(titulo=t, consequencia="") for t in itens_lote],
     )
     reverter_d, avisos_d = _descrever_reversoes(session, alvos_lote, fazenda_id)
-    impacto.reverter = reverter_d
+    impacto.reverter = reverter_d + [
+        linha for it in dados.itens for linha in _reversoes_do_tipo(session, it.tipo, it.id)
+    ]
     impacto.avisos = avisos_d
     impacto.risco = exclusao_risco.calcular(impacto)
     if len(dados.itens) >= 10:
+        impacto.risco = "alto"
+    # Igual à prévia (`_montar_impacto` → `_forcar_risco_do_tipo`): ficha de animal no lote é SEMPRE risco alto.
+    if any(it.tipo == "animal" for it in dados.itens):
         impacto.risco = "alto"
     impacto.porque = exclusao_risco.porque(impacto)
     risco = impacto.risco or "baixo"
@@ -1986,7 +2087,7 @@ def confirmar(
         apagar=[Linha(titulo=s, consequencia="") for s in itens],
     )
     reverter_d, avisos_d = _descrever_reversoes(session, alvos, fazenda_id)
-    impacto.reverter = reverter_d
+    impacto.reverter = reverter_d + _reversoes_do_tipo(session, dados.tipo, dados.id)
     impacto.avisos = avisos_d
     _forcar_risco_do_tipo(impacto, dados.tipo)
     risco = exclusao_risco.calcular(impacto)
@@ -2035,7 +2136,8 @@ def confirmar(
             solicitacao_id=pendente.id, username=user.username, motivo=dados.motivo,
         ))
         session.commit()
-        return {"status": "apoiado", "id": pendente.id}
+        # `solicitado_por`: a tela diz "Você apoiou o pedido de <fulano>" (antes só vinha o id do pedido).
+        return {"status": "apoiado", "id": pendente.id, "solicitado_por": pendente.solicitado_por}
 
     solicitacao = SolicitacaoExclusao(
         tipo=dados.tipo,

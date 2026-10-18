@@ -163,7 +163,22 @@ def data_em_que_ficou_apta(
     return max(data_idade_ok, data_peso_ok)
 
 
-def classificar_animal(
+def diagnostico_efetivo_do_servico(servico: Any) -> str:
+    """O diagnóstico que VALE num serviço: o exame de DATA MAIS RECENTE entre o toque (`diagnostico`) e a reconfirmação
+    (`diagnostico_reconfirmacao`) — nunca "a reconfirmação sempre vence" (ver o comentário em `classificar_animal`).
+    Sem data em algum dos lados (dado legado), o lado com data conhecida vence; sem data nenhuma, o 1º toque desempata.
+    Devolve "" sem nenhum exame. Compartilhado com a auditoria de classificação (`rules/auditoria_classificacao.py`)."""
+    diagnostico = (_get(servico, "diagnostico") or "").strip().upper()
+    reconfirmacao = (_get(servico, "diagnostico_reconfirmacao") or "").strip().upper()
+    candidatos: list[tuple[date, str]] = []
+    if diagnostico:
+        candidatos.append((_d(_get(servico, "data_diagnostico")) or date.min, diagnostico))
+    if reconfirmacao:
+        candidatos.append((_d(_get(servico, "data_reconfirmacao")) or date.min, reconfirmacao))
+    return max(candidatos, key=lambda c: c[0])[1] if candidatos else ""
+
+
+def _classificar_animal_calculado(
     numero: str,
     *,
     hoje: date,
@@ -266,12 +281,7 @@ def classificar_animal(
         diagnostico_reconfirmacao = (_get(ultimo_servico, "diagnostico_reconfirmacao") or "").strip().upper()
         data_diagnostico = _d(_get(ultimo_servico, "data_diagnostico"))
         data_reconfirmacao = _d(_get(ultimo_servico, "data_reconfirmacao"))
-        candidatos_diagnostico: list[tuple[date, str]] = []
-        if diagnostico:
-            candidatos_diagnostico.append((data_diagnostico or date.min, diagnostico))
-        if diagnostico_reconfirmacao:
-            candidatos_diagnostico.append((data_reconfirmacao or date.min, diagnostico_reconfirmacao))
-        diagnostico_efetivo = max(candidatos_diagnostico, key=lambda c: c[0])[1] if candidatos_diagnostico else ""
+        diagnostico_efetivo = diagnostico_efetivo_do_servico(ultimo_servico)
         perdeu = _d(_get(ultimo_servico, "data_perda_prenhez")) is not None
         base["diagnostico"] = diagnostico or None
         base["data_diagnostico"] = data_diagnostico.isoformat() if data_diagnostico else None
@@ -371,6 +381,33 @@ def classificar_animal(
             return {**base, "estado": ATRASADA, "aptidao_por_idade": not tem_peso}
         return {**base, "estado": APTA, "aptidao_por_idade": not tem_peso}
     return {**base, "estado": NAO_APTA, "aptidao_por_idade": False}
+
+
+# TEMPORÁRIO (decisão do dono, 17/10/2026): matrizes cuja classificação o produtor mandou FIXAR enquanto a causa de
+# a regra devolver outro estado é investigada. A matriz 11153 está com toque positivo e reconfirmação lançados mas era
+# classificada como "vazia atrasada". Remover a entrada quando a causa for corrigida na regra ou no dado — a aba
+# Histórico › Reprodução › Auditoria (`GET /reproducao/auditoria-classificacao?animal=11153`) mostra o que a regra enxerga.
+# Vale para todas as fazendas (o contexto de fazenda não chega até aqui); número de matriz repetido em outra fazenda
+# herdaria a fixação — por isso a lista é mínima e documentada.
+CLASSIFICACAO_FIXADA: dict[str, str] = {"11153": GESTANTE}
+
+
+def classificar_animal(numero: str, **kwargs: Any) -> dict:
+    """`_classificar_animal_calculado` + a fixação manual temporária de `CLASSIFICACAO_FIXADA`.
+
+    Único ponto de entrada de todas as telas e relatórios (Rebanho, Agenda, indicadores, programa reprodutivo), então a
+    fixação vale em todos ao mesmo tempo. O resultado ganha `classificacao_fixada: True` para a Auditoria avisar que o
+    estado NÃO veio da regra."""
+    resultado = _classificar_animal_calculado(numero, **kwargs)
+    fixado = CLASSIFICACAO_FIXADA.get(str(numero))
+    if fixado is None or resultado.get("estado") == fixado:
+        return resultado
+    return {
+        **resultado,
+        "estado": fixado,
+        "estado_calculado": resultado.get("estado"),
+        "classificacao_fixada": True,
+    }
 
 
 def _d0_protocolo_ativo(aplicacoes_iatf: list[Any], hoje: date) -> date | None:

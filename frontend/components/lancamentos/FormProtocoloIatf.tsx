@@ -1,447 +1,450 @@
 "use client";
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Check, AlertTriangle, X, HeartPulse } from "lucide-react";
-import { adicionarAnimaisIatf, criarProtocoloIatf, fetchLancamentosIatf, fetchProtocolosIatfAtivos, fetchProtocolosIatfCadastrados, formatDate, removerAnimalIatf } from "@/lib/api";
+// Lançamento de PROTOCOLO IATF — o que fazer → matrizes (tabela com caixas, por lote) → protocolo e cronograma. Só agenda o
+// protocolo hormonal; a inseminação em si (D11, ou o dia do molde) é lançada à parte, na tela Inseminação. Duas abas:
+// "Lançar protocolo" e "Em andamento" (protocolos vigentes, com a correção de inclusão por engano). Mesma língua do Diagnóstico
+// de gestação (kit gerencial). Montada na gaveta de Lançamentos e na Central de Protocolos (/protocolos).
+//
+// Quem decide é o servidor: a aptidão de cada fêmea (na data do D0) vem de GET /reproducao/aptidao-servico; matriz que já está
+// em protocolo IATF vigente NÃO entra em outro (caixa desabilitada com o motivo; o servidor também recusa, 409).
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Check, X } from "lucide-react";
+import {
+  ErroApi, adicionarAnimaisIatf, criarProtocoloIatf, fetchLancamentosIatf, fetchProtocolosIatfAtivos, fetchProtocolosIatfCadastrados, removerAnimalIatf,
+} from "@/lib/api";
 import type { HormonioIatf, ProtocoloIatfMolde } from "@/lib/api";
+import { invalidarEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 import { AnimalRow } from "@/components/AnimalModal";
-import { AnimalPickerModal } from "@/components/AnimalPickerModal";
-import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { EditorHormoniosIatf } from "@/components/EditorHormoniosIatf";
-import { TabBar, EstadoVazio } from "@/components/ui";
-import { Campo, inputStyle, lbl, nota } from "@/components/lancamentos/comumForms";
-import { SelectAnimal, addDias, IDADE_MIN_SERVICO_PADRAO } from "@/components/lancamentos/_shared";
-import { ErroApi } from "@/lib/api";
-import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-
-// Mesma regra de fazenda/rules/nomenclatura_protocolo.py — só para pré-visualização;
-// o nome de fato é sempre calculado no backend.
-function nomeAutoIatf(d0: string, nomeBase: string, diaFinal: number): string {
-  if (!d0) return "";
-  const fmt = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" });
-  const dFinal = new Date(d0 + "T00:00:00"); dFinal.setDate(dFinal.getDate() + diaFinal);
-  return `${nomeBase.toUpperCase()} - ${fmt(d0)} A ${fmt(dFinal.toISOString().slice(0, 10))} (D0 A D${diaFinal} - ${diaFinal + 1} DIAS)`;
-}
-
-// A inseminação acontece 2 dias depois da ÚLTIMA etapa de hormônio do
-// protocolo — D9 → D11 no clássico (sem molde), D12 → D14 num molde
-// D0/D8/D10/D12. Mesma regra de fazenda.rules.protocolo_iatf.dia_inseminacao.
-const DIA_INSEMINACAO_PADRAO = 11;
-function diaInseminacao(diasHormonio: number[]): number {
-  return diasHormonio.length ? Math.max(...diasHormonio) + 2 : DIA_INSEMINACAO_PADRAO;
-}
-const HORMONIOS: Record<string, string[]> = {
-  progesterona: ["Sincrogest", "Cidr"],
-  benzoato: ["Sincrodiol"],
-  buserelina: ["Sincroforte"],
-  cloprostenol: ["Estron"],
-  cipionato: ["SincroCP"],
-};
+import { IDADE_MIN_SERVICO_PADRAO } from "@/components/lancamentos/_shared";
+import { useAptidaoServico, useLinhasFemeas } from "@/components/lancamentos/useFemeasServico";
+import { Aviso, Ajuda, BarraAcao, BotaoOuro, Faixa, Passo, Pilulas, Selo } from "@/components/gerencial/kit";
+import { Abas, BuscaMatrizes, EstiloRepro, PilulasX } from "@/components/gerencial/telas/ReprodutivoComum";
+import { TabelaFemeas } from "@/components/gerencial/telas/TabelaFemeas";
+import { alterna, alternaAptas, ehApta, filtraLinhas, marcavel, ordenaNumero, resumoSelecao } from "@/lib/aptidaoServico";
+import {
+  DIA_INSEMINACAO_PADRAO, diaInseminacao, diaSemana, diasDoMolde, fmtData, hojeIso, nomeProtocoloAuto, nosDoCronograma, type NoTempo,
+} from "@/lib/iatfCronograma";
 
 type ProtocoloIatfAtivo = {
-  lancamento_id: number; nome_protocolo: string; data_d0: string;
-  animais: { numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null; d0_confirmado?: boolean }[];
+  lancamento_id: number; nome_protocolo: string; data_d0: string; concluido?: boolean; proxima_visita?: string;
+  animais: {
+    numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null; d0_confirmado?: boolean;
+    tem_etapa_confirmada?: boolean; pronta_para_inseminar?: boolean;
+  }[];
 };
+type Lancamento = { lancamento_id: number; nome_protocolo: string; data_d0: string; qtd_animais: number };
+type Aba = "lancar" | "andamento";
+type Modo = "novo" | "existente";
 
-function TabelaAnimaisProtocolo({ p, removendo, remover }: {
-  p: ProtocoloIatfAtivo; removendo: string | null; remover: (lancamentoId: number, numero: string) => void;
-}) {
-  const ord = useOrdenacao(p.animais);
+const CSS = `
+.fp-grade-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr)); gap: 1.25rem; align-items: start; }
+`;
+
+/* ───────────────────────────── subcomponentes (fora do pai) ───────────────────────────── */
+function LinhaDoTempo({ nos }: { nos: NoTempo[] }) {
   return (
-    <table className="fazenda-table" style={{ margin: 0 }}>
-      <thead><tr>
-        <ThOrdenavel label="Nº" campo="numero_matriz" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-        <ThOrdenavel label="Etapa atual" campo="etapa_atual" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-        <ThOrdenavel label="Data" campo="data_etapa_atual" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-        <ThOrdenavel label="D0" campo="d0_confirmado" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-        <th></th>
-      </tr></thead>
-      <tbody>
-        {ord.linhasOrdenadas.map((a) => (
-          <tr key={a.numero_matriz}>
-            <td style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
-            <td>{a.etapa_atual}</td>
-            <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{a.data_etapa_atual ? formatDate(a.data_etapa_atual) : "—"}</td>
-            <td>
-              {a.d0_confirmado ? (
-                <span title="D0 confirmado na Agenda" style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.74rem", color: "var(--green-light)" }}>
-                  <Check size={13} /> confirmado
-                </span>
-              ) : (
-                <span title="D0 ainda não confirmado na Agenda — pode ter entrado no protocolo sem ter sido implantada" style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.74rem", color: "var(--amber)" }}>
-                  <AlertTriangle size={13} /> não confirmado
-                </span>
-              )}
-            </td>
-            <td style={{ textAlign: "right" }}>
-              <button
-                type="button" className="btn-ghost" style={{ color: "var(--red)", fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.25rem" }}
-                disabled={removendo === `${p.lancamento_id}-${a.numero_matriz}`}
-                onClick={() => remover(p.lancamento_id, a.numero_matriz)}
-                title="Remover este animal do protocolo (corrige inclusão por engano)"
-              >
-                <X size={12} /> Remover
-              </button>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <ol className="rp-linha-tempo" style={{ listStyle: "none", margin: 0, padding: 0 }} aria-label="Cronograma do protocolo">
+      {nos.map((n) => (
+        <li key={n.dia} className={`rp-etapa${n.fim ? " rp-etapa-fim" : ""}`}>
+          <span className="rp-no" data-fim={n.fim ? "true" : undefined}>D{n.dia}</span>
+          <span className="rp-etapa-data">{n.data ? fmtData(n.data, true) : "—"}</span>
+          <span className="rp-etapa-dow">{n.data ? diaSemana(n.data) : ""}</span>
+          <span className="rp-etapa-txt">
+            {n.subtitulo && <i>{n.subtitulo}</i>}
+            {n.linhas.length ? n.linhas.map((l) => <span key={l} style={{ display: "block" }}>{l}</span>) : <i>sem medicamento informado</i>}
+          </span>
+        </li>
+      ))}
+    </ol>
   );
 }
 
-function ProtocolosIatfAtivos({ recarregarRef }: { recarregarRef: React.MutableRefObject<() => void> }) {
-  const [ativos, setAtivos] = useState<ProtocoloIatfAtivo[] | null>(null);
-  const [abertos, setAbertos] = useState<Set<number>>(new Set());
-  const [removendo, setRemovendo] = useState<string | null>(null);
-  const toggle = (id: number) => setAbertos((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const carregar = () => fetchProtocolosIatfAtivos().then(setAtivos).catch(() => setAtivos([]));
-  useEffect(() => { carregar(); recarregarRef.current = carregar; }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function remover(lancamentoId: number, numero: string) {
-    if (!window.confirm(`Remover ${numero} deste protocolo? Só é possível se nenhuma etapa dela já foi confirmada.`)) return;
-    const chave = `${lancamentoId}-${numero}`;
-    setRemovendo(chave);
-    try {
-      await removerAnimalIatf(lancamentoId, numero);
-      await carregar();
-    } catch (e: any) {
-      window.alert(e.message || "Não foi possível remover este animal.");
-    } finally {
-      setRemovendo(null);
-    }
-  }
-
-  if (!ativos || !ativos.length) {
-    // Achado do lote 2: empty-state da gaveta IATF fora do padrão (texto solto
-    // em vez do padrão .empty-state já usado em outras telas, ex.: Estoque).
-    return <EstadoVazio icon={HeartPulse}>Nenhum protocolo IATF em andamento.</EstadoVazio>;
-  }
+function TabelaAndamento({ dados, busca, removendo, onRemover }: {
+  dados: ProtocoloIatfAtivo[]; busca: string; removendo: string | null; onRemover: (lancamentoId: number, numero: string) => void;
+}) {
+  const q = busca.trim().toLowerCase();
   return (
-    <div className="card" style={{ background: "var(--surface-2)" }}>
-      <div className="card-header mb-2" style={{ background: "none", color: "var(--dourado-light)", padding: "0 0 0.3rem" }}>
-        Protocolos IATF em andamento ({ativos.length})
-      </div>
-      <div className="space-y-2">
-        {ativos.map((p) => {
-          const aberto = abertos.has(p.lancamento_id);
-          return (
-            <div key={p.lancamento_id} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
-              <button onClick={() => toggle(p.lancamento_id)} title={aberto ? "Clique para recolher os animais" : "Clique para ver os animais e etapas"} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.8rem", background: "var(--surface)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
-                {aberto ? <ChevronDown size={15} style={{ color: "var(--dourado-light)", flexShrink: 0 }} /> : <ChevronRight size={15} style={{ color: "var(--dourado-light)", flexShrink: 0 }} />}
-                <span style={{ fontWeight: 700, fontSize: "0.85rem" }}>{p.nome_protocolo}</span>
-                <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>D0 {formatDate(p.data_d0)} — {p.animais.length} animal(is)</span>
-              </button>
-              {aberto && <TabelaAnimaisProtocolo p={p} removendo={removendo} remover={remover} />}
-            </div>
-          );
-        })}
-      </div>
+    <div className="gv-tabela-moldura" style={{ ["--gv-altura-tabela" as string]: "36rem" }}>
+      <table className="gv-tabela">
+        <thead><tr>
+          <th scope="col">Nº</th><th scope="col">Etapa atual</th><th scope="col">Data da etapa</th><th scope="col">D0 na Agenda</th><th scope="col" className="gv-dir">Corrigir</th>
+        </tr></thead>
+        <tbody>
+          {dados.length === 0 && <tr className="rp-tab-vazia"><td colSpan={5}>Nenhum protocolo IATF em andamento.</td></tr>}
+          {dados.map((p) => {
+            const animais = [...p.animais].filter((a) => !q || a.numero_matriz.toLowerCase().includes(q)).sort((a, b) => ordenaNumero(a.numero_matriz, b.numero_matriz));
+            if (q && !animais.length) return null;
+            return (
+              <React.Fragment key={p.lancamento_id}>
+                <tr className="gv-grupo">
+                  <th scope="rowgroup" colSpan={5}>
+                    {p.nome_protocolo} · D0 {fmtData(p.data_d0)} · {p.animais.length} {p.animais.length === 1 ? "animal" : "animais"}
+                    {p.concluido && ` · hormônio concluído${p.proxima_visita ? ` · próxima visita ${fmtData(p.proxima_visita)}` : ""}`}
+                  </th>
+                </tr>
+                {animais.map((a) => {
+                  // Só dá para remover enquanto nenhuma etapa dela foi confirmada na Agenda (o servidor recusa o resto).
+                  const travado = a.tem_etapa_confirmada ?? !!a.d0_confirmado;
+                  const chave = `${p.lancamento_id}-${a.numero_matriz}`;
+                  return (
+                    <tr key={a.numero_matriz}>
+                      <td className="gv-forte">{a.numero_matriz}</td>
+                      <td>
+                        {a.etapa_atual}{" "}
+                        {a.pronta_para_inseminar && <Selo tom="ok" titulo="Protocolo vigente sem inseminação lançada">Pronta para inseminar</Selo>}
+                      </td>
+                      <td className="gv-num">{a.data_etapa_atual ? fmtData(a.data_etapa_atual) : "—"}</td>
+                      <td>
+                        {a.d0_confirmado
+                          ? <Selo tom="ok" titulo="D0 confirmado na Agenda"><Check size={11} aria-hidden="true" /> Confirmado</Selo>
+                          : <Selo tom="atencao" titulo="D0 ainda não confirmado na Agenda — pode ter entrado no protocolo sem ter sido implantada"><AlertTriangle size={11} aria-hidden="true" /> Não confirmado</Selo>}
+                      </td>
+                      <td className="gv-dir">
+                        <button type="button" className="btn-ghost" disabled={travado || removendo === chave}
+                          onClick={() => onRemover(p.lancamento_id, a.numero_matriz)}
+                          title={travado ? "Não dá para remover: já há etapa confirmada na Agenda (desmarque “Realizado” lá antes)" : "Remover este animal do protocolo (corrige inclusão por engano)"}
+                          style={{ display: "inline-flex", gap: "0.25rem", alignItems: "center", padding: "0.2rem 0.55rem", fontSize: "0.74rem", cursor: travado ? "not-allowed" : "pointer" }}>
+                          <X size={12} aria-hidden="true" /> Remover
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </React.Fragment>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
 
+/* ───────────────────────────── a tela ───────────────────────────── */
 export function FormProtocoloIatf({ animais, motivosInaptidao, idadeMinServico = IDADE_MIN_SERVICO_PADRAO, onSalvo }: {
   animais: AnimalRow[];
-  // numero -> motivo de inaptidão (ver FormInseminacao e rules/aptidao.py).
+  // numero -> motivo de inaptidão DURA antecipado pela página; vale só enquanto a resposta do servidor não chega.
   motivosInaptidao?: Map<string, string>;
   idadeMinServico?: number;
   onSalvo?: () => void;
 }) {
-  // Novo protocolo (cria um lançamento) ou adicionar animais a um já existente.
-  const [modo, setModo] = useState<"novo" | "existente">("novo");
-  const [podeForcar, setPodeForcar] = useState(false);
-  const [emLote, setEmLote] = useState(false);
+  const [aba, setAba] = useState<Aba>("lancar");
+  const [modo, setModo] = useState<Modo>("novo");
+  const [origem, setOrigem] = useState<"animais" | "lotes">("animais");
+  const [lotesSel, setLotesSel] = useState<string[]>([]);
   const [sel, setSel] = useState<Set<string>>(new Set());
-  const [um, setUm] = useState("");
-  // Seleção "em lote" pode ser por animal (picker de sempre) ou por lote(s)
-  // inteiro(s) — escolher o(s) lote(s) pré-seleciona seus animais, ainda
-  // ajustável (todos/nenhum/individual) na janela de confirmação abaixo.
-  const [vinculoProtocolo, setVinculoProtocolo] = useState<"animal" | "lote">("animal");
-  const [lotesSelecionados, setLotesSelecionados] = useState<string[]>([]);
-  const [selLote, setSelLote] = useState<Set<string>>(new Set());
-  const [d0, setD0] = useState("");
+  const [busca, setBusca] = useState("");
+  const [d0, setD0] = useState(() => hojeIso());
   const [hormonios, setHormonios] = useState<HormonioIatf[]>([]);
-  // Protocolos já lançados (para "existente").
-  const [existentes, setExistentes] = useState<{ lancamento_id: number; nome_protocolo: string; data_d0: string; qtd_animais: number }[]>([]);
-  const [existenteId, setExistenteId] = useState("");
-  // Molde cadastrado (Central de Protocolos > Cadastro), opcional. Escolhido,
-  // ele passa a MANDAR nos dias e nos hormônios — os dias são livres (um
-  // molde pode ser D0/D8/D10/D12, não só D0/D7/D9), então o cronograma do
-  // lançamento é o do molde, não mais o clássico fixo. Sem molde, nada muda:
-  // hormônios digitados na hora, cronograma clássico D0/D7/D9/D11.
+  // Molde cadastrado (Central de Protocolos > Cadastro), opcional: escolhido, MANDA nos dias e nos hormônios (dias livres:
+  // D0/D8/D10/D12…). Sem molde: cronograma clássico D0/D7/D9/D11 e hormônios digitados na hora.
   const [moldes, setMoldes] = useState<ProtocoloIatfMolde[]>([]);
   const [moldeId, setMoldeId] = useState("");
+  const [existentes, setExistentes] = useState<Lancamento[]>([]);
+  const [existenteId, setExistenteId] = useState("");
+  const [ativos, setAtivos] = useState<ProtocoloIatfAtivo[]>([]);
+  const [buscaAnd, setBuscaAnd] = useState("");
+  const [removendo, setRemovendo] = useState<string | null>(null);
+  const [erroRemocao, setErroRemocao] = useState<string | null>(null);
+
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
-  const recarregarAtivosRef = useRef(() => {});
-  const toggle = (n: string) => setSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
-  const toggleLote = (n: string) => setSelLote((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
-  const codigosLotes = useMemo(
-    () => Array.from(new Set(animais.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort(),
-    [animais]
-  );
-  const animaisDoLote = useMemo(() => {
-    const cods = new Set(lotesSelecionados);
-    return animais.filter((a) => a.grupo_primario && cods.has(a.grupo_primario));
-  }, [animais, lotesSelecionados]);
-  useEffect(() => {
-    setSelLote(new Set(animaisDoLote.map((a) => a.numero)));
-  }, [lotesSelecionados.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [jaLancado, setJaLancado] = useState(false);
+  const [podeForcar, setPodeForcar] = useState(false);
 
-  const moldeSelecionado = moldes.find((m) => String(m.id) === moldeId) || null;
-  const nomeBase = moldeSelecionado?.nome || "Protocolo IATF";
-  const diasHormonioMolde = moldeSelecionado
-    ? Array.from(new Set(moldeSelecionado.etapas.map((e) => e.dia))).sort((a, b) => a - b)
-    : [];
-  const diaFinal = moldeSelecionado ? diaInseminacao(diasHormonioMolde) : DIA_INSEMINACAO_PADRAO;
-  const nomeProtocolo = nomeAutoIatf(d0, nomeBase, diaFinal);
-  // Mesma conta de `salvar()` abaixo — recap e estado do botão sempre em
-  // sincronia com o que realmente será enviado.
-  const totalAnimaisSelecionados = emLote ? (vinculoProtocolo === "lote" ? selLote.size : sel.size) : (um ? 1 : 0);
-  // Hormônios efetivamente enviados: do molde (etapa por etapa, direto —
-  // mesma resolução de estoque por princípio ativo que já acontece na Agenda
-  // ao confirmar o dia) quando um molde foi escolhido; digitados na hora
-  // (EditorHormoniosIatf), como sempre, quando não.
-  const hormoniosEfetivos = moldeSelecionado
-    ? moldeSelecionado.etapas.map((e) => ({ dia: e.dia, produto: e.produto, dose: e.dose, unidade: e.unidade, via: e.via }))
+  const carregarAtivos = useCallback(() => fetchProtocolosIatfAtivos().then(setAtivos).catch(() => setAtivos([])), []);
+  const carregarExistentes = useCallback(() => fetchLancamentosIatf().then(setExistentes).catch(() => setExistentes([])), []);
+  useEffect(() => {
+    carregarAtivos();
+    carregarExistentes();
+    fetchProtocolosIatfCadastrados().then((ms) => setMoldes(ms.filter((m) => m.ativo))).catch(() => setMoldes([]));
+  }, [carregarAtivos, carregarExistentes]);
+
+  const molde = moldes.find((m) => String(m.id) === moldeId) ?? null;
+  const diasMolde = molde ? diasDoMolde(molde.etapas) : [];
+  const diaIA = molde ? diaInseminacao(diasMolde) : DIA_INSEMINACAO_PADRAO;
+  const nomeBase = molde?.nome || "Protocolo IATF";
+  const nomeProtocolo = nomeProtocoloAuto(d0, nomeBase, diaIA);
+  const existente = existentes.find((l) => String(l.lancamento_id) === existenteId) ?? null;
+  // Hormônios efetivamente enviados: do molde (etapa por etapa, direto) quando há molde; digitados na hora quando não.
+  const hormoniosEfetivos: HormonioIatf[] = molde
+    ? molde.etapas.map((e) => ({ dia: e.dia, produto: e.produto, dose: e.dose, unidade: e.unidade, via: e.via }))
     : hormonios;
 
-  useEffect(() => { fetchProtocolosIatfCadastrados().then((ms) => setMoldes(ms.filter((m) => m.ativo))).catch(() => setMoldes([])); }, []);
+  // ── fêmeas, com o veredito do servidor na data do D0 ───────────────────────────────────────────────────────────
+  const dataAptidao = modo === "existente" ? (existente?.data_d0?.slice(0, 10) ?? "") : d0;
+  const { api, falhou: aptidaoFalhou, recarregar: recarregarAptidao } = useAptidaoServico(dataAptidao);
+  const linhas = useLinhasFemeas({
+    animais, api, motivosInaptidao, bloquearEmProtocolo: true, protocoloDestinoId: modo === "existente" && existente ? existente.lancamento_id : null,
+  });
+  const lotes = useMemo(() => {
+    const m = new Map<string, number>();
+    linhas.forEach((l) => m.set(l.lote, (m.get(l.lote) ?? 0) + 1));
+    return [...m.entries()].sort(([a], [b]) => ordenaNumero(a, b));
+  }, [linhas]);
+  const base = useMemo(() => (origem === "animais" ? linhas : linhas.filter((l) => lotesSel.includes(l.lote))), [origem, linhas, lotesSel]);
+  const visiveis = useMemo(() => filtraLinhas(base, busca), [base, busca]);
 
-  useEffect(() => {
-    if (modo === "existente") fetchLancamentosIatf().then(setExistentes).catch(() => setExistentes([]));
-  }, [modo]);
+  const bloqueadasNumeros = useMemo(() => new Set(linhas.filter((l) => !marcavel(l)).map((l) => l.numero)), [linhas]);
+  const selEfetiva = useMemo(() => new Set([...sel].filter((n) => !bloqueadasNumeros.has(n))), [sel, bloqueadasNumeros]);
+  const ignoradas = useMemo(() => linhas.filter((l) => sel.has(l.numero) && !marcavel(l)), [linhas, sel]);
+  const nSel = selEfetiva.size;
+  const { pedemConfirmacao } = useMemo(() => resumoSelecao(linhas, selEfetiva), [linhas, selEfetiva]);
 
+  function alternaLote(lote: string) {
+    const ativo = lotesSel.includes(lote);
+    setLotesSel(ativo ? lotesSel.filter((l) => l !== lote) : [...lotesSel, lote]);
+    // Escolher um lote marca as aptas dele (ajustável na tabela); tirar o lote desmarca as dele.
+    const doLote = linhas.filter((l) => l.lote === lote);
+    setSel((p) => {
+      const s = new Set(p);
+      doLote.forEach((l) => { if (ativo) s.delete(l.numero); else if (ehApta(l)) s.add(l.numero); });
+      return s;
+    });
+  }
+
+  const nos = nosDoCronograma(d0, molde ? molde.etapas : null, hormonios);
+
+  // ── salvar ────────────────────────────────────────────────────────────────────────────────────────────────────
   async function salvar(forcar = false) {
-    setErro(null); setSucesso(null); setPodeForcar(false);
-    const animaisAlvo = emLote ? Array.from(vinculoProtocolo === "lote" ? selLote : sel) : (um ? [um] : []);
-    if (!animaisAlvo.length) { setErro(emLote ? "Selecione ao menos um animal." : "Selecione a matriz."); return; }
+    setErro(null); setSucesso(null); setJaLancado(false); setPodeForcar(false);
+    const alvo = [...sel].filter((n) => !bloqueadasNumeros.has(n)).sort(ordenaNumero);
+    if (!alvo.length) { setErro("Selecione ao menos um animal."); return; }
     setSalvando(true);
     try {
       if (modo === "existente") {
-        if (!existenteId) { setErro("Selecione o protocolo existente."); setSalvando(false); return; }
-        const r = await adicionarAnimaisIatf(Number(existenteId), animaisAlvo);
-        setSucesso(`${r.adicionados} animal(is) adicionado(s) ao protocolo "${r.nome_protocolo}".`);
+        if (!existenteId) { setErro("Selecione o protocolo existente."); return; }
+        const r = await adicionarAnimaisIatf(Number(existenteId), alvo, forcar || undefined);
+        setSucesso(`${r.adicionados} ${r.adicionados === 1 ? "animal adicionado" : "animais adicionados"} ao protocolo “${r.nome_protocolo}”.`);
       } else {
-        if (!d0) { setErro("Informe a data do D0."); setSalvando(false); return; }
-        const r = await criarProtocoloIatf({ animais: animaisAlvo, data_d0: d0, protocolo_id: moldeId ? Number(moldeId) : null, hormonios: hormoniosEfetivos, forcar: forcar || undefined });
-        // `criado: false` = o backend achou um lançamento ativo idêntico (mesmo
-        // protocolo/D0/animais, ou mesmo D0/animais/hormônios num ad-hoc sem
-        // molde) e reaproveitou em vez de duplicar — duplo clique ou retry da
-        // fila offline. Sem este ramo a tela dizia "agendado ... — 0 eventos
-        // na Agenda", que parece defeito (mesmo padrão de FormInducaoLactacao).
-        setSucesso(r.criado === false
-          ? (r.aviso || "Este protocolo já estava lançado para estes animais nesta data — nada foi duplicado.")
-          : `Protocolo "${nomeProtocolo}" agendado para ${r.animais} animal(is) — ${r.eventos_criados} eventos na Agenda (D0 a D${diaFinal}).`);
+        if (!d0) { setErro("Informe a data do D0."); return; }
+        const r = await criarProtocoloIatf({ animais: alvo, data_d0: d0, protocolo_id: moldeId ? Number(moldeId) : null, hormonios: hormoniosEfetivos, forcar: forcar || undefined });
+        // `criado: false` = o servidor achou um lançamento ativo idêntico (mesmo protocolo/D0/animais) e reaproveitou em vez de
+        // duplicar — duplo clique ou retry da fila offline. Sem este ramo a tela diria "0 eventos na Agenda", que parece defeito.
+        if (r.criado === false) {
+          setJaLancado(true);
+          setSucesso(r.aviso || "Este protocolo já estava lançado para estes animais nesta data — nada foi duplicado.");
+        } else {
+          setSucesso(`Protocolo “${nomeProtocolo}” agendado para ${r.animais} ${r.animais === 1 ? "animal" : "animais"} — ${r.eventos_criados} eventos na Agenda (D0 a D${diaIA}).`);
+        }
       }
-      setSel(new Set()); setUm("");
-      recarregarAtivosRef.current();
-      if (modo === "existente") fetchLancamentosIatf().then(setExistentes).catch(() => {});
+      setSel(new Set()); setLotesSel([]);
+      invalidarEstadosReprodutivos();
+      carregarAtivos(); carregarExistentes(); recarregarAptidao();
       onSalvo?.();
-    } catch (e: any) {
-      setErro(e.message || "Erro ao lançar protocolo IATF");
-      // 409 de aptidão confirmável — ver o mesmo tratamento em FormInseminacao.
+    } catch (e) {
+      setErro(e instanceof Error && e.message ? e.message : "Erro ao lançar protocolo IATF");
+      // 409 confirmável (peso da novilha, matriz que consta gestante): oferece "confirmar". "Já em protocolo", idade, a descartar: não.
       if (e instanceof ErroApi && e.status === 409 && e.confirmavel) setPodeForcar(true);
+      else if (e instanceof ErroApi && e.status === 409) recarregarAptidao();
     } finally {
       setSalvando(false);
     }
   }
 
+  async function remover(lancamentoId: number, numero: string) {
+    if (!window.confirm(`Remover ${numero} deste protocolo? Só é possível se nenhuma etapa dela já foi confirmada.`)) return;
+    setErroRemocao(null);
+    const chave = `${lancamentoId}-${numero}`;
+    setRemovendo(chave);
+    try {
+      await removerAnimalIatf(lancamentoId, numero);
+      await carregarAtivos();
+      carregarExistentes(); recarregarAptidao();
+    } catch (e) {
+      setErroRemocao(e instanceof Error && e.message ? e.message : "Não foi possível remover este animal.");
+    } finally {
+      setRemovendo(null);
+    }
+  }
+
+  // ── resumo da barra ───────────────────────────────────────────────────────────────────────────────────────────
+  const plural = (n: number) => (n === 1 ? "animal" : "animais");
+  const resumo = modo === "novo"
+    ? `${nSel} ${plural(nSel)} · ${molde ? molde.nome : "Protocolo IATF (sem molde)"}`
+    : `${nSel} ${plural(nSel)} entram em “${existente ? existente.nome_protocolo : "—"}”`;
+  const conf = pedemConfirmacao ? ` · ${pedemConfirmacao} pede(m) confirmação (o servidor vai perguntar ao salvar)` : "";
+  const detalhe = !nSel ? "Marque ao menos um animal na tabela do passo 2"
+    : modo === "novo"
+      ? (!d0 ? "Falta a data do D0" : `D0 ${fmtData(d0)} · inseminação D${diaIA} em ${fmtData(nos[nos.length - 1]?.data ?? "")}${conf}`)
+      : (!existente ? "Escolha o protocolo no passo 3" : `Mesmo D0 do protocolo (${fmtData(existente.data_d0)})${conf}`);
+  const podeSalvar = nSel > 0 && (modo === "novo" ? !!d0 : !!existente) && !salvando;
+
+  const faixa = [
+    { rotulo: "Protocolos em andamento", valor: ativos.length },
+    { rotulo: "Animais em protocolo", valor: ativos.reduce((s, p) => s + p.animais.length, 0) },
+    { rotulo: "Prontas para inseminar", valor: ativos.reduce((s, p) => s + p.animais.filter((a) => a.pronta_para_inseminar).length, 0), tom: "ok" as const },
+    { rotulo: "D0 sem confirmar", valor: ativos.reduce((s, p) => s + p.animais.filter((a) => !a.d0_confirmado).length, 0), tom: "atencao" as const },
+    { rotulo: "Moldes ativos", valor: moldes.length },
+  ];
+  const idadeMin = api?.idade_min_meses ?? idadeMinServico;
+  const nAnimaisAtivos = ativos.reduce((s, p) => s + p.animais.length, 0);
+
   return (
-    <>
-      <TabBar<"novo" | "existente">
-        abas={[
-          { id: "novo", label: "Novo protocolo", title: "Criar um novo protocolo IATF (define D0 e hormônios)" },
-          { id: "existente", label: "Adicionar a protocolo existente", title: "Incluir animais num protocolo já lançado (mesmo D0 e nome)" },
-        ]}
-        ativa={modo}
-        onChange={setModo}
-      />
+    <div style={{ display: "flex", flexDirection: "column" }}>
+      <EstiloRepro />
+      <style>{CSS}</style>
+      <Faixa itens={faixa} />
+      <Abas<Aba> rotulo="Protocolo IATF" ativa={aba} onChange={setAba} abas={[
+        { id: "lancar", nome: "Lançar protocolo" },
+        { id: "andamento", nome: "Em andamento", n: ativos.length },
+      ]} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-3">
-      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
-        <ProtocolosIatfAtivos recarregarRef={recarregarAtivosRef} />
-      </div>
-      <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Seleção">
-          <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}>
-            <input type="checkbox" checked={emLote} onChange={(e) => setEmLote(e.target.checked)} /> Em lote (vários animais)
-          </label>
-        </Campo>
-        {modo === "novo" ? (
-          <>
-            <Campo label="Protocolo cadastrado (opcional)">
-              <select style={inputStyle} value={moldeId} onChange={(e) => setMoldeId(e.target.value)}>
-                <option value="">Sem molde — informar hormônios abaixo</option>
-                {moldes.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
-              </select>
-            </Campo>
-            <Campo label="Data do D0"><input type="date" style={inputStyle} value={d0} onChange={(e) => setD0(e.target.value)} /></Campo>
-            <Campo label="Nome do lançamento (automático)" full>
-              <input style={{ ...inputStyle, opacity: 0.85 }} readOnly value={nomeProtocolo || "Informe a data do D0…"} />
-            </Campo>
-          </>
-        ) : (
-          <Campo label="Protocolo existente" full>
-            <select style={inputStyle} value={existenteId} onChange={(e) => setExistenteId(e.target.value)}>
-              <option value="">Selecione o protocolo…</option>
-              {existentes.map((l) => <option key={l.lancamento_id} value={l.lancamento_id}>{l.nome_protocolo} — {l.qtd_animais} animal(is)</option>)}
-            </select>
-          </Campo>
-        )}
+      {/* Os dois painéis ficam montados (só um à vista): o que foi digitado em "Lançar" — hormônios inclusive — não se perde
+          ao espiar "Em andamento". */}
+      <div role="tabpanel" aria-labelledby="aba-andamento" hidden={aba !== "andamento"} style={{ display: aba === "andamento" ? "flex" : "none", flexDirection: "column", gap: "0.6rem" }}>
+        <div className="rp-ferr">
+          <BuscaMatrizes valor={buscaAnd} onChange={setBuscaAnd} rotulo="Buscar animal" />
+          <span className="rp-contagem">{ativos.length} {ativos.length === 1 ? "protocolo" : "protocolos"} · {nAnimaisAtivos} {plural(nAnimaisAtivos)}</span>
+        </div>
+        {erroRemocao && <Aviso tom="erro">{erroRemocao}</Aviso>}
+        <TabelaAndamento dados={ativos} busca={buscaAnd} removendo={removendo} onRemover={remover} />
+        <Ajuda>
+          “Pronta para inseminar” = protocolo vigente sem inseminação lançada; ela vai para a tela <strong>Inseminação</strong> (origem “Protocolo IATF vigente”).
+          Remover um animal corrige inclusão por engano e <strong>só é possível enquanto nenhuma etapa dele foi confirmada na Agenda</strong>.
+        </Ajuda>
       </div>
 
-      <div className="mt-3">
-        <label style={lbl}>Matriz (nº)</label>
-        {emLote ? (
-          <>
-            <TabBar<"animal" | "lote">
-              abas={[
-                { id: "animal", label: "Animal(is)", title: "Selecionar matrizes/novilhas individualmente" },
-                { id: "lote", label: "Lote(s)", title: "Selecionar um ou mais lotes — pré-seleciona os animais de cada um, ajustável" },
-              ]}
-              ativa={vinculoProtocolo}
-              onChange={setVinculoProtocolo}
-            />
-            {vinculoProtocolo === "animal" ? (
-              <AnimalPickerModal
-                animais={animais} selecionados={sel} onToggle={toggle}
-                titulo="Escolher animais para o protocolo IATF"
-                motivosInaptidao={motivosInaptidao}
-                colunas={[
-                  { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
-                  { header: "Lote", render: (a) => a.grupo_primario || "—" },
-                ]}
-              />
-            ) : (
-              <div style={{ marginTop: "0.5rem" }}>
-                <LotePicker
-                  opcoes={opcoesLoteDeAnimais(animais, codigosLotes)}
-                  selecionados={lotesSelecionados}
-                  onChange={setLotesSelecionados}
-                  placeholder="Selecionar lote(s)…"
-                />
-                {lotesSelecionados.length > 0 && (
-                  <div style={{ marginTop: "0.6rem" }}>
-                    <AnimalPickerModal
-                      animais={animaisDoLote} selecionados={selLote} onToggle={toggleLote}
-                      titulo="Confirmar animais do(s) lote(s) selecionado(s)"
-                      placeholder="Confirmar animais do(s) lote(s)…"
-                      motivosInaptidao={motivosInaptidao}
-                      // Sem isso, o lote entrava inteiro por padrão e o
-                      // usuário só via quem foi incluído se lembrasse de
-                      // clicar aqui — mesma disciplina de FormInseminacao.tsx.
-                      abrirAoMudar={lotesSelecionados.join("|")}
-                      colunas={[
-                        { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
-                        { header: "Lote", render: (a) => a.grupo_primario || "—" },
-                      ]}
-                    />
-                    <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
-                      {selLote.size} de {animaisDoLote.length} animal(is) no(s) lote(s) selecionado(s) — "Selecionar todos"/"Limpar seleção" ou desmarque um a um na janela acima.
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-          </>
-        ) : (
-          <SelectAnimal animais={animais} value={um} onChange={setUm} placeholder="Selecione a matriz…" motivosInaptidao={motivosInaptidao} />
-        )}
-      </div>
-      <p style={nota}>
-        A lista mostra todas as fêmeas — as <strong>inaptas em cinza</strong>, com o motivo (idade mínima de {idadeMinServico} meses,
-        animal baixado ou a descartar). Isso só agenda o protocolo hormonal — a inseminação em si (D{diaFinal}) é
-        lançada à parte, na sub-aba Inseminação.
-      </p>
-
-      {modo === "novo" && (
-        <>
-          <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
-            <div className="card-header mb-2" style={{ background: "none", color: "var(--dourado-light)", padding: "0 0 0.3rem" }}>
-              Cronograma IATF — vai para a Agenda
-            </div>
-            <div className="overflow-x-auto">
-              <table className="fazenda-table">
-                <thead><tr><th>Dia</th><th>Data</th><th>Ação / hormônio</th></tr></thead>
-                <tbody>
-                  {moldeSelecionado ? (
-                    <>
-                      {diasHormonioMolde.map((dia) => {
-                        const doDia = moldeSelecionado.etapas.filter((e) => e.dia === dia);
-                        const descricao = doDia
-                          .map((e) => `${e.dose ? `${e.dose}${e.unidade ? ` ${e.unidade}` : ""} ` : ""}${e.produto}`)
-                          .join(" + ");
-                        return <tr key={dia}><td style={{ fontWeight: 700 }}>D{dia}</td><td>{addDias(d0, dia)}</td><td>{descricao}</td></tr>;
-                      })}
-                      <tr><td style={{ fontWeight: 700, color: "var(--green-light)" }}>D{diaFinal}</td><td>{addDias(d0, diaFinal)}</td><td style={{ color: "var(--green-light)" }}>Inseminação (IATF)</td></tr>
-                    </>
-                  ) : (
-                    <>
-                      <tr><td style={{ fontWeight: 700 }}>D0</td><td>{addDias(d0, 0)}</td><td>Implante de progesterona + Benzoato de estradiol + Acetato de buserelina</td></tr>
-                      <tr><td style={{ fontWeight: 700 }}>D7</td><td>{addDias(d0, 7)}</td><td>Cloprostenol</td></tr>
-                      <tr><td style={{ fontWeight: 700 }}>D9</td><td>{addDias(d0, 9)}</td><td>Retirar implante + Cipionato de estradiol + Cloprostenol</td></tr>
-                      <tr><td style={{ fontWeight: 700, color: "var(--green-light)" }}>D11</td><td>{addDias(d0, 11)}</td><td style={{ color: "var(--green-light)" }}>Inseminação (IATF)</td></tr>
-                    </>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            <p style={nota}>
-              {moldeSelecionado
-                ? `Cronograma do molde "${moldeSelecionado.nome}" — a inseminação (D${diaFinal}) é sempre 2 dias depois da última etapa cadastrada. Ao salvar, cria estes eventos na Agenda para cada animal selecionado.`
-                : "Ao salvar, cria os eventos D0/D7/D9/D11 na Agenda para cada animal selecionado."}
-            </p>
+      <div role="tabpanel" aria-labelledby="aba-lancar" hidden={aba !== "lancar"} style={{ display: aba === "lancar" ? "block" : "none" }}>
+        {aptidaoFalhou && !api && (
+          <div style={{ marginBottom: "0.9rem" }}>
+            <Aviso>
+              <AlertTriangle size={15} style={{ marginTop: "0.1rem", flexShrink: 0 }} aria-hidden="true" />
+              <span>Não consegui conferir a aptidão de cada fêmea agora. A tabela mostra só o que o cadastro já indica; peso e “consta gestante” serão conferidos ao salvar.</span>
+            </Aviso>
           </div>
-          {moldeSelecionado ? (
-            <p style={{ ...nota, marginTop: "0.5rem" }}>
-              Hormônios vindos do molde acima — para mudar dose, produto ou dia, edite o molde em <strong>Central de Protocolos › Cadastro</strong>.
-              Ao confirmar cada dia na Agenda, você ainda escolhe o frasco em estoque do princípio ativo, como em qualquer protocolo.
-            </p>
-          ) : (
-            <EditorHormoniosIatf onChange={setHormonios} />
-          )}
-        </>
-      )}
-      {modo === "novo" && (
-        <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
-          <table className="fazenda-table">
-            <tbody>
-              <tr><td>Animais selecionados</td><td style={{ fontWeight: 700, textAlign: "right" }}>{totalAnimaisSelecionados}</td></tr>
-              <tr><td>Protocolo</td><td style={{ fontWeight: 700, textAlign: "right" }}>{nomeProtocolo || nomeBase}</td></tr>
-              <tr><td>Início (D0)</td><td style={{ fontWeight: 700, textAlign: "right" }}>{d0 ? addDias(d0, 0) : "—"}</td></tr>
-            </tbody>
-          </table>
-        </div>
-      )}
-      {/* Achado do lote 2: "Salvar" sem recapitulação — mesmo recap do modo
-          "novo" acima, aqui para "adicionar a protocolo existente" (também um
-          lote inteiro de animais entrando de uma vez num protocolo em curso). */}
-      {modo === "existente" && existenteId && (
-        <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
-          <table className="fazenda-table">
-            <tbody>
-              <tr><td>Animais selecionados</td><td style={{ fontWeight: 700, textAlign: "right" }}>{totalAnimaisSelecionados}</td></tr>
-              <tr><td>Protocolo</td><td style={{ fontWeight: 700, textAlign: "right" }}>{existentes.find((l) => String(l.lancamento_id) === existenteId)?.nome_protocolo || "—"}</td></tr>
-            </tbody>
-          </table>
-        </div>
-      )}
-      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
-      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
-      <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={() => salvar()} disabled={salvando || totalAnimaisSelecionados === 0}>{salvando ? "Salvando…" : "Salvar"}</button>
-        {podeForcar && (
-          <button className="btn-secondary" onClick={() => salvar(true)} disabled={salvando}
-            title="Lança o protocolo assumindo a situação descrita acima">
-            Confirmar e lançar mesmo assim
-          </button>
         )}
+        <Passo n={1} id="iatf-p1" titulo="O que fazer">
+          <Pilulas<Modo> rotulo="Modo" valor={modo} onChange={(m) => { setModo(m); setErro(null); setPodeForcar(false); }} opcoes={[
+            { id: "novo", nome: "Novo protocolo", titulo: "Criar um novo protocolo IATF (define D0 e hormônios)" },
+            { id: "existente", nome: "Adicionar a protocolo existente", n: existentes.length, titulo: "Incluir animais num protocolo já lançado (mesmo D0 e nome)" },
+          ]} />
+          <Ajuda>
+            {modo === "novo" ? "Cria um lançamento com D0, hormônios e os eventos de cada etapa na Agenda." : "Os animais entram com o mesmo D0, nome e hormônios do protocolo escolhido."}
+          </Ajuda>
+        </Passo>
+
+        <Passo n={2} id="iatf-p2" titulo="Matrizes" direita={
+          <span className="rp-contagem" aria-live="polite">
+            {nSel} de {visiveis.length} {nSel === 1 ? "marcada" : "marcadas"}{pedemConfirmacao > 0 && ` · ${pedemConfirmacao} pede(m) confirmação`}
+          </span>
+        }>
+          <div className="rp-ferr">
+            <PilulasX<"animais" | "lotes"> rotulo="Escolher por" valor={origem} onChange={(o) => { setOrigem(o); setLotesSel([]); }}
+              opcoes={[{ id: "animais", nome: "Animais" }, { id: "lotes", nome: "Lotes", n: lotes.length }]} />
+            <BuscaMatrizes valor={busca} onChange={setBusca} />
+            <button type="button" className="btn-ghost" onClick={() => setSel((p) => alternaAptas(p, visiveis))}>Marcar / desmarcar as aptas</button>
+            <button type="button" className="btn-ghost" onClick={() => setSel(new Set())} disabled={!sel.size}>Limpar</button>
+          </div>
+          {origem === "lotes" && (
+            <Pilulas<string> rotulo="Lotes" valor={lotesSel} onChange={alternaLote} opcoes={lotes.map(([l, n]) => ({ id: l, nome: l, n }))} />
+          )}
+          {ignoradas.length > 0 && (
+            <Aviso>
+              <AlertTriangle size={15} style={{ marginTop: "0.1rem", flexShrink: 0 }} aria-hidden="true" />
+              <span>
+                Marcadas, mas bloqueadas agora — <strong>não serão enviadas</strong>: {ignoradas.map((l) => `${l.numero} (${l.aptidao.motivo})`).join("; ")}.
+              </span>
+            </Aviso>
+          )}
+          <TabelaFemeas
+            linhas={visiveis} sel={selEfetiva} mostrarProtocolo altura="36rem" carregando={!animais.length}
+            vazio={origem === "lotes" ? "Marque um ou mais lotes acima." : busca ? "Nenhuma fêmea bate com a busca." : "Nenhuma fêmea na lista."}
+            onToggle={(n) => setSel((p) => alterna(p, n))}
+            onToggleAptas={() => setSel((p) => alternaAptas(p, visiveis))}
+            onToggleLote={(_l, itens) => setSel((p) => alternaAptas(p, itens))}
+          />
+          <Ajuda>
+            A lista mostra <strong>todas as fêmeas</strong>. <strong>Bloqueada</strong> (caixa desabilitada, com o motivo): idade mínima de {idadeMin} meses, marcada a descartar, baixada ou
+            <strong> já em protocolo IATF vigente</strong> — o servidor recusa. <strong>Confirmar</strong>: peso da novilha lançado abaixo do mínimo e matriz que consta gestante — marcável; ao salvar
+            o servidor pede a sua confirmação. Isto só agenda o protocolo hormonal: a inseminação em si (D{modo === "novo" ? diaIA : DIA_INSEMINACAO_PADRAO}) é lançada à parte, na tela <strong>Inseminação</strong>.
+          </Ajuda>
+        </Passo>
+
+        <Passo n={3} id="iatf-p3" titulo={modo === "novo" ? "Protocolo e cronograma" : "Protocolo existente"}>
+          {modo === "novo" ? (
+            <>
+              <div className="fp-grade-2">
+                <div className="rp-col">
+                  <div className="gv-campo">
+                    <label htmlFor="iatf-molde">Protocolo cadastrado (opcional)</label>
+                    <select id="iatf-molde" className="rp-select" value={moldeId} onChange={(e) => setMoldeId(e.target.value)}>
+                      <option value="">Sem molde — informar hormônios abaixo</option>
+                      {moldes.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
+                    </select>
+                  </div>
+                  <div className="gv-campo">
+                    <label htmlFor="iatf-d0">Data do D0</label>
+                    <input id="iatf-d0" type="date" className="rp-input" value={d0} onChange={(e) => setD0(e.target.value)} />
+                  </div>
+                  <div className="gv-campo">
+                    <label htmlFor="iatf-nome">Nome do lançamento (automático)</label>
+                    <input id="iatf-nome" className="rp-input" readOnly value={nomeProtocolo || "Informe a data do D0…"} style={{ fontVariantNumeric: "tabular-nums" }} />
+                  </div>
+                  <p className="gv-ajuda">
+                    {molde
+                      ? <>O molde <strong>manda nos dias e nos hormônios</strong>; para mudar dose, produto ou dia, edite em <strong>Central de Protocolos › Cadastro</strong>. Ao confirmar cada dia na Agenda você ainda escolhe o frasco em estoque do princípio ativo.</>
+                      : <>Sem molde: cronograma clássico D0/D7/D9/D11 e hormônios digitados abaixo. A inseminação é sempre 2 dias depois da última etapa de hormônio.</>}
+                  </p>
+                </div>
+                <div className="rp-bloco">
+                  <div className="rp-bloco-t">Cronograma — vai para a Agenda de cada animal</div>
+                  <LinhaDoTempo nos={nos} />
+                  <p className="gv-ajuda" style={{ borderTop: "1px solid var(--border)", paddingTop: "0.5rem" }}>
+                    Ao salvar, cria os eventos D0 a D{diaIA} na Agenda para cada animal marcado ({nSel} × {nos.length} = <strong>{nSel * nos.length}</strong> eventos).
+                  </p>
+                </div>
+              </div>
+              {!molde && (
+                // O editor já traz o próprio cartão e o título "Medicamentos por dia…": sem moldura/título duplicados aqui.
+                <EditorHormoniosIatf onChange={setHormonios} />
+              )}
+            </>
+          ) : (
+            <div className="fp-grade-2">
+              <div className="gv-campo">
+                <label htmlFor="iatf-exist">Protocolo existente</label>
+                <select id="iatf-exist" className="rp-select" value={existenteId} onChange={(e) => setExistenteId(e.target.value)}>
+                  <option value="">Selecione o protocolo…</option>
+                  {existentes.map((l) => <option key={l.lancamento_id} value={l.lancamento_id}>{l.nome_protocolo} — {l.qtd_animais} animal(is)</option>)}
+                </select>
+              </div>
+              {existente && (
+                <div className="rp-bloco">
+                  <div className="rp-bloco-t">O que muda no protocolo</div>
+                  <div style={{ fontSize: "0.85rem" }}>
+                    D0 <strong>{fmtData(existente.data_d0)}</strong> · hoje {existente.qtd_animais} {plural(existente.qtd_animais)} → <strong>{existente.qtd_animais + nSel}</strong> com os {nSel} marcados.
+                  </div>
+                  <p className="gv-ajuda">Os eventos das etapas já vencidas também entram na Agenda dos novos animais — confira antes de lançar.</p>
+                </div>
+              )}
+            </div>
+          )}
+        </Passo>
       </div>
-      </div>
-      </div>
-    </>
+
+      {aba === "lancar" && (
+        <BarraAcao
+          resumo={resumo}
+          detalhe={detalhe}
+          retorno={(erro || sucesso || podeForcar) ? (
+            <div className="rp-retorno-linha">
+              {sucesso && (jaLancado ? <span className="rp-mudo" role="status">{sucesso}</span> : <span className="rp-ok" role="status">✓ {sucesso}</span>)}
+              {erro && <span className="rp-err" role="alert">{erro}</span>}
+              <span style={{ flex: 1 }} />
+              {sucesso && <button type="button" className="btn-ghost" onClick={() => setAba("andamento")}>Ver em andamento</button>}
+              {podeForcar && (
+                <button type="button" className="btn-secondary" onClick={() => salvar(true)} disabled={salvando}
+                  title="Lança o protocolo assumindo a situação descrita ao lado">Confirmar e lançar mesmo assim</button>
+              )}
+            </div>
+          ) : undefined}
+          secundaria={<button type="button" className="btn-ghost" onClick={() => setSel(new Set())} disabled={!sel.size}>Limpar</button>}
+          acao={<BotaoOuro desabilitado={!podeSalvar} onClick={() => salvar()}>
+            {salvando ? "Salvando…" : modo === "novo" ? `Lançar protocolo${nSel ? ` (${nSel})` : ""}` : `Adicionar${nSel ? ` ${nSel}` : ""} ao protocolo`}
+          </BotaoOuro>}
+        />
+      )}
+    </div>
   );
 }
