@@ -1,0 +1,18 @@
+<!doctype html><html><body style="margin:0"><svg width="1080" height="1920" xmlns="http://www.w3.org/2000/svg">
+<!-- Papel Kraft / prancheta de campo da Temporada 2: base #E6DCCD→#EDE3D2, fibras (ruído semeado), grade pontilhada técnica e vinheta.
+     Tudo determinístico (seeds fixas); o PNG é gerado por snap_t2.mjs e não é versionado. -->
+<defs>
+ <linearGradient id="base" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" stop-color="#E6DCCD"/><stop offset="1" stop-color="#EDE3D2"/></linearGradient>
+ <filter id="fibra" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency=".9 .06" numOctaves="3" seed="11"/><feColorMatrix values="0 0 0 0 .36  0 0 0 0 .28  0 0 0 0 .18  0 0 0 -1.7 1.0"/></filter>
+ <filter id="nuvem" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency=".008" numOctaves="3" seed="23"/><feColorMatrix values="0 0 0 0 .45  0 0 0 0 .33  0 0 0 0 .2  0 0 0 -2.1 1.15"/></filter>
+ <filter id="grao" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="1.2" numOctaves="2" seed="5"/><feColorMatrix values="0 0 0 0 .3  0 0 0 0 .22  0 0 0 0 .14  0 0 0 -2 1.05"/></filter>
+ <pattern id="grade" width="40" height="40" patternUnits="userSpaceOnUse"><circle cx="20" cy="20" r="2.1" fill="#8B7355" opacity=".42"/></pattern>
+ <radialGradient id="vinheta" cx="50%" cy="46%" r="75%"><stop offset=".55" stop-color="#3B2A14" stop-opacity="0"/><stop offset="1" stop-color="#3B2A14" stop-opacity=".30"/></radialGradient>
+</defs>
+<rect width="1080" height="1920" fill="url(#base)"/>
+<rect width="1080" height="1920" filter="url(#nuvem)" opacity=".30"/>
+<rect width="1080" height="1920" filter="url(#fibra)" opacity=".30"/>
+<rect width="1080" height="1920" filter="url(#grao)" opacity=".22"/>
+<rect x="0" y="0" width="1080" height="1920" fill="url(#grade)"/>
+<rect width="1080" height="1920" fill="url(#vinheta)"/>
+</svg></body></html>
