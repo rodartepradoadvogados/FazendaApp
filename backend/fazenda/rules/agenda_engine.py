@@ -555,8 +555,13 @@ class AgendaEngine:
             # valor congelado — um animal recém-parido pelo app nunca entrava
             # para secar, e um animal recém-seco pelo app nunca saía da lista
             # (ver auditoria ago/2026).
+            # `inicio_lactacao_por_animal`: Lactacao aberta sem Parto (indução de
+            # lactação, aborto com abertura) conta como parto para o DEL — sem
+            # isso a matriz 422 (parto antigo, secagem, indução mais nova) saía
+            # das listas de BST/secagem com DEL None.
             del_dias = _del_dias_ao_vivo(
                 animal.get("del_dias"), data_parto_real, ult_secagem_por_animal.get(numero), data_referencia,
+                inicio_lactacao=(inicio_lactacao_por_animal or {}).get(numero),
             )
 
             # ── PARTO PROVÁVEL (só para prenhes com serviço positivo)

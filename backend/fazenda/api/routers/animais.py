@@ -25,6 +25,7 @@ from fazenda.rules.parto_resumo import resumo_por_parto
 from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
 from fazenda.rules.gestation import dias_gestacao_da_raca
 from fazenda.rules.lactacao import em_lactacao_por_matriz as lactacoes_abertas_por_matriz
+from fazenda.rules.lactacao import lactacao_aberta, lactacoes_da_matriz
 from fazenda.rules.parto import eh_parto_produtivo
 from fazenda.rules.producao_leiteira import com_fallback_animal, del_dias_ao_vivo, ultimo_controle_por_animal
 from fazenda.rules.relatorios_gerenciais import GESTACAO_DIAS, LIMITE_SECAGEM_RETROATIVA_DIAS
@@ -55,6 +56,13 @@ def _categoria_ao_vivo(categoria_completa: str | None, categoria_abrev: str | No
         return "Vaca seca" if seca else "Vaca em lactação"
 
     return _corrige(categoria_completa), _corrige(categoria_abrev)
+
+
+def _ancora_lactacao(ult_parto_produtivo: date | None, lactacao) -> date | None:
+    """Início da lactação em curso: o mais recente entre o último parto produtivo e o início da `Lactacao` aberta
+    (indução/aborto não têm `Parto` por trás). Mesma âncora de `del_dias_ao_vivo` e de `estado_reprodutivo`."""
+    inicio = getattr(lactacao, "data_inicio", None)
+    return max((d for d in (ult_parto_produtivo, inicio) if d is not None), default=None)
 
 
 @router.get("/")
@@ -165,7 +173,9 @@ def listar_animais(
             # (lactação aberta por aborto ou indução, que não têm parto
             # produtivo por trás).
             d["del_dias"] = (hoje - lact.data_inicio).days
-        d["categoria_completa"], d["categoria_abrev"] = _categoria_ao_vivo(d["categoria_completa"], d["categoria_abrev"], pp_produtivo, sec)
+        d["categoria_completa"], d["categoria_abrev"] = _categoria_ao_vivo(
+            d["categoria_completa"], d["categoria_abrev"], _ancora_lactacao(pp_produtivo, lact), sec,
+        )
         producao_kg, producao_data = com_fallback_animal(a.numero, producao_ao_vivo, a)
         d["producao_kg"] = producao_kg
         d["producao_data"] = producao_data.isoformat() if producao_data else None
@@ -735,7 +745,14 @@ def ficha_animal(
         (p["data_parto"] for p in reversed(partos_dump) if p["conta_ordem_parto_lactacao"]), None,
     )
     ultima_secagem_data = secagens[-1].data_secagem if secagens else None
-    del_dias_vivo = _del_dias_ao_vivo(animal.del_dias, ultimo_parto_produtivo_data, ultima_secagem_data, date.today())
+    # Lactações da matriz (indução e aborto com abertura não têm `Parto`): a ABERTA hoje entra como âncora do DEL junto com o
+    # último parto produtivo — sem ela a vaca com parto antigo, secagem e uma indução mais nova (matriz 422) ficava sem DEL.
+    lactacoes_matriz = lactacoes_da_matriz(session, numero_matriz=numero, fazenda_id=fazenda_id)
+    lactacao_atual = lactacao_aberta(session, numero_matriz=numero, data=date.today(), fazenda_id=fazenda_id)
+    del_dias_vivo = _del_dias_ao_vivo(
+        animal.del_dias, ultimo_parto_produtivo_data, ultima_secagem_data, date.today(),
+        inicio_lactacao=lactacao_atual.data_inicio if lactacao_atual else None,
+    )
 
     # Previsão de parto / secagem: gestação em curso = último serviço positivo
     # (sem perda registrada) posterior ao último parto — mesma regra usada nas
@@ -785,7 +802,8 @@ def ficha_animal(
     animal_dump = animal.model_dump()
     animal_dump["del_dias"] = del_dias_vivo
     animal_dump["categoria_completa"], animal_dump["categoria_abrev"] = _categoria_ao_vivo(
-        animal_dump["categoria_completa"], animal_dump["categoria_abrev"], ultimo_parto_produtivo_data, ultima_secagem_data,
+        animal_dump["categoria_completa"], animal_dump["categoria_abrev"],
+        _ancora_lactacao(ultimo_parto_produtivo_data, lactacao_atual), ultima_secagem_data,
     )
 
     # Mãe: prioridade 1 é o cadastro manual (Animal.mae_numero, preenchido em
@@ -840,6 +858,22 @@ def ficha_animal(
         "previsao_secagem": previsao_secagem,
         "precisao_parto": precisao_parto,
         "partos": partos_dump,
+        # Lactações (parto, aborto, INDUÇÃO, importação) e a que está aberta hoje — a origem "inducao" é o que
+        # marca na Ficha que a lactação veio de um protocolo de indução e não de um parto.
+        "lactacoes": [
+            {
+                "id": l.id, "numero_lactacao": l.numero_lactacao, "origem": l.origem, "data_inicio": l.data_inicio,
+                "data_fim": l.data_fim, "parto_id": l.parto_id, "observacao": l.observacao,
+            }
+            for l in lactacoes_matriz
+        ],
+        "lactacao_atual": (
+            {
+                "id": lactacao_atual.id, "numero_lactacao": lactacao_atual.numero_lactacao, "origem": lactacao_atual.origem,
+                "data_inicio": lactacao_atual.data_inicio, "del_dias": del_dias_vivo,
+            }
+            if lactacao_atual else None
+        ),
         "resumo_partos": resumo_partos,
         "ultima_cria": ultima_cria,
         "servicos": servicos_dump,

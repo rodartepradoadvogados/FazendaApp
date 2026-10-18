@@ -1483,7 +1483,16 @@ def info_secagem(
     if fazenda_id is not None:
         query_ultimo_parto = query_ultimo_parto.where(Parto.fazenda_id == fazenda_id)
     ultimo_parto = session.exec(query_ultimo_parto.order_by(Parto.data_parto.desc())).first()
-    del_atual = (date.today() - ultimo_parto.data_parto).days if ultimo_parto else animal.del_dias
+    # Lactação aberta sem Parto (indução, aborto com abertura) conta como parto: vaca com parto antigo e uma indução mais
+    # nova (matriz 422) mostrava aqui o DEL do parto de 2025. Vale a âncora mais recente, igual a `del_dias_ao_vivo`.
+    lactacao_hoje = regras_lactacao.lactacao_aberta(
+        session, numero_matriz=numero_matriz, data=date.today(), fazenda_id=fazenda_id,
+    )
+    ancora_del = max(
+        (d for d in (ultimo_parto.data_parto if ultimo_parto else None, lactacao_hoje.data_inicio if lactacao_hoje else None) if d),
+        default=None,
+    )
+    del_atual = (date.today() - ancora_del).days if ancora_del else animal.del_dias
 
     return {
         "numero_matriz": numero_matriz,

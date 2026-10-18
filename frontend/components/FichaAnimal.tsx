@@ -31,6 +31,10 @@ type Ficha = {
   pai: { nome: string | null; naab: string | null; central: string | null; tpi: number | null; nm_dolar: number | null } | null;
   precisao_parto: PrecisaoParto | null;
   partos: Record<string, unknown>[];
+  // Lactação aberta hoje (parto, aborto, indução ou importação) — `origem === "inducao"` marca a que veio de um protocolo de
+  // indução de lactação (sem Parto por trás, mas conta para o DEL como um parto). Ver fazenda.rules.lactacao.
+  lactacao_atual?: { id: number; numero_lactacao: number | null; origem: string; data_inicio: string; del_dias: number | null } | null;
+  lactacoes?: { id: number; numero_lactacao: number | null; origem: string; data_inicio: string; data_fim: string | null }[];
   // Quadro "por parto" — o que se quer ver "se fosse comprar este animal":
   // produção, duração, tentativas de emprenhar e DEL de concepção, por
   // lactação (mais antiga primeiro). Ver fazenda.rules.parto_resumo.
@@ -1003,7 +1007,14 @@ export default function FichaAnimal({ numeroInicial, contextoInicial }: {
             )}
             <div style={{ marginTop: "0.85rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border)", display: "grid", gridTemplateColumns: "repeat(4, minmax(120px, 1fr))", gap: "0.75rem", fontSize: "0.8rem" }}>
               <div><span style={labelStyle}>Dias de gestação</span><br />{ficha.precisao_parto?.dias_gestacao ?? "—"}</div>
-              <div><span style={labelStyle}>DEL atual</span><br />{a.del_dias != null ? String(a.del_dias) : "—"}</div>
+              <div>
+                <span style={labelStyle}>DEL atual</span><br />{a.del_dias != null ? String(a.del_dias) : "—"}
+                {ficha.lactacao_atual?.origem === "inducao" && (
+                  <span title="Lactação aberta pelo protocolo de indução de lactação — conta como um parto para o DEL" style={{ display: "block", fontSize: "0.7rem", color: "var(--blue)" }}>
+                    Indução de lactação desde {formatDate(ficha.lactacao_atual.data_inicio)}
+                  </span>
+                )}
+              </div>
               <div><span style={labelStyle}>Previsão de parto</span><br />{ficha.precisao_parto?.data_parto_provavel ? formatDate(ficha.precisao_parto.data_parto_provavel) : "—"}</div>
               <div><span style={labelStyle}>Última cria</span><br />{renderCria(ficha.ultima_cria)}</div>
             </div>
