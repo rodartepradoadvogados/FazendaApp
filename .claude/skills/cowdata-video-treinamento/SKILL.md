@@ -35,6 +35,13 @@ for produzido e não puder ser salvo na pasta acima — por esse ou qualquer out
 
 Nunca diga "salvo" sem confirmação da ferramenta.
 
+**Sempre entregue duas versões** (pedido do dono em 2026-10-18): o download pela conversa de arquivos de ~35 MB
+chegou truncado no computador do usuário — o MP4 abria com a duração cheia (índice +faststart no começo) e travava
+após poucos segundos. Envie a completa (CRF 18) **e** a leve `<nome>_leve.mp4` (`-c:v libx264 -preset slow -crf 26
+-profile:v high -level 4.1 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart`, ~11–14 MB), confira que ambas
+decodificam inteiras (`ffmpeg -v error -i X -f null -`) e informe o **tamanho exato em bytes** de cada uma, para o
+usuário conferir em Propriedades que o arquivo baixado está completo.
+
 ## 3. Séries e episódios
 
 ### Temporada 1 — Rebanho (app Android) — CONCLUÍDA em 2026-10-16
@@ -44,10 +51,10 @@ Nunca diga "salvo" sem confirmação da ferramenta.
 | 2 | Lotes (Composição, Indicadores, Exportar PDF / Compartilhar) | 0:56 |
 | 3 | Listas do painel (Gestantes, Inseminadas, PEV, Vazias, Aptas, Atrasadas, IA atual, Parto previsto, Secagens, DEL/Produção, IEP, Ver Animal) | 1:30 |
 
-### Temporada 2 — Lançamentos (app Android) — EM ANDAMENTO (Ep. 1 em 2026-10-17, Ep. 2 e Ep. 3 em 2026-10-18), ~11 episódios
+### Temporada 2 — Lançamentos (app Android) — EM ANDAMENTO (Ep. 1 em 2026-10-17, Ep. 2, Ep. 3 e Ep. 4 em 2026-10-18), ~11 episódios
 | Bloco | Episódios |
 |---|---|
-| REPRODUTIVOS (4) | lançamento de inseminação — **Ep. 2 CONCLUÍDO** (`APP-Lancamentos_Ep2_Inseminacao-em-lote.mp4`, 1:04) · diagnóstico — **Ep. 3 CONCLUÍDO** (`APP-Lancamentos_Ep3_Diagnostico-de-gestacao.mp4`, 1:05) · parto · protocolo de IATF |
+| REPRODUTIVOS (4) | lançamento de inseminação — **Ep. 2 CONCLUÍDO** (`APP-Lancamentos_Ep2_Inseminacao-em-lote.mp4`, 1:04) · diagnóstico — **Ep. 3 CONCLUÍDO** (`APP-Lancamentos_Ep3_Diagnostico-de-gestacao.mp4`, 1:05) · parto — **Ep. 4 CONCLUÍDO** (`APP-Lancamentos_Ep4_Parto.mp4`, 1:02) · protocolo de IATF |
 | PRODUÇÃO (3) | controle leiteiro · pesagem corporal + secagem (um episódio) · BST |
 | SANIDADE (2) | aplicação — curativa e preventiva no mesmo episódio · protocolo sanitário (curativo) |
 | ALIMENTAÇÃO (1) | lançamento e sobra de cocho |
@@ -120,6 +127,11 @@ Temporada 2" abaixo). Pasta de destino: `H:\Meu Drive\COWDATA\Tutoriais\APP - LA
   `/reproducao/diagnostico/candidatas` e POST `/reproducao/diagnostico` que move as vacas para A reconfirmar / vazias). A barra do Diagnóstico não tem classe: a captura a marca com
   `data-vbarra`. Novidades no motor: 4º campo de `EP.telas` (1 = troca só de estado, as anotações continuam) e `titulos()` decide o `display` de `.titm` ANTES de medir (senão o primeiro
   quadro depois de uma janela oculta saía sem redução de escala e cortava o título).
+
+- **Ep. 4 (Parto)**: `episodios/t2e4.js`, `tl_t2e4.py` → `audio/tl_t2e4.json`, captura em `captura/capturar_t2e4.mjs` (`EP=t2e4 node stub-api.mjs`: herda o Ep. 3 e acrescenta no 05 - Pré-parto as matrizes
+  3654 Dolores e 5611 Lucinda; `POST /reproducao/parto` devolve `crias_criadas` e põe a cria na lista, `/producao/sugestao-lote-evento` (mãe → 01 - Alta, Bezerra → 07 - Bezerras) e `/sanidade/colostragem`).
+  O Parto é um formulário de UM animal, sem barra fixa (barTop = topo da navegação) e os modais são estáticos (`position:fixed`). Cuidado de rolagem: uma captura alta só rola até o próprio máximo — troque de estado
+  ANTES de rolar além dele (senão a imagem salta na troca). Anotação presa a um alvo que vai sair da tela por rolagem precisa terminar antes da rolagem. O nome "Serena" já é da 4210 (Eps. 1–3): a matriz do parto é 3654 Dolores.
 
 ### Ambiente
 `quadros.mjs` usa o Playwright de `/opt/node-tools` e o Chromium de `/opt/pw-browsers` (sessão na
