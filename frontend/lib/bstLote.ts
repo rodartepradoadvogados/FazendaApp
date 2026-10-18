@@ -94,6 +94,35 @@ export function reanalisadasMarcadas(marcadas: Marcadas, segs: Record<Seg, Anima
 export type ParamsAplicacao = { data: string; produto: string; dose: string; unidade: string; porAnimal: boolean; resp: string };
 export type ItemEstoque = { nome: string; unidade?: string | null; quantidade?: number | null };
 
+/** Finalidade e conta gerencial padrão (despesa) que um item de estoque precisa ter, ao mesmo tempo, para ser oferecido no BST. */
+export const FINALIDADE_BST = "Medicamento";
+export const CONTA_GERENCIAL_BST = "3.01.04.02";
+
+/** Item como vem de GET /estoque/ — só os campos que decidem se ele é um produto de BST. */
+export type ItemEstoqueCadastro = {
+  nome?: string | null; unidade?: string | null; quantidade?: number | null;
+  finalidade?: string | null; conta_gerencial_despesa_padrao?: string | null; ativo?: boolean | null;
+};
+
+const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
+/** A conta é gravada só pelo código ("3.01.04.02"); tolera "3.01.04.02 - BST" caso o rótulo venha junto. */
+const codigoDaConta = (s: string | null | undefined) => (s ?? "").trim().split(/\s+/)[0];
+
+/**
+ * Produtos que o BST pode usar: finalidade Medicamento + conta gerencial padrão de despesa 3.01.04.02 (BST) + item ativo.
+ * Por padrão só os com saldo (> 0); `incluirSemEstoque` traz também os zerados/sem saldo — NUNCA os inativos (`ativo === false`;
+ * `null` é item legado, tratado como ativo). Não depende do nome: "Lactotropin" inativo fica de fora e "Lactotropin 500mg" entra.
+ */
+export function itensParaBst(itens: ItemEstoqueCadastro[] | null | undefined, incluirSemEstoque: boolean): ItemEstoque[] {
+  return (Array.isArray(itens) ? itens : [])
+    .filter((i) => !!(i.nome ?? "").trim()
+      && norm(i.finalidade) === norm(FINALIDADE_BST)
+      && codigoDaConta(i.conta_gerencial_despesa_padrao) === CONTA_GERENCIAL_BST
+      && i.ativo !== false
+      && (incluirSemEstoque || (typeof i.quantidade === "number" && i.quantidade > 0)))
+    .map((i) => ({ nome: i.nome as string, unidade: i.unidade, quantidade: i.quantidade }));
+}
+
 const arred = (v: number) => Math.round(v * 10000) / 10000;
 
 /** Dose total a baixar: por animal × n, ou o total do lote informado. `null` se a dose está em branco ou inválida. */
@@ -141,11 +170,12 @@ export type DadosAplicarBst = {
 export function montarPayloadAplicar(p: ParamsAplicacao, numeros: string[]): { erro: string } | { dados: DadosAplicarBst } {
   if (!numeros.length) return { erro: "Marque ao menos um animal." };
   if (!p.data) return { erro: "Informe a data da aplicação." };
+  if (!p.produto.trim()) return { erro: "Escolha o produto da aplicação (medicamento ativo com a conta 3.01.04.02 - BST)." };
   const d = lerNumero(p.dose);
   if (d !== null && (Number.isNaN(d) || d <= 0)) return { erro: "A dose precisa ser um número maior que zero (ou deixe em branco)." };
   return {
     dados: {
-      numeros_matriz: numeros, data_aplicacao: p.data, aplicado: true, produto: p.produto.trim() || "Lactotropin",
+      numeros_matriz: numeros, data_aplicacao: p.data, aplicado: true, produto: p.produto.trim(),
       dose: d, unidade: p.unidade.trim() || null, responsavel: p.resp.trim() || undefined, dose_por_animal: p.porAnimal,
     },
   };

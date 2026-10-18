@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Ban, CalendarClock, Check, ChevronDown, ChevronUp, Droplets, SlidersHorizontal } from "lucide-react";
 import { aplicarBstLote, marcarInaptaBst, ajustarProximaAplicacaoBst, fetchEstoqueAtivos, formatDate, ehAdmin } from "@/lib/api";
+import { fetchComCache } from "@/lib/offline";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
@@ -10,16 +11,10 @@ import { Aviso, BotaoOuro, Passo, Selo } from "@/components/gerencial/kit";
 import { CSS_RAIZ } from "@/components/gerencial/producaoCss";
 import { dataBR, diasEntre, hojeLocal, mensagemDe, plural } from "@/lib/producaoGerencial";
 import {
-  SEGMENTOS, alvoDaAcao, doseTotal, filtrarAnimais, interpretarRetornoAplicar, montarPayloadAplicar, ordenarAnimais, preverEstoque,
+  SEGMENTOS, alvoDaAcao, doseTotal, filtrarAnimais, interpretarRetornoAplicar, itensParaBst, montarPayloadAplicar, ordenarAnimais, preverEstoque,
   reanalisadasMarcadas, segmentosDaAgenda, textoPrevisao, textoRetornoMarcar,
-  type AgendaBst, type AnimalBst, type DadosAplicarBst, type ItemEstoque, type Marcadas, type Ordem, type ParamsAplicacao, type Seg,
+  type AgendaBst, type AnimalBst, type DadosAplicarBst, type ItemEstoque, type ItemEstoqueCadastro, type Marcadas, type Ordem, type ParamsAplicacao, type Seg,
 } from "@/lib/bstLote";
-
-// Mesmo padrão de nome usado no backend para reconhecer um item de estoque
-// como BST (ver MARCADORES_BST em fazenda/api/routers/agenda.py) — não há
-// categoria/princípio ativo dedicado ainda, então os dois lados casam pelo
-// nome do produto.
-const MARCADORES_BST = /\b(lactotropin|boostin|bst|somatotropina)\b/i;
 
 const th: React.CSSProperties = { textAlign: "left", padding: "0.4rem 0.6rem", fontSize: "0.72rem", textTransform: "uppercase", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" };
 const td: React.CSSProperties = { padding: "0.4rem 0.6rem", fontSize: "0.82rem", borderBottom: "1px solid var(--border)" };
@@ -416,16 +411,25 @@ function TabelaBst({ linhas, carregando, filtrando, marcadas, onToggle, onTodas,
   );
 }
 
-function ParametrosLinha({ p, onChange, produtos, itens, responsaveis }: { p: ParamsAplicacao; onChange: (n: Partial<ParamsAplicacao>) => void; produtos: string[]; itens: ItemEstoque[]; responsaveis: string[] }) {
+function ParametrosLinha({ p, onChange, produtos, itens, responsaveis, incluirSemEstoque, onIncluirSemEstoque }: {
+  p: ParamsAplicacao; onChange: (n: Partial<ParamsAplicacao>) => void; produtos: string[]; itens: ItemEstoque[]; responsaveis: string[];
+  incluirSemEstoque: boolean; onIncluirSemEstoque: (v: boolean) => void;
+}) {
   return (
     <div className="bst-params" role="group" aria-label="Dose e produto">
       <div className="bst-params-tit gv-rotulo"><span className="gv-n" aria-hidden="true">2</span>Dados da aplicação</div>
       <div className="gv-campo" style={{ width: "9.5rem" }}><label htmlFor="bst-data">Data</label><input id="bst-data" type="date" value={p.data} onChange={(e) => onChange({ data: e.target.value })} /></div>
-      <div className="gv-campo" style={{ width: "11rem" }}>
+      <div className="gv-campo" style={{ width: "13rem" }}>
         <label htmlFor="bst-produto">Produto</label>
-        <select id="bst-produto" value={p.produto} onChange={(e) => onChange({ produto: e.target.value, unidade: itens.find((i) => i.nome === e.target.value)?.unidade || p.unidade })}>
+        <select id="bst-produto" value={p.produto} disabled={!produtos.length} onChange={(e) => onChange({ produto: e.target.value, unidade: itens.find((i) => i.nome === e.target.value)?.unidade || p.unidade })}>
+          {!produtos.length && <option value="">Nenhum produto disponível</option>}
           {produtos.map((n) => <option key={n} value={n}>{n}</option>)}
         </select>
+        <label className="gv-ajuda" style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginTop: "0.25rem", cursor: "pointer" }}
+          title="Mostra também os produtos ativos que estão com saldo zerado. Produtos inativos nunca aparecem.">
+          <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => onIncluirSemEstoque(e.target.checked)} />
+          Incluir produtos sem estoque
+        </label>
       </div>
       <div className="gv-campo" style={{ width: "5.5rem" }}><label htmlFor="bst-dose">Dose</label><input id="bst-dose" type="text" inputMode="decimal" autoComplete="off" value={p.dose} placeholder="opc." onChange={(e) => onChange({ dose: e.target.value })} /></div>
       <div className="gv-campo" style={{ width: "6.5rem" }}><label htmlFor="bst-un">Unidade</label><input id="bst-un" value={p.unidade} placeholder="unidade" onChange={(e) => onChange({ unidade: e.target.value })} /></div>
@@ -443,16 +447,19 @@ function ParametrosLinha({ p, onChange, produtos, itens, responsaveis }: { p: Pa
           {responsaveis.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
       </div>
-      <p className="gv-ajuda" style={{ flex: "1 1 14rem", alignSelf: "center" }}>Sem dose, o BST é registrado mas o estoque não baixa. Data futura = agenda (nada baixa agora).</p>
+      <p className="gv-ajuda" style={{ flex: "1 1 14rem", alignSelf: "center" }}>
+        Sem dose, o BST é registrado mas o estoque não baixa. Data futura = agenda (nada baixa agora).
+        {!produtos.length && <> Só aparecem produtos ativos com finalidade Medicamento e conta gerencial padrão 3.01.04.02 - BST{incluirSemEstoque ? "" : ", com saldo em estoque"}.</>}
+      </p>
     </div>
   );
 }
 
 function BarraBst({ seg, n, nAptas, nIncluir, nRe, ocultas, p, previsao, paramsAberto, onParams, onAbrirParams, conf, ocupado, retorno, produtos, itens, responsaveis,
-  onPedir, onCancelar, onConfirmar, onLimpar, onFecharRetorno, onVerIncluir }: {
+  incluirSemEstoque, onIncluirSemEstoque, onPedir, onCancelar, onConfirmar, onLimpar, onFecharRetorno, onVerIncluir }: {
   seg: Seg; n: number; nAptas: number; nIncluir: number; nRe: number; ocultas: number; p: ParamsAplicacao; previsao: string; paramsAberto: boolean;
   onParams: (x: Partial<ParamsAplicacao>) => void; onAbrirParams: () => void; conf: ConfirmacaoBst | null; ocupado: boolean; retorno: RetornoBst | null;
-  produtos: string[]; itens: ItemEstoque[]; responsaveis: string[];
+  produtos: string[]; itens: ItemEstoque[]; responsaveis: string[]; incluirSemEstoque: boolean; onIncluirSemEstoque: (v: boolean) => void;
   onPedir: (t: AcaoBst) => void; onCancelar: () => void; onConfirmar: (c: ConfirmacaoBst) => void; onLimpar: () => void; onFecharRetorno: () => void; onVerIncluir: () => void;
 }) {
   const inaptas = seg === "inaptas";
@@ -496,7 +503,10 @@ function BarraBst({ seg, n, nAptas, nIncluir, nRe, ocultas, p, previsao, paramsA
           <button type="button" className="gp-link" onClick={onFecharRetorno} aria-label="Fechar aviso">Fechar</button>
         </div>
       )}
-      {!inaptas && paramsAberto && !conf && <ParametrosLinha p={p} onChange={onParams} produtos={produtos} itens={itens} responsaveis={responsaveis} />}
+      {!inaptas && paramsAberto && !conf && (
+        <ParametrosLinha p={p} onChange={onParams} produtos={produtos} itens={itens} responsaveis={responsaveis}
+          incluirSemEstoque={incluirSemEstoque} onIncluirSemEstoque={onIncluirSemEstoque} />
+      )}
       <div className="gv-barra-miolo">
         {conf ? (
           <div className="bst-conf" role="alertdialog" aria-label="Confirmação">
@@ -523,7 +533,7 @@ function BarraBst({ seg, n, nAptas, nIncluir, nRe, ocultas, p, previsao, paramsA
               </span>
             </div>
             {!inaptas && !paramsAberto && (
-              <span className="bst-resumo-linha">{br(p.data)} · {p.produto} · {p.dose ? `${p.dose} ${p.unidade} ${p.porAnimal ? "por animal" : "no total"}` : "sem dose"}</span>
+              <span className="bst-resumo-linha">{br(p.data)} · {p.produto || "sem produto"} · {p.dose ?`${p.dose} ${p.unidade} ${p.porAnimal ? "por animal" : "no total"}` : "sem dose"}</span>
             )}
             {!inaptas && (
               <button type="button" className="bst-btn" aria-expanded={paramsAberto} onClick={onAbrirParams}>
@@ -567,26 +577,34 @@ export function PainelLancarBst({
   const [ajusteAberto, setAjusteAberto] = useState(false);
   const [ajusteMsg, setAjusteMsg] = useState("");
   const [paramsAberto, setParamsAberto] = useState(true);
-  const [params, setParams] = useState<ParamsAplicacao>(() => ({ data: hojeLocal(), produto: "Lactotropin", dose: "", unidade: "unidade", porAnimal: true, resp: "" }));
+  // Produto começa vazio: o painel escolhe o primeiro item elegível assim que o estoque carrega (nada de nome fixo).
+  const [paramsBase, setParams] = useState<ParamsAplicacao>(() => ({ data: hojeLocal(), produto: "", dose: "", unidade: "unidade", porAnimal: true, resp: "" }));
+  const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
   const [conf, setConf] = useState<ConfirmacaoBst | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [retorno, setRetorno] = useState<RetornoBst | null>(null);
-  const [estoqueItens, setEstoqueItens] = useState<{ nome?: string; unidade?: string | null; quantidade?: number | null }[]>([]);
+  const [estoqueItens, setEstoqueItens] = useState<ItemEstoqueCadastro[]>([]);
   const { pessoas: pessoasAtivas } = usePessoasAtivas();
   const admin = ehAdmin();
 
+  // Mesma chave de cache da aba Secagem do app de campo: sem internet, usa a última lista de estoque baixada.
   const carregarEstoque = useCallback(() => {
-    fetchEstoqueAtivos().then((d) => setEstoqueItens(d.itens || [])).catch(() => setEstoqueItens([]));
+    fetchComCache<{ itens: ItemEstoqueCadastro[] }>("estoque_itens_completo", () => fetchEstoqueAtivos())
+      .then(({ dados }) => setEstoqueItens(dados?.itens || []));
   }, []);
   useEffect(carregarEstoque, [carregarEstoque]);
 
-  // Itens de estoque reconhecidos como BST (mesmo critério do backend) — Lactotropin/Boostin aparecem aqui só se já cadastrados,
-  // mas qualquer outro produto com nome batendo no padrão também entra (ex.: genérico cadastrado em Configurações › Cadastro › Estoque).
-  const itensBst: ItemEstoque[] = useMemo(
-    () => estoqueItens.filter((i) => MARCADORES_BST.test(i.nome || "")).map((i) => ({ nome: i.nome as string, unidade: i.unidade, quantidade: i.quantidade })),
-    [estoqueItens],
-  );
-  const produtos = useMemo(() => Array.from(new Set([...itensBst.map((i) => i.nome), params.produto])), [itensBst, params.produto]);
+  // Produtos selecionáveis: finalidade Medicamento + conta gerencial padrão 3.01.04.02 (BST) + item ativo, só com saldo — a menos que
+  // "Incluir produtos sem estoque" esteja marcado (inativos nunca entram). Independe do nome (ver itensParaBst em lib/bstLote.ts).
+  const itensBst: ItemEstoque[] = useMemo(() => itensParaBst(estoqueItens, incluirSemEstoque), [estoqueItens, incluirSemEstoque]);
+  const produtos = useMemo(() => Array.from(new Set(itensBst.map((i) => i.nome))), [itensBst]);
+  // O produto usado é sempre um da lista: ao carregar o estoque, ao desmarcar "sem estoque" ou se o item escolhido deixou de ser elegível,
+  // cai no primeiro elegível (e na unidade dele) — sem nome fixo e sem efeito.
+  const params = useMemo<ParamsAplicacao>(() => {
+    if (produtos.includes(paramsBase.produto)) return paramsBase;
+    const primeiro = itensBst[0];
+    return { ...paramsBase, produto: primeiro?.nome ?? "", unidade: primeiro?.unidade || paramsBase.unidade };
+  }, [paramsBase, produtos, itensBst]);
   const responsaveis = useMemo(() => pessoasAtivas.map((p) => p.nome).filter(Boolean), [pessoasAtivas]);
 
   const agendaBst: AgendaBst = agenda;
@@ -718,6 +736,7 @@ export function PainelLancarBst({
       <BarraBst seg={seg} n={nAcao} nAptas={nAptas} nIncluir={nIncluir} nRe={nRe} ocultas={ocultas} p={params} previsao={previsaoTxt} paramsAberto={paramsAberto}
         onParams={(x) => { setParams((p) => ({ ...p, ...x })); setRetorno(null); }} onAbrirParams={() => setParamsAberto((v) => !v)}
         conf={conf} ocupado={ocupado} retorno={retorno} produtos={produtos} itens={itensBst} responsaveis={responsaveis}
+        incluirSemEstoque={incluirSemEstoque} onIncluirSemEstoque={(v) => { setIncluirSemEstoque(v); setRetorno(null); }}
         onPedir={pedir} onCancelar={() => setConf(null)} onConfirmar={executar} onLimpar={limpar} onFecharRetorno={() => setRetorno(null)}
         onVerIncluir={() => { trocarSeg("incluir"); setRetorno(null); }} />
     </div>
