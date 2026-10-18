@@ -1,8 +1,9 @@
 // API de mentira para filmar as telas reais (dados fictícios, Fazenda Boa Esperança). Aplica POST /movimentacoes/mover.
 import http from "node:http";
-import { animais, lotes, SEED_MOTIVOS, estadosEp2 } from "./dados.mjs";
-const EP2 = process.env.EP === "t2e2"; // Ep. 2: inseminação em lote
-const INICIAL = EP2 ? { est: structuredClone(estadosEp2), semen: structuredClone(globalThis.__SEMEN) } : null;
+import { animais, lotes, SEED_MOTIVOS, estadosEp2, candidatasEp3, DATA_REF } from "./dados.mjs";
+const EP3 = process.env.EP === "t2e3"; // Ep. 3: diagnóstico de gestação (usa também os estados e o estoque do Ep. 2)
+const EP2 = process.env.EP === "t2e2" || EP3; // Ep. 2: inseminação em lote
+const INICIAL = EP2 ? { est: structuredClone(estadosEp2), semen: structuredClone(globalThis.__SEMEN), cand: structuredClone(candidatasEp3) } : null;
 const cfg = { atraso: 0, falhar: [] }; // POST /__cfg {atraso: ms por envio, falhar: [brincos que falham 1 vez]}
 const log = [];
 const estadoDe = (a) => {
@@ -33,13 +34,31 @@ http.createServer(async (req, res) => {
   if (p === "/movimentacoes/motivos") return send(SEED_MOTIVOS);
   if (p === "/movimentacoes/sugestoes") return send({ total: 0, lotes_com_criterio: 0, sugestoes: [] });
   if (p === "/indicadores/estados-reprodutivos") return send({ data_referencia: "2026-10-17", animais: animais.map(estadoDe), contagem: {}, parametros: {} });
-  if (EP2 && p === "/__reset") { for (const k of Object.keys(estadosEp2)) estadosEp2[k] = structuredClone(INICIAL.est[k]); globalThis.__SEMEN = structuredClone(INICIAL.semen); cfg.atraso = 0; cfg.falhar = []; return send({ ok: true }); }
+  if (EP2 && p === "/__reset") { for (const k of Object.keys(estadosEp2)) estadosEp2[k] = structuredClone(INICIAL.est[k]); globalThis.__SEMEN = structuredClone(INICIAL.semen); if (EP3) for (const k of Object.keys(candidatasEp3)) candidatasEp3[k] = structuredClone(INICIAL.cand[k]); cfg.atraso = 0; cfg.falhar = []; return send({ ok: true }); }
   if (p === "/__cfg" && req.method === "POST") { Object.assign(cfg, await corpo(req)); return send(cfg); }
   if (EP2 && p === "/cadastro/estoque-semen/disponivel") {
     const t = globalThis.__SEMEN.touros; const tot = (k) => t.filter((x) => x.tipo === k).reduce((n, x) => n + x.doses, 0);
     return send({ touros: t, totais: { convencional: tot("convencional"), sexado: tot("sexado") }, minimos: { convencional: 5, sexado: 3 }, abaixo_minimo: { convencional: false, sexado: false } });
   }
   if (EP2 && p === "/reproducao/protocolo-iatf/ativos") return send([]);
+  if (EP3 && p === "/reproducao/diagnostico/candidatas") {
+    const c = candidatasEp3;
+    return send({ data_referencia: DATA_REF, parametros: { dias_toque: 30, dias_reconfirmacao: 60 }, usa_adesivo: false, situacoes: c, totais: { a_tocar: c.a_tocar.length, a_reconfirmar: c.a_reconfirmar.length, reconfirmada: c.reconfirmada.length } });
+  }
+  if (EP3 && p === "/reproducao/diagnostico" && req.method === "POST") {
+    const b = await corpo(req); log.push({ p, b });
+    if (cfg.atraso) await new Promise((ok) => setTimeout(ok, cfg.atraso));
+    const i = candidatasEp3.a_tocar.findIndex((x) => x.numero_matriz === b.numero_matriz);
+    if (i < 0) return send({ detail: "stub: animal fora de A tocar" }, 422);
+    const [it] = candidatasEp3.a_tocar.splice(i, 1); const x = estadosEp2[b.numero_matriz];
+    if (b.resultado === "retoque") { // Positivo — para retoque: vai para "A reconfirmar"
+      candidatasEp3.a_reconfirmar.push({ ...it, estado: "gestante", dias_gestacao: it.dias_desde_servico, fase: "a_reconfirmar", diagnostico: "POSITIVO", data_diagnostico: b.data_diagnostico, retoque: true, ainda_nao: false, dias_para_prazo: null, prazo_tipo: null });
+      if (x) { x.estado = "gestante"; x.gest = it.dias_desde_servico; x.ia = null; }
+    } else if (b.resultado === "negativo") { if (x) { x.estado = "apta"; x.ia = null; x.gest = null; } } // vira vazia e entra na Inseminação como apta
+    else candidatasEp3.a_tocar.splice(i, 0, it);
+    return send({ ok: true, numero_matriz: b.numero_matriz });
+  }
+  if (p === "/reproducao/agenda-reprodutiva/cards-config") return send({ cards: null, atualizado_em: null });
   if (EP2 && p === "/reproducao/servico" && req.method === "POST") {
     const b = await corpo(req); log.push({ p, b });
     if (cfg.atraso) await new Promise((ok) => setTimeout(ok, cfg.atraso));
