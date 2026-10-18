@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  alvoDaAcao, doseTotal, filtrarAnimais, interpretarRetornoAplicar, montarPayloadAplicar, ordenarAnimais, preverEstoque,
+  alvoDaAcao, doseTotal, filtrarAnimais, interpretarRetornoAplicar, itensParaBst, montarPayloadAplicar, ordenarAnimais, preverEstoque,
   reanalisadasMarcadas, segmentosDaAgenda, textoPrevisao, textoRetornoMarcar, type Marcadas, type ParamsAplicacao,
 } from "./bstLote.ts";
 
@@ -85,8 +85,10 @@ test("previsão do estoque: data futura agenda; sem dose/unidade registra; com d
 test("payload de aplicar: o mesmo corpo que o painel antigo mandava", () => {
   const r = montarPayloadAplicar(params({ dose: "1,5", resp: " Marcelo ", porAnimal: false }), ["1274", "2507"]);
   assert.deepEqual(r, { dados: { numeros_matriz: ["1274", "2507"], data_aplicacao: HOJE, aplicado: true, produto: "Lactotropin", dose: 1.5, unidade: "unidade", responsavel: "Marcelo", dose_por_animal: false } });
-  const semDose = montarPayloadAplicar(params({ unidade: "", produto: "  " }), ["1"]);
-  assert.ok("dados" in semDose && semDose.dados.dose === null && semDose.dados.unidade === null && semDose.dados.produto === "Lactotropin" && semDose.dados.responsavel === undefined);
+  const semDose = montarPayloadAplicar(params({ unidade: "", produto: " Lactotropin 500mg " }), ["1"]);
+  assert.ok("dados" in semDose && semDose.dados.dose === null && semDose.dados.unidade === null && semDose.dados.produto === "Lactotropin 500mg" && semDose.dados.responsavel === undefined);
+  // Sem produto escolhido não existe mais o "Lactotropin" implícito (era o item inativo): a tela pede para escolher.
+  assert.match((montarPayloadAplicar(params({ produto: "  " }), ["1"]) as { erro: string }).erro, /Escolha o produto/);
   assert.deepEqual(montarPayloadAplicar(params(), []), { erro: "Marque ao menos um animal." });
   assert.deepEqual(montarPayloadAplicar(params({ data: "" }), ["1"]), { erro: "Informe a data da aplicação." });
   assert.ok("erro" in montarPayloadAplicar(params({ dose: "x" }), ["1"]));
@@ -127,4 +129,26 @@ test("retorno de marcar inapta / apta usa a contagem do servidor", () => {
   assert.match(textoRetornoMarcar({ atualizados: 1, inapta: false }, 1, false).texto, /^1 marcada como apta\. Ficou em/);
   assert.match(textoRetornoMarcar({ enviado: true }, 4, true).texto, /^4 marcadas como inaptas/);
   assert.equal(textoRetornoMarcar({ enviado: false }, 4, true).tipo, "offline");
+});
+
+test("produtos do BST: Medicamento + conta 3.01.04.02 + ativo + com saldo; \"sem estoque\" inclui zerados, nunca inativos", () => {
+  const base = { finalidade: "Medicamento", conta_gerencial_despesa_padrao: "3.01.04.02", ativo: true, unidade: "unidade" };
+  const cadastro = [
+    { ...base, nome: "Lactotropin", ativo: false, quantidade: 30 },        // inativo (o caso real): nunca aparece
+    { ...base, nome: "Lactotropin 500mg", quantidade: 12 },               // ativo com saldo: o único padrão
+    { ...base, nome: "Boostin", quantidade: 0 },                          // ativo e zerado: só com a caixa marcada
+    { ...base, nome: "Sem saldo informado", quantidade: null },           // saldo nulo conta como sem estoque
+    { ...base, nome: "Legado sem flag", ativo: null, quantidade: 5 },     // ativo nulo = item legado, tratado como ativo
+    { ...base, nome: "Outra finalidade", finalidade: "Material/Insumo", quantidade: 9 },
+    { ...base, nome: "Outra conta", conta_gerencial_despesa_padrao: "3.01.04.01", quantidade: 9 },
+    { ...base, nome: "Sem conta", conta_gerencial_despesa_padrao: null, quantidade: 9 },
+    { ...base, nome: "Conta com rótulo", conta_gerencial_despesa_padrao: "3.01.04.02 - BST", finalidade: " medicamento ", quantidade: 2 },
+    { ...base, nome: "BST no nome mas sem a conta", conta_gerencial_despesa_padrao: null, quantidade: 9 },
+    { ...base, nome: "  ", quantidade: 9 },
+  ];
+  assert.deepEqual(itensParaBst(cadastro, false).map((i) => i.nome), ["Lactotropin 500mg", "Legado sem flag", "Conta com rótulo"]);
+  assert.deepEqual(itensParaBst(cadastro, true).map((i) => i.nome), ["Lactotropin 500mg", "Boostin", "Sem saldo informado", "Legado sem flag", "Conta com rótulo"]);
+  assert.ok(!itensParaBst(cadastro, true).some((i) => i.nome === "Lactotropin"), "inativo não entra nem com a caixa marcada");
+  assert.deepEqual(itensParaBst(cadastro, false)[0], { nome: "Lactotropin 500mg", unidade: "unidade", quantidade: 12 });
+  assert.deepEqual(itensParaBst(null, true), []);
 });
