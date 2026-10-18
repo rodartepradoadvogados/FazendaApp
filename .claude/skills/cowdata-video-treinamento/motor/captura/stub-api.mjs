@@ -1,7 +1,8 @@
 // API de mentira para filmar as telas reais (dados fictícios, Fazenda Boa Esperança). Aplica POST /movimentacoes/mover.
 import http from "node:http";
-import { animais, lotes, SEED_MOTIVOS, estadosEp2, candidatasEp3, DATA_REF, pesagensRel, secagemLista, ESTOQUE7 } from "./dados.mjs";
-const EP7 = process.env.EP === "t2e7"; // Ep. 7: pesagem corporal e secagem (herda o Ep. 6)
+import { animais, lotes, SEED_MOTIVOS, estadosEp2, candidatasEp3, DATA_REF, pesagensRel, secagemLista, ESTOQUE7, ESTOQUE8, PESSOAS8, bst } from "./dados.mjs";
+const EP8 = process.env.EP === "t2e8"; // Ep. 8: BST (herda o Ep. 7)
+const EP7 = process.env.EP === "t2e7" || EP8; // Ep. 7: pesagem corporal e secagem (herda o Ep. 6)
 const EP6 = process.env.EP === "t2e6" || EP7; // Ep. 6: controle leiteiro (herda o Ep. 5)
 const EP5 = process.env.EP === "t2e5" || EP6; // Ep. 5: protocolo de IATF (herda o Ep. 4)
 const EP4 = process.env.EP === "t2e4" || EP5; // Ep. 4: parto (herda o Ep. 3)
@@ -12,6 +13,9 @@ const ANIMAIS0 = EP4 ? structuredClone(animais) : null; // Ep. 4: o parto acresc
 const REL0 = EP7 ? structuredClone(pesagensRel) : null, SEC0 = EP7 ? structuredClone(secagemLista.animais) : null, EST0 = EP7 ? structuredClone(ESTOQUE7) : null; // Ep. 7: /__reset volta ao início
 const cfg = { atraso: 0, falhar: [] }; // POST /__cfg {atraso: ms por envio, falhar: [brincos que falham 1 vez]}
 const log = [];
+const BST0 = EP8 ? structuredClone(bst) : null;
+const bstDel = (l) => ({ numero_matriz: l.numero_matriz, grupo: l.grupo, del_atual: l.del_atual, del_projetado: l.del_atual == null ? null : l.del_atual + Math.round((Date.parse(bst.proxima) - Date.parse("2026-10-17")) / 864e5),
+  requer_reanalise: !!l.requer_reanalise, origem_inducao_lactacao: !!l.origem_inducao_lactacao, motivo_exclusao: l.motivo_exclusao ?? null });
 const estadoDe = (a) => {
   const g = a.grupo_primario;
   if (EP2) { const x = estadosEp2[a.numero]; return { numero: a.numero, estado: x.estado, categoria: a.categoria_abrev, lote: g, del_dias: a.del_dias, data_ultimo_parto: null, dias_gestacao: x.gest || null, parto_previsto: null, data_servico: null, tipo_servico: null, protocolo: null, dias_desde_servico: x.ia ?? null, protocolo_dia_atual: x.prot ?? null, protocolo_d0: x.d0 ?? null }; }
@@ -31,6 +35,7 @@ http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") { res.statusCode = 204; return res.end(); }
   const send = (obj, status = 200) => { res.statusCode = status; res.end(JSON.stringify(obj)); };
   if (p === "/health") return send({ ok: true });
+  if (EP8 && p === "/agenda/") return send({ eventos: [], proxima_visita_bst: bst.proxima, intervalo_bst: bst.intervalo, bst_elegiveis: bst.aptas.map(bstDel), bst_nunca_aplicados: bst.incluir.map(bstDel), bst_excluidos: bst.inaptas.map(bstDel) });
   if (p === "/agenda/") return send({ eventos: [] });
   if (p === "/agenda/materializar") return send({ ok: true });
   if (p === "/__log") return send(log);
@@ -41,6 +46,25 @@ http.createServer(async (req, res) => {
   if (p === "/movimentacoes/sugestoes") return send({ total: 0, lotes_com_criterio: 0, sugestoes: [] });
   if (p === "/indicadores/estados-reprodutivos") return send({ data_referencia: "2026-10-17", animais: animais.map(estadoDe), contagem: {}, parametros: {} });
   if (EP4 && p === "/__reset") { animais.splice(0, animais.length, ...structuredClone(ANIMAIS0)); }
+  if (EP8 && p === "/__reset") { Object.assign(bst, structuredClone(BST0)); ESTOQUE8[0].quantidade = 40; }
+  if (EP8) { // Ep. 8: BST
+    if (p === "/agenda/bst/aplicar" && req.method === "POST") { // a âncora passa a ser hoje: próxima = +14 dias; as aplicadas continuam aptas (o servidor recalcula o DEL projetado)
+      const b = await corpo(req); log.push({ p, b });
+      if (cfg.atraso) await new Promise((ok) => setTimeout(ok, cfg.atraso));
+      const n = (b.numeros_matriz || []).length, tot = b.dose_por_animal === false ? b.dose : (b.dose || 0) * n;
+      if (b.dose) ESTOQUE8[0].quantidade -= tot;
+      bst.proxima = "2026-10-31";
+      return send({ aplicados: n, agendados: 0, programado: false, proxima_aplicacao_calculada: bst.proxima, avisos: [] });
+    }
+    if (p === "/agenda/bst/marcar-inapta" && req.method === "POST") { // sai de Aptas e vai para "Incluir no próximo BST" com o selo Reanalisar
+      const b = await corpo(req); log.push({ p, b }); let k = 0;
+      for (const n of b.numeros_matriz || []) { const i = bst.aptas.findIndex((x) => x.numero_matriz === n); if (i < 0) continue; const [l] = bst.aptas.splice(i, 1);
+        bst.incluir.push({ ...l, requer_reanalise: true, origem_inducao_lactacao: false, motivo_exclusao: "Excluída manualmente do BST — revisar na próxima aplicação" }); k++; }
+      return send({ atualizados: k });
+    }
+    if (p === "/estoque/") return send({ itens: ESTOQUE8 });
+    if (p === "/cadastro/pessoas") return send(PESSOAS8);
+  }
   if (EP7 && p === "/__reset") { pesagensRel.splice(0, pesagensRel.length, ...structuredClone(REL0)); secagemLista.animais.splice(0, secagemLista.animais.length, ...structuredClone(SEC0)); secagemLista.ultima_secagem = null; ESTOQUE7.splice(0, ESTOQUE7.length, ...structuredClone(EST0)); }
   if (EP2 && p === "/__reset") { for (const k of Object.keys(estadosEp2)) estadosEp2[k] = structuredClone(INICIAL.est[k]); globalThis.__SEMEN = structuredClone(INICIAL.semen); if (EP3) for (const k of Object.keys(candidatasEp3)) candidatasEp3[k] = structuredClone(INICIAL.cand[k]); cfg.atraso = 0; cfg.falhar = []; return send({ ok: true }); }
   if (EP4 && p === "/producao/sugestao-lote-evento" && req.method === "POST") { // mãe recém-parida → 01 - Alta; cria Bezerra → 07 - Bezerras
