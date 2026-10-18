@@ -332,6 +332,9 @@ class TestProtocoloVigenteParaInseminacao:
         c.post("/reproducao/servico", json={
             "numero_matriz": "700", "data_servico": (hoje + timedelta(days=11)).isoformat(),
             "tipo_servico": "IA", "reprodutor": "Coors",
+            # `protocolo` preenchido = a IA do próprio protocolo IATF (sem ele é cio natural, e `/servico` recusa quem
+            # está em protocolo vigente — ver `_exigir_fora_de_protocolo_vigente`).
+            "protocolo": "PROTOCOLO IATF",
         })
 
         ativos = c.get("/reproducao/protocolo-iatf/ativos").json()
