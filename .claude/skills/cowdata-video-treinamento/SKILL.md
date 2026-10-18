@@ -44,10 +44,10 @@ Nunca diga "salvo" sem confirmação da ferramenta.
 | 2 | Lotes (Composição, Indicadores, Exportar PDF / Compartilhar) | 0:56 |
 | 3 | Listas do painel (Gestantes, Inseminadas, PEV, Vazias, Aptas, Atrasadas, IA atual, Parto previsto, Secagens, DEL/Produção, IEP, Ver Animal) | 1:30 |
 
-### Temporada 2 — Lançamentos (app Android) — EM ANDAMENTO (Ep. 1 em 2026-10-17, Ep. 2 em 2026-10-18), ~11 episódios
+### Temporada 2 — Lançamentos (app Android) — EM ANDAMENTO (Ep. 1 em 2026-10-17, Ep. 2 e Ep. 3 em 2026-10-18), ~11 episódios
 | Bloco | Episódios |
 |---|---|
-| REPRODUTIVOS (4) | lançamento de inseminação — **Ep. 2 CONCLUÍDO** (`APP-Lancamentos_Ep2_Inseminacao-em-lote.mp4`, 1:04) · diagnóstico · parto · protocolo de IATF |
+| REPRODUTIVOS (4) | lançamento de inseminação — **Ep. 2 CONCLUÍDO** (`APP-Lancamentos_Ep2_Inseminacao-em-lote.mp4`, 1:04) · diagnóstico — **Ep. 3 CONCLUÍDO** (`APP-Lancamentos_Ep3_Diagnostico-de-gestacao.mp4`, 1:05) · parto · protocolo de IATF |
 | PRODUÇÃO (3) | controle leiteiro · pesagem corporal + secagem (um episódio) · BST |
 | SANIDADE (2) | aplicação — curativa e preventiva no mesmo episódio · protocolo sanitário (curativo) |
 | ALIMENTAÇÃO (1) | lançamento e sobra de cocho |
@@ -115,6 +115,11 @@ Temporada 2" abaixo). Pasta de destino: `H:\Meu Drive\COWDATA\Tutoriais\APP - LA
   atrasar o envio e fazer uma vaca falhar na 1ª tentativa). Capturas altas limitadas a 2500 px CSS (a imagem não pode passar de ~16000 px). Regra de zoom:
   centrado e ≤ 1,18 (a tela tem 390 px e a câmera mostra ~439/zoom px de largura; acima disso os cartões são cortados nas bordas).
   As pausas naturais da locução já dão o ritmo: em `tl_*.py` a folga só ACRESCENTA tempo (o total = fim da voz + LEAD + folgas + cauda).
+
+- **Ep. 3 (Diagnóstico de gestação)**: `episodios/t2e3.js`, `tl_t2e3.py` → `audio/tl_t2e3.json`, captura em `captura/capturar_t2e3.mjs` (`EP=t2e3 node stub-api.mjs`:
+  `/reproducao/diagnostico/candidatas` e POST `/reproducao/diagnostico` que move as vacas para A reconfirmar / vazias). A barra do Diagnóstico não tem classe: a captura a marca com
+  `data-vbarra`. Novidades no motor: 4º campo de `EP.telas` (1 = troca só de estado, as anotações continuam) e `titulos()` decide o `display` de `.titm` ANTES de medir (senão o primeiro
+  quadro depois de uma janela oculta saía sem redução de escala e cortava o título).
 
 ### Ambiente
 `quadros.mjs` usa o Playwright de `/opt/node-tools` e o Chromium de `/opt/pw-browsers` (sessão na

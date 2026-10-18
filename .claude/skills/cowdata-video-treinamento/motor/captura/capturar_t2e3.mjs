@@ -30,7 +30,8 @@ async function caixas(sel) {
 }
 const scrollar = (y) => p.evaluate((y) => { document.activeElement?.blur?.(); window.scrollTo(0, y); document.body.scrollTo(0, y); document.scrollingElement.scrollTo(0, y); }, y);
 // A barra de ação do Diagnóstico não tem classe (é uma div sticky com botões .mob-btn): marcamos com data-vbarra para medir e esconder.
-const marcarBarra = () => p.evaluate(() => { document.querySelectorAll("[data-vbarra]").forEach((e) => e.removeAttribute("data-vbarra")); const d = [...document.querySelectorAll("div")].find((e) => getComputedStyle(e).position === "sticky" && e.querySelector(":scope > button.mob-btn")); if (d) d.setAttribute("data-vbarra", "1"); return !!d; });
+const marcarBarra = () => p.evaluate(() => { document.querySelectorAll("[data-vbarra]").forEach((e) => e.removeAttribute("data-vbarra")); const d = [...document.querySelectorAll("div")].find((e) => getComputedStyle(e).position === "sticky" && e.querySelector(":scope > button.mob-btn")); const alvo = d || document.querySelector(".lote-barra"); // a Inseminação (aberta depois do Negativo) usa a barra .lote-barra
+  if (alvo) alvo.setAttribute("data-vbarra", "1"); return !!alvo; });
 // tall = captura alta (barra escondida) para o motor rolar a imagem; scroll = posição da página na captura normal
 async function snap(nome, { tall = false, alvos = {}, scroll = 0, tallMax = 3000 } = {}) {
   await esp(); await scrollar(scroll); await esp(250);
@@ -59,8 +60,8 @@ const BARRA = "[data-vbarra]";
 const A1 = {
   passo: "p:has-text('Passo 1 de 2')", origem: "[aria-label=Origem]", btnAnimais: "[aria-label=Origem] button:has-text('Animais')", situacao: '[aria-label="Situação"]',
   btnATocar: sit("A tocar"), btnATocarN: sit("A tocar") + " b", btnReconfirmar: sit("A reconfirmar"), btnReconfirm: sit("Reconfirm."), notaSit: "p:has-text('Inseminadas ainda sem diagnóstico')",
-  selPrazo: "button:has-text('Selecionar todas no prazo')", grupoAlta: "div:text-is('01 - Alta · 5')", grupoMedia: "div:text-is('02 - Média · 4')",
-  aviso: "[role=status], .mob-aviso, div:has-text('Diagnóstico salvo para')", legenda: ".ft-legenda",
+  selPrazo: "button:has-text('Selecionar todas no prazo')", grupoAlta: 'div:text-matches("^01 - Alta ·")', grupoMedia: 'div:text-matches("^02 - Média ·")',
+  aviso: 'text="Diagnóstico salvo para 5 animais."', legenda: ".ft-legenda",
   barra: BARRA, barraTxt: BARRA + " > span", continuar: BARRA + " button.mob-btn",
 };
 for (const n of ["4318", "4455", "4731", "4846", "4902", "2127", "2263", "2342", "2388"]) {
@@ -98,7 +99,7 @@ await snap("s11_p2_metodo", { tall: true, alvos: A2 });
 await cfg({ atraso: 1100, falhar: [] });
 await p.locator(BARRA + " button.mob-btn", { hasText: "Salvar (" }).click();
 await p.waitForSelector("text=Salvando…", { timeout: 5000 });
-await snap("s12_salvando", { tall: false, alvos: A2 });
+await snap("s12_salvando", { tall: false, alvos: A2, scroll: 400 }); // mesma rolagem de s11 (a página já estava no fim)
 await p.waitForFunction(() => document.body.innerText.includes("Diagnóstico salvo para"), null, { timeout: 20000 }); await cfg({ atraso: 0 });
 await snap("s13_p1_salvo", { tall: true, alvos: A1 });
 const logA = await (await fetch(API + "/__log")).json(); console.log("POSTs:", logA.filter((x) => x.p === "/reproducao/diagnostico").map((x) => x.b.numero_matriz + ":" + x.b.resultado + ":" + x.b.metodo).join(" "));
@@ -109,6 +110,6 @@ await snap("s16_p2_neg", { tall: true, alvos: A2 });
 await p.locator('[aria-label="Resultado do diagnóstico"] button', { hasText: "Negativo" }).click(); await esp(300);
 await snap("s17_p2_neg_ok", { tall: true, alvos: A2 });
 await p.locator(BARRA + " button", { hasText: "Salvar e lançar inseminação" }).click(); await esp(1800);
-await snap("s18_insem", { tall: true, alvos: AI });
+await snap("s18_insem", { tall: true, alvos: AI, tallMax: 1400 });
 fs.writeFileSync("mapa.json", JSON.stringify(mapa, null, 1));
 await br.close();

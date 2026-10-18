@@ -138,7 +138,7 @@ function anotacoes(t,z,iTela){let h='',notas='';
   for(const[i,a]of EP.anot.entries()){const[t0,t1,tipo,bx,by,bw,bh,o]=a;const op=o||{};
     if(t<t0||t>=t1+0.2)continue;
     // regra de limpeza: toda anotação morre exatamente no quadro da próxima troca de tela
-    const prox=EP.telas.find(e=>e[0]>t0+1e-6);if(prox&&t>=prox[0])continue;
+    const prox=EP.telas.find(e=>e[0]>t0+1e-6&&!e[3]); /* e[3]=1: troca só de estado da mesma tela (ex.: marcar um cartão): a anotação continua */ if(prox&&t>=prox[0])continue;
     const rol=op.scr?scroll(op.scr,t):0;
     const cor=op.c||"#2E7D52";const p=op.fixo?1:oc(lin(t,t0,t0+0.38)),s=lin(t,t1,t1+0.2);const seed=i*97+Math.floor(t*12);
     if(tipo==='marca'){const pm=io(lin(t,t0,t0+0.5));h+=`<rect x="${(bx-6)*U}" y="${(by-rol+SBH-3)*U}" width="${(bw+12)*U*pm}" height="${(bh+6)*U}" rx="5" fill="${cor}" fill-opacity="${.5*(1-s)}" style="mix-blend-mode:multiply"/>`;continue;}
@@ -148,16 +148,18 @@ function anotacoes(t,z,iTela){let h='',notas='';
   X(K.anot,h);X(K.notas,notas);}
 function fitas(t){let h='';for(const[t0,t1,txt,x,y,rot]of EP.fitas){if(t<t0-0.05||t>=t1+0.3)continue;const p=mola(t-t0,12,.5),s=iq(lin(t,t1,t1+0.3));
   h+=`<div class="fita" style="left:${x}px;top:${y}px;transform:translateX(${s*1300}px) rotate(${rot}deg) scale(${L(1.25,1,cl(p,0,1.1))});opacity:${cl(p*3)}">${txt}</div>`;}X(K.fitas,h);}
-function titulos(t){const Q=EP.titulos;let i=0;while(i+1<Q.length&&t>=Q[i+1][0])i++;const[t0,tit]=Q[i];
+function titulos(t){const Q=EP.titulos;
+  // o diagrama De → Para ocupa o lugar do título enquanto durar. Decidir ANTES de medir: com .titm em display:none o scrollWidth vale 0
+  // e o primeiro quadro depois da janela (ou qualquer salto no tempo) saía sem a redução de escala e cortava o texto.
+  const D=EP.diag;const dv=(t>=D[0]&&t<D[1])||(EP.oculta||[]).some(o=>t>=o[0]&&t<o[1]);
+  K.titm=K.titm||document.querySelector('.titm');K.titm.style.display=(dv?'none':'block');let i=0;while(i+1<Q.length&&t>=Q[i+1][0])i++;const[t0,tit]=Q[i];
   const pe=oc(lin(t,t0,t0+0.5)),pm=io(lin(t,t0+0.35,t0+0.85));const a=i%2,b=1-a;
   const tt=K['tit'+a];X(tt,tit.replace(/<m>(.*?)<\/m>/g,'<m><i></i>$1</m>'));
   tt.style.display='block';const w=tt.scrollWidth;const sc=Math.min(1,900/w);tt.style.transform=`translateY(${(1-pe)*130}px) scale(${sc})`;tt.style.display='block';
   for(const m of tt.querySelectorAll('m i'))m.style.width=`calc(${pm*100}% + ${pm*20}px)`;
   const prev=Q[i-1];const ps=iq(lin(t,t0,t0+0.35));const tb=K['tit'+b];
   if(prev&&ps<1){X(tb,prev[1].replace(/<m>(.*?)<\/m>/g,'<m><i></i>$1</m>'));tb.style.display='block';const wb=tb.scrollWidth;tb.style.transform=`translateY(${-ps*130}px) scale(${Math.min(1,900/wb)})`;for(const m of tb.querySelectorAll('m i'))m.style.width='calc(100% + 20px)';}else tb.style.display='none';
-  // o diagrama De → Para ocupa o lugar do título enquanto durar
-  const D=EP.diag;const dv=(t>=D[0]&&t<D[1])||(EP.oculta||[]).some(o=>t>=o[0]&&t<o[1]);
-  K.titm=K.titm||document.querySelector('.titm');K.titm.style.display=(dv?'none':'block');}
+}
 function legenda(t){let f=null;for(const fr of EP.leg)if(t>=fr[0]-0.1&&t<fr[1]+0.35)f=fr;
   if(!f||t>=EP.fimLeg){K.legbox.style.display='none';return;}K.legbox.style.display='block';X(K.leg,f[2]);const q=mola(t-f[0]+0.1,14,.55);K.leg.style.transform=`scale(${L(.92,1,cl(q,0,1.05))}) rotate(${(1-cl(q,0,1))*-1.5}deg)`;K.leg.style.opacity=cl(q*2.5);}
 function shake(t){const t0=EP.shake;const f=Math.floor((t-t0)*30+1e-6);const S=[[-18,11],[13,-9],[-6,5]];
