@@ -7,30 +7,51 @@
 
 ## As cinco rotinas
 
-Horários em Brasília. Todas rodam em **sessão nova a cada disparo** e avisam o dono por **push**.
+Horários em Brasília. Desenho: sessão nova a cada disparo e aviso por **push**.
 
-| Rotina | Quando | Trabalho | Entrega | ID |
-|---|---|---|---|---|
-| **Milknews: matéria diária** | Todo dia, 05:00 (`0 8 * * *` UTC) | Pesquisa o setor leiteiro, escreve o lote de posts do blog | Lote em `backend/fazenda/seed_data/milknews_lotes/` + PR | `trig_01Qpm1wm4eD8x1wDrcjhFzpo` |
-| **Milknews: conferência das entregas** | Segunda, 07:00 (`0 10 * * 1` UTC) | Só leitura. Confere se cada rotina entregou o que prometeu na semana anterior | Relatório curto ao dono | `trig_01LpDEv49546nvreHFBgS96D` |
-| **Milknews: fontes do simulador de preço do leite** | Segunda, 09:00 (`0 12 * * 1` UTC) | Revalida as fontes do card do simulador (MAPA IN 76/2018 + apoio) | PR de `MilkPriceExplainer.tsx`, mescla sozinha (squash) | `trig_013E38QyXwKWCABVXCxX9RWH` |
-| **Milknews: réguas de referência (1ª segunda do mês)** | Segunda, 09:30 (`30 12 * * 1` UTC); só trabalha se o dia do mês for 1 a 7 | Confere as réguas de referência (`docs/agents/reguas-referencia-mensal.md`) | PR + relatório "RÉGUAS DE REFERÊNCIA — CONFERÊNCIA DE AAAA-MM" | `trig_016AeerJeafn3JaazEw6i8QG` |
-| **Milknews: catálogo de touros NAAB** | Terça, 09:00 (`CRON_TZ=America/Sao_Paulo 0 9 * * 2`) | Compara o catálogo oficial da NAAB com o banco, só leitura | Relatório no chat, **sem PR** | `trig_018jseB3ZQyiyc7BXaf1dmXd` |
+| Rotina | Quando | Trabalho | Entrega | ID | Estado em 19/10/2026 |
+|---|---|---|---|---|---|
+| **Milknews: matéria diária** | Todo dia, 05:00 (`0 8 * * *` UTC) | Pesquisa o setor leiteiro, escreve o lote de posts do blog | Lote em `backend/fazenda/seed_data/milknews_lotes/` + PR | `trig_01Qpm1wm4eD8x1wDrcjhFzpo` | **Ativa.** Texto novo pendente: só o dono edita (ver o fim deste documento) |
+| **Milknews: conferência das entregas** | Segunda, 07:00 (`0 10 * * 1` UTC) | Só leitura. Confere se cada rotina entregou o que prometeu na semana anterior | Relatório curto ao dono | `trig_01LpDEv49546nvreHFBgS96D` | **Criada, desligada** até anexar o repositório |
+| **Milknews: fontes do simulador de preço do leite** | Segunda, 09:00 (`0 12 * * 1` UTC) | Revalida as fontes do card do simulador (MAPA IN 76/2018 + apoio) | PR de `MilkPriceExplainer.tsx`, mescla sozinha (squash) | `trig_013E38QyXwKWCABVXCxX9RWH` | **Criada, desligada** até anexar o repositório |
+| **Milknews: réguas de referência (1ª segunda do mês)** | Segunda, 09:30 (`30 12 * * 1` UTC); só trabalha se o dia do mês for 1 a 7 | Confere as réguas de referência (`docs/agents/reguas-referencia-mensal.md`) | PR + relatório "RÉGUAS DE REFERÊNCIA — CONFERÊNCIA DE AAAA-MM" | `trig_016AeerJeafn3JaazEw6i8QG` | **Criada, desligada** até anexar o repositório |
+| **Milknews: catálogo de touros NAAB** | Terça, 09:00 (`CRON_TZ=America/Sao_Paulo 0 9 * * 2`) | Compara o catálogo oficial da NAAB com o banco, só leitura | Relatório no chat, **sem PR** | `trig_01UShspCeaDjNZG59CENiMR3` | **Ativa** (a rotina existente; texto corrigido em 19/10) |
 
 Em cron, "dia do mês" e "dia da semana" juntos valem como **OU**. Por isso as réguas disparam toda
 segunda e a regra "1ª segunda do mês" está no texto da rotina (primeiro passo: se o dia for maior
 que 7, encerra em uma linha).
 
-## Rotinas antigas (desligadas, não apagadas)
+## Rotinas provisórias e duplicadas
 
-| Rotina antiga | Substituída por | ID |
+| Rotina | Situação | ID |
 |---|---|---|
-| "Milknews: checar fontes do simulador de preço do leite (+ réguas de referência, 1ª segunda do mês)" | Fontes do simulador + Réguas de referência | `trig_01BPgD6Ng7FbJM3gmpRiy2cQ` |
-| "Milknews: catálogo de touros NAAB" (versão anterior) | NAAB (nova, com push) | `trig_01UShspCeaDjNZG59CENiMR3` |
+| "Milknews: fontes do simulador + réguas (provisória)" (era "checar fontes do simulador de preço do leite (+ réguas de referência, 1ª segunda do mês)") | **Ativa.** Roda dentro da conversa que já tem o repositório e continua fazendo as duas partes, agora sem o `force-push`. **Desligue-a no dia em que ligar as três rotinas novas de segunda.** | `trig_01BPgD6Ng7FbJM3gmpRiy2cQ` |
+| "Milknews: catálogo de touros NAAB (duplicada, desligada)" | **Desligada.** Foi criada por engano; a NAAB oficial é a de `trig_01UShspCeaDjNZG59CENiMR3`. Pode ser apagada na interface. | `trig_018jseB3ZQyiyc7BXaf1dmXd` |
 
 A rotina de segunda antiga disparava **dentro de uma conversa específica** (`persist_session`), então
 o histórico mostrava "sucesso" 12 ms depois do disparo, sem prova de que o trabalho foi feito. Foi
 isso que motivou a rotina de conferência.
+
+## O que falta o dono fazer (5 minutos, na interface do Claude)
+
+O agendador permite criar e ajustar rotinas por API, mas **não** anexar repositório, mudar
+`persist_session`, ligar o push de uma rotina já existente nem editar uma rotina criada pela
+interface. Por isso restam estes passos, em claude.ai > Rotinas:
+
+1. **Matéria diária:** trocar o texto pelo do fim deste documento (política do Firecrawl, checagem de
+   duplicidade e padrão de título).
+2. **Conferência, fontes e réguas:** em cada uma, "Executa com" > anexar o repositório
+   `rodartepradoadvogados/FazendaApp` e **ligar** a rotina.
+3. **Desligar** a rotina "fontes do simulador + réguas (provisória)".
+4. **Push:** ligar o aviso por push na rotina de NAAB e na provisória, se ainda não estiver (a API
+   não altera isso numa rotina existente).
+5. Opcional: apagar a "NAAB (duplicada, desligada)".
+
+Por quê (1) e (2): as rotinas criadas por API nascem sem repositório (`sources` vazio; sessões
+marcadas `config:no-git-repo`) e só têm as ferramentas `add_repo`/`list_repos`, sem as do GitHub. Um
+disparo de teste da conferência terminou limpo em cerca de 50 s, mas sem repositório anexado na
+sessão, então não foi possível confirmar que ela leu o GitHub. Não ligamos as rotinas novas à
+espera do repositório para não abrir uma lacuna na segunda-feira.
 
 ## Regras que valem para todas
 
@@ -55,15 +76,6 @@ isso que motivou a rotina de conferência.
 5. Rotinas habilitadas, `last_run` dentro da janela esperada e `last_run` suspeito (menos de 5 s
    entre disparo e fim).
 6. Réguas: `conferida_em` do mês corrente na primeira segunda do mês.
-
-## Limitação conhecida das rotinas criadas pela API
-
-As quatro rotinas criadas em 19/10/2026 (conferência, fontes, réguas, NAAB) foram criadas pela
-ferramenta do Claude Code Remote, que **não permite anexar o repositório** à rotina
-(`sources` vazio; sessões marcadas `config:no-git-repo`). Os textos mandam a sessão anexar
-`rodartepradoadvogados/FazendaApp` com `add_repo`. A matéria diária foi criada pela interface e
-já tem o repositório anexado. Se uma rotina nova falhar por falta de acesso ao repositório,
-anexe o repositório a ela em claude.ai > Rotinas > (rotina) > Executa com.
 
 ## Texto novo da matéria diária (colar na rotina)
 
