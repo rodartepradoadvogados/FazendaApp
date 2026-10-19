@@ -1,7 +1,8 @@
 // API de mentira para filmar as telas reais (dados fictícios, Fazenda Boa Esperança). Aplica POST /movimentacoes/mover.
 import http from "node:http";
-import { animais, lotes, SEED_MOTIVOS, estadosEp2, candidatasEp3, DATA_REF, pesagensRel, secagemLista, ESTOQUE7, ESTOQUE8, PESSOAS8, bst, ESTOQUE9, DOENCAS9, PRINCIPIOS9, MED_POR_DOENCA, INDICACOES_MASTITE, EVENTOS9, PROTOCOLOS10 } from "./dados.mjs";
-const EP10 = process.env.EP === "t2e10"; // Ep. 10: Sanidade — protocolo sanitário (herda o Ep. 9)
+import { animais, lotes, SEED_MOTIVOS, estadosEp2, candidatasEp3, DATA_REF, pesagensRel, secagemLista, ESTOQUE7, ESTOQUE8, PESSOAS8, bst, ESTOQUE9, DOENCAS9, PRINCIPIOS9, MED_POR_DOENCA, INDICACOES_MASTITE, EVENTOS9, PROTOCOLOS10, DIETA11 } from "./dados.mjs";
+const EP11 = process.env.EP === "t2e11"; // Ep. 11: Alimentação — consumo e sobra de cocho (herda o Ep. 10)
+const EP10 = process.env.EP === "t2e10" || EP11; // Ep. 10: Sanidade — protocolo sanitário (herda o Ep. 9)
 const EP9 = process.env.EP === "t2e9" || EP10; // Ep. 9: Sanidade — aplicação de medicamentos (herda o Ep. 8)
 const EP8 = process.env.EP === "t2e8" || EP9; // Ep. 8: BST (herda o Ep. 7)
 const EP7 = process.env.EP === "t2e7" || EP8; // Ep. 7: pesagem corporal e secagem (herda o Ep. 6)
@@ -15,6 +16,7 @@ const ANIMAIS0 = EP4 ? structuredClone(animais) : null; // Ep. 4: o parto acresc
 const REL0 = EP7 ? structuredClone(pesagensRel) : null, SEC0 = EP7 ? structuredClone(secagemLista.animais) : null, EST0 = EP7 ? structuredClone(ESTOQUE7) : null; // Ep. 7: /__reset volta ao início
 const cfg = { atraso: 0, falhar: [] }; // POST /__cfg {atraso: ms por envio, falhar: [brincos que falham 1 vez]}
 const log = [];
+const consumo11 = { itens: [], sobra_kg: null };
 const EST9_0 = EP9 ? ESTOQUE9.map((x) => x.quantidade) : null;
 const BST0 = EP8 ? structuredClone(bst) : null;
 const bstDel = (l) => ({ numero_matriz: l.numero_matriz, grupo: l.grupo, del_atual: l.del_atual, del_projetado: l.del_atual == null ? null : l.del_atual + Math.round((Date.parse(bst.proxima) - Date.parse("2026-10-17")) / 864e5),
@@ -38,6 +40,24 @@ http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") { res.statusCode = 204; return res.end(); }
   const send = (obj, status = 200) => { res.statusCode = status; res.end(JSON.stringify(obj)); };
   if (p === "/health") return send({ ok: true });
+  if (EP11) { // Ep. 11: Alimentação — dieta do 01 - Alta, consumo do dia (soma) e sobra (substitui; % do total fornecido, faixa até 5%)
+    if (p === "/__reset") { consumo11.itens = []; consumo11.sobra_kg = null; }
+    if (p === "/alimentacao/consumo/dieta-do-lote") return Number(u.searchParams.get("lote")) === 1 ? send(DIETA11) : send({ detail: "sem dieta" }, 404);
+    const vis11 = () => { const tot = consumo11.itens.reduce((n, i) => n + i.kg_equivalente, 0), pct = consumo11.sobra_kg != null && tot > 0 ? consumo11.sobra_kg / tot * 100 : null;
+      return { lote: 1, data: "2026-10-17", num_animais: consumo11.itens.length ? 40 : null, itens: consumo11.itens, kg_fornecido_total: tot, sobra_kg: consumo11.sobra_kg, sobra_pct: pct, dentro_da_faixa: pct == null ? null : pct <= 5 }; };
+    if (p === "/alimentacao/consumo" && req.method === "GET") return send(vis11());
+    if (p === "/alimentacao/consumo" && req.method === "POST") {
+      const b = await corpo(req); log.push({ p, b });
+      if (cfg.atraso) await new Promise((ok) => setTimeout(ok, cfg.atraso));
+      for (const it of b.itens || []) { const x = consumo11.itens.find((y) => y.alimento === it.alimento); if (x) { x.quantidade += it.quantidade; x.kg_equivalente += it.quantidade; } else consumo11.itens.push({ alimento: it.alimento, quantidade: it.quantidade, unidade: it.unidade, kg_equivalente: it.quantidade }); }
+      return send({ ok: true, avisos: [] });
+    }
+    if (p === "/alimentacao/sobra" && req.method === "POST") {
+      const b = await corpo(req); log.push({ p, b });
+      if (cfg.atraso) await new Promise((ok) => setTimeout(ok, cfg.atraso));
+      consumo11.sobra_kg = b.kg_sobra; return send({ ok: true });
+    }
+  }
   if (EP10) { // Ep. 10: protocolo sanitário — lista de protocolos e o POST que cria o tratamento com todas as etapas
     if (p === "/cadastro/protocolos-sanitarios") return send(PROTOCOLOS10);
     if (p === "/sanidade/protocolos/lancamentos" && req.method === "POST") {
