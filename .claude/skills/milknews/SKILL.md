@@ -22,14 +22,18 @@ rodando sozinha. Sozinha é justamente quando não há ninguém para pegar o err
 
 ## Coleta
 
-A leitura das fontes abaixo é feita pelo **Firecrawl** (`/scrape` para ler a página
-de verdade — inclusive PDF — e `/search` só para descoberta), conforme
-`docs/agents/milknews-firecrawl.md`. O Firecrawl passa em sites que hoje bloqueiam
-acesso automatizado comum (Cepea, Canal Rural, USDA AMS). Teto de **25 chamadas por
-execução**; consulte o saldo de créditos (`/v2/team/credit-usage`) antes de começar.
-Sem `FIRECRAWL_API_KEY` no ambiente, ou com a API fora do ar, siga o plano B do
-mesmo documento (coleta pelo próprio agente, mesmas regras de verificação) e diga
-no PR que o Firecrawl não estava disponível.
+A leitura das fontes abaixo segue a política de `docs/agents/milknews-firecrawl.md`
+(seção 1.1, decidida em 19/10/2026): **leitura comum primeiro** (WebFetch, `curl`
+pelo proxy, PDF baixado e lido com `pdftotext`). O **Firecrawl é fonte principal só
+no Canal Rural**, único site que a leitura comum não abre (403); para ele, vá direto
+ao `/scrape`. Em **todos os outros** sites o Firecrawl é **último recurso**: só depois
+de a leitura comum falhar de verdade (403, bloqueio, só JavaScript, PDF que não abre),
+registrando no PR qual fonte falhou e com qual erro. Cepea: leitura comum, depois uma
+tentativa com Firecrawl; se as duas falharem (em 19/10/2026 o site deu 500 em ambas),
+o indicador fica "não lido nesta rodada". Descoberta de pauta usa `WebSearch`, não o
+`/search` do Firecrawl. Teto de **25 chamadas por execução** (esperado: 1 a 3).
+Sem `FIRECRAWL_API_KEY`, sem créditos ou com a API fora do ar, não insista: o Canal
+Rural fica "não lido nesta rodada", as demais fontes seguem, e o PR diz isso.
 
 ## Fontes
 

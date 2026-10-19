@@ -73,15 +73,16 @@ Por isso as duas mudanças abaixo são necessárias.
    >
    > "Rode o ciclo diário do robô MilkNews no repositório rodartepradoadvogados/FazendaApp
    > seguindo **integralmente** a skill `.claude/skills/milknews/SKILL.md` (invoque pela Skill tool;
-   > se não aparecer, leia o arquivo) e `docs/agents/milknews-firecrawl.md`. Use o Firecrawl
-   > (variável de ambiente FIRECRAWL_API_KEY) para ler as fontes. Tudo em português do Brasil com
+   > se não aparecer, leia o arquivo) e `docs/agents/milknews-firecrawl.md`. Leia as fontes pela
+   > leitura comum; o Firecrawl (FIRECRAWL_API_KEY) é principal só no Canal Rural e último recurso
+   > nos demais (política em `docs/agents/milknews-firecrawl.md`, seção 1.1). Tudo em português do Brasil com
    > acentuação completa. Sessão nova a cada disparo."
    >
    > Salve. Não crie Routine nova e não apague a atual: só troque o prompt.
 
-   Ofereça-se também para atualizar da mesma forma a Routine semanal "Milknews: checar fonte do
-   simulador de preço do leite": ela hoje evita o WebFetch por causa de 403, e o Firecrawl resolve
-   isso.
+   (Atualizado em 19/10/2026: a rotina semanal virou "Milknews: fontes do simulador de preço do
+   leite" e **não** usa o Firecrawl como principal, só como último recurso. Ver
+   `docs/agents/rotinas-milknews.md`.)
 
 ## Etapa 2: rotina diária com Firecrawl
 A partir do merge da Etapa 1, cada execução segue `docs/agents/milknews-firecrawl.md`:

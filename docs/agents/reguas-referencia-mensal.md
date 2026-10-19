@@ -1,8 +1,10 @@
 # Réguas de referência: conferência mensal (tarefa do robô MilkNews)
 
-> **Para quem é este documento:** a Routine **"Milknews: checar fontes do simulador de preço do
-> leite"** (segunda-feira, 12h UTC). Uma vez por mês, na **primeira segunda-feira do mês** (dia 1 a 7),
-> ela executa também esta tarefa. Nas demais segundas, ignore este documento.
+> **Para quem é este documento:** a Routine **"Milknews: réguas de referência (1ª segunda)"**
+> (segunda-feira, 12h30 UTC, sessão nova a cada disparo). Ela dispara toda segunda, mas só executa
+> esta tarefa na **primeira segunda-feira do mês** (dia 1 a 7, no horário de Brasília). Se o dia do
+> mês for maior que 7, encerre sem fazer nada e diga isso numa linha. (Em cron, "dia do mês" e "dia
+> da semana" juntos valem como OU, por isso a regra da primeira segunda fica aqui no texto.)
 
 ## O que é
 
