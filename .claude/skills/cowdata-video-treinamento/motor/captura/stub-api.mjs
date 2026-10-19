@@ -1,7 +1,8 @@
 // API de mentira para filmar as telas reais (dados fictícios, Fazenda Boa Esperança). Aplica POST /movimentacoes/mover.
 import http from "node:http";
-import { animais, lotes, SEED_MOTIVOS, estadosEp2, candidatasEp3, DATA_REF, pesagensRel, secagemLista, ESTOQUE7, ESTOQUE8, PESSOAS8, bst } from "./dados.mjs";
-const EP8 = process.env.EP === "t2e8"; // Ep. 8: BST (herda o Ep. 7)
+import { animais, lotes, SEED_MOTIVOS, estadosEp2, candidatasEp3, DATA_REF, pesagensRel, secagemLista, ESTOQUE7, ESTOQUE8, PESSOAS8, bst, ESTOQUE9, DOENCAS9, PRINCIPIOS9, MED_POR_DOENCA, INDICACOES_MASTITE, EVENTOS9 } from "./dados.mjs";
+const EP9 = process.env.EP === "t2e9"; // Ep. 9: Sanidade — aplicação de medicamentos (herda o Ep. 8)
+const EP8 = process.env.EP === "t2e8" || EP9; // Ep. 8: BST (herda o Ep. 7)
 const EP7 = process.env.EP === "t2e7" || EP8; // Ep. 7: pesagem corporal e secagem (herda o Ep. 6)
 const EP6 = process.env.EP === "t2e6" || EP7; // Ep. 6: controle leiteiro (herda o Ep. 5)
 const EP5 = process.env.EP === "t2e5" || EP6; // Ep. 5: protocolo de IATF (herda o Ep. 4)
@@ -13,6 +14,7 @@ const ANIMAIS0 = EP4 ? structuredClone(animais) : null; // Ep. 4: o parto acresc
 const REL0 = EP7 ? structuredClone(pesagensRel) : null, SEC0 = EP7 ? structuredClone(secagemLista.animais) : null, EST0 = EP7 ? structuredClone(ESTOQUE7) : null; // Ep. 7: /__reset volta ao início
 const cfg = { atraso: 0, falhar: [] }; // POST /__cfg {atraso: ms por envio, falhar: [brincos que falham 1 vez]}
 const log = [];
+const EST9_0 = EP9 ? ESTOQUE9.map((x) => x.quantidade) : null;
 const BST0 = EP8 ? structuredClone(bst) : null;
 const bstDel = (l) => ({ numero_matriz: l.numero_matriz, grupo: l.grupo, del_atual: l.del_atual, del_projetado: l.del_atual == null ? null : l.del_atual + Math.round((Date.parse(bst.proxima) - Date.parse("2026-10-17")) / 864e5),
   requer_reanalise: !!l.requer_reanalise, origem_inducao_lactacao: !!l.origem_inducao_lactacao, motivo_exclusao: l.motivo_exclusao ?? null });
@@ -35,6 +37,20 @@ http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") { res.statusCode = 204; return res.end(); }
   const send = (obj, status = 200) => { res.statusCode = status; res.end(JSON.stringify(obj)); };
   if (p === "/health") return send({ ok: true });
+  if (EP9) { // Ep. 9: Sanidade — aplicação de medicamentos (curativa e preventiva); estoque e catálogo de sanidade fictícios
+    if (p === "/__reset") { ESTOQUE9.forEach((x, i) => { x.quantidade = EST9_0[i]; }); return send({ ok: true }); }
+    if (p === "/estoque/") return send({ itens: ESTOQUE9 });
+    if (p === "/cadastro/principios-ativos") return send(PRINCIPIOS9);
+    if (p === "/cadastro/doencas") return send(DOENCAS9);
+    if (p === "/cadastro/eventos-sanitarios") return send(EVENTOS9);
+    if (p === "/estoque/medicamentos") { // o servidor real esconde itens com saldo <= 0
+      const nomes = MED_POR_DOENCA[u.searchParams.get("doenca")] || [];
+      return send(ESTOQUE9.filter((x) => nomes.includes(x.nome) && x.quantidade > 0).map((x) => ({ nome: x.nome, unidade: x.unidade, quantidade: x.quantidade, estoque_id: 1, sem_estoque: false })));
+    }
+    if (p === "/sanidade/indicacoes-doenca/1") return send(INDICACOES_MASTITE);
+    if (p === "/sanidade/aplicacoes" && req.method === "POST") { const b = await corpo(req); log.push({ p, b }); if (cfg.atraso) await new Promise((ok) => setTimeout(ok, cfg.atraso)); return send({ ok: true, criados: (b.animais || []).length }); }
+    if (p === "/sanidade/calendario/cadastrar-preventivo" && req.method === "POST") { const b = await corpo(req); log.push({ p, b }); if (cfg.atraso) await new Promise((ok) => setTimeout(ok, cfg.atraso)); return send({ ok: true, aplicados: (b.animais || []).length }); }
+  }
   if (EP8 && p === "/agenda/") return send({ eventos: [], proxima_visita_bst: bst.proxima, intervalo_bst: bst.intervalo, bst_elegiveis: bst.aptas.map(bstDel), bst_nunca_aplicados: bst.incluir.map(bstDel), bst_excluidos: bst.inaptas.map(bstDel) });
   if (p === "/agenda/") return send({ eventos: [] });
   if (p === "/agenda/materializar") return send({ ok: true });

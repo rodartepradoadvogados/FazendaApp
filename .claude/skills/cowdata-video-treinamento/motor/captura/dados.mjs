@@ -3,7 +3,8 @@ function rng(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t
 const r = rng(20261017);
 const NOMES = `Estrela Mimosa Boneca Pérola Serena Pintada Bonita Faceira Graúna Jóia Garoa Princesa Aurora Violeta Margarida Flor Cereja Malhada Caramelo Chiquita Dengosa Fumaça Gaivota Hortênsia Iracema Jabuticaba Kiara Lavanda Moranga Naná Orquídea Palmira Quitéria Rosinha Safira Tereza Uirapuru Vitória Xuxa Zulmira Açucena Brisa Canela Dalila Esperança Fidalga Guiomar Helena Ipê Janaína Lua Maravilha Neblina Ondina Papoula Quimera Rainha Sereia Tulipa Urca Vênus Alvorada Bela Cigana Doçura Eva Florinda Girassol Hera Íris Jurema Lolita Melodia Nuvem Olinda Pitanga Querida Ruiva Sinhá Tigresa Umbela Valentina Alegria Baunilha Cotia Diamante Esmeralda Ferrugem Galega Heloísa Ingá Jandira Lindoia Mariposa Nega Oliveira Pagu Rubi Sabiá Tapioca Ubirajara Violeta2 Zeferina Acácia Bambina Cecília Doralice Elvira Filó Glória Hilda Iolanda Judite Lourdes Madalena Neusa Odete Prenda Rita Socorro Teresinha Vanda Zilda Amora Bromélia Cacau Dama Encanto Fada Gardênia Harmonia Inês Jasmim Lírio Marfim Neve Opala Pérola2 Réstia Safra Trigueira Urtiga Vaidosa Xaxá Yara Zabumba Alecrim Boêmia Camélia Dália Estação Frésia Gioconda Hortelã Iara Jacira Kátia Lavínia Mangueira Nectarina Oásis Petúnia Quaresma Romã Sálvia Tâmara Ursula Verbena Wanda Ximena Yasmin Zínia Abelha Borboleta Cotovia Dourada Estrelinha Formosa Galinha2 Harpia Ilusão Joaninha Lagoa Mariana Névoa Ostra Pomba Quinquilharia Rolinha Saudade Tempestade Umbu Vagalume Zefa Amada Branquinha Clarice Diva Edite Fartura Gentil Hera2 Ivete Jussara Laura Mel Noêmia Olga Penha Rosália Sol Tina Uva Vera Wilma Alma Berenice Chuvisco Donzela Elis Fiama Gema Hebe Isadora Julieta Lara Márcia Nilza Ofélia Paloma Quênia Regina Sandra Telma Ursa Vilma Zoraide Aldeia Barroca Cascata Duna Enseada Fonte Gruta Horizonte Ilha Jangada Lagoinha Mata Nascente Oca Pradaria Quebrada Restinga Serra Trilha Vale Várzea Aroeira Buriti Cajá Dendê Embaúba Figueira Goiaba Hibisco Imbé Jaca Louro Manga Nogueira`.split(/\s+/).filter(n=>n && !/\d/.test(n));
 // séries (T1) + as duas vacas novas do episódio
-const EP8 = process.env.EP === "t2e8"; // Ep. 8: BST (herda o Ep. 7; acrescenta a agenda de BST e o produto de BST no estoque)
+const EP9 = process.env.EP === "t2e9"; // Ep. 9: Sanidade — aplicação de medicamentos (herda o Ep. 8; troca o estoque e acrescenta o catálogo de sanidade)
+const EP8 = process.env.EP === "t2e8" || EP9; // Ep. 8: BST (herda o Ep. 7; acrescenta a agenda de BST e o produto de BST no estoque)
 const EP7 = process.env.EP === "t2e7" || EP8; // Ep. 7: pesagem corporal e secagem (herda o Ep. 6; acrescenta idade_meses, pesagens anteriores e a lista de secagem)
 const EP6 = process.env.EP === "t2e6" || EP7; // Ep. 6: controle leiteiro (herda o Ep. 5; acrescenta em_lactacao nos animais e status_lactacao nos lotes)
 const EP5 = process.env.EP === "t2e5" || EP6; // Ep. 5: protocolo de IATF (herda o Ep. 4 e aplica o parto: 3654 Dolores → 01 - Alta, nasce a 4712; 6 atrasadas; 1 vaca em protocolo D7)
@@ -205,3 +206,32 @@ if (EP8) {
   bst.incluir = BST_PLANO.incluir.map((n) => ({ ...lin(n), requer_reanalise: false, origem_inducao_lactacao: false, motivo_exclusao: null }));
   bst.inaptas = BST_PLANO.inaptas.map(([n, m]) => { const l = lin(n); return { ...l, motivo_exclusao: m || `DEL ${l.del_atual} < 60 dias` }; });
 }
+
+// ── Ep. 9: Sanidade › aplicação de medicamentos (curativa e preventiva). Estoque com nomes genéricos (princípio ativo + apresentação), nunca marca comercial ──
+// Mastite: Cefalexina intramamária está BAIXA (2 bisnagas, abaixo do mínimo) → o app mostra o aviso de substituto; Cloxacilina intramamária (36) é o substituto disponível.
+// O servidor real esconde do filtro por doença os itens com saldo <= 0, por isso o gatilho do aviso na tela é "Estoque baixo" (e não "zerado").
+const med = (nome, quantidade, unidade, categoria, extra = {}) => ({ nome, quantidade, unidade, categoria, ativo: true, estocavel: true, finalidade: "Medicamento", ...extra });
+export const ESTOQUE9 = [
+  med("Cefalexina intramamária (bisnaga)", 2, "unidade", "Antibiótico", { abaixo_minimo: true, estoque_minimo: 10 }),
+  med("Cloxacilina intramamária (bisnaga)", 36, "unidade", "Antibiótico", { abaixo_minimo: false, estoque_minimo: 10 }),
+  med("Ceftiofur injetável 100 ml", 400, "ml", "Antibiótico"),
+  med("Flunixina injetável 100 ml", 250, "ml", "Anti-inflamatório"),
+  med("Vacina reprodutiva polivalente", 600, "ml", "Vacina"),
+  med("Vermífugo injetável", 500, "ml", "Antiparasitário"),
+  ...ESTOQUE8,
+];
+export const DOENCAS9 = ["Mastite", "Metrite", "Pneumonia", "Diarreia", "Laminite", "Retenção de placenta", "Tristeza parasitária"].map((nome, i) => ({ id: i + 1, nome, ativo: true }));
+export const PRINCIPIOS9 = ["Cefalexina", "Cloxacilina", "Ceftiofur", "Flunixina", "Ivermectina", "Oxitetraciclina"].map((nome, i) => ({ id: i + 1, nome, ativo: true }));
+// medicamentos (itens de estoque) indicados por doença: GET /estoque/medicamentos?doenca=...
+export const MED_POR_DOENCA = { "Mastite": ["Cefalexina intramamária (bisnaga)", "Cloxacilina intramamária (bisnaga)", "Ceftiofur injetável 100 ml", "Flunixina injetável 100 ml"] };
+// GET /sanidade/indicacoes-doenca/1 (Mastite): Cloxacilina = disponível agora; Cefalexina (a escolhida, baixa) aparece em "Precisa comprar"
+export const INDICACOES_MASTITE = { doenca_id: 1, doenca: "Mastite", opcoes: [
+  { principio_ativo_id: 1, nome: "Cefalexina", classificacao: "Antibiótico", prioridade: 1, status_estoque: "low", total_apresentacoes: 2, unidade_apresentacao: "unidade", marcas: ["Cefalexina intramamária (bisnaga)"] },
+  { principio_ativo_id: 2, nome: "Cloxacilina", classificacao: "Antibiótico", prioridade: 2, status_estoque: "ok", total_apresentacoes: 36, unidade_apresentacao: "unidade", marcas: ["Cloxacilina intramamária (bisnaga)"] },
+] };
+// eventos preventivos do calendário (GET /cadastro/eventos-sanitarios): todos agendados por época (sem gatilho) → o modo "Na janela" não aparece
+export const EVENTOS9 = [
+  { id: 1, nome: "Vacina reprodutiva", ativo: true, categoria_preventiva: "vacina", produto_padrao: "Vacina reprodutiva polivalente", dose_padrao: 5, unidade_padrao: "ml", tipo_agendamento: "epoca", gatilho: null },
+  { id: 2, nome: "Vermifugação estratégica", ativo: true, categoria_preventiva: "vermifugo", produto_padrao: "Vermífugo injetável", dose_padrao: 10, unidade_padrao: "ml", tipo_agendamento: "epoca", gatilho: null },
+  { id: 3, nome: "Exame de brucelose", ativo: true, categoria_preventiva: "exame", produto_padrao: null, dose_padrao: null, unidade_padrao: null, tipo_agendamento: "epoca", gatilho: null },
+];
