@@ -60,6 +60,19 @@ import { formatBRL } from "@/lib/api";
 // revogando ou alterando esses limites foi encontrada; a IN 55/2020 continua
 // alterando só pontos de temperatura. Leitura comum bastou; o Firecrawl não
 // foi usado.
+// Checagem de 19/10/2026: MAPA IN 76/2018 (espelho SISLEGIS, PDF baixado pelo
+// WebFetch e lido por inteiro com pdftotext: Art. 5º gordura mín. 3,0 g/100g e
+// proteína mín. 2,9 g/100g; Art. 7º CPP/CBT 300.000 UFC/mL e CCS 500.000 CS/mL,
+// médias geométricas trimestrais; Art. 8º CPP máx. 900.000 UFC/mL; o inciso
+// revogado pela IN 55/2020 é o de temperatura) e MilkPoint (resumão das INs 76
+// e 77, lido por inteiro: CCS 500 mil, CBT 300 mil) seguem se corroborando; o
+// guia da IN 76/77 do Sistema FAEP (PDF lido com pdftotext) traz os mesmos
+// 300 mil UFC/mL e 500 mil CS/mL em média geométrica trimestral. As fontes
+// citadas no card não mudaram. Nenhuma norma posterior revogando ou alterando
+// esses limites foi encontrada na busca, mas a busca só devolveu material de
+// 2018–2019 e o espelho do MAPA lido é uma impressão de 07/07/2023; a vigência
+// em 2026 não foi confirmada em fonte lida, só pela ausência de norma nova.
+// Leitura comum bastou; o Firecrawl não foi usado.
 const FONTES_BONIFICACAO = [
   {
     nome: "MAPA — Instrução Normativa nº 76/2018 (SISLEGIS)",
@@ -70,7 +83,7 @@ const FONTES_BONIFICACAO = [
     url: "https://www.milkpoint.com.br/colunas/rafael-fagnani/resumao-das-ins-76-e-77-elas-estao-chegando-212785/",
   },
 ] as const;
-const FONTES_ATUALIZADO_EM = "12/10/2026";
+const FONTES_ATUALIZADO_EM = "19/10/2026";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Simulador ILUSTRATIVO de preço do leite — para a página pública de login.
