@@ -3,7 +3,8 @@ function rng(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t
 const r = rng(20261017);
 const NOMES = `Estrela Mimosa Boneca Pérola Serena Pintada Bonita Faceira Graúna Jóia Garoa Princesa Aurora Violeta Margarida Flor Cereja Malhada Caramelo Chiquita Dengosa Fumaça Gaivota Hortênsia Iracema Jabuticaba Kiara Lavanda Moranga Naná Orquídea Palmira Quitéria Rosinha Safira Tereza Uirapuru Vitória Xuxa Zulmira Açucena Brisa Canela Dalila Esperança Fidalga Guiomar Helena Ipê Janaína Lua Maravilha Neblina Ondina Papoula Quimera Rainha Sereia Tulipa Urca Vênus Alvorada Bela Cigana Doçura Eva Florinda Girassol Hera Íris Jurema Lolita Melodia Nuvem Olinda Pitanga Querida Ruiva Sinhá Tigresa Umbela Valentina Alegria Baunilha Cotia Diamante Esmeralda Ferrugem Galega Heloísa Ingá Jandira Lindoia Mariposa Nega Oliveira Pagu Rubi Sabiá Tapioca Ubirajara Violeta2 Zeferina Acácia Bambina Cecília Doralice Elvira Filó Glória Hilda Iolanda Judite Lourdes Madalena Neusa Odete Prenda Rita Socorro Teresinha Vanda Zilda Amora Bromélia Cacau Dama Encanto Fada Gardênia Harmonia Inês Jasmim Lírio Marfim Neve Opala Pérola2 Réstia Safra Trigueira Urtiga Vaidosa Xaxá Yara Zabumba Alecrim Boêmia Camélia Dália Estação Frésia Gioconda Hortelã Iara Jacira Kátia Lavínia Mangueira Nectarina Oásis Petúnia Quaresma Romã Sálvia Tâmara Ursula Verbena Wanda Ximena Yasmin Zínia Abelha Borboleta Cotovia Dourada Estrelinha Formosa Galinha2 Harpia Ilusão Joaninha Lagoa Mariana Névoa Ostra Pomba Quinquilharia Rolinha Saudade Tempestade Umbu Vagalume Zefa Amada Branquinha Clarice Diva Edite Fartura Gentil Hera2 Ivete Jussara Laura Mel Noêmia Olga Penha Rosália Sol Tina Uva Vera Wilma Alma Berenice Chuvisco Donzela Elis Fiama Gema Hebe Isadora Julieta Lara Márcia Nilza Ofélia Paloma Quênia Regina Sandra Telma Ursa Vilma Zoraide Aldeia Barroca Cascata Duna Enseada Fonte Gruta Horizonte Ilha Jangada Lagoinha Mata Nascente Oca Pradaria Quebrada Restinga Serra Trilha Vale Várzea Aroeira Buriti Cajá Dendê Embaúba Figueira Goiaba Hibisco Imbé Jaca Louro Manga Nogueira`.split(/\s+/).filter(n=>n && !/\d/.test(n));
 // séries (T1) + as duas vacas novas do episódio
-const EP7 = process.env.EP === "t2e7"; // Ep. 7: pesagem corporal e secagem (herda o Ep. 6; acrescenta idade_meses, pesagens anteriores e a lista de secagem)
+const EP8 = process.env.EP === "t2e8"; // Ep. 8: BST (herda o Ep. 7; acrescenta a agenda de BST e o produto de BST no estoque)
+const EP7 = process.env.EP === "t2e7" || EP8; // Ep. 7: pesagem corporal e secagem (herda o Ep. 6; acrescenta idade_meses, pesagens anteriores e a lista de secagem)
 const EP6 = process.env.EP === "t2e6" || EP7; // Ep. 6: controle leiteiro (herda o Ep. 5; acrescenta em_lactacao nos animais e status_lactacao nos lotes)
 const EP5 = process.env.EP === "t2e5" || EP6; // Ep. 5: protocolo de IATF (herda o Ep. 4 e aplica o parto: 3654 Dolores → 01 - Alta, nasce a 4712; 6 atrasadas; 1 vaca em protocolo D7)
 const EP4 = process.env.EP === "t2e4" || EP5; // Ep. 4: parto (herda tudo do Ep. 3; acrescenta no 05 - Pré-parto as matrizes 3654 Dolores e 5611 Lucinda)
@@ -182,4 +183,25 @@ if (EP7) {
     secagemLista.animais.push({ numero_matriz: a.numero, grupo_primario: a.grupo_primario, del_atual: a.del_dias, dias_gestacao: gest,
       data_prevista_secagem: dias == null ? null : dataMais("2026-10-17", dias), dias_para_secagem: dias, deve_secar: dias == null ? null : true, motivo_exclusao: null });
   }
+}
+
+// ── Ep. 8: BST. O rebanho DEPOIS da secagem do Ep. 7 (2305 Melodia e 3338 Hilda no 04 - Secas: 40 + 40 + 29 = 109 vacas em lactação) e a agenda de BST ──
+// Aptas 18 · Incluir no próximo BST 4 (nunca aplicadas) · Inaptas 6 (DEL < 60 dias, ou poucos dias para secar: a 3013 Iolanda do Ep. 7). Próxima aplicação = hoje (17/10/2026), intervalo 14 dias.
+export const ESTOQUE8 = [
+  { nome: "Somatotropina bovina 500 mg", quantidade: 40, unidade: "seringa", categoria: "Medicamento", ativo: true, estocavel: true, finalidade: "Medicamento", conta_gerencial_despesa_padrao: "3.01.04.02" },
+  ...ESTOQUE7,
+];
+export const PESSOAS8 = [{ id: 1, nome: "Adelino", tipos: ["Funcionário"], ativo: true }, { id: 2, nome: "Bernadete", tipos: ["Funcionário"], ativo: true }, { id: 3, nome: "Cláudio", tipos: ["Funcionário"], ativo: true }];
+export const bst = { proxima: "2026-10-17", intervalo: 14, aptas: [], incluir: [], inaptas: [] };
+export const BST_PLANO = {
+  aptas: ["1502", "3877", "4102", "4318", "4455", "4521", "4613", "4652", "1045", "2014", "2020", "2025", "2027", "2039", "1450", "3005", "3025", "3032"],
+  incluir: ["4669", "4769", "2098", "2371"],
+  inaptas: [["3654", null], ["4210", null], ["4605", null], ["4623", null], ["2103", null], ["3013", "Faltam apenas 9 dias para secar (mínimo 15)"]],
+};
+if (EP8) {
+  for (const n of ["2305", "3338"]) { const a = animais.find((x) => x.numero === n); a.grupo_primario = "04 - Secas"; a.categoria_abrev = "Vaca seca"; a.categoria_completa = "Vaca seca"; a.del_dias = null; a.em_lactacao = false; }
+  const lin = (n) => { const a = animais.find((x) => x.numero === n); return { numero_matriz: n, grupo: a.grupo_primario, del_atual: a.del_dias }; };
+  bst.aptas = BST_PLANO.aptas.map(lin);
+  bst.incluir = BST_PLANO.incluir.map((n) => ({ ...lin(n), requer_reanalise: false, origem_inducao_lactacao: false, motivo_exclusao: null }));
+  bst.inaptas = BST_PLANO.inaptas.map(([n, m]) => { const l = lin(n); return { ...l, motivo_exclusao: m || `DEL ${l.del_atual} < 60 dias` }; });
 }
