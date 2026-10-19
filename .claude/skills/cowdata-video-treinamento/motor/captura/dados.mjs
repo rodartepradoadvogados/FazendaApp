@@ -3,7 +3,8 @@ function rng(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t
 const r = rng(20261017);
 const NOMES = `Estrela Mimosa Boneca Pérola Serena Pintada Bonita Faceira Graúna Jóia Garoa Princesa Aurora Violeta Margarida Flor Cereja Malhada Caramelo Chiquita Dengosa Fumaça Gaivota Hortênsia Iracema Jabuticaba Kiara Lavanda Moranga Naná Orquídea Palmira Quitéria Rosinha Safira Tereza Uirapuru Vitória Xuxa Zulmira Açucena Brisa Canela Dalila Esperança Fidalga Guiomar Helena Ipê Janaína Lua Maravilha Neblina Ondina Papoula Quimera Rainha Sereia Tulipa Urca Vênus Alvorada Bela Cigana Doçura Eva Florinda Girassol Hera Íris Jurema Lolita Melodia Nuvem Olinda Pitanga Querida Ruiva Sinhá Tigresa Umbela Valentina Alegria Baunilha Cotia Diamante Esmeralda Ferrugem Galega Heloísa Ingá Jandira Lindoia Mariposa Nega Oliveira Pagu Rubi Sabiá Tapioca Ubirajara Violeta2 Zeferina Acácia Bambina Cecília Doralice Elvira Filó Glória Hilda Iolanda Judite Lourdes Madalena Neusa Odete Prenda Rita Socorro Teresinha Vanda Zilda Amora Bromélia Cacau Dama Encanto Fada Gardênia Harmonia Inês Jasmim Lírio Marfim Neve Opala Pérola2 Réstia Safra Trigueira Urtiga Vaidosa Xaxá Yara Zabumba Alecrim Boêmia Camélia Dália Estação Frésia Gioconda Hortelã Iara Jacira Kátia Lavínia Mangueira Nectarina Oásis Petúnia Quaresma Romã Sálvia Tâmara Ursula Verbena Wanda Ximena Yasmin Zínia Abelha Borboleta Cotovia Dourada Estrelinha Formosa Galinha2 Harpia Ilusão Joaninha Lagoa Mariana Névoa Ostra Pomba Quinquilharia Rolinha Saudade Tempestade Umbu Vagalume Zefa Amada Branquinha Clarice Diva Edite Fartura Gentil Hera2 Ivete Jussara Laura Mel Noêmia Olga Penha Rosália Sol Tina Uva Vera Wilma Alma Berenice Chuvisco Donzela Elis Fiama Gema Hebe Isadora Julieta Lara Márcia Nilza Ofélia Paloma Quênia Regina Sandra Telma Ursa Vilma Zoraide Aldeia Barroca Cascata Duna Enseada Fonte Gruta Horizonte Ilha Jangada Lagoinha Mata Nascente Oca Pradaria Quebrada Restinga Serra Trilha Vale Várzea Aroeira Buriti Cajá Dendê Embaúba Figueira Goiaba Hibisco Imbé Jaca Louro Manga Nogueira`.split(/\s+/).filter(n=>n && !/\d/.test(n));
 // séries (T1) + as duas vacas novas do episódio
-const EP11 = process.env.EP === "t2e11"; // Ep. 11: Alimentação — consumo e sobra de cocho (herda o Ep. 10; acrescenta a dieta do lote 01 - Alta)
+const EP12 = process.env.EP === "t2e12"; // Ep. 12: Protocolos — Lançar › Protocolos › Personalizado (herda o Ep. 11; acrescenta a lista de protocolos personalizados)
+const EP11 = process.env.EP === "t2e11" || EP12; // Ep. 11: Alimentação — consumo e sobra de cocho (herda o Ep. 10; acrescenta a dieta do lote 01 - Alta)
 const EP10 = process.env.EP === "t2e10" || EP11; // Ep. 10: Sanidade — protocolo sanitário (herda o Ep. 9; acrescenta a lista de protocolos sanitários)
 const EP9 = process.env.EP === "t2e9" || EP10; // Ep. 9: Sanidade — aplicação de medicamentos (herda o Ep. 8; troca o estoque e acrescenta o catálogo de sanidade)
 const EP8 = process.env.EP === "t2e8" || EP9; // Ep. 8: BST (herda o Ep. 7; acrescenta a agenda de BST e o produto de BST no estoque)
@@ -250,3 +251,16 @@ export const PROTOCOLOS10 = [
 export const DIETA11 = { base_quantidade: "total", kg_total_dieta: 1850, itens: [
   ["Silagem de milho", 35, 1], ["Concentrado lactação", 9, 2], ["Feno de tifton", 2, 3], ["Núcleo mineral", 0.25, 4],
 ].map(([alimento, cab, id]) => ({ alimento, alimento_id: id, quantidade: cab * 40, unidade: "kg", por_cabeca: cab, converte_para_kg: true, quantidade_total_lote: cab * 40, kg_total: cab * 40, percentual_dieta: +(cab * 40 / 1850 * 100).toFixed(1) })) };
+
+// ── Ep. 12: Protocolos › Personalizado (ProtocoloCustomizadoApp). GET /protocolos-customizados: protocolos fictícios genéricos (sem marca), dia_inicial 0 ──
+const etp = (dia, descricao_evento, ordem) => ({ dia, descricao_evento, insumo_padrao: null, dose: null, unidade: null, via: null, observacao: null, ordem });
+export const PROTOCOLOS12 = [
+  { id: 1, nome: "Cuidados pós-parto", categoria: "Rebanho", tipo: "sanitario", dia_inicial: 0, observacao: null, ativo: true, duracao_dias: 10,
+    etapas: [etp(0, "Conferir apetite e temperatura", 1), etp(3, "Examinar o úbere", 2), etp(7, "Avaliar secreção e involução", 3), etp(10, "Liberar para o lote de produção", 4)] },
+  { id: 2, nome: "Limpeza de bebedouros", categoria: "Atividades", tipo: null, dia_inicial: 0, observacao: null, ativo: true, duracao_dias: 7,
+    etapas: [etp(0, "Esvaziar e lavar", 1), etp(3, "Conferir boia e nível", 2), etp(7, "Lavar novamente", 3)] },
+  { id: 3, nome: "Manutenção da ordenha", categoria: "Atividades", tipo: null, dia_inicial: 0, observacao: null, ativo: true, duracao_dias: 30,
+    etapas: [etp(0, "Trocar as teteiras", 1), etp(15, "Revisar a linha de vácuo", 2), etp(30, "Lavagem ácida do circuito", 3)] },
+  { id: 4, nome: "Pré-secagem", categoria: "Produção", tipo: "produtivo", dia_inicial: 0, observacao: null, ativo: true, duracao_dias: 21,
+    etapas: [etp(0, "Reduzir a dieta", 1), etp(14, "Teste de mastite", 2), etp(21, "Secar a vaca", 3)] },
+];

@@ -1,7 +1,8 @@
 // API de mentira para filmar as telas reais (dados fictícios, Fazenda Boa Esperança). Aplica POST /movimentacoes/mover.
 import http from "node:http";
-import { animais, lotes, SEED_MOTIVOS, estadosEp2, candidatasEp3, DATA_REF, pesagensRel, secagemLista, ESTOQUE7, ESTOQUE8, PESSOAS8, bst, ESTOQUE9, DOENCAS9, PRINCIPIOS9, MED_POR_DOENCA, INDICACOES_MASTITE, EVENTOS9, PROTOCOLOS10, DIETA11 } from "./dados.mjs";
-const EP11 = process.env.EP === "t2e11"; // Ep. 11: Alimentação — consumo e sobra de cocho (herda o Ep. 10)
+import { animais, lotes, SEED_MOTIVOS, estadosEp2, candidatasEp3, DATA_REF, pesagensRel, secagemLista, ESTOQUE7, ESTOQUE8, PESSOAS8, bst, ESTOQUE9, DOENCAS9, PRINCIPIOS9, MED_POR_DOENCA, INDICACOES_MASTITE, EVENTOS9, PROTOCOLOS10, DIETA11, PROTOCOLOS12 } from "./dados.mjs";
+const EP12 = process.env.EP === "t2e12"; // Ep. 12: Protocolos — lançar protocolo personalizado (herda o Ep. 11)
+const EP11 = process.env.EP === "t2e11" || EP12; // Ep. 11: Alimentação — consumo e sobra de cocho (herda o Ep. 10)
 const EP10 = process.env.EP === "t2e10" || EP11; // Ep. 10: Sanidade — protocolo sanitário (herda o Ep. 9)
 const EP9 = process.env.EP === "t2e9" || EP10; // Ep. 9: Sanidade — aplicação de medicamentos (herda o Ep. 8)
 const EP8 = process.env.EP === "t2e8" || EP9; // Ep. 8: BST (herda o Ep. 7)
@@ -40,6 +41,15 @@ http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") { res.statusCode = 204; return res.end(); }
   const send = (obj, status = 200) => { res.statusCode = status; res.end(JSON.stringify(obj)); };
   if (p === "/health") return send({ ok: true });
+  if (EP12) { // Ep. 12: Protocolos › Personalizado — lista de protocolos e o POST que cria o lançamento com as etapas na agenda
+    if (p === "/protocolos-customizados" && req.method === "GET") return send(PROTOCOLOS12);
+    if (p === "/protocolos-customizados/lancar" && req.method === "POST") {
+      const b = await corpo(req); log.push({ p, b });
+      if (cfg.atraso) await new Promise((ok) => setTimeout(ok, cfg.atraso));
+      const pr = PROTOCOLOS12.find((x) => x.id === b.protocolo_id);
+      return send({ criado: true, lancamento_id: 1, eventos_criados: pr ? pr.etapas.length : 0, animais: (b.animais || []).length });
+    }
+  }
   if (EP11) { // Ep. 11: Alimentação — dieta do 01 - Alta, consumo do dia (soma) e sobra (substitui; % do total fornecido, faixa até 5%)
     if (p === "/__reset") { consumo11.itens = []; consumo11.sobra_kg = null; }
     if (p === "/alimentacao/consumo/dieta-do-lote") return Number(u.searchParams.get("lote")) === 1 ? send(DIETA11) : send({ detail: "sem dieta" }, 404);
