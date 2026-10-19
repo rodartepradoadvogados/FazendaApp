@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<style>
+@font-face{font-family:Archivo;src:url(assets/fonts/archivo-latin-400-normal.woff2);font-weight:400}
+@font-face{font-family:Archivo;src:url(assets/fonts/archivo-latin-600-normal.woff2);font-weight:600}
+@font-face{font-family:Archivo;src:url(assets/fonts/archivo-latin-700-normal.woff2);font-weight:700}
+@font-face{font-family:Archivo;src:url(assets/fonts/archivo-latin-800-normal.woff2);font-weight:800}
+html,body{margin:0;background:#1b120a}
+#palco{position:relative;width:1080px;height:1920px;overflow:hidden;font-family:Archivo,sans-serif;background:#1b120a}
+canvas{position:absolute;left:0;top:0}
+#vig{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse 100% 90% at 50% 50%,rgba(20,12,6,0) 62%,rgba(20,12,6,.34) 100%)}
+#grao{position:absolute;inset:0;pointer-events:none;background:url(assets/grao.png);background-size:cover;opacity:.05;mix-blend-mode:overlay}
+#etq{position:absolute;left:0;right:0;top:62px;margin:0 auto;width:max-content;font:800 34px/1 Archivo;letter-spacing:.04em;text-transform:uppercase;color:#FFF8E8;background:rgba(26,16,8,.62);padding:14px 28px 15px 24px;border-radius:999px;box-shadow:0 6px 22px rgba(0,0,0,.35)}
+#etq i{display:inline-block;width:14px;height:14px;border-radius:50%;background:#E0A63C;margin-right:14px;vertical-align:1px}
+#nav{pointer-events:none}
+#leg{position:absolute;left:80px;width:920px;bottom:400px;text-align:center;opacity:0}
+#leg span{display:inline-block;font:800 54px/1.14 Archivo;color:#FFF8E8;background:rgba(26,16,8,.80);padding:16px 30px 18px;border-radius:18px;letter-spacing:-.005em;box-shadow:0 8px 30px rgba(0,0,0,.35)}
+#leg b{color:#E0A63C;font-weight:800}
+</style></head><body>
+<div id="palco"><div id="vig"></div><div id="grao"></div><canvas id="nav" width="1080" height="1920"></canvas><div id="etq"><i></i>Agenda Reprodutiva</div><div id="leg"><span></span></div></div>
+<script type="importmap">{"imports":{"three":"./three.module.js"}}</script>
+<script type="module">
+import * as THREE from "three";
+const W = 1080, H = 1920, U = 6.9 / 390; // unidades por px CSS da tela do app
+const palco = document.getElementById("palco");
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, powerPreference: "high-performance" });
+renderer.setPixelRatio(1); renderer.setSize(W, H);
+renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.NoToneMapping;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.VSMShadowMap;
+palco.insertBefore(renderer.domElement, palco.firstChild);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x1b120a);
+scene.fog = new THREE.Fog(0x1b120a, 55, 120);
+const cam = new THREE.PerspectiveCamera(26, W / H, 1, 300); scene.add(cam);
+const clamp01 = (x) => Math.min(1, Math.max(0, x));
+const sm = (a, b, t) => { const x = clamp01((t - a) / (b - a)); return x * x * (3 - 2 * x); };
+const eo = (a, b, t) => { const x = clamp01((t - a) / (b - a)); return 1 - Math.pow(1 - x, 3); };
+const ei = (a, b, t) => { const x = clamp01((t - a) / (b - a)); return x * x * x; };
+const eb = (a, b, t) => { const x = clamp01((t - a) / (b - a)), c = 1.2, d = c + 1; return 1 + d * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// ---------- ambiente (softboxes procedurais para reflexo do vidro e do metal) ----------
+function ambiente() {
+  const s = new THREE.Scene();
+  s.add(new THREE.Mesh(new THREE.BoxGeometry(80, 80, 80), new THREE.MeshBasicMaterial({ color: 0x2a1d12, side: THREE.BackSide })));
+  const painel = (w, h, pos, cor, k) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: new THREE.Color(cor).multiplyScalar(k), side: THREE.DoubleSide })); m.position.set(...pos); m.lookAt(0, 0, 0); s.add(m); };
+  painel(40, 24, [-22, 30, 18], 0xfff1dc, 7); painel(10, 40, [30, 14, -22], 0xe0a63c, 6); painel(34, 10, [0, 24, -30], 0xfff6e6, 3); painel(18, 18, [26, 8, 26], 0xffe8c8, 1.6);
+  const pm = new THREE.PMREMGenerator(renderer); const t = pm.fromScene(s, 0.02).texture; pm.dispose(); return t;
+}
+scene.environment = ambiente(); scene.environmentIntensity = 0.9;
+
+// ---------- luzes ----------
+const hemi = new THREE.HemisphereLight(0xfff0da, 0x6b4f33, 1.15); scene.add(hemi);
+const key = new THREE.DirectionalLight(0xfff1dc, 2.6); key.position.set(-13, 28, 15); key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048); key.shadow.radius = 7; key.shadow.blurSamples = 20; key.shadow.bias = -0.0004; key.shadow.normalBias = 0.02;
+Object.assign(key.shadow.camera, { left: -17, right: 17, top: 17, bottom: -17, near: 5, far: 80 }); scene.add(key); scene.add(key.target);
+const rim = new THREE.DirectionalLight(0xe0a63c, 2.4); rim.position.set(16, 9, -22); scene.add(rim);
+const fill = new THREE.DirectionalLight(0xffe2bd, 0.6); fill.position.set(14, 10, 22); scene.add(fill);
+
+// ---------- texturas ----------
+const loader = new THREE.TextureLoader();
+const aniso = renderer.capabilities.getMaxAnisotropy();
+const carrega = (u, srgb = true) => new Promise((ok) => loader.load(u, (t) => { if (srgb) t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = aniso; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; ok(t); }));
+const TEX = {};
+const nomes = [];
+const fontesOk = Promise.all([400, 600, 700, 800].map((w) => document.fonts.load(`${w} 40px Archivo`)));
+const kraft = await carrega("assets/kraft.png");
+const imgCarrega = (u) => new Promise((ok) => { const i = new Image(); i.onload = () => ok(i); i.src = u; });
+const IMG = { agenda: await imgCarrega("tex2/agenda.png"), gaveta: await imgCarrega("tex2/gaveta.png") };
+const MAPA = await (await fetch("tex2/mapa.json")).json();
+await fontesOk;
+
+// DoF barato: viés de mip por fragmento (distância ao foco) e/ou fixo, mais ilha de luz (escurece as bordas da mesa)
+const foco = { dist: 40 };
+function comDof(mat, { mesa = false } = {}) {
+  const uni = { uBias: { value: 0 }, uFoco: foco, uK: { value: mesa ? 0.16 : 0 } };
+  mat.userData.uni = uni;
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, { uBias: uni.uBias, uFoco: { get value() { return foco.dist; } }, uK: uni.uK });
+    sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 vWP;").replace("#include <begin_vertex>", "#include <begin_vertex>\nvWP=(modelMatrix*vec4(transformed,1.0)).xyz;");
+    sh.fragmentShader = sh.fragmentShader.replace("#include <common>", "#include <common>\nvarying vec3 vWP; uniform float uBias; uniform float uFoco; uniform float uK;")
+      .replace("#include <map_fragment>", `
+        float bias = uBias + clamp(abs(length(vViewPosition) - uFoco) * uK - 0.6, 0.0, 3.5);
+        vec4 sampledDiffuseColor = texture2D( map, vMapUv, bias ); diffuseColor *= sampledDiffuseColor;
+        ${mesa ? "float rr = length(vWP.xz * vec2(0.9,0.62)) / 24.0; diffuseColor.rgb *= mix(vec3(1.0), vec3(0.20,0.15,0.10), smoothstep(0.18, 0.85, rr));" : ""}`);
+  };
+  return mat;
+}
+
+// ---------- mesa kraft ----------
+kraft.wrapS = kraft.wrapT = THREE.MirroredRepeatWrapping; kraft.repeat.set(2.4, 4.2);
+const mesaMat = comDof(new THREE.MeshStandardMaterial({ map: kraft, color: 0xcdbb9c, roughness: 0.96, metalness: 0 }), { mesa: true });
+const mesa = new THREE.Mesh(new THREE.PlaneGeometry(64, 110), mesaMat); mesa.rotation.x = -Math.PI / 2; mesa.receiveShadow = true; scene.add(mesa);
+
+// ---------- celular ----------
+const PW = 7.4, PL = 15.9, PT = 0.8, SW = 6.9, SH = 844 * U;
+function retRedondo(w, h, r) { const s = new THREE.Shape(), x = -w / 2, y = -h / 2; s.moveTo(x + r, y); s.lineTo(x + w - r, y); s.absarc(x + w - r, y + r, r, -Math.PI / 2, 0); s.lineTo(x + w, y + h - r); s.absarc(x + w - r, y + h - r, r, 0, Math.PI / 2); s.lineTo(x + r, y + h); s.absarc(x + r, y + h - r, r, Math.PI / 2, Math.PI); s.lineTo(x, y + r); s.absarc(x + r, y + r, r, Math.PI, Math.PI * 1.5); return s; }
+const bs = 0.14, bt = 0.14;
+const corpoGeo = new THREE.ExtrudeGeometry(retRedondo(PW - 2 * bs, PL - 2 * bs, 1.05), { depth: PT - 2 * bt, bevelEnabled: true, bevelThickness: bt, bevelSize: bs, bevelSegments: 5, curveSegments: 28 });
+corpoGeo.translate(0, 0, -(PT - 2 * bt) / 2);
+const phone = new THREE.Group();
+const corpo = new THREE.Mesh(corpoGeo, new THREE.MeshStandardMaterial({ color: 0x4a4c55, metalness: 1, roughness: 0.27 })); corpo.castShadow = true; corpo.receiveShadow = true; phone.add(corpo);
+const planoRedondo = (w, h, r, seg = 24) => new THREE.ShapeGeometry(retRedondo(w, h, r), seg);
+// vidro frontal preto
+const vidro = new THREE.Mesh(planoRedondo(PW - 0.2, PL - 0.2, 0.95), new THREE.MeshStandardMaterial({ color: 0x050506, roughness: 0.12, metalness: 0.2 })); vidro.position.z = PT / 2 + 0.001; phone.add(vidro);
+// vidro traseiro azul-petróleo
+const tras = new THREE.Mesh(planoRedondo(PW - 0.2, PL - 0.2, 0.95), new THREE.MeshStandardMaterial({ color: 0x1a2c44, roughness: 0.22, metalness: 0.55 })); tras.rotation.y = Math.PI; tras.position.z = -PT / 2 - 0.001; phone.add(tras);
+// ilha das câmeras (visto de trás: canto superior esquerdo = +x local)
+const ilha = new THREE.Group(); ilha.rotation.y = Math.PI; ilha.position.set(-(PW / 2 - 2.2), PL / 2 - 2.4, -PT / 2 - 0.002);
+const placaIlha = new THREE.Mesh(new THREE.ExtrudeGeometry(retRedondo(3.1, 3.1, 0.7), { depth: 0.08, bevelEnabled: true, bevelThickness: 0.04, bevelSize: 0.04, bevelSegments: 3, curveSegments: 16 }), new THREE.MeshStandardMaterial({ color: 0x0c1118, roughness: 0.3, metalness: 0.7 })); placaIlha.castShadow = true; ilha.add(placaIlha);
+const lente = (x, y) => { const g = new THREE.Group(); g.position.set(x, y, 0.1);
+  const aro = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.075, 16, 40), new THREE.MeshStandardMaterial({ color: 0xb9bcc4, metalness: 1, roughness: 0.2 })); aro.position.z = 0.05; g.add(aro);
+  const cil = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.46, 0.1, 40), new THREE.MeshStandardMaterial({ color: 0x03060c, roughness: 0.05, metalness: 0.6 })); cil.rotation.x = Math.PI / 2; cil.position.z = 0.03; g.add(cil);
+  const iris = new THREE.Mesh(new THREE.CircleGeometry(0.27, 32), new THREE.MeshStandardMaterial({ color: 0x1b3a8c, emissive: 0x0b1840, roughness: 0.05, metalness: 0.2 })); iris.position.z = 0.09; g.add(iris);
+  const brilho = new THREE.Mesh(new THREE.CircleGeometry(0.07, 16), new THREE.MeshBasicMaterial({ color: 0xffffff })); brilho.position.set(-0.12, 0.12, 0.095); g.add(brilho); return g; };
+ilha.add(lente(-0.7, 0.72), lente(-0.7, -0.72), lente(0.72, 0));
+const flash = new THREE.Mesh(new THREE.CircleGeometry(0.16, 20), new THREE.MeshBasicMaterial({ color: 0xffe9b0 })); flash.position.set(0.8, 1.05, 0.092); ilha.add(flash);
+phone.add(ilha);
+// botões laterais
+const botao = (y, h) => { const m = new THREE.Mesh(new THREE.BoxGeometry(0.14, h, 0.3), new THREE.MeshStandardMaterial({ color: 0x8a8d96, metalness: 1, roughness: 0.3 })); m.position.set(PW / 2 + 0.03, y, 0); phone.add(m); };
+botao(3.0, 1.5); botao(-0.5, 1.0); botao(0.9, 1.0);
+// tela: alphaMap com cantos arredondados
+const aCan = document.createElement("canvas"); aCan.width = 780; aCan.height = Math.round(780 * SH / SW); { const c = aCan.getContext("2d"); c.fillStyle = "#000"; c.fillRect(0, 0, aCan.width, aCan.height); c.fillStyle = "#fff"; const r = 0.62 / SW * aCan.width; c.beginPath(); c.roundRect(0, 0, aCan.width, aCan.height, r); c.fill(); }
+const alfa = new THREE.CanvasTexture(aCan);
+const telaZ = PT / 2 + 0.004;
+const mkTela = (tex, dz, ordem) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(SW, SH), new THREE.MeshBasicMaterial({ map: tex, alphaMap: alfa, transparent: true, opacity: 1, depthWrite: false })); m.position.z = telaZ + dz; m.renderOrder = ordem; phone.add(m); return m; };
+// tela = canvas 2D (captura real do app, DPR 3) composto por tempo: lista, afundamento do botão, escurecimento e gaveta deslizando
+const SC = document.createElement("canvas"); SC.width = 1170; SC.height = 2532; const sg = SC.getContext("2d");
+const scTex = new THREE.CanvasTexture(SC); scTex.colorSpace = THREE.SRGBColorSpace; scTex.anisotropy = aniso; scTex.generateMipmaps = false; scTex.minFilter = THREE.LinearFilter; scTex.magFilter = THREE.LinearFilter;
+const tAg = mkTela(scTex, 0, 2);
+// reflexo do vidro: faixa diagonal suave
+const rCan = document.createElement("canvas"); rCan.width = 256; rCan.height = 512; { const c = rCan.getContext("2d"); const g = c.createLinearGradient(0, 0, 256, 512); g.addColorStop(0, "rgba(255,255,255,0)"); g.addColorStop(0.36, "rgba(255,255,255,0)"); g.addColorStop(0.46, "rgba(255,244,225,.55)"); g.addColorStop(0.53, "rgba(255,244,225,.10)"); g.addColorStop(0.60, "rgba(255,255,255,.28)"); g.addColorStop(0.7, "rgba(255,255,255,0)"); g.addColorStop(1, "rgba(255,255,255,0)"); c.fillStyle = g; c.fillRect(0, 0, 256, 512); }
+const rTex = new THREE.CanvasTexture(rCan); rTex.wrapS = rTex.wrapT = THREE.RepeatWrapping; rTex.colorSpace = THREE.SRGBColorSpace;
+const reflexo = new THREE.Mesh(planoRedondo(SW, SH, 0.62), new THREE.MeshBasicMaterial({ map: rTex, transparent: true, opacity: 0.20, blending: THREE.AdditiveBlending, depthWrite: false })); reflexo.position.z = telaZ + 0.012; reflexo.renderOrder = 5;
+{ const g = reflexo.geometry; const p = g.attributes.position, uv = new Float32Array(p.count * 2); for (let i = 0; i < p.count; i++) { uv[2 * i] = p.getX(i) / SW + 0.5; uv[2 * i + 1] = p.getY(i) / SH + 0.5; } g.setAttribute("uv", new THREE.BufferAttribute(uv, 2)); }
+phone.add(reflexo);
+// furo da câmera frontal
+const furo = new THREE.Mesh(new THREE.CircleGeometry(0.17, 24), new THREE.MeshBasicMaterial({ color: 0x000000 })); furo.position.set(0, SH / 2 - 0.42, telaZ + 0.016); furo.renderOrder = 6; phone.add(furo);
+
+
+const laid = new THREE.Group(); laid.rotation.x = -Math.PI / 2; laid.add(phone);
+const root = new THREE.Group(); root.add(laid); scene.add(root);
+const Y0 = PT / 2; root.position.set(0, Y0, 0);
+scene.updateMatrixWorld(true);
+const cssP = (x, y) => new THREE.Vector3((x - 195) * U, (422 - y) * U, telaZ + 0.01);
+
+// ---------- tela (composição por tempo) ----------
+const COR_FUNDO = "#eff1f6"; // fundo da lista (amostrado da captura)
+const S3 = 3;
+const G = MAPA.gaveta, NV = MAPA.novo;
+const SHEET_TOP = Math.round(G.y * S3), SHEET_H = 2532 - SHEET_TOP;
+const T_TAP = 3.285, T_ABRE = 3.36, DUR_ABRE = 0.42;
+function desenhaTela(t) {
+  sg.clearRect(0, 0, 1170, 2532); sg.drawImage(IMG.agenda, 0, 0);
+  // afundamento do botão "Novo card" no toque
+  const dt = t - T_TAP; if (dt > 0 && dt < 0.3) {
+    const k = dt < 0.09 ? dt / 0.09 : 1 - (dt - 0.09) / 0.21, s = 1 - 0.055 * Math.max(0, k);
+    const x = NV.x * S3, y = NV.y * S3, w = NV.w * S3, h = NV.h * S3, m = 6;
+    sg.fillStyle = COR_FUNDO; sg.fillRect(x - m, y - m, w + 2 * m, h + 2 * m);
+    sg.save(); sg.translate(x + w / 2, y + h / 2); sg.scale(s, s); sg.drawImage(IMG.agenda, x, y, w, h, -w / 2, -h / 2, w, h); sg.restore();
+    sg.fillStyle = `rgba(26,38,56,${0.06 * Math.max(0, k)})`; sg.fillRect(x + w * 0.02, y + h * 0.02, w * 0.96, h * 0.96);
+  }
+  const u = clamp01((t - T_ABRE) / DUR_ABRE);
+  if (u > 0) {
+    const e = 1 - Math.pow(1 - u, 3);
+    sg.fillStyle = `rgba(0,0,0,${0.5 * clamp01(u * 2.2)})`; sg.fillRect(0, 0, 1170, 2532);
+    const off = (1 - e) * (SHEET_H + 40);
+    sg.save(); sg.beginPath(); sg.roundRect(0, SHEET_TOP + off, 1170, SHEET_H + 400, [53, 53, 0, 0]); sg.clip();
+    sg.drawImage(IMG.gaveta, 0, SHEET_TOP, 1170, SHEET_H, 0, SHEET_TOP + off, 1170, SHEET_H); sg.restore();
+  }
+  scTex.needsUpdate = true;
+}
+
+// ---------- câmera frontal (dolly reto + deslocamento lateral, sem inclinar) ----------
+const D0 = 38.5, AZ = 2.5, EL = 87, SHIFT = 40;
+const KF = [ // t, zoom, cx, cy (px CSS da tela no centro do quadro)
+  [0.0, 1.0, 195, 430], [0.9, 1.0, 195, 430], [2.4, 1.2, 195, 420], [3.3, 1.24, 195, 405], [4.25, 1.1, 195, 520], [5.0, 1.1, 195, 522],
+];
+function kf(t) {
+  let i = 0; while (i < KF.length - 2 && t >= KF[i + 1][0]) i++;
+  const a = KF[i], b = KF[i + 1]; let u = clamp01((t - a[0]) / (b[0] - a[0])); u = u * u * (3 - 2 * u);
+  return [lerp(a[1], b[1], u), lerp(a[2], b[2], u), lerp(a[3], b[3], u)];
+}
+function atualizaCam(t) {
+  const [z, cxs, cys] = kf(t), d = D0 / z;
+  const alvo = phone.localToWorld(cssP(cxs, cys));
+  const A = THREE.MathUtils.degToRad(AZ), E = THREE.MathUtils.degToRad(EL);
+  cam.up.set(0, 0, -1);
+  cam.position.set(alvo.x + d * Math.sin(A) * Math.cos(E), alvo.y + d * Math.sin(E), alvo.z + d * Math.cos(A) * Math.cos(E)); cam.lookAt(alvo);
+  cam.setViewOffset(W, H, 0, -SHIFT, W, H); cam.updateMatrixWorld(true);
+  foco.dist = d; key.target.position.set(0, 0, 0);
+  return z;
+}
+function proj(x, y) { const v = phone.localToWorld(cssP(x, y)); v.project(cam); return [(v.x * 0.5 + 0.5) * W, (-v.y * 0.5 + 0.5) * H]; }
+
+// ---------- navegador: marcador de foco dourado ----------
+const nav = document.getElementById("nav").getContext("2d");
+const OURO = "#E0A63C";
+const pad = 6, R_EL = 9;
+const quadro = (b, p = pad) => ({ cx: b.x + b.w / 2, cy: b.y + b.h / 2, w: b.w + 2 * p, h: b.h + 2 * p, r: R_EL, f: 1 });
+const PUCK = (cx, cy) => ({ cx, cy, w: 24, h: 24, r: 12, f: 0 });
+const cards = MAPA.cards;
+// waypoints: t chegada, t partida, forma, mid = passa por "anel" no trajeto de chegada
+const WP = [
+  { ta: 0.30, td: 0.30, s: PUCK(352, 112), mid: 0 },
+  { ta: 0.84, td: 1.28, s: quadro(MAPA.titulo, 7), mid: 1 },
+  { ta: 1.58, td: 1.78, s: quadro(cards[0]), mid: 0 },
+  { ta: 2.02, td: 2.18, s: quadro(cards[1]), mid: 0 },
+  { ta: 2.42, td: 2.72, s: quadro(cards[2]), mid: 0 },
+  { ta: 3.12, td: 3.88, s: quadro(MAPA.novo, 5), mid: 1 },
+  { ta: 4.36, td: 99, s: quadro(MAPA.nomeCampo, 5), mid: 1 },
+];
+const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+const lerpS = (a, b, k) => ({ cx: lerp(a.cx, b.cx, k), cy: lerp(a.cy, b.cy, k), w: lerp(a.w, b.w, k), h: lerp(a.h, b.h, k), r: lerp(a.r, b.r, k), f: lerp(a.f, b.f, k) });
+function forma(t) { // forma do navegador no tempo t + "velocidade" (0..1) para o rastro
+  if (t <= WP[0].ta) return { s: WP[0].s, v: 0, alfa: 0 };
+  for (let i = 1; i < WP.length; i++) {
+    const A = WP[i - 1], B = WP[i];
+    if (t < A.td) return { s: A.s, v: 0, alfa: 1 };
+    if (t < B.ta) {
+      const x = (t - A.td) / (B.ta - A.td), e = ease(x);
+      let s = lerpS(A.s, B.s, e), mid = B.mid ? Math.pow(Math.sin(Math.PI * e), 0.8) : 0;
+      if (i === 1) { s = lerpS(A.s, B.s, e); mid = 0; }
+      if (mid > 0) { const p = PUCK(s.cx, s.cy); s = lerpS(s, p, mid * 0.92); }
+      return { s, v: Math.sin(Math.PI * x), alfa: i === 1 ? clamp01((t - 0.30) / 0.16) : 1, A, B, x };
+    }
+  }
+  return { s: WP[WP.length - 1].s, v: 0, alfa: 1 };
+}
+function trilhaRR(s, n = 22) { // contorno arredondado em px CSS -> projeção
+  const w = s.w / 2, h = s.h / 2, r = Math.min(s.r, w, h), pts = [];
+  const arco = (cx, cy, a0) => { for (let k = 0; k <= n; k++) { const a = a0 + (k / n) * Math.PI / 2; pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); } };
+  arco(s.cx + w - r, s.cy + h - r, 0); arco(s.cx - w + r, s.cy + h - r, Math.PI / 2); arco(s.cx - w + r, s.cy - h + r, Math.PI); arco(s.cx + w - r, s.cy - h + r, Math.PI * 1.5);
+  return pts.map(([x, y]) => proj(x, y));
+}
+function caminho(P) { nav.beginPath(); P.forEach(([x, y], i) => (i ? nav.lineTo(x, y) : nav.moveTo(x, y))); nav.closePath(); }
+function desenhaForma(s, alfa, pulsoT) {
+  const P = trilhaRR(s); const f = s.f;
+  nav.save(); nav.lineJoin = "round"; nav.globalAlpha = alfa;
+  // sombra discreta sobre a tela
+  nav.save(); nav.translate(0, 5); caminho(P); nav.shadowColor = "rgba(15,22,36,.45)"; nav.shadowBlur = 16; nav.strokeStyle = "rgba(15,22,36,.28)"; nav.lineWidth = 6; nav.stroke(); nav.restore();
+  // núcleo translúcido
+  caminho(P); nav.fillStyle = `rgba(224,166,60,${lerp(0.30, 0.10, f)})`; nav.fill();
+  // contorno fino escuro (legibilidade em fundo claro) + ouro com brilho
+  caminho(P); nav.strokeStyle = "rgba(26,38,56,.40)"; nav.lineWidth = lerp(7.5, 8.5, f); nav.stroke();
+  caminho(P); nav.shadowColor = "rgba(233,168,42,.85)"; nav.shadowBlur = 20; nav.strokeStyle = OURO; nav.lineWidth = lerp(4.2, 5, f); nav.stroke();
+  nav.restore();
+}
+function desenhaNav(t) {
+  nav.clearRect(0, 0, W, H);
+  const { s, v, alfa, A, B, x } = forma(t); if (alfa <= 0.01) return;
+  // rastro curto: posições recentes do centro, só em deslocamento rápido
+  if (v > 0.12) for (let k = 7; k >= 1; k--) {
+    const tt = t - k * 0.022, f2 = forma(tt); if (f2.alfa <= 0.01) continue;
+    const [px, py] = proj(f2.s.cx, f2.s.cy); const a = (1 - k / 8) * 0.34 * v, r = lerp(26, 8, k / 8);
+    nav.save(); nav.globalAlpha = a; nav.fillStyle = OURO; nav.shadowColor = "rgba(233,168,42,.7)"; nav.shadowBlur = 12; nav.beginPath(); nav.arc(px, py, r, 0, 7); nav.fill(); nav.restore();
+  }
+  desenhaForma(s, alfa);
+  // pulso de toque (onda 0,25 s) sobre o botão Novo card
+  const dt = t - T_TAP;
+  if (dt > 0 && dt < 0.25) {
+    const k = dt / 0.25, e = 1 - Math.pow(1 - k, 2);
+    const b = quadro(MAPA.novo, 5), sp = { ...b, w: b.w + 46 * e, h: b.h + 46 * e, r: R_EL + 23 * e, f: 1 };
+    const P = trilhaRR(sp); nav.save(); nav.globalAlpha = 0.85 * (1 - k); caminho(P); nav.strokeStyle = OURO; nav.shadowColor = "rgba(233,168,42,.8)"; nav.shadowBlur = 16; nav.lineWidth = lerp(6, 2, k); nav.stroke(); nav.restore();
+  }
+}
+
+// ---------- legenda (HTML, zona segura) ----------
+const etq = document.getElementById("etq"); const leg = document.getElementById("leg"), legSp = leg.firstElementChild;
+const LEG = [
+  [0.299, 2.475, "No topo ficam os <b>cards configuráveis</b>"],
+  [2.859, 3.70, "Toque em <b>Novo card</b>"],
+];
+let legAtual = -1;
+function atualizaLeg(t) {
+  let k = -1; for (let i = 0; i < LEG.length; i++) if (t >= LEG[i][0] - 0.05 && t < LEG[i][1] + 0.3) k = i;
+  if (k !== legAtual) { legAtual = k; if (k >= 0) legSp.innerHTML = LEG[k][2]; }
+  let o = 0; if (k >= 0) { const [a, b] = LEG[k]; o = Math.min(clamp01((t - (a - 0.05)) / 0.25), 1 - clamp01((t - b) / 0.3)); }
+  leg.style.opacity = o; leg.style.transform = `translateY(${(1 - o) * 14}px)`;
+}
+
+window.seek = (t) => {
+  desenhaTela(t); atualizaCam(t);
+  rTex.offset.set(-0.02, 0.01); reflexo.material.opacity = 0.025;
+  key.shadow.needsUpdate = true; renderer.render(scene, cam);
+  desenhaNav(t); atualizaLeg(t);
+  { const topo = proj(195, -27)[1]; etq.style.opacity = clamp01((topo - 105) / 45); }
+};
+window.seek(0); window.__ready = true;
+</script></body></html>
