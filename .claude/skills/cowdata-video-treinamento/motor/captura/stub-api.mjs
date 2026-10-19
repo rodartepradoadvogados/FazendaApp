@@ -1,7 +1,8 @@
 // API de mentira para filmar as telas reais (dados fictícios, Fazenda Boa Esperança). Aplica POST /movimentacoes/mover.
 import http from "node:http";
-import { animais, lotes, SEED_MOTIVOS, estadosEp2, candidatasEp3, DATA_REF, pesagensRel, secagemLista, ESTOQUE7, ESTOQUE8, PESSOAS8, bst, ESTOQUE9, DOENCAS9, PRINCIPIOS9, MED_POR_DOENCA, INDICACOES_MASTITE, EVENTOS9 } from "./dados.mjs";
-const EP9 = process.env.EP === "t2e9"; // Ep. 9: Sanidade — aplicação de medicamentos (herda o Ep. 8)
+import { animais, lotes, SEED_MOTIVOS, estadosEp2, candidatasEp3, DATA_REF, pesagensRel, secagemLista, ESTOQUE7, ESTOQUE8, PESSOAS8, bst, ESTOQUE9, DOENCAS9, PRINCIPIOS9, MED_POR_DOENCA, INDICACOES_MASTITE, EVENTOS9, PROTOCOLOS10 } from "./dados.mjs";
+const EP10 = process.env.EP === "t2e10"; // Ep. 10: Sanidade — protocolo sanitário (herda o Ep. 9)
+const EP9 = process.env.EP === "t2e9" || EP10; // Ep. 9: Sanidade — aplicação de medicamentos (herda o Ep. 8)
 const EP8 = process.env.EP === "t2e8" || EP9; // Ep. 8: BST (herda o Ep. 7)
 const EP7 = process.env.EP === "t2e7" || EP8; // Ep. 7: pesagem corporal e secagem (herda o Ep. 6)
 const EP6 = process.env.EP === "t2e6" || EP7; // Ep. 6: controle leiteiro (herda o Ep. 5)
@@ -37,6 +38,15 @@ http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") { res.statusCode = 204; return res.end(); }
   const send = (obj, status = 200) => { res.statusCode = status; res.end(JSON.stringify(obj)); };
   if (p === "/health") return send({ ok: true });
+  if (EP10) { // Ep. 10: protocolo sanitário — lista de protocolos e o POST que cria o tratamento com todas as etapas
+    if (p === "/cadastro/protocolos-sanitarios") return send(PROTOCOLOS10);
+    if (p === "/sanidade/protocolos/lancamentos" && req.method === "POST") {
+      const b = await corpo(req); log.push({ p, b });
+      if (cfg.atraso) await new Promise((ok) => setTimeout(ok, cfg.atraso));
+      const pr = PROTOCOLOS10.find((x) => x.id === b.protocolo_id);
+      return send({ lancamentos: (b.numeros_matriz || []).map((n, i) => ({ id: i + 1, numero_matriz: n, protocolo_id: b.protocolo_id, protocolo_nome: pr?.nome })), avisos: [], pulados: [] }, 201);
+    }
+  }
   if (EP9) { // Ep. 9: Sanidade — aplicação de medicamentos (curativa e preventiva); estoque e catálogo de sanidade fictícios
     if (p === "/__reset") { ESTOQUE9.forEach((x, i) => { x.quantidade = EST9_0[i]; }); return send({ ok: true }); }
     if (p === "/estoque/") return send({ itens: ESTOQUE9 });
