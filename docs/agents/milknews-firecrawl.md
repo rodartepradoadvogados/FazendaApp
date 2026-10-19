@@ -4,9 +4,11 @@
 > rodando como Routine agendada do Claude no repositório FazendaApp/CowData) e o agente que for
 > preparar o terreno para ele.
 >
-> **O que muda:** a coleta na internet (cotações, notícias, conteúdo técnico) passa a ser feita
-> pelo **Firecrawl**, que lê a página de verdade (inclusive PDF e sites que hoje devolvem 403 para
-> acesso automatizado), em vez de busca solta e snippets.
+> **O que muda:** a coleta na internet lê a página de verdade, em vez de busca solta e snippets.
+> **Política de uso do Firecrawl (decidida em 19/10/2026):** a leitura comum (WebFetch, `curl`,
+> `pdftotext`) vem primeiro. O Firecrawl é **fonte principal só no Canal Rural**, o único site que
+> a leitura comum não abre (403). Em todos os outros é **último recurso**, para não gastar créditos
+> à toa. Detalhes na seção 1.1.
 >
 > **O que NÃO muda:** as regras editoriais e de verificação do `SKILL.md` ("inegociáveis"), o
 > formato do lote JSON, a pasta `backend/fazenda/seed_data/milknews_lotes/` e o teste de formato do
@@ -29,6 +31,28 @@ ambiente**, não no repositório:
 **Regra para o robô:** nunca imprima, logue, grave em arquivo ou coloque em commit o valor da
 chave. Se `FIRECRAWL_API_KEY` não estiver no ambiente, **não invente outro caminho**: siga a coleta
 antiga (seção 6) e diga no PR que o Firecrawl não estava disponível.
+
+---
+
+## 1.1 Política: quando usar o Firecrawl (decidida em 19/10/2026)
+
+O plano tem poucos créditos e eles são compartilhados com o resto do CowData. A regra é:
+
+| Fonte | Como ler | Observação |
+|---|---|---|
+| **Canal Rural** (`canalrural.com.br`) | **Firecrawl primeiro**, direto no `/scrape`, sem tentar a leitura comum antes | A leitura comum devolve **403** (testado em 19/10/2026, com e sem user-agent de navegador). O Firecrawl devolve 200. É o único site neste caso. |
+| **Todos os outros** (MilkPoint, Notícias Agrícolas, USDA AMS, GDT, DairyReporter, DairyNews.today, sites de Alta Genetics/ABS/Semex, MAPA, FAEP, periódicos) | **Leitura comum primeiro**: WebFetch, `curl` pelo proxy, PDF baixado e lido com `pdftotext` | Firecrawl só se a leitura comum falhar de verdade (403, bloqueio, página só com JavaScript, PDF que não abre) |
+| **Cepea** (`cepea.org.br`) | Leitura comum primeiro; se falhar, **uma** tentativa com Firecrawl | Em 19/10/2026 o site respondeu **500 até no Firecrawl**: é queda do site, não bloqueio. Se as duas falharem, o indicador fica "não lido nesta rodada" (nunca vale snippet; a cotação do Cepea reproduzida por terceiro só entra com a data de referência conferida e uma segunda fonte). |
+
+**Antes de usar o Firecrawl em qualquer site fora do Canal Rural, registre** (no relatório ou no
+PR) qual fonte falhou, com qual erro, na leitura comum. Sem a chave, sem créditos ou com a API fora
+do ar: **não insista**, marque a fonte como "não lida nesta rodada" e siga com as outras.
+
+**Descoberta de pauta** usa `WebSearch`, não o `/search` do Firecrawl (resultado de busca nunca é
+fonte; o `/search` gasta crédito sem ganho). O Firecrawl `/scrape` só entra para **ler** página.
+
+**Esperado por execução:** 1 a 3 chamadas de Firecrawl (Canal Rural, mais algum fallback). O teto
+de 25 continua valendo como trava, não como meta.
 
 ---
 
@@ -74,11 +98,11 @@ Pastas de trabalho: use `/tmp/milknews/`. **Nada coletado vai para o git** além
 ## 3. Roteiro de coleta por tipo de informação
 
 ### 3.1 Cotações (prioridade 1, todo dia que houver execução)
-| Dado | Fonte primária (ler com `/scrape`) | Segunda fonte independente |
+| Dado | Fonte primária (leitura comum; Firecrawl só pela seção 1.1) | Segunda fonte independente |
 |---|---|---|
 | Indicador do leite ao produtor (Cepea/Esalq) | `https://www.cepea.org.br/br/indicador/leite.aspx` (alternativa `https://www.cepea.esalq.usp.br/br/indicador/leite.aspx`) | `https://www.noticiasagricolas.com.br/cotacoes/leite` ou a matéria do MilkPoint sobre o mesmo indicador |
-| Leite spot / preços regionais | `https://www.noticiasagricolas.com.br/cotacoes/leite` | MilkPoint (achar a matéria com `/search`, depois `/scrape`) |
-| Mercado internacional (EUA) | USDA AMS Dairy Market News, PDF semanal `https://www.ams.usda.gov/mnreports/dywweeklyreport.pdf` (o `/scrape` lê PDF) | DairyReporter ou DairyNews.today sobre o mesmo relatório |
+| Leite spot / preços regionais | `https://www.noticiasagricolas.com.br/cotacoes/leite` | MilkPoint (achar a matéria com `WebSearch`, depois ler a página) |
+| Mercado internacional (EUA) | USDA AMS Dairy Market News, PDF semanal `https://www.ams.usda.gov/mnreports/dywweeklyreport.pdf` (PDF: baixar para diretório novo e vazio e ler com `pdftotext`) | DairyReporter ou DairyNews.today sobre o mesmo relatório |
 | Leilão GDT (Global Dairy Trade) | Resultado do evento em `https://www.globaldairytrade.info/` | DairyReporter ou DairyNews.today |
 
 **Como extrair um número:**
@@ -91,19 +115,20 @@ Pastas de trabalho: use `/tmp/milknews/`. **Nada coletado vai para o git** além
 4. Data de referência posterior a hoje → erro, descarta (regra 4).
 
 ### 3.2 Notícias de mercado (nacional e internacional)
-- Descoberta com `/scrape` nas páginas de listagem:
+- Descoberta lendo as páginas de listagem (leitura comum; **Canal Rural pelo Firecrawl**, seção 1.1):
   - MilkPoint: `https://www.milkpoint.com.br/`
   - Notícias Agrícolas: `https://www.noticiasagricolas.com.br/noticias/leite/`
   - Canal Rural: `https://www.canalrural.com.br/pecuaria/`
   - DairyReporter: `https://www.dairyreporter.com/`
   - DairyNews.today: `https://dairynews.today/`
 - Escolha 1 a 3 pautas. Para cada uma, leia a matéria original **e** uma segunda fonte
-  independente sobre o mesmo fato (`/search` com a manchete, depois `/scrape`).
-- Canal Rural e cepea.org.br costumam devolver 403 para acesso automatizado comum. O Firecrawl
-  normalmente passa. Se falhar, a página **não conta** como fonte (regra 5).
+  independente sobre o mesmo fato (`WebSearch` com a manchete, depois ler a página).
+- **Canal Rural** devolve 403 para leitura comum: leia **direto pelo Firecrawl** (seção 1.1). O
+  Cepea está fora da regra "só com Firecrawl" (em 19/10/2026 deu 500 também nele). Se uma página
+  não abrir por nenhum meio, ela **não conta** como fonte (regra 5).
 
 ### 3.3 Conteúdo técnico (genética e manejo)
-- Sites oficiais da **Alta Genetics**, **ABS** e **Semex**: leia a página da novidade com `/scrape`.
+- Sites oficiais da **Alta Genetics**, **ABS** e **Semex**: leia a página da novidade (leitura comum).
   O site oficial da empresa prevalece sobre terceiros (regra 2).
 - Artigo científico (Journal of Dairy Science / Journal of Animal Science): leia o resumo na página
   da revista.
@@ -118,7 +143,7 @@ Siga o `SKILL.md` à risca. Resumo operacional:
 2. Escreva 1 a 3 posts, cada um com `manchete`, `resumo` (lead de 1 a 2 frases, ≤ 800 caracteres),
    `materia` (2 a 3 parágrafos separados por `\n\n`, ≤ 350 palavras, paráfrase, citação inline sem
    link: "segundo o Cepea/Esalq…"), `link` (`/news#milknews-AAAA-MM-DD-NN`), `data_publicacao`
-   (= data do arquivo, ≤ hoje) e `fontes` (**as URLs efetivamente lidas com `/scrape`**, todas
+   (= data do arquivo, ≤ hoje) e `fontes` (**as URLs efetivamente lidas**, todas
    começando com `http`).
 3. Novo arquivo `milknews_AAAAMMDD.json` (segundo lote do dia: `milknews_AAAAMMDD_b.json`). Nunca
    edite nem apague lote existente.
@@ -150,9 +175,10 @@ registra a resposta no `SKILL.md` (ver `docs/agents/MISSAO-milknews.md`, Etapa 1
 ---
 
 ## 6. Plano B (Firecrawl indisponível)
-Sem `FIRECRAWL_API_KEY`, com saldo zerado ou com a API fora do ar: use a coleta antiga (busca e
-leitura pelo próprio agente), **com as mesmas regras de dupla verificação**. Diga no PR: "coleta
-sem Firecrawl nesta execução: <motivo>".
+Sem `FIRECRAWL_API_KEY`, com saldo zerado ou com a API fora do ar: como a leitura comum já é a
+regra, só o **Canal Rural** fica sem leitura ("não lido nesta rodada"); as demais fontes seguem,
+**com as mesmas regras de dupla verificação**. Diga no PR: "Canal Rural não lido nesta execução:
+<motivo>".
 
 ---
 
@@ -168,8 +194,9 @@ quiser cotações estruturadas (gráfico histórico, série do Cepea), a propost
 **Não implemente sem pedido explícito.** É mudança de schema e de tela.
 
 ## 8. Checklist de cada execução
-- [ ] Saldo do Firecrawl consultado; teto de 25 chamadas respeitado.
-- [ ] Cada número com 2 fontes **lidas** (`/scrape`) e iguais; divergência não publicada.
+- [ ] Firecrawl só no Canal Rural e nos fallbacks da seção 1.1, cada fallback com o erro da leitura
+      comum registrado; teto de 25 chamadas respeitado.
+- [ ] Cada número com 2 fontes **lidas** e iguais; divergência não publicada.
 - [ ] Nenhum snippet de busca usado como fonte.
 - [ ] Lote novo validado por `json.load` e pelo `pytest` de formato.
 - [ ] PR lista as URLs por número; nenhum valor de chave em arquivo, log ou PR.
