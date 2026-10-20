@@ -34,7 +34,7 @@ const GESTANTES = [
   gest("1204", A, 214, "POSITIVO", dia(-182), "POSITIVO", dia(-152), false),
 ];
 const VAZIAS_ATRASADAS = [["1045", M, 187], ["3990", M, 201], ["2388", M, 214], ["4033", M, 236], ["4078", M, 254], ["1450", B, 262]].map(([n, l, d]) => base(n, l, { estado: "vazia_atrasada", del_dias: d }));
-const PEV = [["3601", A, 52], ["3644", A, 58], ["3689", A, 61], ["3702", A, 66], ["3733", A, 71], ["3758", A, 79], ["3790", A, 86]].map(([n, l, d]) => base(n, l, { estado: "pev", del_dias: d }));
+const PEV = [["3601", A, 4], ["3644", A, 9], ["3689", A, 15], ["3702", A, 22], ["3733", A, 28], ["3758", A, 36], ["3790", A, 43]].map(([n, l, d]) => base(n, l, { estado: "pev", del_dias: d }));
 const MASTER = [...INSEMINADAS, ...GESTANTES, ...VAZIAS_ATRASADAS, ...PEV];
 
 const SIT = { pev: (i) => i.estado === "pev", inseminada: (i) => i.estado === "inseminada", gestante: (i) => i.estado === "gestante", vazia: (i) => ["vazia", "vazia_atrasada"].includes(i.estado), vazia_atrasada: (i) => i.estado === "vazia_atrasada", a_descartar: () => false };
@@ -50,7 +50,7 @@ function resultado(config) {
 const CARDS0 = [
   { id: "t3-vaz", nome: "Vazias atrasadas", config: { categoria: "todas", lotes: [], situacao: "vazia_atrasada", periodos: [], somente_atrasadas: false, exceto_atrasadas: false } },
   { id: "t3-gest", nome: "Gestantes 60–89 dias", config: { categoria: "todas", lotes: [], situacao: "gestante", periodos: [[60, 89]], somente_atrasadas: false, exceto_atrasadas: false } },
-  { id: "t3-pev", nome: "PEV 45–90 dias", config: { categoria: "todas", lotes: [A], situacao: "pev", periodos: [[45, 90]], somente_atrasadas: false, exceto_atrasadas: false } },
+  { id: "t3-pev", nome: "PEV 0–45 dias", config: { categoria: "todas", lotes: [A], situacao: "pev", periodos: [[0, 45]], somente_atrasadas: false, exceto_atrasadas: false } },
 ];
 let cards = structuredClone(CARDS0);
 
