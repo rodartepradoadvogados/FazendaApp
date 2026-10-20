@@ -35,3 +35,13 @@ Rodar `aud/*.mjs` e os scripts de render a partir desta pasta (`motor_t3/`).
 - O stub de T3 reinicia os cards com `GET /__reset`; o app em produção lê o stub em `localhost:8000`.
 - `@keyframes ft-pulso` não existe no CSS do app (o `.ft-cartao-breve` não pulsa de verdade): o pulso do cartão é animado no motor a partir da captura.
 - Voltar da ficha do animal recolhe os cards e listas (o componente remonta); o vídeo mostra o retorno ao estado anterior (corte).
+
+## Episódio 2 — Protocolos IATF em andamento
+Arquivos com sufixo `_t3e2` (não alteram o Ep. 1): `cena/index_t3e2.html` (abertura "T3 · MENU / EP. 2 / PROTOCOLOS IATF"), `cena/episodio_roteiro_t3e2.js` + `cena/episodio_corpo_t3e2.js` (`python3 cena/montar_episodio_t3e2.py` → `cena/episodio_t3e2.html`), `captura/capturar_t3e2_ep.mjs` (+ dados em `captura/t3e2.mjs`, `EP=t3e2` no stub; herda o t3e1), `beats_t3e2.json`, `copiar_telas_t3e2.sh`, `render_ep2.sh`, `aud/exportar_roteiro_audio_t3e2.mjs`.
+```bash
+cd captura && (EP=t3e2 STUB_PORT=8100 node stub-api.mjs &) ; STUB=8100 APP=3100 node capturar_t3e2_ep.mjs   # app em produção: next start -p 3100; gera shots_ep/ (+ folha.pdf, folha_pdf.png, mapa.json)
+cd .. && ./copiar_telas_t3e2.sh && python3 cena/montar_episodio_t3e2.py && ./render_ep2.sh ../q   # TOTAL=2079 quadros (69,3 s)
+node aud/exportar_roteiro_audio_t3e2.mjs   # → aud/roteiro_t3e2.json; depois trilha_app.py + norm.sh como no Ep. 1
+```
+Precisa de `pdftoppm`/`pdftotext` (poppler). `shots_ep/`, `cena/tex*` e os quadros são regenerados por episódio (não rode a captura do Ep. 1 e a do Ep. 2 na mesma pasta ao mesmo tempo).
+Armadilhas: (1) o `.next` de produção chama a API em `localhost:8000`: a captura redireciona por `context.route` para a porta do stub; (2) o nome do lançamento segue `gerar_nome_lancamento` (molde em caixa alta + datas); com o molde "IATF 3 MANEJOS" o título cabe no cabeçalho do PDF — nomes mais longos (ex. com o lote) sobrepõem o "Gerado por" no PDF real; (3) D11 só aparece como etapa atual de vaca no dia da inseminação — com D0 em 10/10 e hoje 17/10 a lista mostra D7 e D9.
