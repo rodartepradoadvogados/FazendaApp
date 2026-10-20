@@ -254,6 +254,48 @@ function atualizaFitas(t) {
   });
 }
 
+
+// ---------- fita do protocolo cadastrado (F4): a mesma fita de papel kraft, com o texto que acende cada dia ----------
+const FP_W = 1600, FP_H = 420, FP_LARG = 8.2, FP_ALT = FP_LARG * FP_H / FP_W, FP_DIAS = ["D0", "D7", "D9", "D11"];
+const fpCv = document.createElement("canvas"); fpCv.width = FP_W; fpCv.height = FP_H; const fpG = fpCv.getContext("2d");
+function fpPinta(t) { // estado puro do tempo: quantos dias já acenderam e o pulso do último
+  const g = fpG, w = FP_W, h = FP_H; g.clearRect(0, 0, w, h); g.save(); g.beginPath(); g.moveTo(10, 0); for (let i = 0; i <= 10; i++) g.lineTo(i % 2 ? 2 : 14, (i / 10) * h); g.lineTo(w - 10, h); for (let i = 10; i >= 0; i--) g.lineTo(i % 2 ? w - 14 : w - 2, (i / 10) * h); g.closePath(); g.clip();
+  g.fillStyle = "#EBDDB4"; g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 1400; i++) { g.fillStyle = `rgba(${120 + (i * 7) % 60},${95 + (i * 13) % 40},60,${0.03 + ((i * 17) % 9) / 160})`; g.fillRect((i * 97) % w, (i * 57) % h, 1 + (i % 7) * 7, 1); }
+  g.fillStyle = "rgba(255,255,255,.18)"; g.fillRect(0, 0, w, 10); g.fillStyle = "rgba(0,0,0,.07)"; g.fillRect(0, h - 10, w, 10);
+  g.textBaseline = "middle"; g.fillStyle = "#1A2638"; g.textAlign = "center";
+  g.font = "800 92px Archivo"; const l1 = "Conforme o protocolo cadastrado", sc1 = Math.min(1, (w - 150) / g.measureText(l1).width);
+  g.save(); g.translate(w / 2, 118); g.scale(sc1, 1); g.fillText(l1, 0, 0); g.restore();
+  g.fillStyle = "rgba(26,38,56,.5)"; g.fillRect(w / 2 - 210, 190, 420, 4);
+  // linha 2: "neste exemplo:  D0 · D7 · D9 · D11"; cada dia acende (pílula dourada) quando a voz o diz
+  const fN = "800 72px Archivo", fD = "800 118px Archivo", rot = "neste exemplo:", gap = 34, pad = 22;
+  g.font = fN; const wN = g.measureText(rot).width; g.font = fD;
+  const wd = FP_DIAS.map((d) => g.measureText(d).width), wP = g.measureText("·").width, tot = wN + gap + wd.reduce((a, b) => a + b, 0) + 3 * (wP + 2 * gap * 0.8) + 8 * pad;
+  const sc2 = Math.min(1, (w - 150) / tot); g.save(); g.translate(w / 2, 312); g.scale(sc2, 1); let x = -tot / 2;
+  g.textAlign = "left"; g.fillStyle = "#1A2638"; g.font = fN; g.fillText(rot, x, 6); x += wN + gap;
+  g.font = fD;
+  FP_DIAS.forEach((d, i) => {
+    const dt = t - FITA_PROT.dias[i], lit = dt >= 0, pu = lit ? Math.exp(-dt * 5) : 0, bw = wd[i] + 2 * pad, bh = 150;
+    if (lit) { const k = 1 + 0.10 * pu; g.save(); g.translate(x + bw / 2, 0); g.scale(k, k); g.shadowColor = "rgba(233,168,42,.75)"; g.shadowBlur = 20 * (0.4 + pu); g.fillStyle = "#E0A63C"; g.beginPath(); g.roundRect(-bw / 2, -bh / 2, bw, bh, 34); g.fill(); g.shadowBlur = 0; g.lineWidth = 5; g.strokeStyle = "rgba(26,38,56,.55)"; g.stroke(); g.fillStyle = "#1A2638"; g.textAlign = "center"; g.fillText(d, 0, 8); g.restore(); }
+    else { g.fillStyle = "rgba(26,38,56,.30)"; g.textAlign = "center"; g.fillText(d, x + bw / 2, 8); g.strokeStyle = "rgba(26,38,56,.22)"; g.lineWidth = 4; g.setLineDash([10, 9]); g.beginPath(); g.roundRect(x, -bh / 2, bw, bh, 34); g.stroke(); g.setLineDash([]); }
+    x += bw; if (i < 3) { g.fillStyle = "rgba(26,38,56,.55)"; g.textAlign = "center"; g.fillText("·", x + gap * 0.8 + wP / 2, 6); x += wP + 2 * gap * 0.8; }
+  });
+  g.restore(); g.restore();
+  fpTex.needsUpdate = true;
+}
+const fpTex = new THREE.CanvasTexture(fpCv); fpTex.colorSpace = THREE.SRGBColorSpace; fpTex.anisotropy = aniso;
+const fpGeo = new THREE.PlaneGeometry(FP_LARG, FP_ALT, 60, 4); fpGeo.userData.base = fpGeo.attributes.position.array.slice();
+const fpMat = new THREE.MeshStandardMaterial({ map: fpTex, transparent: true, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.9, emissive: 0xffffff, emissiveMap: fpTex, emissiveIntensity: 0.45 });
+const fpMesh = new THREE.Mesh(fpGeo, fpMat), fpGrp = new THREE.Group(); fpGrp.add(fpMesh); cam.add(fpGrp); fpGrp.visible = false;
+const fpF = { geo: fpGeo, larg: FP_LARG, alt: FP_ALT };
+const fpEnt = (t) => eb(FITA_PROT.t0, FITA_PROT.t0 + 0.6, t), fpSai = (t) => ei(FITA_PROT.t1 - 0.5, FITA_PROT.t1, t);
+function atualizaFitaProt(t) {
+  const vis = t > FITA_PROT.t0 - 0.02 && t < FITA_PROT.t1; fpGrp.visible = vis; if (!vis) return;
+  fpPinta(t); const e = fpEnt(t), sai = fpSai(t); const [x, y, z] = naTela(W / 2, FITA_PROT.py);
+  fpGrp.position.set(x - (1 - e) * 9 + sai * 9, y, z); fpGrp.rotation.z = -0.018 - 0.02 * (1 - e) + 0.02 * sai; fpGrp.rotation.y = 0.06; fpGrp.rotation.x = 0.03;
+  dobra(fpF, 0, 0.9, 0.7, 0.5 * (1 - e)); fpMat.opacity = 1;
+}
+
 // ---------- seek ----------
 let ultimoT = null;
 window.seek = (t) => {
@@ -267,7 +309,7 @@ window.seek = (t) => {
   rTex.offset.set(-0.02, 0.01); reflexo.material.opacity = 0.025 + 0.10 * sm(T_VIRA, T_VIRA + 1.5, t);
   const salto = ultimoT === null || Math.abs(t - ultimoT) > 0.4; ultimoT = t;
   key.shadow.needsUpdate = salto || selo || pap.anim || (t >= T_VIRA - 0.05);
-  atualizaFitas(t);
+  atualizaFitas(t); atualizaFitaProt(t);
   renderer.render(scene, cam);
   NAV_Z = pap.ativo && t > PAPEL[0] + 0.6 && t < PAPEL[1] ? 0.115 : 0;
   const naFrente = t < T_FIM_FRONTAL; desenhaNav(naFrente ? t : 1e9); NAV_Z = 0;
@@ -276,7 +318,7 @@ window.seek = (t) => {
 // assinatura do quadro: quadros com a mesma assinatura saem idênticos (o render copia em vez de redesenhar)
 const rd = (v, n = 2) => Math.round(v * 10 ** n) / 10 ** n;
 window.sig = (t) => {
-  if (t < T_INI + 0.4 || t >= T_VIRA - 0.01 || t < T_MENU_FIM + 0.45 || SELOS.some((o) => t >= o.t0 - 0.01 && t < o.t1 + 0.1) || (t >= PAPEL[0] - 0.02 && t < PAPEL[0] + 1.25) || (t > PAPEL[1] - 0.05 && t <= PAPEL[2] + 0.1)) return "u" + t;
+  if (t < T_INI + 0.4 || t >= T_VIRA - 0.01 || t < T_MENU_FIM + 0.45 || SELOS.some((o) => t >= o.t0 - 0.01 && t < o.t1 + 0.1) || (t >= PAPEL[0] - 0.02 && t < PAPEL[0] + 1.25) || (t > PAPEL[1] - 0.05 && t <= PAPEL[2] + 0.1) || (t > FITA_PROT.t0 - 0.05 && t < FITA_PROT.t0 + 0.7) || (t > FITA_PROT.t1 - 0.55 && t < FITA_PROT.t1 + 0.05) || (FITA_PROT.dias.some((d) => t >= d && t < d + 0.6))) return "u" + t;
   const k = paginaEm(t); if (t < PLANO_PG[k][0] + 0.16) return "u" + t;
   for (const tp of TAPS) if (t - tp[0] > -0.01 && t - tp[0] < 0.3) return "u" + t;
   const f = folhaEm(t), v = visaoEm(t); if ((f && f.e < 1) || (v && v.a < 1)) return "u" + t;
@@ -285,6 +327,6 @@ window.sig = (t) => {
   let lk = -1; for (let i = 0; i < LEG.length; i++) if (t >= LEG[i][0] - 0.05 && t < LEG[i][1] + 0.3) lk = i;
   let lo = 0; if (lk >= 0) { const [x0, x1] = LEG[lk]; lo = rd(Math.min(clamp01((t - (x0 - 0.05)) / 0.25), 1 - clamp01((t - x1) / 0.3)), 2); }
   const topo = proj(195, -27)[1];
-  return JSON.stringify([kfCam(t).map((x) => rd(x, 3)), rd(sy(t), 2), k, f && [f.id, rd(f.scroll, 2)], v && v.id, ss(a.s), rd(a.alfa, 2), ss(b.s), lk, lo, rd(topo, 0) < 200 ? rd(topo, 0) : 0, NAV_FIM < t + 0.4 ? t : 0, T_ETQ_FIM < t + 0.4 ? t : 0, ETQ.filter((e) => t >= e[0]).length]);
+  return JSON.stringify([kfCam(t).map((x) => rd(x, 3)), rd(sy(t), 2), k, f && [f.id, rd(f.scroll, 2)], v && v.id, ss(a.s), rd(a.alfa, 2), ss(b.s), lk, lo, rd(topo, 0) < 200 ? rd(topo, 0) : 0, NAV_FIM < t + 0.4 ? t : 0, T_ETQ_FIM < t + 0.4 ? t : 0, ETQ.filter((e) => t >= e[0]).length, t > FITA_PROT.t0 && t < FITA_PROT.t1 ? FITA_PROT.dias.filter((d) => t >= d).length : -1]);
 };
 window.__ready = true; window.seek(T_INI);
