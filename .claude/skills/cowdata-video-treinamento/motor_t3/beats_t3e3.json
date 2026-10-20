@@ -1,0 +1,9 @@
+{
+ "protocolos": 6.12, "andamento": 7.17, "iatf": 8.75, "sanitarios": 9.73, "produtivos": 10.55, "toqueProt": 11.65,
+ "cadaDia": 13.35, "cadastrado": 14.15, "cartao": 14.95, "data": 15.78, "faltam": 17.25, "hoje": 18.8,
+ "confira": 20.73, "diaAplicado": 21.45, "atrasada": 23.9, "dataReal": 25.05, "animais": 26.3, "desmarque": 27.03,
+ "oQueAplicar": 29.77, "medicamento": 31.95, "dose": 33.0, "via": 33.75, "protCadastrado": 34.7,
+ "frasco": 36.9, "lote": 39.64, "maisAntigo": 41.25, "confirmar": 43.1, "sanidade": 45.4, "estoque": 46.95, "descontado": 47.67,
+ "estoqueBaixo": 49.6, "zerar": 50.83, "avisa": 52.0, "inseminacao": 54.0, "lancarInsem": 57.3, "insem2": 58.17,
+ "pronto": 59.87, "proximo": 63.29, "ciclos": 64.34, "fimVoz": 65.69
+}

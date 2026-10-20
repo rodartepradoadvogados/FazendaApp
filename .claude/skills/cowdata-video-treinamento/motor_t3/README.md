@@ -45,3 +45,13 @@ node aud/exportar_roteiro_audio_t3e2.mjs   # → aud/roteiro_t3e2.json; depois t
 ```
 Precisa de `pdftoppm`/`pdftotext` (poppler). `shots_ep/`, `cena/tex*` e os quadros são regenerados por episódio (não rode a captura do Ep. 1 e a do Ep. 2 na mesma pasta ao mesmo tempo).
 Armadilhas: (1) o `.next` de produção chama a API em `localhost:8000`: a captura redireciona por `context.route` para a porta do stub; (2) o nome do lançamento segue `gerar_nome_lancamento` (molde em caixa alta + datas); com o molde "IATF 3 MANEJOS" o título cabe no cabeçalho do PDF — nomes mais longos (ex. com o lote) sobrepõem o "Gerado por" no PDF real; (3) D11 só aparece como etapa atual de vaca no dia da inseminação — com D0 em 10/10 e hoje 17/10 a lista mostra D7 e D9.
+
+## Episódio 3 — Baixa e aplicação do protocolo (Menu › Protocolos)
+Arquivos `*_t3e3`: `cena/index_t3e3.html` (abertura "T3 · MENU / EP. 3 / BAIXA E APLICAÇÃO"), `cena/episodio_roteiro_t3e3.js` + `cena/episodio_corpo_t3e3.js` (`python3 cena/montar_episodio_t3e3.py` → `cena/episodio_t3e3.html`), `captura/capturar_t3e3_ep.mjs` (+ `captura/t3e3.mjs`, `EP=t3e3` no stub), `beats_t3e3.json`, `copiar_telas_t3e3.sh`, `render_ep3.sh`, `aud/exportar_roteiro_audio_t3e3.mjs`.
+```bash
+cd ../../../../frontend && npx next build && npx next start -p 3300 &     # precisa do build com a baixa nova (PR #943)
+cd captura && (EP=t3e3 STUB_PORT=8300 node stub-api.mjs &) ; STUB=8300 APP=3300 node capturar_t3e3_ep.mjs   # shots_ep/ + mapa.json
+cd .. && ./copiar_telas_t3e3.sh && python3 cena/montar_episodio_t3e3.py && ./render_ep3.sh ../q          # TOTAL=2109 quadros (70,3 s)
+node aud/exportar_roteiro_audio_t3e3.mjs   # → aud/roteiro_t3e3.json; depois trilha_app.py + norm.sh como no Ep. 1
+```
+Armadilhas: (1) "De qual lote?" só existe no protocolo sanitário (o backend só devolve `lotes` para `origem == "sanitario"`): o IATF mostra só o frasco, por isso o stub tem um sanitário fictício (id 401); (2) selects nativos não abrem no headless: lista aberta = `<select size=N>`; (3) o texto do aviso de estoque vem do POST `/baixa` do stub, no formato de `rules/estoque_baixa.py`; (4) `__reset` do stub reinicia estoque e baixas (rode antes de cada captura).
