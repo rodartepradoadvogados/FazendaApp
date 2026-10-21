@@ -1,0 +1,10 @@
+{
+ "reproducao": 5.25, "ciclos21": 6.57, "eficiencia": 8.40, "dataRef": 12.35, "inicio": 14.03, "fim": 14.64, "quantos": 15.69,
+ "categoria": 17.10, "todas": 18.05, "vacas": 18.69, "novilhas": 19.28, "tresTaxas": 21.71, "servico": 22.63, "prenhez": 23.40,
+ "concepcao": 24.05, "verde": 25.20, "meta": 26.45, "ambar": 27.85, "taxaServico": 30.50, "aptas": 32.25, "inseminadas": 32.97,
+ "taxaPrenhez": 34.85, "aptasPrenhez": 36.45, "prenhes": 38.00, "concepcaoDef": 39.45, "inseminacoes": 40.40, "comResultado": 41.34,
+ "deramPrenhez": 42.00, "cartao": 44.10, "barras": 45.20, "barraServico": 45.82, "barraPrenhez": 46.75, "maisRecente": 48.55,
+ "emApuracao": 49.66, "diagnosticos": 50.80, "parcialFrase": 52.90, "parcial": 53.45, "toqueCiclo": 54.98, "gAptas": 57.40,
+ "gInseminadas": 57.99, "gAptasPrenhez": 58.92, "gPrenhes": 60.30, "excel": 62.35, "pdf": 62.96, "pronto": 64.56,
+ "fimModulo": 69.35, "obrigado": 70.98, "fimVoz": 72.40
+}
