@@ -6048,6 +6048,10 @@ export async function criarDieta(dados: {
   lote: number; responsavel?: string; data_abertura: string; data_prevista_encerramento?: string; observacao?: string;
   base_quantidade?: string; leite_bezerros_kg_dia?: number | null;
   itens: { alimento: string; quantidade: number; unidade: string; base?: string; ms_pct?: number | null; base_quantidade?: string | null }[]; encerrar_anterior?: boolean;
+  // Tratos por dia DESTA dieta (1 a 4, % somando 100) e entre quais tratos a
+  // sobra é lida (nº do trato depois do qual se lê; null = como antes).
+  // Omitidos = o backend herda da dieta ativa anterior do lote.
+  tratos_pct?: number[]; sobra_posicao_leitura?: number | null;
 }) {
   const res = await authFetch(`${API}/alimentacao/dietas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -6065,20 +6069,29 @@ export type ContextoDieta = {
     // "por cabeça" num lote sem nenhum animal ativo (não há efetivo para
     // multiplicar e chegar no total do lote) — ver `_totais_item` no backend.
     itens: { alimento: string; unidade: string; total_dia: number | null; por_cabeca: number | null }[];
-  } | null;
+  } & TratosDaDieta | null;
+};
+// Tratos por dia de uma dieta (cadastro por dieta — ver lib/tratos.ts). Dieta
+// sem cadastro chega como 2 tratos 50/50 e `tratos_configurados: false`.
+export type TratosDaDieta = {
+  num_tratos: number; tratos_pct: number[]; tratos_configurados: boolean;
+  sobra_posicao_leitura: number | null;
 };
 export async function fetchContextoDieta(lote: number) {
   const res = await authFetch(`${API}/alimentacao/dietas/contexto/${lote}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Contexto dieta error: ${res.status}`);
   return res.json() as Promise<ContextoDieta>;
 }
-export type ApresentacaoDieta = {
+export type ApresentacaoDieta = TratosDaDieta & {
   lote: number; nome: string | null; qtd_animais: number; data_abertura: string; data_prevista_encerramento: string | null;
-  num_tratos: number; vagao_kg_dia: number; vagao_kg_trato: number;
-  // `total_dia`/`total_trato` só ficam `null` no caso extremo de um item com
+  // `vagao_kg_trato`/`total_trato` (número único por trato) só vêm quando
+  // todos os tratos têm o mesmo % — senão `null`; use `tratos`/`por_trato`.
+  vagao_kg_dia: number; vagao_kg_trato: number | null;
+  tratos: { trato: number; pct: number; vagao_kg: number | null }[];
+  // `total_dia`/`por_trato` só ficam `null` no caso extremo de um item com
   // override "por cabeça" num lote sem nenhum animal ativo — ver
   // `_totais_item` no backend.
-  itens: { alimento: string; unidade: string; total_dia: number | null; por_cabeca: number | null; total_trato: number | null }[];
+  itens: { alimento: string; unidade: string; total_dia: number | null; por_cabeca: number | null; total_trato: number | null; por_trato: (number | null)[] }[];
 };
 export async function fetchApresentacaoDieta(id: number) {
   const res = await authFetch(`${API}/alimentacao/dietas/${id}/apresentacao`, { cache: "no-store" });
@@ -10142,9 +10155,25 @@ export type ConsumoDoDia = {
   lote: number; data: string; num_animais: number | null;
   itens: { alimento: string; quantidade: number; unidade: string; kg_equivalente: number | null }[];
   kg_fornecido_total: number;
+  // Fornecido do dia por trato (só quando a fazenda lança por trato) e o que
+  // foi lançado pelo dia inteiro, sem trato.
+  por_trato?: { trato: number; kg: number }[];
+  kg_sem_trato?: number;
+  // Sobra do ciclo que FECHA neste dia; o % é sobre o fornecido NA JANELA
+  // da sobra (ciclo de 24h), descrita em `sobra_janela`.
   sobra_kg: number | null;
   sobra_pct: number | null;
   dentro_da_faixa: boolean | null;              // null = sem sobra lançada ainda
+  sobra_janela?: { descricao: string; itens: { data: string; trato: number }[]; kg_fornecido: number; posicao_leitura: number | null; data_leitura: string } | null;
+};
+// Resumo pré-montado do período da sobra (GET /alimentacao/sobra/janela) — o
+// que a tela mostra para Confirmar / Selecionar outro período / Cancelar.
+export type JanelaSobra = {
+  lote: number; num_tratos: number; tratos_pct: number[]; tratos_configurados: boolean;
+  posicao_leitura: number | null; posicao_da_dieta: number | null;
+  data_leitura: string; data_fechamento: string;
+  janela: { data: string; trato: number }[]; descricao: string;
+  kg_fornecido_janela: number; kg_sobra_existente?: number | null;
 };
 export type ConsumoItemIn = {
   alimento: string; alimento_id?: number | null; quantidade: number; unidade: string;
@@ -10157,7 +10186,12 @@ export type RespostaConsumo = {
   avisos: string[];
 };
 
-export async function fetchDietaDoLote(lote: number): Promise<{ itens: ItemDietaDoLote[]; base_quantidade: string; kg_total_dieta: number } | null> {
+export type DietaDoLote = TratosDaDieta & {
+  itens: ItemDietaDoLote[]; base_quantidade: string; kg_total_dieta: number;
+  // Parâmetro da fazenda "lançar consumo por trato" (Parâmetros > Alimentação).
+  consumo_por_trato: boolean;
+};
+export async function fetchDietaDoLote(lote: number): Promise<DietaDoLote | null> {
   const res = await authFetch(`${API}/alimentacao/consumo/dieta-do-lote?lote=${lote}`, { cache: "no-store" });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Dieta do lote error: ${res.status}`);
@@ -10171,6 +10205,7 @@ export async function fetchConsumoDoDia(lote: number, data: string): Promise<Con
 export async function lancarConsumo(dados: {
   lote: number; data: string; num_animais?: number | null;
   origem: "animais" | "kg" | "vagao"; kg_vagao?: number | null; itens: ConsumoItemIn[];
+  trato?: number | null;   // obrigatório quando a fazenda lança o consumo por trato
 }): Promise<RespostaConsumo> {
   const res = await authFetch(`${API}/alimentacao/consumo`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -10183,9 +10218,20 @@ export async function excluirConsumo(id: number) {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || "Erro ao excluir consumo"); }
   return res.json();
 }
-// Relançar a sobra no mesmo dia SUBSTITUI (é medição do dia), ao contrário do
-// consumo, que soma (é o vagão passando várias vezes).
-export async function lancarSobra(dados: { lote: number; data: string; kg_sobra: number }) {
+// Relançar a sobra para o mesmo ciclo SUBSTITUI (é uma medição), ao contrário
+// do consumo, que soma (é o vagão passando várias vezes). `data` = data da
+// LEITURA (ou o dia do fornecimento, no comportamento antigo / `dia_civil`);
+// `posicao_leitura` = "Selecionar outro período" (null = a da dieta).
+export type SobraIn = { lote: number; data: string; kg_sobra: number; posicao_leitura?: number | null; dia_civil?: boolean };
+export async function fetchJanelaSobra(p: { lote: number; data: string; posicao_leitura?: number | null; dia_civil?: boolean }): Promise<JanelaSobra> {
+  const qs = new URLSearchParams({ lote: String(p.lote), data: p.data });
+  if (p.posicao_leitura != null) qs.set("posicao_leitura", String(p.posicao_leitura));
+  if (p.dia_civil) qs.set("dia_civil", "true");
+  const res = await authFetch(`${API}/alimentacao/sobra/janela?${qs.toString()}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(mensagemErroApi(d.detail) || `Janela da sobra error: ${res.status}`); }
+  return res.json();
+}
+export async function lancarSobra(dados: SobraIn): Promise<JanelaSobra & { ok: boolean; kg_sobra: number; substituiu: boolean; sobra_pct: number | null; dentro_da_faixa: boolean | null }> {
   const res = await authFetch(`${API}/alimentacao/sobra`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });

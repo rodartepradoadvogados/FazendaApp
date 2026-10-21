@@ -128,6 +128,16 @@ class DietaLancamento(SQLModel, table=True):
     # (ver fazenda/api/routers/formulacao_dietas.py). None para lançamentos
     # feitos direto em Alimentação, como sempre.
     dieta_simulacao_id: Optional[int] = Field(default=None, foreign_key="dieta_simulacao.id", index=True)
+    # Tratos por dia DESTA dieta (decisão do dono, 2026-10-21): lista JSON com
+    # o % de cada trato (1 a 4, somando 100), ex. "[40, 30, 30]". O % vale para
+    # a dieta inteira. NULL = dieta lançada antes do cadastro existir, e vale
+    # como 2 tratos 50/50 — a conta fixa de antes (ver `rules/tratos.py`).
+    tratos_pct: Optional[str] = None
+    # Entre quais tratos a sobra do cocho é lida: o nº do trato DEPOIS do qual
+    # a leitura acontece (1..N; N = entre o último e o Trato 1 do dia seguinte).
+    # Define o ciclo de 24h a que cada sobra se refere. NULL = comportamento
+    # antigo (sobra comparada com o fornecido do próprio dia informado).
+    sobra_posicao_leitura: Optional[int] = None
 
 
 class DietaItemProgramado(SQLModel, table=True):
@@ -336,6 +346,11 @@ class ConsumoAlimento(SQLModel, table=True):
     # olhando pro que aconteceu quando o lançamento foi feito, não pro que o
     # lote é hoje.
     baixou_estoque: bool = True
+    # Trato do dia a que este fornecimento se refere (1..N da dieta ativa) —
+    # só preenchido quando a fazenda liga o parâmetro "lançar consumo por
+    # trato". NULL = lançamento do dia inteiro (o de sempre): na base da sobra
+    # ele entra rateado pelo % dos tratos (ver `rules/tratos.fornecido_na_janela`).
+    trato: Optional[int] = None
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
@@ -352,6 +367,13 @@ class ConsumoSobra(SQLModel, table=True):
     somar: sobra é uma medição única do dia, não um acúmulo de eventos. A
     unicidade por (fazenda, lote, data) trava isso no banco, para não depender
     de a aplicação lembrar.
+
+    Ciclo de 24h (tratos por dieta, 2026-10-21): a sobra se refere a uma
+    JANELA de tratos definida pela posição da leitura cadastrada na dieta
+    (ver `rules/tratos.py`). `data` passa a ser a data de FECHAMENTO do ciclo
+    (dia do último trato da janela) — no comportamento antigo (sem posição)
+    é a própria data informada, então os registros antigos não mudam de
+    sentido e a unicidade continua valendo "uma sobra por lote por ciclo".
     """
 
     __tablename__ = "consumo_sobra"
@@ -362,6 +384,13 @@ class ConsumoSobra(SQLModel, table=True):
     data: date = Field(index=True)
     lote: int = Field(index=True)
     kg_sobra: float = 0.0
+    # Retrato do ciclo confirmado no lançamento — guardado no registro (e não
+    # relido da dieta) porque a dieta pode mudar depois e a sobra continua se
+    # referindo ao período que o usuário confirmou. Os três NULL = registro
+    # antigo / comportamento de sempre (dia civil `data`, 2 tratos 50/50).
+    data_leitura: Optional[date] = None
+    posicao_leitura: Optional[int] = None
+    tratos_pct: Optional[str] = None
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)

@@ -35,8 +35,9 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { Modal } from "@/components/Modal";
 import { SecaoRecolhivel } from "@/components/ui";
 import { listarSimulacoes, obterSimulacao, type SimulacaoResumo } from "@/lib/dietas";
+import { dividirPorTrato } from "@/lib/tratos";
+import { EditorTratosDieta, erroTratosForm, tratosDoForm, tratosFormPadrao, type TratosForm } from "./EditorTratosDieta";
 
-const NUM_TRATOS = 2;
 const UNIDADES = ["kg", "g", "L", "ml", "unidade", "dose", "saca 30kg", "saca 60kg"];
 
 type LoteRow = { codigo: string; nome?: string | null; rotulo?: string; qtd_animais?: number };
@@ -44,7 +45,9 @@ type LoteRow = { codigo: string; nome?: string | null; rotulo?: string; qtd_anim
 // = herda a base do lote (`LoteForm.baseQuantidade`) — mesma semântica do
 // backend (`DietaItemProgramado.base_quantidade`, ver `_base_efetiva`).
 type ItemForm = { alimento: string; quantidade: string; unidade: string; base: string; ms_pct: number | null; baseQuantidade?: "total" | "animal" | null };
-type LoteForm = { responsavel: string; dataAbertura: string; dataPrevista: string; baseQuantidade: string; leiteBezerros: string; leitePorBezerroLDia: string; itens: ItemForm[] };
+// `tratos`: tratos por dia DESTA dieta (nº, % de cada um e entre quais tratos a
+// sobra é lida) — cadastro por dieta desde 21/10/2026 (antes era fixo em 2).
+type LoteForm = { responsavel: string; dataAbertura: string; dataPrevista: string; baseQuantidade: string; leiteBezerros: string; leitePorBezerroLDia: string; itens: ItemForm[]; tratos: TratosForm };
 
 const hoje = () => new Date().toISOString().slice(0, 10);
 const itemVazio = (): ItemForm => ({ alimento: "", quantidade: "", unidade: "kg", base: "MN", ms_pct: null, baseQuantidade: null });
@@ -69,7 +72,7 @@ function totaisItem(qFisica: number, baseEfetiva: "total" | "animal", nAnimais: 
   if (baseEfetiva === "animal") return [nAnimais ? qFisica * nAnimais : null, qFisica];
   return [qFisica, nAnimais ? qFisica / nAnimais : null];
 }
-const formVazio = (): LoteForm => ({ responsavel: "Alexandre Scarpa (consultor)", dataAbertura: hoje(), dataPrevista: "", baseQuantidade: "total", leiteBezerros: "", leitePorBezerroLDia: "", itens: [itemVazio()] });
+const formVazio = (): LoteForm => ({ responsavel: "Alexandre Scarpa (consultor)", dataAbertura: hoje(), dataPrevista: "", baseQuantidade: "total", leiteBezerros: "", leitePorBezerroLDia: "", itens: [itemVazio()], tratos: tratosFormPadrao() });
 
 function num(v?: number | null, casas = 2): string {
   if (v == null) return "—";
@@ -1272,6 +1275,8 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
         const f = forms[ln]!;
         const itensValidos = f.itens.filter((it) => it.alimento && Number(it.quantidade) > 0);
         if (!f.dataAbertura) { falhas.push(`Lote ${ln}: informe a data de início.`); continue; }
+        const erroTratos = erroTratosForm(f.tratos ?? tratosFormPadrao());
+        if (erroTratos) { falhas.push(`Lote ${ln}: ${erroTratos}`); continue; }
         // Se já há dieta ativa, pergunta se deseja encerrá-la na data de início.
         let encerrar = false;
         if (contextos[ln]?.ultima_dieta) {
@@ -1285,6 +1290,7 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
             data_prevista_encerramento: f.dataPrevista || undefined,
             itens: itensValidos.map((it) => ({ alimento: it.alimento, quantidade: Number(it.quantidade), unidade: it.unidade, base: it.base, ms_pct: it.ms_pct, base_quantidade: it.baseQuantidade || null })),
             encerrar_anterior: encerrar,
+            ...tratosDoForm(f.tratos ?? tratosFormPadrao()),
           });
           salvos.push(ln);
         } catch (e: any) {
@@ -1310,7 +1316,8 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
       <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.8rem" }}>
         Abra cada lote para ver o rebanho, a última dieta e o último controle leiteiro, e lançar a nova dieta.
         A <strong>quantidade</strong> de cada produto é o total do lote por dia — o sistema calcula sozinho por cabeça,
-        por trato ({NUM_TRATOS} tratos/dia) e o total de kg no vagão. Ao final, um único botão salva todos os lotes.
+        por trato (pelo nº de tratos e o % de cada um, cadastrados em cada dieta) e o total de kg no vagão. Ao final, um
+        único botão salva todos os lotes.
       </p>
 
       <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.8rem", cursor: "pointer" }}>
@@ -1333,6 +1340,7 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
             return s + (totalLote ?? 0);
           }, 0) : 0;
           const preenchido = lotesPreenchidos.includes(ln);
+          const pctsTratos = tratosDoForm(f?.tratos ?? tratosFormPadrao()).tratos_pct;
           return (
             <div key={l.codigo} style={{ border: "1px solid " + (preenchido ? "var(--dourado)" : "var(--border)"), borderRadius: 10, overflow: "hidden" }}>
               <button onClick={() => toggle(ln)}
@@ -1417,6 +1425,9 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
                       </div>
                     </div>
 
+                    <EditorTratosDieta variante="site" estiloInput={{ ...input, width: "5rem" }}
+                      valor={f?.tratos ?? tratosFormPadrao()} onChange={(v) => patchForm(ln, { tratos: v })} />
+
                     <div className="space-y-2 mt-3">
                       {(f?.itens || []).map((it, idx) => {
                         const qLancado = Number(it.quantidade) || 0;
@@ -1426,7 +1437,7 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
                         // pra o preview ao vivo nunca discordar do que é salvo.
                         const baseEfetiva = baseEfetivaItem(it, f?.baseQuantidade || "total");
                         const [totalLoteDia, porCab] = totaisItem(qFisica, baseEfetiva, nAnimais);
-                        const porTrato = totalLoteDia != null ? totalLoteDia / NUM_TRATOS : null;
+                        const porTrato = dividirPorTrato(totalLoteDia, pctsTratos);
                         const msConhecido = it.alimento in msPorAlimento;
                         const semMsCadastrado = it.base === "MS" && msConhecido && !msPorAlimento[it.alimento];
                         return (
@@ -1468,7 +1479,9 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
                             {/* Cálculo automático enquanto edita — já convertido para o físico
                                 (matéria natural) quando lançado em base MS. */}
                             <div className="flex items-center gap-4 mt-2" style={{ flexWrap: "wrap", fontSize: "0.76rem" }}>
-                              <span style={{ color: "var(--green-light)", fontWeight: 700 }}>{porTrato != null ? `${num(porTrato)} ${it.unidade}/trato` : `— ${it.unidade}/trato`}</span>
+                              <span style={{ color: "var(--green-light)", fontWeight: 700 }}>
+                                {porTrato.map((v, i) => `T${i + 1}: ${v != null ? num(v) : "—"}`).join(" · ")} {it.unidade}
+                              </span>
                               <span style={{ color: "var(--amber)", fontWeight: 600 }}>{totalLoteDia != null ? `${num(totalLoteDia)} ${it.unidade}/dia` : `— ${it.unidade}/dia`}</span>
                               <span style={{ color: "var(--text-muted)" }}>{porCab != null ? `${num(porCab, 3)} ${it.unidade}/cab` : "—/cab"}</span>
                               {it.base === "MS" && it.ms_pct && qFisica !== qLancado && (
@@ -1492,7 +1505,7 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
                       <button onClick={() => addItem(ln)} className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.78rem" }}><Plus size={14} /> Acrescentar produto</button>
                       <span style={{ fontSize: "0.8rem", fontWeight: 700 }}>
                         Vagão: <span style={{ color: "var(--dourado-light)" }}>{num(vagaoKg)} kg/dia</span>
-                        <span style={{ color: "var(--text-muted)", fontWeight: 500 }}> · {num(vagaoKg / NUM_TRATOS)} kg/trato</span>
+                        <span style={{ color: "var(--text-muted)", fontWeight: 500 }}> · {dividirPorTrato(vagaoKg, pctsTratos).map((v, i) => `Trato ${i + 1}: ${num(v)} kg`).join(" · ")}</span>
                       </span>
                     </div>
                   </div>
@@ -1591,6 +1604,7 @@ function ContextoLoteBox({ ctx }: { ctx: ContextoDieta }) {
               <Metrica titulo="Quantidades informadas" valor={ud.base_quantidade ? (ROTULO_BASE_QUANTIDADE[ud.base_quantidade] || ud.base_quantidade) : "—"} />
               <Metrica titulo="Leite por bezerro" valor={ud.leite_por_bezerro_kg_dia != null ? `${num(ud.leite_por_bezerro_kg_dia, 2)} kg/dia` : "—"} />
               <Metrica titulo="Leite para bezerros" valor={ud.leite_bezerros_kg_dia != null ? `${num(ud.leite_bezerros_kg_dia, 1)} kg/dia` : "—"} />
+              <Metrica titulo="Tratos por dia" valor={ud.tratos_pct ? `${ud.tratos_pct.length} (${ud.tratos_pct.map((p) => `${num(p)}%`).join(" / ")})${ud.tratos_configurados ? "" : " — sem cadastro"}` : "—"} />
             </div>
             {ud.itens.length > 0 ? (
               <div className="flex flex-wrap gap-2">
@@ -1784,14 +1798,15 @@ function ApresentacaoBox({ a }: { a: ApresentacaoDieta }) {
   return (
     <div>
       <div style={{ fontSize: "0.8rem", marginBottom: "0.5rem" }}>
-        <strong>Lote {a.lote}{a.nome ? ` · ${a.nome}` : ""}</strong> — {a.qtd_animais} {a.qtd_animais === 1 ? "animal" : "animais"} · {a.num_tratos} tratos/dia
+        <strong>Lote {a.lote}{a.nome ? ` · ${a.nome}` : ""}</strong> — {a.qtd_animais} {a.qtd_animais === 1 ? "animal" : "animais"} · {a.num_tratos} {a.num_tratos === 1 ? "trato" : "tratos"}/dia
+        {" "}({a.tratos.map((t) => `Trato ${t.trato}: ${num(t.pct)}%`).join(" · ")}{!a.tratos_configurados ? " — dieta sem cadastro de tratos, vale 50/50" : ""})
       </div>
       <table className="fazenda-table" style={{ margin: 0 }}>
         <thead><tr>
           <th>Produto</th>
           <th style={{ textAlign: "right" }}>Por cabeça/dia</th>
           <th style={{ textAlign: "right" }}>Total/dia</th>
-          <th style={{ textAlign: "right" }}>Total/trato</th>
+          {a.tratos.map((t) => <th key={t.trato} style={{ textAlign: "right" }}>Trato {t.trato}</th>)}
         </tr></thead>
         <tbody>
           {a.itens.map((it, i) => (
@@ -1799,15 +1814,17 @@ function ApresentacaoBox({ a }: { a: ApresentacaoDieta }) {
               <td style={{ fontWeight: 700 }}>{it.alimento}</td>
               <td style={{ textAlign: "right" }}>{it.por_cabeca != null ? `${num(it.por_cabeca, 3)} ${it.unidade}` : "—"}</td>
               <td style={{ textAlign: "right", color: "var(--amber)", fontWeight: 600 }}>{num(it.total_dia)} {it.unidade}</td>
-              <td style={{ textAlign: "right", color: "var(--green-light)", fontWeight: 700 }}>{num(it.total_trato)} {it.unidade}</td>
+              {(it.por_trato ?? []).map((v, j) => (
+                <td key={j} style={{ textAlign: "right", color: "var(--green-light)", fontWeight: 700 }}>{num(v)} {it.unidade}</td>
+              ))}
             </tr>
           ))}
-          {!a.itens.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Sem produtos.</td></tr>}
+          {!a.itens.length && <tr><td colSpan={3 + a.tratos.length} style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Sem produtos.</td></tr>}
         </tbody>
       </table>
       <div style={{ marginTop: "0.6rem", fontSize: "0.85rem", fontWeight: 700 }}>
         Somatório no vagão: <span style={{ color: "var(--dourado-light)" }}>{num(a.vagao_kg_dia)} kg/dia</span>
-        <span style={{ color: "var(--text-muted)", fontWeight: 500 }}> · {num(a.vagao_kg_trato)} kg por trato</span>
+        <span style={{ color: "var(--text-muted)", fontWeight: 500 }}> · {a.tratos.map((t) => `Trato ${t.trato}: ${num(t.vagao_kg)} kg`).join(" · ")}</span>
       </div>
     </div>
   );

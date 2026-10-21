@@ -1,10 +1,11 @@
 "use client";
-// Sub-tela ALIMENTAÇÃO do app de campo — dois cartões:
-// 1) Consumo diário: o que foi fornecido a um lote, alternando entre digitar
-//    o nº de animais (o backend já devolve a quantidade por cabeça — só
-//    multiplica) e digitar os quilos direto.
-// 2) Sobra do cocho: um número só, em quilos totais do dia (o rateio por
-//    alimento é calculado no backend, nunca digitado aqui).
+// Sub-tela ALIMENTAÇÃO do app de campo — o FORNECIMENTO (consumo) de um
+// lote, alternando entre digitar o nº de animais (o backend já devolve a
+// quantidade por cabeça — só multiplica) e digitar os quilos direto. Quando a
+// fazenda lança o consumo por trato (Parâmetros > Alimentação), cada
+// lançamento diz de qual trato da dieta é. A SOBRA do cocho saiu daqui
+// (21/10/2026): é lançada à parte, em Lançar > Sobra do cocho
+// (FormSobraCocho.tsx), porque se refere a um ciclo de 24h e não ao dia.
 // Mesma regra de negócio da tela do site (specs/sessao-3-consumo-e-sobra.md,
 // Frente D): só os alimentos da DIETA ATIVA do lote entram na lista — sem
 // isso, não há o que lançar. Envio pela fila offline (enviarOuEnfileirar),
@@ -14,21 +15,20 @@ import { MobCampo, MobAviso, MobCard } from "@/components/mobile/ui";
 import { enviarOuEnfileirar } from "@/lib/offline";
 import {
   fetchLotes, fetchDietaDoLote, fetchConsumoDoDia,
-  type ItemDietaDoLote, type ConsumoDoDia, type ConsumoItemIn,
+  type ItemDietaDoLote, type ConsumoDoDia, type ConsumoItemIn, type DietaDoLote,
 } from "@/lib/api";
-import { useCache, useEnvio, useRascunho, hoje, BotoesEscolha, RascunhoAviso, type Aviso } from "./comum";
+import { useCache, useRascunho, hoje, BotoesEscolha, RascunhoAviso, type Aviso } from "./comum";
 
 type Lote = { id: number; codigo: string; nome: string };
-type DietaDoLote = { itens: ItemDietaDoLote[]; base_quantidade: string };
-// Rascunho — nº de animais/kg por alimento e sobra do cocho são exatamente o
-// tipo de dado que se perde numa interrupção (docs/agents/
-// design-implementation.md §5, acabamento-de-campo.html). Data fica de fora
-// (sempre volta a "hoje", não vale a pena persistir).
-type DraftAlimentacao = { loteSel: string; modoConsumo: "animais" | "kg"; numAnimais: string; qtdKg: Record<string, string>; kgSobra: string };
+// Rascunho — nº de animais/kg por alimento são exatamente o tipo de dado que
+// se perde numa interrupção (docs/agents/design-implementation.md §5,
+// acabamento-de-campo.html). Data fica de fora (sempre volta a "hoje", não
+// vale a pena persistir). `trato` só é usado quando a fazenda lança por trato.
+type DraftAlimentacao = { loteSel: string; modoConsumo: "animais" | "kg"; numAnimais: string; qtdKg: Record<string, string>; trato?: string };
 
 /** Vibração curta de confirmação — mesmo reforço tátil usado no resto do app
  * (comum.tsx tem a mesma função, mas não é exportada; duplicar 4 linhas é
- * mais simples do que abrir mão da fachada `useEnvio` no cartão de sobra). */
+ * mais simples do que reescrever o envio do consumo sobre `useEnvio`). */
 function vibrar(padrao: number | number[]) {
   try {
     navigator.vibrate?.(padrao);
@@ -39,16 +39,16 @@ function vibrar(padrao: number | number[]) {
 
 export function FormAlimentacao() {
   const lotes = useCache<Lote[]>("lotes", () => fetchLotes() as Promise<Lote[]>, []);
-  const rascunho = useRascunho<DraftAlimentacao>("alimentacao", { loteSel: "", modoConsumo: "animais", numAnimais: "", qtdKg: {}, kgSobra: "" });
-  const { loteSel, modoConsumo, numAnimais, qtdKg, kgSobra } = rascunho.valor;
+  const rascunho = useRascunho<DraftAlimentacao>("alimentacao", { loteSel: "", modoConsumo: "animais", numAnimais: "", qtdKg: {}, trato: "" });
+  const { loteSel, modoConsumo, numAnimais, qtdKg } = rascunho.valor;
+  const trato = rascunho.valor.trato ?? "";
   const atualizar = (patch: Partial<DraftAlimentacao>) => rascunho.setValor((atual) => ({ ...atual, ...patch }));
   const setLoteSel = (v: string) => atualizar({ loteSel: v }); // guarda o CÓDIGO (2 dígitos) do lote, igual ao select
   const setModoConsumo = (v: "animais" | "kg") => atualizar({ modoConsumo: v });
   const setNumAnimais = (v: string) => atualizar({ numAnimais: v });
   const setQtdKg = (v: Record<string, string> | ((atual: Record<string, string>) => Record<string, string>)) =>
     atualizar({ qtdKg: typeof v === "function" ? v(qtdKg) : v });
-  const setKgSobra = (v: string | ((atual: string) => string)) =>
-    atualizar({ kgSobra: typeof v === "function" ? v(kgSobra) : v });
+  const setTrato = (v: string) => atualizar({ trato: v });
   const [data, setData] = useState(hoje());
 
   // undefined = ainda carregando · null = carregou e não há dieta ativa
@@ -61,7 +61,6 @@ export function FormAlimentacao() {
   const [avisoConsumo, setAvisoConsumo] = useState<Aviso>(null);
   const [avisosEstoque, setAvisosEstoque] = useState<string[]>([]);
   const [enviandoConsumo, setEnviandoConsumo] = useState(false);
-  const { aviso: avisoSobra, enviar: enviarSobra, enviando: enviandoSobra, erroValidacao: erroSobra } = useEnvio();
 
   const rotuloLote = (codigo: string) => {
     const lo = lotes.dados.find((x) => x.codigo === codigo);
@@ -74,6 +73,7 @@ export function FormAlimentacao() {
   useEffect(() => {
     setDietaInfo(undefined);
     setQtdKg({});
+    setTrato("");
     if (!loteSel) return;
     let vivo = true;
     fetchDietaDoLote(Number(loteSel))
@@ -82,19 +82,13 @@ export function FormAlimentacao() {
     return () => { vivo = false; };
   }, [loteSel]);
 
-  // O que já foi lançado hoje nesse lote (consumo somado + sobra do dia, se
-  // houver). Refeito ao trocar lote/data e após cada envio bem-sucedido.
+  // O que já foi lançado hoje nesse lote (consumo somado + sobra do ciclo que
+  // fecha hoje, se houver). Refeito ao trocar lote/data e após cada envio.
   useEffect(() => {
     if (!loteSel) { setConsumoHoje(null); return; }
     let vivo = true;
     fetchConsumoDoDia(Number(loteSel), data)
-      .then((r) => {
-        if (!vivo) return;
-        setConsumoHoje(r);
-        // Pré-preenche a sobra só se o campo ainda estiver vazio — não pisa
-        // no que o usuário já está digitando.
-        setKgSobra((atual) => (atual !== "" ? atual : r.sobra_kg != null ? String(r.sobra_kg) : ""));
-      })
+      .then((r) => { if (vivo) setConsumoHoje(r); })
       .catch(() => { if (vivo) setConsumoHoje(null); });
     return () => { vivo = false; };
   }, [loteSel, data, versao]);
@@ -105,6 +99,10 @@ export function FormAlimentacao() {
   );
   const itens = dietaInfo?.itens ?? [];
   const numAnimaisNum = Number(numAnimais) || 0;
+  // Parâmetro "lançar consumo por trato": cada fornecimento diz de qual trato
+  // (1..N da dieta ativa). Desligado = lançamento do dia, como sempre.
+  const porTrato = !!dietaInfo?.consumo_por_trato;
+  const numTratos = dietaInfo?.num_tratos ?? 2;
 
   function itensParaEnviar(): ConsumoItemIn[] {
     if (modoConsumo === "animais") {
@@ -122,6 +120,7 @@ export function FormAlimentacao() {
   async function salvarConsumo() {
     if (!loteSel) return setAvisoConsumo({ tipo: "erro", msg: "Selecione o lote." });
     if (!dietaInfo || itens.length === 0) return setAvisoConsumo({ tipo: "erro", msg: "Este lote não tem dieta ativa." });
+    if (porTrato && !trato) return setAvisoConsumo({ tipo: "erro", msg: "Informe de qual trato é este fornecimento." });
     if (modoConsumo === "animais" && !(numAnimaisNum > 0)) return setAvisoConsumo({ tipo: "erro", msg: "Informe o número de animais." });
     const itensEnvio = itensParaEnviar();
     if (itensEnvio.length === 0) {
@@ -134,8 +133,11 @@ export function FormAlimentacao() {
     setAvisoConsumo(null);
     setAvisosEstoque([]);
     try {
-      const corpo = { lote: Number(loteSel), data, num_animais: modoConsumo === "animais" ? numAnimaisNum : null, origem: modoConsumo, itens: itensEnvio };
-      const descricao = `Consumo — ${rotuloLote(loteSel)}: ${itensEnvio.length} alimento(s) (${data})`;
+      const corpo = {
+        lote: Number(loteSel), data, num_animais: modoConsumo === "animais" ? numAnimaisNum : null, origem: modoConsumo, itens: itensEnvio,
+        ...(porTrato ? { trato: Number(trato) } : {}),
+      };
+      const descricao = `Consumo — ${rotuloLote(loteSel)}: ${itensEnvio.length} alimento(s) (${data}${porTrato ? `, trato ${trato}` : ""})`;
       const { enviado, resposta } = await enviarOuEnfileirar("/alimentacao/consumo", corpo, descricao);
       setAvisoConsumo(enviado
         ? { tipo: "ok", msg: "Consumo lançado." }
@@ -145,6 +147,7 @@ export function FormAlimentacao() {
       if (enviado && Array.isArray(resposta?.avisos) && resposta.avisos.length > 0) setAvisosEstoque(resposta.avisos);
       vibrar(enviado ? 20 : [15, 60, 15]);
       if (modoConsumo === "kg") setQtdKg({});
+      if (porTrato) setTrato("");
       if (enviado) setVersao((v) => v + 1);
     } catch (e) {
       setAvisoConsumo({ tipo: "erro", msg: e instanceof Error ? e.message : "Erro ao lançar consumo." });
@@ -152,19 +155,6 @@ export function FormAlimentacao() {
     } finally {
       setEnviandoConsumo(false);
     }
-  }
-
-  function salvarSobra() {
-    if (!loteSel) return erroSobra("Selecione o lote.");
-    if (kgSobra.trim() === "" || !(Number(kgSobra) >= 0)) return erroSobra("Informe a sobra em quilos.");
-    // Relançar a sobra no mesmo dia SUBSTITUI a anterior (é medição do dia,
-    // não acúmulo) — o próprio backend faz essa troca; aqui só reenvia.
-    enviarSobra(
-      "/alimentacao/sobra",
-      { lote: Number(loteSel), data, kg_sobra: Number(kgSobra) },
-      `Sobra — ${rotuloLote(loteSel)}: ${kgSobra} kg (${data})`,
-      () => setVersao((v) => v + 1),
-    );
   }
 
   if (lotes.pronto && lotes.dados.length === 0) {
@@ -213,13 +203,19 @@ export function FormAlimentacao() {
                   <span>Total fornecido</span>
                   <span>{consumoHoje.kg_fornecido_total.toFixed(1)} kg</span>
                 </div>
+                {(consumoHoje.por_trato?.length ?? 0) > 0 && (
+                  <div style={{ fontSize: "0.8rem", color: "var(--mob-muted)" }}>
+                    {consumoHoje.por_trato!.map((t) => `Trato ${t.trato}: ${t.kg.toFixed(1)} kg`).join(" · ")}
+                    {(consumoHoje.kg_sem_trato ?? 0) > 0 && ` · sem trato: ${consumoHoje.kg_sem_trato!.toFixed(1)} kg`}
+                  </div>
+                )}
               </div>
             ) : (
               <span style={{ color: "var(--mob-muted)", fontSize: "0.9rem" }}>Nada lançado ainda hoje.</span>
             )}
             {consumoHoje?.sobra_pct != null && (
               <div style={{ marginTop: "0.6rem", fontSize: "0.85rem", fontWeight: 700, color: corFaixa }}>
-                Sobra de hoje: {consumoHoje.sobra_pct.toFixed(1)}% {consumoHoje.dentro_da_faixa ? "— dentro da faixa" : "— fora da faixa"}
+                Sobra do ciclo que fecha hoje: {consumoHoje.sobra_pct.toFixed(1)}% {consumoHoje.dentro_da_faixa ? "— dentro da faixa" : "— fora da faixa"}
               </div>
             )}
           </MobCard>
@@ -227,6 +223,15 @@ export function FormAlimentacao() {
           {/* ── Cartão 1: lançar consumo ─────────────────────────────────── */}
           <div className="mob-secao">Lançar consumo</div>
           <MobCard style={{ marginBottom: "1rem" }}>
+            {porTrato && (
+              <MobCampo label="De qual trato é este fornecimento?">
+                <BotoesEscolha
+                  opcoes={Array.from({ length: numTratos }, (_, i) => ({ valor: String(i + 1), label: `Trato ${i + 1}` }))}
+                  valor={trato}
+                  onChange={setTrato}
+                />
+              </MobCampo>
+            )}
             <MobCampo label="Como informar a quantidade?">
               <BotoesEscolha
                 opcoes={[{ valor: "animais", label: "Nº de animais" }, { valor: "kg", label: "Kg direto" }]}
@@ -257,20 +262,10 @@ export function FormAlimentacao() {
             {avisosEstoque.map((a, idx) => <MobAviso key={idx} tipo="offline">{a}</MobAviso>)}
           </MobCard>
 
-          {/* ── Cartão 2: lançar sobra (separado de propósito — a sobra é   ── */}
-          {/*    por lote e dia, não por alimento; o rateio é calculado)       */}
-          <div className="mob-secao">Sobra do cocho</div>
-          <MobCard>
-            <MobCampo label="Sobra (kg totais)">
-              <input type="number" inputMode="decimal" className="mob-input" style={{ fontSize: "1.3rem", fontWeight: 700 }}
-                value={kgSobra} onChange={(e) => setKgSobra(e.target.value)} placeholder="0" />
-            </MobCampo>
-            <p style={{ fontSize: "0.8rem", color: "var(--mob-muted)", margin: "-0.3rem 0 0.7rem" }}>
-              Relançar hoje substitui a sobra já lançada, não soma.
-            </p>
-            <button className="mob-btn" onClick={salvarSobra} disabled={enviandoSobra}>{enviandoSobra ? "Salvando…" : "Lançar sobra"}</button>
-            {avisoSobra && <MobAviso tipo={avisoSobra.tipo}>{avisoSobra.msg}</MobAviso>}
-          </MobCard>
+          <p style={{ fontSize: "0.82rem", color: "var(--mob-muted)", lineHeight: 1.45 }}>
+            A sobra do cocho é lançada à parte, em <strong>Lançar › Sobra do cocho</strong> — ela se refere a um ciclo de 24h
+            (entre os tratos cadastrados na dieta), não só ao dia.
+          </p>
         </>
       )}
     </>

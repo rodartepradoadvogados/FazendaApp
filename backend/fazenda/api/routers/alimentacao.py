@@ -32,11 +32,39 @@ from fazenda.rules.dieta_lancamento import criar_lancamento_programado
 from fazenda.rules.producao_leiteira import ultimo_controle_por_animal, com_fallback_animal
 from fazenda.rules import estoque_baixa
 from fazenda.rules.farmacia import pode_baixar_estoque
-from fazenda.rules.parametros import get_param
+from fazenda.rules.parametros import get_param, get_param_bool
+from fazenda.rules import tratos as regras_tratos
 from fazenda.rules.unidades import converte_para_kg, de_kg_para_unidade, kg_equivalente
 
-# Nº de tratos por dia (fornecimentos). Hoje são 2.
-NUM_TRATOS = 2
+# Nº de tratos por dia (fornecimentos): deixou de ser fixo em 2 — é cadastro
+# da DIETA de cada lote (`DietaLancamento.tratos_pct`, 1 a 4 tratos com %).
+# Dieta sem cadastro vale 2 tratos 50/50. Regras em `fazenda/rules/tratos.py`.
+CHAVE_CONSUMO_POR_TRATO = "alimentacao_consumo_por_trato"
+
+
+def _tratos_da_dieta(dieta: DietaLancamento | None) -> list[float]:
+    """% de cada trato da dieta (2×50% para dieta antiga ou lote sem dieta)."""
+    return regras_tratos.ler_tratos(dieta.tratos_pct if dieta else None)
+
+
+def _resumo_tratos(dieta: DietaLancamento | None) -> dict:
+    """Campos de tratos que as telas recebem junto com a dieta."""
+    pcts = _tratos_da_dieta(dieta)
+    return {
+        "num_tratos": len(pcts), "tratos_pct": pcts,
+        # False = dieta lançada antes do cadastro de tratos (vale 2×50%).
+        "tratos_configurados": bool(dieta and dieta.tratos_pct),
+        "sobra_posicao_leitura": _posicao_da_dieta(dieta),
+    }
+
+
+def _posicao_da_dieta(dieta: DietaLancamento | None) -> int | None:
+    """Posição da leitura da sobra da dieta: 1 sempre com 1 trato (não se
+    pergunta); None = comportamento antigo (dia civil)."""
+    if not dieta or not dieta.tratos_pct:
+        return None
+    n = len(_tratos_da_dieta(dieta))
+    return 1 if n == 1 else dieta.sobra_posicao_leitura
 
 router = APIRouter(prefix="/alimentacao", tags=["alimentacao"])
 
@@ -303,7 +331,16 @@ def obter_alimentacao(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     _dar_baixa_automatica(session, fazenda_id)
     dietas, animais = _dietas_e_animais(session, fazenda_id)
-    return calcular_consumo(dietas, animais, _lotes_cadastro(session, fazenda_id))
+    consumo = calcular_consumo(dietas, animais, _lotes_cadastro(session, fazenda_id))
+    # Tratos da dieta ativa de cada lote (Plano por lote no app mostra o
+    # "/trato" de cada um); lote só com a dieta do import antigo = 2×50%.
+    query_ativas = select(DietaLancamento).where(DietaLancamento.data_efetivo_encerramento == None)  # noqa: E711
+    if fazenda_id is not None:
+        query_ativas = query_ativas.where(DietaLancamento.fazenda_id == fazenda_id)
+    ativa_por_lote = {d.lote: d for d in session.exec(query_ativas).all()}
+    for linha in consumo.get("por_lote", []):
+        linha["tratos_pct"] = _tratos_da_dieta(ativa_por_lote.get(linha.get("lote")))
+    return consumo
 
 
 @router.get("/necessidade-mensal")
@@ -1662,6 +1699,13 @@ class DietaLancamentoIn(BaseModel):
     # desta (o veterinário responde "sim" ao salvar). Se False e houver ativa,
     # devolve 409 como antes.
     encerrar_anterior: bool = False
+    # Tratos por dia DESTA dieta: % de cada trato (1 a 4, soma 100). Omitido
+    # (cliente antigo, fila offline antiga) = herda da dieta ativa anterior do
+    # lote, ou fica sem cadastro (2×50%) — ver `criar_lancamento_programado`.
+    tratos_pct: list[float] | None = None
+    # Trato depois do qual a sobra é lida (1..N); None = comportamento antigo
+    # (sobra × fornecido do próprio dia). Ignorado com 1 trato (vale 1).
+    sobra_posicao_leitura: int | None = None
 
 
 def _serializar_dieta(session: Session, d: DietaLancamento, fazenda_id: int | None) -> dict:
@@ -1669,7 +1713,10 @@ def _serializar_dieta(session: Session, d: DietaLancamento, fazenda_id: int | No
     if fazenda_id is not None:
         query = query.where(DietaItemProgramado.fazenda_id == fazenda_id)
     itens = session.exec(query).all()
-    return {**d.model_dump(), "ativa": d.data_efetivo_encerramento is None, "itens_programados": [i.model_dump() for i in itens]}
+    return {
+        **d.model_dump(), **_resumo_tratos(d),
+        "ativa": d.data_efetivo_encerramento is None, "itens_programados": [i.model_dump() for i in itens],
+    }
 
 
 @router.get("/dietas")
@@ -1704,6 +1751,7 @@ def criar_dieta(
         data_prevista_encerramento=dados.data_prevista_encerramento, observacao=dados.observacao,
         base_quantidade=dados.base_quantidade, leite_bezerros_kg_dia=dados.leite_bezerros_kg_dia,
         itens=[item.model_dump() for item in dados.itens], encerrar_anterior=dados.encerrar_anterior,
+        tratos_pct=dados.tratos_pct, sobra_posicao_leitura=dados.sobra_posicao_leitura,
     )
     return _serializar_dieta(session, dieta, fazenda_id)
 
@@ -1775,6 +1823,7 @@ def contexto_dieta(
                 _linha_item_dieta(it, ativa.base_quantidade, n)
                 for it in itens
             ],
+            **_resumo_tratos(ativa),
         }
 
     return {
@@ -1817,6 +1866,7 @@ def apresentacao_dieta(
     if fazenda_id is not None:
         query_itens = query_itens.where(DietaItemProgramado.fazenda_id == fazenda_id)
     itens = session.exec(query_itens).all()
+    pcts = _tratos_da_dieta(dieta)
     linhas = []
     total_dia = 0.0
     for it in itens:
@@ -1827,7 +1877,12 @@ def apresentacao_dieta(
         # tamanho do lote quando a dieta era lançada "por animal").
         linha = _linha_item_dieta(it, dieta.base_quantidade, n)
         total_lote_item = linha["total_dia"]
-        linha["total_trato"] = round(total_lote_item / NUM_TRATOS, 2) if total_lote_item is not None else None
+        # Por trato, pelo % de cada trato DESTA dieta (antes: total ÷ 2 fixo).
+        # `total_trato` (um número só) segue existindo para quem já o lia, mas
+        # só quando todos os tratos têm o mesmo % — senão vem None e vale a
+        # lista `por_trato`.
+        linha["por_trato"] = regras_tratos.dividir_por_trato(total_lote_item, pcts)
+        linha["total_trato"] = regras_tratos.valor_unico_por_trato(total_lote_item, pcts)
         linhas.append(linha)
         if (it.unidade or "").lower() in ("kg", "g") and total_lote_item is not None:
             total_dia += total_lote_item
@@ -1835,10 +1890,14 @@ def apresentacao_dieta(
         "lote": dieta.lote, "nome": lote_cad.nome if lote_cad else None, "qtd_animais": n,
         "data_abertura": dieta.data_abertura.isoformat(),
         "data_prevista_encerramento": dieta.data_prevista_encerramento.isoformat() if dieta.data_prevista_encerramento else None,
-        "num_tratos": NUM_TRATOS, "itens": linhas,
+        **_resumo_tratos(dieta), "itens": linhas,
         # Somatório de quilos que deve estar no vagão (só itens em kg).
         "vagao_kg_dia": round(total_dia, 2),
-        "vagao_kg_trato": round(total_dia / NUM_TRATOS, 2),
+        "vagao_kg_trato": regras_tratos.valor_unico_por_trato(round(total_dia, 2), pcts),
+        "tratos": [
+            {"trato": i + 1, "pct": p, "vagao_kg": kg}
+            for i, (p, kg) in enumerate(zip(pcts, regras_tratos.dividir_por_trato(round(total_dia, 2), pcts)))
+        ],
     }
 
 
@@ -2085,21 +2144,79 @@ def _resolver_estoque_item(
     return None
 
 
-def _kg_fornecido_do_dia(session: Session, lote: int, data: date, fazenda_id: int | None) -> float:
-    """Soma em kg (via `kg_equivalente`) de tudo que foi lançado como consumo
-    de um lote num dia — o denominador do percentual de sobra (B14). Itens
-    cuja unidade não converte (litro, dose...) ficam fora da soma: um `None`
-    tratado como zero inflaria a sobra artificialmente (ver docstring de
-    `rules/unidades`)."""
-    query = select(ConsumoAlimento).where(ConsumoAlimento.lote == lote, ConsumoAlimento.data == data)
+def _dieta_vigente_em(session: Session, lote: int, dia: date, fazenda_id: int | None) -> DietaLancamento | None:
+    """A dieta que valia para o lote num dia (aberta até o dia, não encerrada
+    antes dele); na falta, a ativa. Usada para saber os tratos de uma sobra
+    lançada para um dia passado — o resto do arquivo usa a ativa de hoje."""
+    query = select(DietaLancamento).where(DietaLancamento.lote == lote, DietaLancamento.data_abertura <= dia)
+    if fazenda_id is not None:
+        query = query.where(DietaLancamento.fazenda_id == fazenda_id)
+    candidatas = [
+        d for d in session.exec(query).all()
+        if d.data_efetivo_encerramento is None or d.data_efetivo_encerramento >= dia
+    ]
+    if candidatas:
+        return max(candidatas, key=lambda d: (d.data_abertura, d.id or 0))
+    return _dieta_ativa_do_lote(session, lote, fazenda_id)
+
+
+def _resolver_ciclo_sobra(
+    session: Session, lote: int, data_informada: date, fazenda_id: int | None,
+    posicao_leitura: int | None = None, dia_civil: bool = False,
+) -> dict:
+    """Ciclo de 24h de uma sobra a lançar: tratos da dieta vigente, posição
+    (a da dieta, salvo outra escolhida em "Selecionar outro período"), data de
+    fechamento e a janela de tratos. `data_informada` é a data da LEITURA —
+    ou, no comportamento antigo (sem posição / `dia_civil`), o próprio dia do
+    fornecimento, como sempre foi."""
+    dieta = _dieta_vigente_em(session, lote, data_informada, fazenda_id)
+    pcts = _tratos_da_dieta(dieta)
+    if dia_civil:
+        posicao = None
+    elif posicao_leitura is not None:
+        try:
+            posicao = regras_tratos.validar_posicao(len(pcts), posicao_leitura)
+        except regras_tratos.TratosInvalidos as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    else:
+        posicao = _posicao_da_dieta(dieta)
+    fechamento = regras_tratos.data_fechamento(data_informada, len(pcts), posicao)
+    itens = regras_tratos.janela(fechamento, len(pcts), posicao)
+    return {
+        "tratos_pct": pcts, "tratos_configurados": bool(dieta and dieta.tratos_pct),
+        "posicao_leitura": posicao, "posicao_da_dieta": _posicao_da_dieta(dieta),
+        "data_fechamento": fechamento,
+        "data_leitura": regras_tratos.data_leitura(fechamento, len(pcts), posicao),
+        "janela": itens,
+    }
+
+
+def _fornecido_por_alimento_na_janela(
+    session: Session, lote: int, itens_janela: list[tuple[date, int]], pcts: list[float], fazenda_id: int | None,
+) -> dict[str, float]:
+    """kg fornecido por alimento dentro da janela da sobra — o denominador do
+    percentual de sobra (B14). Itens cuja unidade não converte (litro,
+    dose...) ficam fora da soma: um `None` tratado como zero inflaria a sobra
+    artificialmente (ver docstring de `rules/unidades`). Trato/rateio pela
+    regra de `rules/tratos.fornecido_na_janela`."""
+    dias = sorted({d for d, _ in itens_janela})
+    if not dias:
+        return {}
+    query = select(ConsumoAlimento).where(
+        ConsumoAlimento.lote == lote, ConsumoAlimento.data >= dias[0], ConsumoAlimento.data <= dias[-1],
+    )
     if fazenda_id is not None:
         query = query.where(ConsumoAlimento.fazenda_id == fazenda_id)
-    total = 0.0
+    consumos = []
     for r in session.exec(query).all():
         kg = kg_equivalente(r.quantidade, r.unidade)
         if kg is not None:
-            total += kg
-    return round(total, 4)
+            consumos.append((r.data, r.trato, r.alimento, kg))
+    return regras_tratos.fornecido_na_janela(consumos, itens_janela, pcts)
+
+
+def _serializar_janela(itens: list[tuple[date, int]]) -> list[dict]:
+    return [{"data": d.isoformat(), "trato": t} for d, t in itens]
 
 
 def _faixa_sobra(sobra_pct: float | None) -> bool | None:
@@ -2145,7 +2262,15 @@ def dieta_do_lote_consumo(
             "kg_total": round(p["kg_total"], 4) if p["kg_total"] is not None else None,
             "percentual_dieta": p["percentual_dieta"],
         })
-    return {"itens": linhas, "base_quantidade": dieta.base_quantidade or "total", "kg_total_dieta": kg_total_dieta}
+    return {
+        "itens": linhas, "base_quantidade": dieta.base_quantidade or "total", "kg_total_dieta": kg_total_dieta,
+        # Tratos da dieta (nº, % e posição da leitura da sobra) + o parâmetro
+        # da fazenda "lançar consumo por trato" — a tela de lançamento precisa
+        # dos dois para pedir o trato e montar o resumo da sobra (também
+        # offline: esta resposta fica no cache do app).
+        **_resumo_tratos(dieta),
+        "consumo_por_trato": get_param_bool(CHAVE_CONSUMO_POR_TRATO, False),
+    }
 
 
 @router.get("/consumo")
@@ -2188,18 +2313,48 @@ def obter_consumo(
     # atual do efetivo que passou no cocho hoje.
     num_animais = registros[-1].num_animais if registros else None
 
+    # Fornecido do dia por trato (só existe quando a fazenda lança por trato);
+    # o que veio sem trato fica em `kg_sem_trato` (lançamento do dia inteiro).
+    kg_por_trato: dict[int, float] = {}
+    kg_sem_trato = 0.0
+    for r in registros:
+        kg = kg_equivalente(r.quantidade, r.unidade)
+        if kg is None:
+            continue
+        if r.trato is None:
+            kg_sem_trato += kg
+        else:
+            kg_por_trato[r.trato] = kg_por_trato.get(r.trato, 0.0) + kg
+
+    # Sobra do ciclo que FECHA neste dia (`ConsumoSobra.data` = fechamento —
+    # ver rules/tratos.py). Registro antigo = dia civil, conta de sempre.
     query_sobra = select(ConsumoSobra).where(ConsumoSobra.lote == lote, ConsumoSobra.data == data)
     if fazenda_id is not None:
         query_sobra = query_sobra.where(ConsumoSobra.fazenda_id == fazenda_id)
     sobra = session.exec(query_sobra).first()
     sobra_kg = sobra.kg_sobra if sobra else None
-    sobra_pct = round(sobra_kg / kg_total * 100, 2) if sobra_kg is not None and kg_total > 0 else None
+    sobra_janela = None
+    sobra_pct = None
+    if sobra:
+        itens_janela, pcts = regras_tratos.ciclo_do_registro(sobra)
+        kg_janela = round(sum(_fornecido_por_alimento_na_janela(session, lote, itens_janela, pcts, fazenda_id).values()), 4)
+        sobra_pct = round(sobra.kg_sobra / kg_janela * 100, 2) if kg_janela > 0 else None
+        sobra_janela = {
+            "descricao": regras_tratos.descrever_janela(itens_janela), "itens": _serializar_janela(itens_janela),
+            "kg_fornecido": kg_janela, "posicao_leitura": sobra.posicao_leitura,
+            "data_leitura": (sobra.data_leitura or sobra.data).isoformat(),
+        }
 
     return {
         "lote": lote, "data": data.isoformat(), "num_animais": num_animais,
         "itens": sorted(itens, key=lambda x: x["alimento"]),
         "kg_fornecido_total": kg_total,
+        "por_trato": [{"trato": t, "kg": round(kg, 4)} for t, kg in sorted(kg_por_trato.items())],
+        "kg_sem_trato": round(kg_sem_trato, 4),
+        # sobra_pct = sobra ÷ fornecido NA JANELA da sobra (ciclo de 24h); para
+        # registro antigo a janela é o próprio dia, então é a conta de sempre.
         "sobra_kg": sobra_kg, "sobra_pct": sobra_pct, "dentro_da_faixa": _faixa_sobra(sobra_pct),
+        "sobra_janela": sobra_janela,
     }
 
 
@@ -2215,6 +2370,10 @@ class ConsumoIn(BaseModel):
     data: date
     num_animais: int | None = None
     origem: str  # "animais" (por cabeça × dieta) | "kg" (digitado direto) | "vagao" (kg total do vagão)
+    # Trato do dia (1..N da dieta ativa). Obrigatório quando o parâmetro da
+    # fazenda "lançar consumo por trato" está ligado; desligado, é opcional e
+    # o lançamento vale pelo dia inteiro (como sempre).
+    trato: int | None = None
     # "vagao": kg total ofertado no vagão — a quantidade de cada alimento da
     # dieta que CONVERTE para kg é derivada da % dele na dieta (servidor,
     # nunca confiando em conta feita no cliente — mesmo espírito de "animais").
@@ -2238,6 +2397,18 @@ def lancar_consumo(
         raise HTTPException(status_code=400, detail='Informe "num_animais" para lançar por cabeça')
     if dados.origem == "vagao" and not (dados.kg_vagao and dados.kg_vagao > 0):
         raise HTTPException(status_code=400, detail='Informe "kg_vagao" (kg total ofertado) para lançar por vagão')
+    if dados.trato is None and get_param_bool(CHAVE_CONSUMO_POR_TRATO, False):
+        raise HTTPException(
+            status_code=400,
+            detail="Esta fazenda lança o consumo por trato (Parâmetros > Alimentação) — informe de qual trato é este fornecimento.",
+        )
+    if dados.trato is not None:
+        n_tratos = len(_tratos_da_dieta(_dieta_ativa_do_lote(session, dados.lote, fazenda_id)))
+        if not (1 <= dados.trato <= n_tratos):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Trato inválido: a dieta do lote {dados.lote:02d} tem {n_tratos} trato(s) por dia.",
+            )
 
     dieta_para_vagao = _dieta_ativa_do_lote(session, dados.lote, fazenda_id) if dados.origem == "vagao" else None
     itens_efetivos = list(dados.itens)
@@ -2351,7 +2522,7 @@ def lancar_consumo(
             alimento=item_in.alimento, alimento_id=item_in.alimento_id,
             quantidade=quantidade, unidade=unidade, num_animais=dados.num_animais,
             origem=dados.origem, fora_da_dieta=fora_da_dieta, usuario_id=user.id,
-            baixou_estoque=deduzir_estoque,
+            baixou_estoque=deduzir_estoque, trato=dados.trato,
         )
         session.add(registro)
         session.flush()  # gera o id antes do movimento de estoque (origem_id rastreável — B7)
@@ -2406,8 +2577,53 @@ def excluir_consumo(
 
 class SobraIn(BaseModel):
     lote: int
+    # Data da LEITURA da sobra. No comportamento antigo (dieta sem posição de
+    # leitura, ou `dia_civil`), é o próprio dia do fornecimento — como sempre.
     data: date
     kg_sobra: float
+    # "Selecionar outro período": outra posição da leitura (1..N) só para este
+    # lançamento. None = a posição cadastrada na dieta. Cliente antigo (fila
+    # offline de antes desta mudança) não manda nada e cai na da dieta.
+    posicao_leitura: int | None = None
+    # True = comparar com o fornecido do dia civil `data` (comportamento antigo).
+    dia_civil: bool = False
+
+
+def _sobra_existente(session: Session, lote: int, fechamento: date, fazenda_id: int | None) -> ConsumoSobra | None:
+    query = select(ConsumoSobra).where(ConsumoSobra.lote == lote, ConsumoSobra.data == fechamento)
+    if fazenda_id is not None:
+        query = query.where(ConsumoSobra.fazenda_id == fazenda_id)
+    return session.exec(query).first()
+
+
+def _ciclo_para_resposta(session: Session, lote: int, ciclo: dict, fazenda_id: int | None) -> dict:
+    kg_janela = round(sum(_fornecido_por_alimento_na_janela(
+        session, lote, ciclo["janela"], ciclo["tratos_pct"], fazenda_id,
+    ).values()), 4)
+    return {
+        "lote": lote, "num_tratos": len(ciclo["tratos_pct"]), "tratos_pct": ciclo["tratos_pct"],
+        "tratos_configurados": ciclo["tratos_configurados"],
+        "posicao_leitura": ciclo["posicao_leitura"], "posicao_da_dieta": ciclo["posicao_da_dieta"],
+        "data_leitura": ciclo["data_leitura"].isoformat(), "data_fechamento": ciclo["data_fechamento"].isoformat(),
+        "janela": _serializar_janela(ciclo["janela"]),
+        "descricao": regras_tratos.descrever_janela(ciclo["janela"]),
+        "kg_fornecido_janela": kg_janela,
+    }
+
+
+@router.get("/sobra/janela")
+def janela_sobra(
+    lote: int, data: date, posicao_leitura: int | None = None, dia_civil: bool = False,
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    """Resumo pré-montado do período a que a sobra lida em `data` se refere —
+    o que a tela mostra para o usuário Confirmar / Selecionar outro período /
+    Cancelar antes de gravar — com o fornecido na janela (base da sobra %) e
+    a sobra já lançada para esse ciclo, se houver (relançar substitui)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    ciclo = _resolver_ciclo_sobra(session, lote, data, fazenda_id, posicao_leitura, dia_civil)
+    existente = _sobra_existente(session, lote, ciclo["data_fechamento"], fazenda_id)
+    return {**_ciclo_para_resposta(session, lote, ciclo, fazenda_id), "kg_sobra_existente": existente.kg_sobra if existente else None}
 
 
 @router.post("/sobra", status_code=201)
@@ -2415,32 +2631,42 @@ def lancar_sobra(
     dados: SobraIn, fazenda_id: int = Depends(get_fazenda_id_escrita),
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
 ) -> dict:
-    """B10: grava a sobra do lote no dia, em kg totais. Relançar no mesmo dia
-    SUBSTITUI (upsert por `fazenda_id, lote, data` — a UniqueConstraint do
-    modelo trava isso no banco), ao contrário do consumo, que soma: a sobra é
-    uma medição única do estado do cocho, não um acúmulo de eventos."""
+    """B10: grava a sobra do lote, em kg totais, para UM ciclo de 24h (janela
+    de tratos definida pela posição da leitura cadastrada na dieta — ver
+    `rules/tratos.py`). Relançar para o mesmo ciclo SUBSTITUI (upsert por
+    `fazenda_id, lote, data` de fechamento — a UniqueConstraint do modelo
+    trava isso no banco), ao contrário do consumo, que soma: a sobra é uma
+    medição única do estado do cocho, não um acúmulo de eventos.
+
+    Sem posição cadastrada (dieta antiga), `data` é o dia do fornecimento e a
+    base é o fornecido desse dia — exatamente o comportamento anterior."""
     if dados.kg_sobra < 0:
         raise HTTPException(status_code=400, detail="Sobra não pode ser negativa")
-    query = select(ConsumoSobra).where(ConsumoSobra.lote == dados.lote, ConsumoSobra.data == dados.data)
-    if fazenda_id is not None:
-        query = query.where(ConsumoSobra.fazenda_id == fazenda_id)
-    registro = session.exec(query).first()
-    if registro:
-        registro.kg_sobra = dados.kg_sobra
-        registro.usuario_id = user.id
-        registro.atualizado_em = datetime.utcnow()
+    ciclo = _resolver_ciclo_sobra(session, dados.lote, dados.data, fazenda_id, dados.posicao_leitura, dados.dia_civil)
+    registro = _sobra_existente(session, dados.lote, ciclo["data_fechamento"], fazenda_id)
+    substituiu = registro is not None
+    if registro is None:
+        registro = ConsumoSobra(fazenda_id=fazenda_id, data=ciclo["data_fechamento"], lote=dados.lote)
+    registro.kg_sobra = dados.kg_sobra
+    registro.usuario_id = user.id
+    registro.atualizado_em = datetime.utcnow()
+    # Retrato do ciclo confirmado. Comportamento antigo (sem posição) grava
+    # tudo NULL — o registro fica idêntico aos de antes desta mudança.
+    if ciclo["posicao_leitura"] is None and not ciclo["tratos_configurados"]:
+        registro.data_leitura = registro.posicao_leitura = registro.tratos_pct = None
     else:
-        registro = ConsumoSobra(
-            fazenda_id=fazenda_id, data=dados.data, lote=dados.lote, kg_sobra=dados.kg_sobra, usuario_id=user.id,
-        )
+        registro.data_leitura = ciclo["data_leitura"]
+        registro.posicao_leitura = ciclo["posicao_leitura"]
+        registro.tratos_pct = regras_tratos.gravar_tratos(ciclo["tratos_pct"])
     session.add(registro)
     session.commit()
     session.refresh(registro)
 
-    kg_total = _kg_fornecido_do_dia(session, dados.lote, dados.data, fazenda_id)
+    resumo = _ciclo_para_resposta(session, dados.lote, ciclo, fazenda_id)
+    kg_total = resumo["kg_fornecido_janela"]
     sobra_pct = round(dados.kg_sobra / kg_total * 100, 2) if kg_total > 0 else None
     return {
-        "ok": True, "kg_sobra": registro.kg_sobra,
+        "ok": True, "kg_sobra": registro.kg_sobra, "substituiu": substituiu, **resumo,
         "sobra_pct": sobra_pct, "dentro_da_faixa": _faixa_sobra(sobra_pct),
     }
 

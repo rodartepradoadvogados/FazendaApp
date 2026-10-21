@@ -330,3 +330,31 @@ def test_isolamento_por_fazenda(client):
     r = c.get("/agenda/", params={"data": DATA_HOJE.isoformat(), "dias": 0})
     assert _eventos_alerta(r.json(), lote=3) == []  # cliente está na fazenda 1
     assert _portal_msgs(engine, fazenda_id=1) == []
+
+
+# ---------------------------------------------------------------------------
+# Tratos por dieta (2026-10-21) — a base do alerta é o fornecido NA JANELA da
+# sobra (ciclo de 24h), e o alerta é do dia em que a sobra foi LIDA.
+# ---------------------------------------------------------------------------
+def test_alerta_usa_o_fornecido_da_janela_e_o_dia_da_leitura(client):
+    from datetime import timedelta
+    c, engine = client
+    ontem = DATA_HOJE - timedelta(days=1)
+    with Session(engine) as s:
+        # Ontem 1000 kg (lançado por dia); hoje 10 kg. Leitura antes do 1º
+        # trato (posição 2 de 2): o ciclo é o dia de ontem inteiro. Sobra de
+        # 50 kg = 5% de 1000 — dentro da faixa. Pela conta antiga (fornecido
+        # de hoje, 10 kg) seria 500% e alertaria.
+        s.add(ConsumoAlimento(fazenda_id=1, data=ontem, lote=4, alimento="silagem", quantidade=1000.0, unidade="kg"))
+        s.add(ConsumoAlimento(fazenda_id=1, data=DATA_HOJE, lote=4, alimento="silagem", quantidade=10.0, unidade="kg"))
+        s.add(ConsumoSobra(fazenda_id=1, data=ontem, data_leitura=DATA_HOJE, lote=4, kg_sobra=50.0,
+                           posicao_leitura=2, tratos_pct="[50, 50]"))
+        # Mesmo cenário, sobra de 300 kg (30%) — alerta, e no dia da leitura.
+        s.add(ConsumoAlimento(fazenda_id=1, data=ontem, lote=5, alimento="silagem", quantidade=1000.0, unidade="kg"))
+        s.add(ConsumoSobra(fazenda_id=1, data=ontem, data_leitura=DATA_HOJE, lote=5, kg_sobra=300.0,
+                           posicao_leitura=2, tratos_pct="[50, 50]"))
+        s.commit()
+    corpo = c.get("/agenda/", params={"data": DATA_HOJE.isoformat(), "dias": 0}).json()
+    assert _eventos_alerta(corpo, lote=4) == []
+    alertas = _eventos_alerta(corpo, lote=5)
+    assert len(alertas) == 1 and alertas[0]["data"] == DATA_HOJE.isoformat()

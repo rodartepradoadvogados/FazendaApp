@@ -17,6 +17,7 @@ from sqlmodel import Session, select
 from fazenda.models import (
     Alimento, DietaItemProgramado, DietaLancamento, Estoque, IngredienteMS, Lote,
 )
+from fazenda.rules import tratos as regras_tratos
 
 
 def criar_lancamento_programado(
@@ -34,6 +35,8 @@ def criar_lancamento_programado(
     itens: list[dict],
     encerrar_anterior: bool,
     dieta_simulacao_id: int | None = None,
+    tratos_pct: list[float] | None = None,
+    sobra_posicao_leitura: int | None = None,
 ) -> DietaLancamento:
     """Cria uma DietaLancamento + seus DietaItemProgramado, com a mesma
     validação de % de matéria seca (obrigatório quando `base="MS"`) e a mesma
@@ -46,7 +49,21 @@ def criar_lancamento_programado(
     abaixo), exatamente como antes deste campo existir. Sem validação de
     valor (igual ao `base_quantidade` da própria dieta, hoje também livre) —
     qualquer coisa que não seja exatamente "animal" já cai no ramo "total"
-    em `_base_efetiva`/`_por_cabeca`."""
+    em `_base_efetiva`/`_por_cabeca`.
+
+    `tratos_pct`/`sobra_posicao_leitura`: tratos por dia desta dieta (ver
+    `rules/tratos.py`) — validados aqui (1 a 4 tratos, soma 100%). `None` em
+    `tratos_pct` = quem chamou não informou (cliente antigo, Formulação de
+    Dietas): a dieta nova HERDA os tratos e a posição da dieta ativa que está
+    sendo substituída, e na falta dela fica sem cadastro (vale 2×50%). Herdar
+    é o mais conservador: trocar a dieta pela Formulação não deve mudar
+    silenciosamente o trato nem o ciclo da sobra do lote."""
+    if tratos_pct is not None:
+        try:
+            tratos_pct = regras_tratos.validar_tratos(list(tratos_pct))
+            sobra_posicao_leitura = regras_tratos.validar_posicao(len(tratos_pct), sobra_posicao_leitura)
+        except regras_tratos.TratosInvalidos as e:
+            raise HTTPException(status_code=400, detail=str(e))
     if not itens:
         raise HTTPException(status_code=400, detail="Informe ao menos um alimento do plano programado")
 
@@ -73,6 +90,10 @@ def criar_lancamento_programado(
     if fazenda_id is not None:
         query_ativa = query_ativa.where(DietaLancamento.fazenda_id == fazenda_id)
     ativa_existente = session.exec(query_ativa).first()
+    tratos_json = regras_tratos.gravar_tratos(tratos_pct)
+    if tratos_pct is None and ativa_existente is not None:
+        tratos_json = ativa_existente.tratos_pct
+        sobra_posicao_leitura = ativa_existente.sobra_posicao_leitura
     if ativa_existente:
         if encerrar_anterior:
             ativa_existente.data_efetivo_encerramento = data_abertura
@@ -91,6 +112,7 @@ def criar_lancamento_programado(
         leite_bezerros_kg_dia=leite_bezerros_kg_dia,
         usuario_id=usuario_id, fazenda_id=fazenda_id,
         dieta_simulacao_id=dieta_simulacao_id,
+        tratos_pct=tratos_json, sobra_posicao_leitura=sobra_posicao_leitura if tratos_json else None,
     )
     session.add(dieta)
     session.commit()
