@@ -6,8 +6,10 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { Syringe, Stethoscope, Baby, CalendarClock } from "lucide-react";
 import { MobCampo, MobAviso, MobVoltar, MobConfirmModal } from "@/components/mobile/ui";
-import { sugestaoLoteEvento, criarMovimentacao } from "@/lib/api";
-import { enviarOuEnfileirar } from "@/lib/offline";
+import { sugestaoLoteEvento, criarMovimentacao, fetchLotes } from "@/lib/api";
+import { enviarOuEnfileirar, fetchComCache } from "@/lib/offline";
+import { delDesdeParto } from "@/lib/partoLancamento";
+import { hojeLocal } from "@/lib/financeiroSituacao";
 import { DiagnosticoGestacao } from "./DiagnosticoGestacao";
 import { Inseminacao } from "./lote/InseminacaoLote";
 import { ProtocoloIatf } from "./lote/ProtocoloIatfLote";
@@ -66,11 +68,14 @@ export function FormReprodutivo({ animais, animalFixado, restringirA }: { animai
 // sucesso se criarMovimentacao realmente funcionar. Sugestão/alocação só
 // roda com o lançamento enviado online de fato — se caiu na fila offline
 // (sem internet), não há como saber ainda se foi aceito, então pula esse
-// passo (fica só para quando sincronizar). Mesma regra vale para a
+// passo (fica só para quando sincronizar). Sem lote que bata nos critérios
+// (não há lote pré-definido), o pop-up PERGUNTA para qual lote mandar em vez de
+// pular em silêncio (`semSugestao`). Mesma regra vale para a
 // colostragem: só é gravada (2º POST, /sanidade/colostragem) se a 1ª cria
 // foi de fato criada E algum campo de colostro/IgG foi preenchido — mesma
 // lógica de `registrarColostragem` do site.
-type SugestaoLoteParto = { tipo: "mae" | "cria"; numero: string; codigo: string; rotulo: string; motivo: string };
+type SugestaoLoteParto = { tipo: "mae" | "cria"; numero: string; codigo: string; rotulo: string; motivo: string; semSugestao?: boolean };
+type LoteCadastro = { codigo: string; rotulo: string };
 
 const TIPOS_PARTO = ["Normal", "Distócico moderado", "Distócico severo", "Cesariana", "Natimorto", "Aborto"];
 const LITROS_COLOSTRO = ["1", "1.5", "2", "2.5", "3", "3.5", "4", "4.5", "5"];
@@ -138,6 +143,12 @@ function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: str
 
   const [filaSugestoes, setFilaSugestoes] = useState<SugestaoLoteParto[]>([]);
   const [movendo, setMovendo] = useState(false);
+  // Destino escolhido à mão quando o sistema não tem lote pré-definido para o animal.
+  const [lotesCadastro, setLotesCadastro] = useState<LoteCadastro[]>([]);
+  const [loteEscolhido, setLoteEscolhido] = useState("");
+  useEffect(() => {
+    fetchComCache<LoteCadastro[]>("lotes_cadastro", () => fetchLotes()).then(({ dados }) => setLotesCadastro(dados || []));
+  }, []);
   const [avisosLote, setAvisosLote] = useState<{ tipo: "ok" | "erro"; msg: string }[]>([]);
 
   function limparCampos() {
@@ -161,7 +172,9 @@ function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: str
         categoria_abrev: matrizObj?.categoria_abrev || matrizObj?.categoria_completa || "",
         del_dias: delDias,
       });
-      if (lote_sugerido && lote_sugerido.rotulo !== matrizObj?.grupo_primario) {
+      if (!lote_sugerido) {
+        fila.push({ tipo: "mae", numero: matriz, codigo: "", rotulo: "", motivo, semSugestao: true });
+      } else if (lote_sugerido.rotulo !== matrizObj?.grupo_primario) {
         fila.push({ tipo: "mae", numero: matriz, codigo: lote_sugerido.codigo, rotulo: lote_sugerido.rotulo, motivo });
       }
     } catch { /* sugestão é best-effort — não bloqueia o lançamento já salvo */ }
@@ -208,7 +221,8 @@ function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: str
       if (enviado) {
         const criasCriadas: string[] = resposta?.crias_criadas || [];
         const fila: SugestaoLoteParto[] = [];
-        await sugerirLoteMae(0, "Parto", fila);
+        // DEL real (parto lançado com data de 2 dias atrás = DEL 2) — é o que o motor de critérios usa para achar o lote.
+        await sugerirLoteMae(delDesdeParto(data, hojeLocal()), "Parto", fila);
 
         for (const c of criasCriadas) {
           const sexoCria = c === cria2Numero.trim() ? cria2Sexo : criaSexo;
@@ -218,9 +232,9 @@ function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: str
               categoria_abrev: sexoCria === "F" ? "Bezerra" : "Bezerro",
               data_nasc: data,
             });
-            if (lote_sugerido) {
-              fila.push({ tipo: "cria", numero: c, codigo: lote_sugerido.codigo, rotulo: lote_sugerido.rotulo, motivo: "Nascimento" });
-            }
+            fila.push(lote_sugerido
+              ? { tipo: "cria", numero: c, codigo: lote_sugerido.codigo, rotulo: lote_sugerido.rotulo, motivo: "Nascimento" }
+              : { tipo: "cria", numero: c, codigo: "", rotulo: "", motivo: "Nascimento", semSugestao: true });
           } catch { /* idem */ }
         }
         setFilaSugestoes(fila);
@@ -304,19 +318,25 @@ function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: str
   async function confirmarSugestaoAtual() {
     const item = filaSugestoes[0];
     if (!item) return;
+    // Sem sugestão do sistema: o destino é o que a pessoa escolheu na lista.
+    const codigo = item.semSugestao ? loteEscolhido : item.codigo;
+    const rotulo = item.semSugestao ? (lotesCadastro.find((l) => l.codigo === codigo)?.rotulo || codigo) : item.rotulo;
+    if (!codigo) return;
     setMovendo(true);
     try {
-      await criarMovimentacao({ data_movimento: data, motivo: item.motivo, lote_destino_codigo: item.codigo, animais: [item.numero], origem: "sugestao_confirmada" });
-      setAvisosLote((p) => [...p, { tipo: "ok", msg: `${item.numero} movido para o lote ${item.rotulo}.` }]);
+      await criarMovimentacao({ data_movimento: data, motivo: item.motivo, lote_destino_codigo: codigo, animais: [item.numero], origem: "sugestao_confirmada" });
+      setAvisosLote((p) => [...p, { tipo: "ok", msg: `${item.numero} movido para o lote ${rotulo}.` }]);
     } catch (e) {
       // Erro real na movimentação — não finge sucesso, mostra o problema.
-      setAvisosLote((p) => [...p, { tipo: "erro", msg: `Não foi possível mover ${item.numero} para o lote ${item.rotulo}${e instanceof Error ? `: ${e.message}` : ""}.` }]);
+      setAvisosLote((p) => [...p, { tipo: "erro", msg: `Não foi possível mover ${item.numero} para o lote ${rotulo}${e instanceof Error ? `: ${e.message}` : ""}.` }]);
     } finally {
       setMovendo(false);
+      setLoteEscolhido("");
       setFilaSugestoes((f) => f.slice(1));
     }
   }
   function cancelarSugestaoAtual() {
+    setLoteEscolhido("");
     setFilaSugestoes((f) => f.slice(1));
   }
 
@@ -461,8 +481,21 @@ function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: str
           onCancelar={cancelarSugestaoAtual}
           onConfirmar={confirmarSugestaoAtual}
           confirmando={movendo}
+          confirmarDesabilitado={!!sugestaoAtual.semSugestao && !loteEscolhido}
+          textoCancelar={sugestaoAtual.semSugestao ? "Não mover" : "Cancelar"}
         >
-          {sugestaoAtual.tipo === "mae"
+          {sugestaoAtual.semSugestao ? (
+            <>
+              {sugestaoAtual.tipo === "mae"
+                ? <>A matriz <strong>{sugestaoAtual.numero}</strong> pariu agora, mas nenhum lote tem esse perfil cadastrado.</>
+                : <>A cria <strong>{sugestaoAtual.numero}</strong> ainda não tem lote e nenhum lote tem esse perfil cadastrado.</>}
+              {" "}Para qual lote quer mandar?
+              <select className="mob-input" aria-label="Lote de destino" value={loteEscolhido} onChange={(e) => setLoteEscolhido(e.target.value)} style={{ marginTop: "0.6rem" }}>
+                <option value="">Escolha o lote…</option>
+                {lotesCadastro.map((l) => <option key={l.codigo} value={l.codigo}>{l.rotulo}</option>)}
+              </select>
+            </>
+          ) : sugestaoAtual.tipo === "mae"
             ? <>A matriz <strong>{sugestaoAtual.numero}</strong> pariu agora — mover para o lote <strong>{sugestaoAtual.rotulo}</strong>?</>
             : <>A cria <strong>{sugestaoAtual.numero}</strong> ainda não tem lote — alocar no lote <strong>{sugestaoAtual.rotulo}</strong>?</>}
         </MobConfirmModal>

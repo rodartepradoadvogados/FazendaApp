@@ -426,23 +426,49 @@ def sincronizar_del_do_animal(
     return del_atual
 
 
-def sincronizar_categoria_do_animal(
-    session: Session, *, numero_matriz: str, fazenda_id: int | None = None,
-) -> tuple[str | None, str | None]:
-    """Troca a palavra "gestante" por "vazia" em `Animal.categoria_completa`/
-    `categoria_abrev`, no momento em que uma gestação termina (parto, aborto
-    ou natimorto) — sem isso, os dois campos (escritos só pelo upload do
-    GERAL.csv) continuam dizendo "gestante" indefinidamente depois de um
-    aborto, mesmo com o `Parto` lançado, a lactação aberta e controle
-    leiteiro em andamento (caso relatado: novilha "14", abortou 30/07/2026,
-    categoria seguiu "Novilha gestante").
+_RE_GES_ABREV = re.compile(r"\bges\.", re.IGNORECASE)
+_RE_SEC_ABREV = re.compile(r"\bsec\.", re.IGNORECASE)
 
-    Só troca a PALAVRA "gestante" — preserva o resto do texto do Ideagri que
-    não temos como reconstruir aqui (ex.: "Vaca gestante 3ª lact." vira "Vaca
-    vazia 3ª lact.", não um texto genérico inventado). Textos que não têm a
-    palavra ficam intocados, mesmo critério conservador de `_categoria_ao_vivo`
-    (`api/routers/animais.py`) — que resolve a transição "novilha" -> "vaca"
-    mas nunca tratou esta ("gestante" -> "vazia").
+
+def categoria_sem_gestacao(texto: str | None, *, abriu_lactacao: bool = False) -> str | None:
+    """Reescreve o texto de categoria do Ideagri de uma matriz cuja gestação
+    ACABOU (parto, aborto ou natimorto). Função pura — quem grava/lê decide
+    quando chamar.
+
+    Os dois dialetos do GERAL.csv:
+      * por extenso — "Vaca gestante 3ª lact." -> "Vaca vazia 3ª lact.";
+      * abreviado (o que a fazenda realmente recebe: "Vaca ges. lac.",
+        "Vaca ges. sec.", "Novilha ges.") -> "ges." vira "vaz. pev" (acabou
+        de parir: período de espera voluntário, o mesmo "PEV" que a Sit. rep.
+        ao vivo já mostra). Antes só a forma por extenso era tratada, então a
+        vaca 206 pariu e seguiu "Vaca ges. lac." na tela.
+
+    Com `abriu_lactacao`, uma vaca que estava seca ("sec.") passa a "lac.".
+    Texto sem marca de gestação fica intocado (critério conservador de
+    `_categoria_ao_vivo`, em `api/routers/animais.py`: não inventamos texto)."""
+    if not texto:
+        return texto
+    novo = re.sub("gestante", "vazia", texto, flags=re.IGNORECASE)
+    novo = _RE_GES_ABREV.sub("vaz. pev", novo)
+    if novo == texto:
+        return texto
+    if abriu_lactacao:
+        novo = _RE_SEC_ABREV.sub("lac.", novo)
+    return novo
+
+
+def sincronizar_categoria_do_animal(
+    session: Session, *, numero_matriz: str, fazenda_id: int | None = None, abriu_lactacao: bool = False,
+) -> tuple[str | None, str | None]:
+    """Tira a marca de "gestante" de `Animal.categoria_completa`/
+    `categoria_abrev` (ver `categoria_sem_gestacao`) no momento em que uma
+    gestação termina — parto, aborto ou natimorto. Sem isso, os dois campos
+    (escritos só pelo upload do GERAL.csv) continuam dizendo "gestante"
+    indefinidamente, mesmo com o `Parto` lançado, a lactação aberta e
+    controle leiteiro em andamento (casos relatados: novilha "14", abortou
+    30/07/2026, seguiu "Novilha gestante"; vaca "206", pariu 19/10/2026,
+    seguiu "Vaca ges. lac." — `POST /reproducao/parto` nem chamava esta
+    função).
 
     Não dá commit."""
     query = _escopo(select(Animal).where(Animal.numero == numero_matriz), Animal, fazenda_id)
@@ -450,13 +476,8 @@ def sincronizar_categoria_do_animal(
     if animal is None:
         return None, None
 
-    def _tira_gestante(texto: str | None) -> str | None:
-        if not texto or "gestante" not in texto.lower():
-            return texto
-        return re.sub("gestante", "vazia", texto, flags=re.IGNORECASE)
-
-    animal.categoria_completa = _tira_gestante(animal.categoria_completa)
-    animal.categoria_abrev = _tira_gestante(animal.categoria_abrev)
+    animal.categoria_completa = categoria_sem_gestacao(animal.categoria_completa, abriu_lactacao=abriu_lactacao)
+    animal.categoria_abrev = categoria_sem_gestacao(animal.categoria_abrev, abriu_lactacao=abriu_lactacao)
     animal.atualizado_em = datetime.utcnow()
     session.add(animal)
     return animal.categoria_completa, animal.categoria_abrev
