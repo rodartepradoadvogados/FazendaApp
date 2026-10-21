@@ -37,6 +37,7 @@ from fazenda.api.routers.cadastro.pessoas import seed_tipo_geral, seed_tipos_pap
 from fazenda.api.routers.cadastro.animais import seed_motivos_baixa, seed_motivos_venda, seed_racas_grau_sangue
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 from fazenda.api.routers.recria import seed_recria
+from fazenda.rules.sanitario.definicao import criar_padrao_fabrica as criar_padrao_fabrica_sanitario
 
 router = APIRouter(prefix="/fazendas", tags=["fazendas"])
 
@@ -100,6 +101,12 @@ def provisionar_fazenda_nova(session: Session, fazenda_id: int) -> None:
     # de Configurações > Cadastro > Recria nasce todo vazio e o Dossiê
     # Zootécnico não tem nenhum parâmetro para classificar animais/relatórios.
     seed_recria(session, fazenda_id=fazenda_id)
+    # Sanitário preventivo v2: parâmetros + padrão de fábrica (B19, exame de
+    # tuberculose, exame de brucelose) copiado do catálogo central, INATIVO,
+    # uma única vez (seed_flag) — depois das categorias de manejo acima, que o
+    # público dos exames referencia por ID. Nunca no boot.
+    criar_padrao_fabrica_sanitario(session, fazenda_id)
+    session.commit()
 
 
 def _validar_escopo_contratante(user: Usuario, fazenda_id: int, fazenda_id_token: int | None) -> None:

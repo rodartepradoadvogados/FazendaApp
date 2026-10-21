@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.rules.sanitario import ganchos as ganchos_sanitario
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import Animal, ContaGerencial, Usuario, VendaAnimal
@@ -216,5 +217,6 @@ def registrar_venda(
             session.add(animal)
         vendidos.append(numero)
 
+    ganchos_sanitario.animal_mudou(session, fazenda_id, numeros=vendidos, evento="venda")
     session.commit()
     return {"vendidos": len(vendidos), "animais": vendidos, "numero_lancamento": numero_lancamento}

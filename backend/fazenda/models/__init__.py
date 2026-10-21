@@ -327,6 +327,28 @@ from .sistema import (
     AssistenteEnsinamento,
 )
 
+# Sanitário Preventivo v2 (caixas de vacina/exame) — ver models/sanitario_preventivo.py
+from .sanitario_preventivo import (
+    SanitarioCatalogo,
+    SanitarioCatalogoVersao,
+    SanitarioNorma,
+    SanitarioCaixa,
+    SanitarioCaixaVersao,
+    SanitarioCaixaVersaoCategoria,
+    SanitarioSituacao,
+    SanitarioDia,
+    SanitarioDiaCaixa,
+    SanitarioDiaItem,
+    SanitarioRegistro,
+    SanitarioLog,
+    SanitarioCarenciaAceite,
+    SanitarioPrazoLegal,
+    SanitarioNotaAgenda,
+    SanitarioDispositivo,
+    SanitarioParametros,
+    SanitarioJobEstado,
+)
+
 __all__ = [
     "Fazenda",
     "UsuarioFazenda",
@@ -569,4 +591,22 @@ __all__ = [
     "FechamentoMesEvento",
     "ExtratoImportacao",
     "ExtratoLinha",
+    "SanitarioCatalogo",
+    "SanitarioCatalogoVersao",
+    "SanitarioNorma",
+    "SanitarioCaixa",
+    "SanitarioCaixaVersao",
+    "SanitarioCaixaVersaoCategoria",
+    "SanitarioSituacao",
+    "SanitarioDia",
+    "SanitarioDiaCaixa",
+    "SanitarioDiaItem",
+    "SanitarioRegistro",
+    "SanitarioLog",
+    "SanitarioCarenciaAceite",
+    "SanitarioPrazoLegal",
+    "SanitarioNotaAgenda",
+    "SanitarioDispositivo",
+    "SanitarioParametros",
+    "SanitarioJobEstado",
 ]

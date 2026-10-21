@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.rules.sanitario import ganchos as ganchos_sanitario
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import Animal, BaixaAnimal, ContaGerencial, MotivoBaixa, Usuario
@@ -262,5 +263,6 @@ def registrar_baixa(
         session.add(animal)
         baixados.append(numero)
 
+    ganchos_sanitario.animal_mudou(session, fazenda_id, numeros=baixados, evento="baixa")
     session.commit()
     return {"baixados": len(baixados), "animais": baixados, "nao_encontrados": nao_encontrados}

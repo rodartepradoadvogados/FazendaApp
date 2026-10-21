@@ -141,6 +141,7 @@ from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
 from fazenda.rules.backup import executar_backup_se_necessario
 from fazenda.rules.manual_fazenda import enviar_manual_semanal_todas_fazendas
+from fazenda.rules.sanitario.job import tick as tick_sanitario
 from fazenda.rules.supabase_storage import garantir_buckets
 from fazenda.api.routers.push import despachar_push_pendentes, despachar_resumo_da_noite
 
@@ -205,6 +206,25 @@ async def _loop_despacho_push() -> None:
         except Exception:
             pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
         await asyncio.sleep(_INTERVALO_DESPACHO_PUSH_SEGUNDOS)
+
+
+# Sanitário preventivo v2 (fazenda/rules/sanitario/job.py): a cada 30 min
+# fecha os dias vencidos (23:59 do dia seguinte, fuso de Brasília) e roda a
+# diária de cada fazenda UMA vez por dia local (lock em sanitario_job_estado
+# — vários processos/réplicas não duplicam nada).
+_INTERVALO_SANITARIO_SEGUNDOS = 30 * 60
+
+
+async def _loop_sanitario() -> None:
+    while True:
+        try:
+            # `engine_manutencao`: a volta enumera TODAS as fazendas com caixa
+            # antes de recortar; cada passo filtra por fazenda_id em Python.
+            with Session(engine_manutencao) as session:
+                tick_sanitario(session)
+        except Exception:
+            pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
+        await asyncio.sleep(_INTERVALO_SANITARIO_SEGUNDOS)
 
 
 async def _loop_manual_fazenda_semanal() -> None:
@@ -386,16 +406,20 @@ async def lifespan(app: FastAPI):
     tarefa_backup = asyncio.create_task(_loop_backup_automatico())
     tarefa_push = asyncio.create_task(_loop_despacho_push())
     tarefa_manual_fazenda = asyncio.create_task(_loop_manual_fazenda_semanal())
+    tarefa_sanitario = asyncio.create_task(_loop_sanitario())
     yield
     tarefa_backup.cancel()
     tarefa_push.cancel()
     tarefa_manual_fazenda.cancel()
+    tarefa_sanitario.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await tarefa_backup
     with contextlib.suppress(asyncio.CancelledError):
         await tarefa_push
     with contextlib.suppress(asyncio.CancelledError):
         await tarefa_manual_fazenda
+    with contextlib.suppress(asyncio.CancelledError):
+        await tarefa_sanitario
 
 
 app = FastAPI(

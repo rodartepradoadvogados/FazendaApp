@@ -15,6 +15,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.rules.sanitario import ganchos as ganchos_sanitario
 from fazenda.api.routers.lotes import _codigo_do_grupo, _mesmo_codigo, coletar_dados_criterios
 from fazenda.auth import exigir_admin, exigir_admin_ou_dono, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
@@ -1727,6 +1728,7 @@ def registrar_secagem(
     if dados.produtos and not materializar:
         avisos.append("Produto(s) de secagem programado(s) na Agenda — o estoque baixa quando você confirmar a aplicação.")
 
+    ganchos_sanitario.animal_mudou(session, fazenda_id, numeros=[dados.numero_matriz], evento="secagem")
     session.commit()
     return {
         "criado": True, "avisos": avisos, "programado": not materializar,
