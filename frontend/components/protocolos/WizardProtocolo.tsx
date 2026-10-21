@@ -43,8 +43,8 @@ function useTransicaoDeEtapa(passoAtual: number) {
 
 /**
  * Formato "wizard" do Cadastro de protocolos (redesign "Cooperativa", T5) —
- * componente ÚNICO reaproveitado pelos 6 tipos de molde da Central de
- * Protocolos > Cadastro (Sanitário curativo, Sanitário preventivo/calendário,
+ * componente ÚNICO reaproveitado pelos 5 tipos de molde da Central de
+ * Protocolos > Cadastro (Sanitário curativo,
  * IATF, Indução de lactação, Customizado, Lida). Os outros dois formatos
  * decididos no redesign (duas colunas para o Financeiro inteiro — T4; gaveta
  * lateral para o resto — T2, GavetaLancamento.tsx) NÃO se aplicam aqui: esta é

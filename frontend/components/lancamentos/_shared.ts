@@ -121,10 +121,3 @@ export const CATEGORIAS_ANIMAIS = [
   { id: "pre_parto_15", label: "Pré-parto (próximos 15 dias)", criterios: { dias_para_parto_min: 0, dias_para_parto_max: 15 } },
   { id: "em_tratamento", label: "Em tratamento", criterios: { em_tratamento: true } },
 ] as const;
-
-export const FREQUENCIA_UNIDADES = [
-  { v: "dias", l: "dia(s)" }, { v: "meses", l: "mês(es)" }, { v: "anos", l: "ano(s)" },
-];
-
-// ─────────────────────── Preventivo — aplicação (vacina/exame) ───────────────────────
-export type ExameDef = { id: number; nome: string; tipo_resultado: "diagnostico" | "numerico"; faixa_min: number | null; faixa_max: number | null; acao_abaixo: string | null; acao_dentro: string | null; acao_acima: string | null };

@@ -1,6 +1,7 @@
 "use client";
-// Lançamentos › Produção › Secagem — 4 passos numerados em UMA coluna: vacas (tabela com DEL, gestação, data prevista e situação),
-// dados da secagem, produtos (opcional) e vacina pré-parto (opcional). As decisões ("já consta como seca", "mover para o lote das
+// Lançamentos › Produção › Secagem — 3 passos numerados em UMA coluna: vacas (tabela com DEL, gestação, data prevista e situação),
+// dados da secagem e produtos (opcional). A vacina pré-parto saiu daqui (Sanitário Preventivo v2: é uma caixa do módulo de
+// vacinas e exames, não um atalho da secagem). As decisões ("já consta como seca", "mover para o lote das
 // secas") e o resultado ficam dentro da barra fixa do pé, junto do Salvar em ouro.
 //  • Props: animais, estoque, produtos, numeroInicial (pré-marca a vaca vinda de Listas › Previsão de secagem), salvarSecagem e
 //    salvarMovimentacao (injeção do app de campo/offline; offline não traz `lote_sugerido`: "guardado, será enviado quando conectar").
@@ -10,19 +11,19 @@
 //    GET /producao/secagem-info?numero_matriz. Aviso/motivo_exclusao só informa, não bloqueia.
 //  • POST /producao/secagem por vaca, uma de cada vez (falhou = volta marcada, o que já salvou não se perde). Motivo obrigatório,
 //    ECC 1–5 (passo 0,25), produtos (dosagem por vaca ou total ÷ nº de vacas, estoque restante informado), data futura ⇒
-//    `aplicado=false` (programa na Agenda, não baixa estoque), vacina pré-parto (Sim exige ≥ 1; "já aplicada agora" baixa e registra).
+//    `aplicado=false` (programa na Agenda, não baixa estoque).
 //  • 409 "já consta como seca" PAUSA a fila: Substituir reenvia com `substituir_secagem_id`; Cancelar pula só essa vaca.
 //  • Depois de salvar: lote sugerido por vaca, uma a uma (confirmação) ou automático (Configurações › Parâmetros).
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CalendarClock, Plus, Search, Trash2 } from "lucide-react";
 import {
-  criarMovimentacao, criarSecagem, fetchMedicamentos, fetchSecagemInfo, fetchSecagemLista, fetchTransferenciaLoteAutomatica,
+  criarMovimentacao, criarSecagem, fetchSecagemInfo, fetchSecagemLista, fetchTransferenciaLoteAutomatica,
   formatDate, type SecagemLista,
 } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
 import { Ajuda, Aviso, BarraAcao, BotaoOuro, Campo, Faixa, Passo, Pilulas, Selo } from "@/components/gerencial/kit";
-import { LinhaGrupo, RotuloMini, dataBR, nb, somarDias } from "@/components/gerencial/telas/utilProducao";
+import { LinhaGrupo, RotuloMini, dataBR, nb } from "@/components/gerencial/telas/utilProducao";
 import { BOTAO_COM_ICONE, EstadoVazio, NotaInfo } from "@/components/gerencial/telas/pecasProducao";
 import {
   type EstoqueItem, unidadesCompativeis, codigoGrupo, MOTIVOS_SECAGEM, animalEmLactacao,
@@ -37,7 +38,6 @@ type DadosSecagem = {
   numero_matriz: string; data_secagem: string; motivo: string; escore_condicao_corporal: number | null;
   observacao?: string; responsavel?: string; aplicado?: boolean;
   produtos: { produto: string; via?: string; quantidade: number; unidade: string }[];
-  vacinas_pre_parto: string[]; vacina_pre_parto_aplicada_agora: boolean; vacina_pre_parto: boolean | null;
   substituir_secagem_id?: number;
 };
 // "Esta vaca já consta como seca — substituir a data da secagem anterior ou cancelar este lançamento?" (ver
@@ -192,11 +192,6 @@ export function FormSecagem({
   // "Dosagem" pode ser a dose DE CADA vaca (padrão) ou o TOTAL da aplicação inteira (divide pelo nº de vacas antes de lançar).
   const [modoDosagem, setModoDosagem] = useState<Record<number, ModoDosagem>>({});
   const [aplicado, setAplicado] = useState(true);
-  const [vacinaSim, setVacinaSim] = useState(false);
-  const [vacinas, setVacinas] = useState<string[]>([]);
-  const [vacinasSel, setVacinasSel] = useState<string[]>([]);
-  const [vacinaAgora, setVacinaAgora] = useState(false);
-  const [semEstoque, setSemEstoque] = useState(false);
 
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -243,11 +238,6 @@ export function FormSecagem({
     setPrefeitoPara(matriz);
     if (info?.data_prevista_secagem) setDataSecagem(info.data_prevista_secagem);
   }
-
-  // Vacinas (pré-parto).
-  useEffect(() => {
-    fetchMedicamentos({ finalidade: "vacina_pre_parto", incluir_sem_estoque: semEstoque }).then((d) => setVacinas((d as { nome: string }[]).map((m) => m.nome))).catch(() => {});
-  }, [semEstoque]);
 
   const nomesEstoque = estoque.map((e) => e.nome);
   // Produto de secagem é de livre escolha — não trava na lista de "aptos para secagem", mostra todo o estoque/produtos.
@@ -296,7 +286,7 @@ export function FormSecagem({
   const itensCompletos = produtosParaEnvio(itens, modoDosagem, nVacas);
   const futura = dataSecagem > hoje;
   const baixa = aplicadoEfetivo(aplicado, dataSecagem, hoje) && itensCompletos.length > 0;
-  const bloqueio = erroDeSecagem({ nVacas, motivo, vacinaSim, vacinas: vacinasSel, ecc });
+  const bloqueio = erroDeSecagem({ nVacas, motivo, ecc });
   const pendenteDecisao = !!conflito || filaTransferencia.length > 0;
   const podeSalvar = !bloqueio && !!dataSecagem && !salvando && !pendenteDecisao;
 
@@ -361,7 +351,6 @@ export function FormSecagem({
       }
       setSelAnimal(new Set()); setSelLote(new Set()); setLotesSel([]);
       setMotivo(""); setEcc(""); setObservacao(""); setItens([]); setModoDosagem({});
-      setVacinaSim(false); setVacinasSel([]); setVacinaAgora(false);
     }
     setResultado(res);
     setSalvando(false);
@@ -378,9 +367,6 @@ export function FormSecagem({
       escore_condicao_corporal: numOuNull(ecc),
       observacao: observacao || undefined, responsavel: responsavel || undefined, aplicado: aplicadoEf,
       produtos: produtosParaApi,
-      vacinas_pre_parto: vacinaSim ? vacinasSel : [],
-      vacina_pre_parto_aplicada_agora: vacinaSim ? vacinaAgora : false,
-      vacina_pre_parto: vacinaSim,
     };
     const numeros = Array.from(alvo);
     salvosRef.current = []; falhadosRef.current = []; puladasRef.current = []; pendentesRef.current = [];
@@ -455,7 +441,6 @@ export function FormSecagem({
   const pularTransferenciaLote = () => setFilaTransferencia((f) => f.slice(1));
 
   const unico = matriz ? info : null;
-  const vacinasVisiveis = vacinas;
   const retorno = (
     <RetornoSecagem
       erro={erro} resultado={resultado} conflito={conflito} resolvendo={resolvendoConflito} dataSecagem={dataSecagem}
@@ -695,55 +680,11 @@ export function FormSecagem({
         ))}
       </Passo>
 
-      <Passo n={4} id="sc-p4" titulo="Vacina pré-parto (opcional)">
-        <fieldset style={GRUPO_RADIO} role="radiogroup" aria-label="Aplicar vacina pré-parto?">
-          <label style={ROTULO_RADIO}><input type="radio" name="sc-vacina" checked={!vacinaSim} onChange={() => { setVacinaSim(false); setVacinasSel([]); }} /> Não</label>
-          <label style={ROTULO_RADIO}><input type="radio" name="sc-vacina" checked={vacinaSim} onChange={() => setVacinaSim(true)} /> Sim — aplicar vacina(s) pré-parto</label>
-        </fieldset>
-        {vacinaSim && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.55rem", paddingLeft: "0.2rem" }}>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem 1.5rem", alignItems: "center" }}>
-              {vacinasVisiveis.map((nome) => {
-                const e = estoque.find((x) => x.nome === nome);
-                return (
-                  <label key={nome} style={ROTULO_RADIO}>
-                    <input type="checkbox" checked={vacinasSel.includes(nome)} style={{ accentColor: "var(--ft-ouro)", width: "1.05rem", height: "1.05rem" }}
-                      onChange={() => setVacinasSel((p) => (p.includes(nome) ? p.filter((x) => x !== nome) : [...p, nome]))} />
-                    {nome}{e ? <span style={{ color: "var(--text-muted)", fontSize: "0.74rem" }}>{(e.quantidade ?? 0) > 0 ? `estoque ${e.quantidade} ${e.unidade || ""}` : "sem estoque"}</span> : null}
-                  </label>
-                );
-              })}
-              <label style={{ ...ROTULO_RADIO, color: "var(--text-muted)", fontSize: "0.76rem" }}>
-                <input type="checkbox" checked={semEstoque} onChange={(e) => setSemEstoque(e.target.checked)} style={{ accentColor: "var(--ft-ouro)" }} /> Incluir itens sem estoque
-              </label>
-            </div>
-            {!vacinasVisiveis.length && (
-              <Ajuda>Nenhuma vacina com estoque disponível. Marque “Incluir itens sem estoque” para ver também as vacinas sem saldo cadastrado.</Ajuda>
-            )}
-            {vacinasSel.length === 0 && <Aviso tom="erro">Marque ao menos uma vacina pré-parto, ou volte para “Não”.</Aviso>}
-            {vacinasSel.length > 0 && (
-              <>
-                <fieldset style={GRUPO_RADIO} role="radiogroup" aria-label="As vacinas já foram aplicadas agora?">
-                  <legend style={LEGENDA}>Já aplicada agora?</legend>
-                  <label style={ROTULO_RADIO}><input type="radio" name="sc-vacina-agora" checked={!vacinaAgora} onChange={() => setVacinaAgora(false)} /> Não, aplico depois</label>
-                  <label style={ROTULO_RADIO}><input type="radio" name="sc-vacina-agora" checked={vacinaAgora} onChange={() => setVacinaAgora(true)} /> Sim, já apliquei</label>
-                </fieldset>
-                <Ajuda>
-                  {vacinaAgora
-                    ? "Registra a aplicação em Sanidade e dá baixa no estoque agora; não cria pendência na Agenda."
-                    : `Cria uma pendência na Agenda para ${dataSecagem ? dataBR(somarDias(dataSecagem, 1)) : "o dia seguinte"} (dia seguinte à secagem), com a vaca e a(s) vacina(s) a aplicar.`}
-                </Ajuda>
-              </>
-            )}
-          </div>
-        )}
-      </Passo>
-
       <BarraAcao
         retorno={temRetorno ? retorno : undefined}
         resumo={`${nVacas} ${nVacas === 1 ? "vaca" : "vacas"} · motivo ${motivoRotulo ?? "— escolha"} · ${
           itensCompletos.length === 0 ? "sem produtos" : `${baixa ? "baixa" : "programa"} ${itensCompletos.length} ${itensCompletos.length === 1 ? "produto" : "produtos"}`}`}
-        detalhe={`Secagem em ${dataSecagem ? dataBR(dataSecagem) : "—"}${futura ? " (futura)" : ""}${vacinaSim && vacinasSel.length ? ` · vacina pré-parto: ${vacinasSel.length}${vacinaAgora ? " (aplicada agora)" : " (pendência na Agenda)"}` : ""}${!motivo ? " · falta o motivo" : ""}${pendenteDecisao ? " · responda a decisão acima" : ""}`}
+        detalhe={`Secagem em ${dataSecagem ? dataBR(dataSecagem) : "—"}${futura ? " (futura)" : ""}${!motivo ? " · falta o motivo" : ""}${pendenteDecisao ? " · responda a decisão acima" : ""}`}
         secundaria={resultado && !pendenteDecisao && !salvando ? <button type="button" className="btn-ghost" onClick={() => { setResultado(null); setErro(null); }}>Fechar aviso</button> : undefined}
         acao={<BotaoOuro onClick={salvar} desabilitado={!podeSalvar}>{salvando ? "Salvando…" : `Salvar (${nVacas})`}</BotaoOuro>}
       />

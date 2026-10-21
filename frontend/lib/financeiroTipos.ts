@@ -9,8 +9,6 @@ export type Lanc = {
   // Tem comprovante/anexo em arquivo — inclusive o comprovante único de um
   // pagamento em lote, que é o mesmo arquivo para todas as notas da remessa.
   tem_comprovante?: boolean;
-  // Conta nascida de um agendamento preventivo (Protocolos): link de volta ao agendamento.
-  origem_preventivo?: { cronograma_id: number; protocolo: string; subtipo: "honorario" | "produto" | null; data_evento: string } | null;
   conta_bancaria: string | null; forma_pagamento: string | null; data_vencimento_cartao: string | null; entregue: boolean | null;
   parcela_num: number | null; parcela_total: number | null;
   data_competencia: string | null; data_pagamento: string | null; data_vencimento: string | null; data_emissao: string | null;

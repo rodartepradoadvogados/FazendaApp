@@ -26,7 +26,7 @@ export default function ConfiguracoesPage() {
   // aqui (não dentro de Cadastro/CadastroSanitario) para que só exista UM
   // registro de sub-navegação (evita a Sidebar ficar disputada entre pai e filho).
   const [cadastroAba, setCadastroAba] = useState<AbaCadastro>("lotes");
-  const [sanitarioAba, setSanitarioAba] = useState<AbaCadastroSanitario>("eventos");
+  const [sanitarioAba, setSanitarioAba] = useState<AbaCadastroSanitario>("protocolos");
   const [centralSemenAba, setCentralSemenAba] = useState<AbaCentralSemen>("estoque-semen");
   const [estoqueAba, setEstoqueAba] = useState<AbaCadastroEstoque>("itens");
 

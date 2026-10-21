@@ -32,7 +32,7 @@ export const DOMINIOS_GRADE: { id: DominioId; nome: string; cor: string }[] = [
 /** Ordem de exibição dentro do grupo (os que o dono mais procura primeiro); o que não está aqui vai depois, por nome. */
 const ORDEM_TIPOS = [
   "diagnostico", "servico", "parto", "controle", "animal", "movimento_lote", "secagem", "pesagem_corporal", "evento_manual",
-  "sanidade", "protocolo_sanitario_lancamento", "protocolo_iatf_lancamento", "calendario_sanitario", "exame_resultado",
+  "sanidade", "protocolo_sanitario_lancamento", "protocolo_iatf_lancamento",
   "financeiro", "compra_animal", "compra_semen", "venda_animal", "entrega_leite",
   "estoque", "movimento_estoque",
   "diaria", "diaria_pagamento", "empreitada", "contrato",

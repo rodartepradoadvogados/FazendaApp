@@ -22,6 +22,7 @@ import { TabBar, TelaSkeleton } from "@/components/ui";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import type { ColunaExport } from "@/lib/export";
 import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/WizardProtocolo";
+import EmConstrucao from "@/components/sanitario/EmConstrucao";
 
 const FormProtocoloCustomizado = dynamic(() => import("@/components/lancamentos/FormProtocoloCustomizado").then((m) => m.FormProtocoloCustomizado), { ssr: false });
 // Os mesmos formulários já usados em Lançamentos — reaproveitados aqui, na
@@ -30,25 +31,9 @@ const FormProtocoloCustomizado = dynamic(() => import("@/components/lancamentos/
 const FormProtocoloIatf = dynamic(() => import("@/components/lancamentos/FormProtocoloIatf").then((m) => m.FormProtocoloIatf), { ssr: false });
 const FormInducaoLactacao = dynamic(() => import("@/components/FormInducaoLactacao").then((m) => m.FormInducaoLactacao), { ssr: false });
 const FormProtocoloSanitario = dynamic(() => import("@/components/lancamentos/FormProtocoloSanitario").then((m) => m.FormProtocoloSanitario), { ssr: false });
-// Aplicar (não cadastrar) uma regra do calendário sanitário — mesmo formulário
-// já usado em Lançamentos > Sanitário > Preventiva > Calendário sanitário.
-const FormAplicarCalendarioSanitario = dynamic(() => import("@/components/lancamentos/FormAplicarCalendarioSanitario").then((m) => m.FormAplicarCalendarioSanitario), { ssr: false });
-// Acompanhamento/Histórico do calendário sanitário — MESMOS componentes já
-// usados em Sanidade > Preventiva (Calendário/Cronogramas e Histórico
-// agrupado por vacina/exame). Nada de tabela ou endpoint paralelo.
-const AcompanhamentoPreventivo = dynamic(() => import("@/components/protocolos/AcompanhamentoPreventivo").then((m) => m.AcompanhamentoPreventivo), { ssr: false });
-const ConcluidosPreventivo = dynamic(() => import("@/components/protocolos/ConcluidosPreventivo").then((m) => m.ConcluidosPreventivo), { ssr: false });
-const CalendarioSanitarioAcompanhamento = dynamic(() => import("@/app/sanidade/page").then((m) => m.CalendarioSanitarioView), { ssr: false });
-// Lista de espera do preventivo + assistente "Criar agendamento" (fatia 7).
-const ListaEsperaPreventivo = dynamic(() => import("@/components/protocolos/ListaEsperaPreventivo").then((m) => m.ListaEsperaPreventivo), { ssr: false });
-const HistoricoPreventivoView = dynamic(() => import("@/components/sanidade/HistoricoPreventivoView").then((m) => m.HistoricoPreventivoView), { ssr: false });
 // Editores de cadastro reaproveitados de Configurações > Cadastro — MESMO
 // componente, mesmo endpoint, mesmos protocolos. Ver comentário em TIPOS_CADASTRO.
 const CadastroProtocolosSanitarios = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosSanitarios), { ssr: false });
-// Cadastro do Calendário Sanitário (Preventivo) — migrado de Lançamentos para
-// cá: em Lançamentos só se aplica uma regra já cadastrada (ver
-// FormAplicarCalendarioSanitario), o cadastro da regra em si mora aqui.
-const FormCalendarioSanitario = dynamic(() => import("@/components/lancamentos/FormCalendarioSanitario").then((m) => m.FormCalendarioSanitario), { ssr: false });
 const CadastroProtocolosInducao = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosInducao), { ssr: false });
 const CadastroProtocolosCustomizados = dynamic(() => import("@/components/CadastroProtocolosCustomizados"), { ssr: false });
 const CadastroLida = dynamic(() => import("@/components/CadastroLida"), { ssr: false });
@@ -347,7 +332,7 @@ function SeletorTipoProtocolo<T extends string>({ titulo, tipos, tipo, onChange 
 // mesmo endpoint, mesmos protocolos já cadastrados. Não há cópia nem tabela
 // paralela: cadastrar aqui ou lá é indiferente.
 const TIPOS_CADASTRO = [
-  { id: "sanitario", label: "Sanitário", desc: "Curativo (cronograma de dias) ou Preventivo (vacina, exame, vermífugo ou detecção de cio de repasse)" },
+  { id: "sanitario", label: "Sanitário curativo", desc: "Cronograma de etapas em dias fixos (D0/D1/D2…). Vacinas e exames ficam na aba Vacinas e exames" },
   { id: "iatf", label: "IATF", desc: "Hormônios em dias livres (D0/D7/D9 ou outro espaçamento)" },
   { id: "inducao", label: "Indução de lactação", desc: "Medicamento, implante e manejo por dia" },
   { id: "customizado", label: "Customizado", desc: "Roteiro livre de etapas, para qualquer rotina" },
@@ -355,41 +340,21 @@ const TIPOS_CADASTRO = [
 ] as const;
 type TipoCadastro = typeof TIPOS_CADASTRO[number]["id"];
 
-// Sanitário se divide em dois sub-cards: Curativo (cronograma de etapas de
-// dias fixos, D0/D1/D2…) e Preventivo (o Calendário Sanitário — regra
-// recorrente por frequência ou por evento de vida, ver FormCalendarioSanitario).
-// São modelos de dados bem diferentes — por isso viram sub-abas, não um
-// campo a mais no mesmo formulário.
-const SUBS_SANITARIO = [
-  { id: "curativo", label: "Curativo", desc: "Cronograma de etapas em dias fixos (D0/D1/D2…)" },
-  { id: "preventivo", label: "Preventivo", desc: "Vacina, exame, vermífugo ou detecção de cio de repasse, com janela de aplicação" },
-] as const;
-type SubSanitario = typeof SUBS_SANITARIO[number]["id"];
-
-function CadastroTab({ estoque }: { estoque: EstoqueItem[] }) {
+// O sanitário aqui é só o curativo (cronograma de etapas em dias fixos).
+// Vacinas e exames (Sanitário Preventivo v2) têm aba própria na Central.
+function CadastroTab() {
   const [tipo, setTipo] = useState<TipoCadastro>("sanitario");
-  const [subSanitario, setSubSanitario] = useState<SubSanitario>("curativo");
-  // Atalho vindo de fora (ex.: "Editar" no calendário sanitário, em Sanidade)
-  // — abre direto em Sanitário > Preventivo.
+  // Atalho vindo de fora (?tipo=iatf etc.) — abre direto no tipo pedido.
   useEffect(() => {
-    const qs = new URLSearchParams(window.location.search);
-    const tipoQs = qs.get("tipo");
+    const tipoQs = new URLSearchParams(window.location.search).get("tipo");
     if (tipoQs && TIPOS_CADASTRO.some((t) => t.id === tipoQs)) setTipo(tipoQs as TipoCadastro);
-    const subQs = qs.get("sub");
-    if (subQs && SUBS_SANITARIO.some((s) => s.id === subQs)) setSubSanitario(subQs as SubSanitario);
   }, []);
 
   return (
     <div>
       <SeletorTipoProtocolo titulo="Do que se trata o protocolo?" tipos={TIPOS_CADASTRO} tipo={tipo} onChange={setTipo} />
 
-      {tipo === "sanitario" && (
-        <>
-          <SeletorTipoProtocolo titulo="Curativo ou preventivo?" tipos={SUBS_SANITARIO} tipo={subSanitario} onChange={setSubSanitario} />
-          {subSanitario === "curativo" && <CadastroProtocolosSanitarios />}
-          {subSanitario === "preventivo" && <FormCalendarioSanitario estoque={estoque} />}
-        </>
-      )}
+      {tipo === "sanitario" && <CadastroProtocolosSanitarios />}
       {tipo === "iatf" && <CadastroIatf />}
       {tipo === "inducao" && <CadastroProtocolosInducao />}
       {tipo === "customizado" && <CadastroProtocolosCustomizados />}
@@ -409,7 +374,7 @@ function CadastroTab({ estoque }: { estoque: EstoqueItem[] }) {
 // a tela. Só o Customizado nasce exclusivamente aqui (nunca existiu em
 // Lançamentos, e não faz sentido duplicar essa é a única exceção).
 const TIPOS_LANCAMENTO = [
-  { id: "sanitario", label: "Sanitário", desc: "Aplicar um protocolo cadastrado a um animal" },
+  { id: "sanitario", label: "Sanitário curativo", desc: "Aplicar um protocolo curativo cadastrado a um animal" },
   { id: "iatf", label: "IATF", desc: "Hormônios num lote — molde de dias livres ou digitado na hora" },
   { id: "inducao", label: "Indução de lactação", desc: "Cronograma completo, com baixa de estoque" },
   { id: "customizado", label: "Customizado", desc: "Roteiro livre, por matriz(es) ou tarefa da fazenda" },
@@ -417,53 +382,26 @@ const TIPOS_LANCAMENTO = [
 ] as const;
 type TipoLancamento = typeof TIPOS_LANCAMENTO[number]["id"];
 
-// Sub-abas de lançamento do Sanitário — mesma divisão de Cadastro (ver
-// SUBS_SANITARIO), só que aqui é "aplicar", não "cadastrar": Curativo aplica
-// um protocolo de cronograma (D0/D1/D2…) e Preventivo aplica uma regra já
-// cadastrada no calendário sanitário (FormAplicarCalendarioSanitario — o
-// mesmo formulário de Lançamentos > Sanitário > Preventiva > Calendário
-// sanitário).
-const SUBS_SANITARIO_LANCAMENTO = [
-  { id: "curativo", label: "Curativo", desc: "Aplicar um protocolo cadastrado (cronograma de dias fixos)" },
-  { id: "preventivo", label: "Preventivo", desc: "Vacina ou exame de um protocolo já cadastrado (janela de aplicação)" },
-] as const;
-
-function LancamentoTab({ animais, estoque, lotes, onIrAcompanhamento }: { animais: AnimalRow[]; estoque: EstoqueItem[]; lotes: string[]; onIrAcompanhamento?: () => void }) {
+function LancamentoTab({ animais, estoque }: { animais: AnimalRow[]; estoque: EstoqueItem[] }) {
   const [tipo, setTipo] = useState<TipoLancamento>("sanitario");
-  const [subSanitario, setSubSanitario] = useState<SubSanitario>("preventivo");
 
   return (
     <div>
       <SeletorTipoProtocolo titulo="O que você quer aplicar?" tipos={TIPOS_LANCAMENTO} tipo={tipo} onChange={setTipo} />
 
-      {tipo === "sanitario" && (
-        <SeletorTipoProtocolo titulo="Curativo ou preventivo?" tipos={SUBS_SANITARIO_LANCAMENTO} tipo={subSanitario} onChange={setSubSanitario} />
-      )}
-
-      {tipo === "sanitario" && subSanitario === "preventivo" && (
-        <ListaEsperaPreventivo
-          animais={animais} onAbrirAcompanhamento={onIrAcompanhamento}
-          avulsa={<FormAplicarCalendarioSanitario animais={animais} lotes={lotes} estoque={estoque} />}
-        />
-      )}
-
-      {!(tipo === "sanitario" && subSanitario === "preventivo") && (
       <div className="card mb-3">
         <div className="card-header mb-2">Aplicar {TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label.toLowerCase()}</div>
         {tipo === "iatf" && <FormProtocoloIatf animais={animais} />}
         {tipo === "inducao" && <FormInducaoLactacao animais={animais} />}
-        {tipo === "sanitario" && subSanitario === "curativo" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
+        {tipo === "sanitario" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
         {tipo === "customizado" && <FormProtocoloCustomizado animais={animais as any} />}
         {tipo === "lida" && <FormLida animais={animais as any} />}
       </div>
-      )}
 
       <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
         {tipo === "customizado" || tipo === "lida"
           ? `${TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label} só é lançado aqui — não existe em Lançamentos.`
-          : tipo === "sanitario" && subSanitario === "preventivo"
-            ? "Vacina e exame só são agendados e aplicados aqui (e na Agenda, no dia) — não existem mais em Lançamentos nem em Sanidade."
-            : "Mesmo lançamento de Lançamentos — lance aqui ou lá, dá no mesmo registro."}
+          : "Mesmo lançamento de Lançamentos — lance aqui ou lá, dá no mesmo registro."}
       </p>
     </div>
   );
@@ -987,7 +925,7 @@ const COLUNAS_EXPORT: ColunaExport[] = [
 // backend, já que esse sim é decidido lá).
 const TIPOS_ACOMPANHAMENTO = [
   { id: "", label: "Todos", desc: "Todos os protocolos" },
-  { id: "sanitario", label: "Sanitário", desc: "Curativo ou preventivo" },
+  { id: "sanitario", label: "Sanitário", desc: "Protocolos curativos" },
   { id: "iatf", label: "IATF", desc: "Hormônios em lote" },
   { id: "inducao", label: "Indução de lactação", desc: "Cronograma com baixa de estoque" },
   { id: "customizado", label: "Customizado", desc: "Roteiro livre" },
@@ -1004,11 +942,7 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
   const [nome, setNome] = useState("");
   const [origem, setOrigem] = useState<OrigemAcompanhamento>(origemFixa ?? "");
   // Sanitário aqui só cobre o Curativo (lançamentos com etapas — ver
-  // _linhas_sanitario no backend); o Preventivo (calendário sanitário) é um
-  // modelo de dado bem diferente (regra recorrente, não lançamento com
-  // etapas) e mora só na Sanidade — reaproveita-se a MESMA tela de lá
-  // (CalendarioSanitarioView / HistoricoPreventivoView), sem tabela paralela.
-  const [subSanitario, setSubSanitario] = useState<SubSanitario>("curativo");
+  // _linhas_sanitario no backend). Vacinas e exames têm aba própria.
   const [erro, setErro] = useState<string | null>(null);
   const [aberto, setAberto] = useState<{ origem: string; id: number } | null>(null);
   const [recarga, setRecarga] = useState(0);
@@ -1046,18 +980,10 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
     status: LABEL_STATUS[l.status] || l.status,
   })), [linhasFiltradas]);
 
-  const mostrarPreventivo = !origemFixa && origem === "sanitario" && subSanitario === "preventivo";
-
   return (
     <div>
       {!origemFixa && <SeletorTipoProtocolo titulo="Filtrar por protocolo" tipos={TIPOS_ACOMPANHAMENTO} tipo={origem} onChange={setOrigem} />}
-      {!origemFixa && origem === "sanitario" && (
-        <SeletorTipoProtocolo titulo="Curativo ou preventivo?" tipos={SUBS_SANITARIO} tipo={subSanitario} onChange={setSubSanitario} />
-      )}
 
-      {mostrarPreventivo ? (
-        historico ? <HistoricoPreventivoView /> : <CalendarioSanitarioAcompanhamento modoInicial="calendario" />
-      ) : (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
       <div className="mb-3">
@@ -1117,7 +1043,6 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
       )}
       </div>
       </div>
-      )}
 
       {aberto && (
         <DetalheProtocolo origem={aberto.origem} origemId={aberto.id}
@@ -1132,95 +1057,68 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
 // Acompanhamento › Concluídos. "Aplicar" era "Lançamento" e "Concluídos" era
 // "Histórico"; os ids antigos (?aba=lancamento / ?aba=historico) continuam
 // valendo como atalho para não quebrar links já salvos.
-type AbaProtocolos = "cadastro" | "aplicar" | "acompanhamento" | "concluidos";
+// "Vacinas e exames" é o ponto de encaixe do Sanitário Preventivo v2
+// (Cadastro | Vacinas e exames marcados); o preventivo antigo saiu.
+type AbaProtocolos = "cadastro" | "aplicar" | "acompanhamento" | "concluidos" | "vacinas";
 const ABAS_LEGADO: Record<string, AbaProtocolos> = { lancamento: "aplicar", historico: "concluidos" };
-const ABAS_PROTOCOLOS: AbaProtocolos[] = ["cadastro", "aplicar", "acompanhamento", "concluidos"];
+const ABAS_PROTOCOLOS: AbaProtocolos[] = ["cadastro", "aplicar", "acompanhamento", "concluidos", "vacinas"];
 
-// Acompanhamento e Concluídos: o sanitário preventivo (vacina/vermífugo) tem tela
-// própria (agendamentos, gaveta Aplicar, estorno); IATF, indução, curativo e
-// protocolo próprio seguem nas listas de sempre, escolhidas pelo chip.
-type TipoAbaLista = "preventivo" | "outros";
-function EscolhaTipoLista({ tipo, onChange }: { tipo: TipoAbaLista; onChange: (t: TipoAbaLista) => void }) {
-  return (
-    <TabBar<TipoAbaLista>
-      abas={[
-        { id: "preventivo", label: "Sanitário preventivo", title: "Vacina e vermífugo agendados" },
-        { id: "outros", label: "IATF, indução, curativo e próprio", title: "Os demais protocolos" },
-      ]}
-      ativa={tipo}
-      onChange={onChange}
-    />
-  );
-}
+type SubVacinas = "cadastro" | "marcados";
 
 export default function ProtocolosPage() {
   const [aba, setAba] = useState<AbaProtocolos>("acompanhamento");
-  const [tipoAcomp, setTipoAcomp] = useState<TipoAbaLista>("preventivo");
-  const [tipoConcl, setTipoConcl] = useState<TipoAbaLista>("preventivo");
-  const [concluidoInicial, setConcluidoInicial] = useState<number | null>(null);
+  const [subVacinas, setSubVacinas] = useState<SubVacinas>("cadastro");
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
   useEffect(() => {
     fetchAnimais().then(setAnimais).catch(() => {});
     fetchEstoqueAtivos().then((d) => setEstoque(d.itens || [])).catch(() => {});
   }, []);
-  // Lotes existentes (para o lançamento de Calendário sanitário, que aplica
-  // por animal/lote/categoria) — mesma dedução de maiúsculas/minúsculas de
-  // app/lancamentos/page.tsx.
-  const lotes = useMemo(() => {
-    const porChave = new Map<string, string>();
-    (animais.map((a) => a.grupo_primario).filter(Boolean) as string[]).forEach((l) => {
-      const chave = l.toUpperCase();
-      const atual = porChave.get(chave);
-      if (!atual || l === l.toUpperCase()) porChave.set(chave, l === l.toUpperCase() ? l : atual || l);
-    });
-    return Array.from(porChave.values()).sort();
-  }, [animais]);
-  // Atalho vindo de fora (ex.: "Editar" no calendário sanitário, em Sanidade,
-  // ou no relatório de Exclusão) — só escolhe a aba certa; a Central de
-  // Protocolos não permite pular direto para uma regra específica, mesmo
-  // padrão do "ir=" de Lançamentos.
+  // Atalho vindo de fora (?aba=...) — só escolhe a aba certa, mesmo padrão
+  // do "ir=" de Lançamentos.
   useEffect(() => {
     const abaQs = new URLSearchParams(window.location.search).get("aba");
     const abaId = abaQs ? (ABAS_LEGADO[abaQs] ?? abaQs) : null;
     if (abaId && (ABAS_PROTOCOLOS as string[]).includes(abaId)) setAba(abaId as AbaProtocolos);
-    const conc = new URLSearchParams(window.location.search).get("concluido");
-    if (conc && Number(conc) > 0) { setAba("concluidos"); setConcluidoInicial(Number(conc)); }
   }, []);
 
   return (
     <div className="p-6">
       <h1 className="text-xl font-bold mb-1" style={{ color: "var(--dourado-light)" }}>Central de Protocolos</h1>
       <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginBottom: "1.2rem" }}>
-        Cadastre o protocolo, aplique, acompanhe o que está agendado e consulte os concluídos — vacinas, exames, IATF, indução de lactação e protocolos próprios num só lugar.
-        Vacina e exame (preventivo) são aplicados só aqui; IATF, Indução e Sanitário curativo continuam também em Lançamentos — é o mesmo lançamento, dois caminhos.
+        Cadastre o protocolo, aplique, acompanhe o que está agendado e consulte os concluídos — IATF, indução de lactação, sanitário curativo e protocolos próprios num só lugar.
+        IATF, Indução e Sanitário curativo continuam também em Lançamentos — é o mesmo lançamento, dois caminhos. Vacinas e exames têm aba própria.
       </p>
 
       <TabBar<AbaProtocolos>
         abas={[
-          { id: "cadastro", label: "Cadastro", title: "Moldes de cada protocolo, com a janela de aplicação" },
-          { id: "aplicar", label: "Aplicar", title: "Aplicar vacina, exame, IATF, indução, curativo ou protocolo próprio" },
+          { id: "cadastro", label: "Cadastro", title: "Moldes de cada protocolo" },
+          { id: "aplicar", label: "Aplicar", title: "Aplicar IATF, indução, curativo ou protocolo próprio" },
           { id: "acompanhamento", label: "Acompanhamento", title: "O que já está agendado ou em andamento" },
           { id: "concluidos", label: "Concluídos", title: "Aplicados e cancelados, com exportação" },
+          { id: "vacinas", label: "Vacinas e exames", title: "Cadastro das vacinas e exames e os dias marcados" },
         ]}
         ativa={aba}
         onChange={setAba}
       />
 
-      {aba === "cadastro" && <CadastroTab estoque={estoque} />}
-      {aba === "aplicar" && <LancamentoTab animais={animais} estoque={estoque} lotes={lotes} onIrAcompanhamento={() => setAba("acompanhamento")} />}
-      {aba === "acompanhamento" && (
+      {aba === "cadastro" && <CadastroTab />}
+      {aba === "aplicar" && <LancamentoTab animais={animais} estoque={estoque} />}
+      {aba === "acompanhamento" && <ListaProtocolos historico={false} />}
+      {aba === "concluidos" && <ListaProtocolos historico />}
+      {aba === "vacinas" && (
         <>
-          <EscolhaTipoLista tipo={tipoAcomp} onChange={setTipoAcomp} />
-          {tipoAcomp === "preventivo"
-            ? <AcompanhamentoPreventivo onIrLista={() => setAba("aplicar")} onVerConcluidos={() => { setTipoConcl("preventivo"); setAba("concluidos"); }} />
-            : <ListaProtocolos historico={false} />}
-        </>
-      )}
-      {aba === "concluidos" && (
-        <>
-          <EscolhaTipoLista tipo={tipoConcl} onChange={setTipoConcl} />
-          {tipoConcl === "preventivo" ? <ConcluidosPreventivo idInicial={concluidoInicial} /> : <ListaProtocolos historico />}
+          <TabBar<SubVacinas>
+            abas={[
+              { id: "cadastro", label: "Cadastro", title: "Vacinas e exames da fazenda, a partir do catálogo" },
+              { id: "marcados", label: "Vacinas e exames marcados", title: "Dias de vacina e exame marcados, execução e fechamento" },
+            ]}
+            ativa={subVacinas}
+            onChange={setSubVacinas}
+          />
+          {subVacinas === "cadastro"
+            ? <EmConstrucao titulo="Vacinas e exames › Cadastro" descricao="Cadastro das vacinas e exames da fazenda a partir do catálogo sanitário." />
+            : <EmConstrucao titulo="Vacinas e exames marcados" descricao="Marcar o dia, escolher os animais, executar e fechar." />}
         </>
       )}
     </div>

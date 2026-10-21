@@ -181,13 +181,11 @@ test("data futura nunca baixa estoque", () => {
   assert.equal(aplicadoEfetivo(true, "2026-10-18", "2026-10-17"), false);
   assert.equal(aplicadoEfetivo(false, "2026-10-10", "2026-10-17"), false);
 });
-test("o que falta para salvar a secagem: vaca, motivo, vacina", () => {
-  const ok = { nVacas: 2, motivo: "rotina", vacinaSim: false, vacinas: [] as string[] };
+test("o que falta para salvar a secagem: vaca, motivo, escore", () => {
+  const ok = { nVacas: 2, motivo: "rotina" };
   assert.equal(erroDeSecagem(ok), null);
   assert.match(erroDeSecagem({ ...ok, nVacas: 0 }) ?? "", /ao menos uma vaca/);
   assert.match(erroDeSecagem({ ...ok, motivo: "" }) ?? "", /motivo/);
-  assert.match(erroDeSecagem({ ...ok, vacinaSim: true }) ?? "", /vacina pré-parto/);
-  assert.equal(erroDeSecagem({ ...ok, vacinaSim: true, vacinas: ["Rotavec"] }), null);
   // escore: em branco vale; de 1 a 5 vale; fora disso o servidor recusaria (400)
   assert.equal(erroDeSecagem({ ...ok, ecc: "" }), null);
   assert.equal(erroDeSecagem({ ...ok, ecc: "3,25" }), null);

@@ -20,17 +20,16 @@ import {
   Stethoscope, Syringe, CalendarDays, CalendarRange, Wheat, FileBarChart, Gauge,
   LogOut, CheckCheck, Heart, ShieldPlus, Landmark,
   Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor, WifiOff,
-  Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks, ChevronRight, ChevronDown, Sun, ClipboardCheck,
+  Milk, FlaskConical, Droplet, Droplets, Scale, ListChecks, ChevronRight, ChevronDown, Sun,
 } from "lucide-react";
 import { getUsuario, podeModulo, ehAdmin, ehDono, ehOperadorRestrito, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, descartarPendente, lerCache } from "@/lib/offline";
 import { MobTitulo, MobVoltar, MobConfirmModal } from "@/components/mobile/ui";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
+import EmConstrucao from "@/components/sanitario/EmConstrucao";
 import AgendaVet from "@/components/mobile/menu/AgendaVet";
 import ProtocolosIatf from "@/components/mobile/menu/ProtocolosIatf";
-import CalendarioSanitario from "@/components/mobile/menu/CalendarioSanitario";
 import AplicacoesSanidade from "@/components/mobile/menu/AplicacoesSanidade";
-import Cronogramas from "@/components/mobile/menu/Cronogramas";
 import PlanoAlimentacao from "@/components/mobile/menu/PlanoAlimentacao";
 import LancarDieta from "@/components/mobile/menu/LancarDieta";
 import ConsultarDietas from "@/components/mobile/menu/ConsultarDietas";
@@ -58,7 +57,7 @@ import RemediosPorDoenca from "@/components/mobile/menu/RemediosPorDoenca";
 import Sincronizacao from "@/components/mobile/menu/Sincronizacao";
 import Ciclos21Dias from "@/components/mobile/menu/Ciclos21Dias";
 
-type SubKey = "agendaVet" | "iatf" | "ciclos21" | "calendario" | "cronogramas" | "aplicacoes" | "remedios" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
+type SubKey = "agendaVet" | "iatf" | "ciclos21" | "vacinacao" | "aplicacoes" | "remedios" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
   | "fluxoCaixa" | "dre" | "rmca" | "extrato" | "ultimosControles" | "qualidadeLeite" | "secagens" | "bstHistorico" | "pesagemHistorico";
 type SecaoKey = "reproducao" | "sanidade" | "alimentacao" | "producao" | "gestao" | "financeiro";
 type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode; soAdmin?: boolean; cor?: string };
@@ -78,9 +77,8 @@ const GRUPOS: Grupo[] = [
     { chave: "ciclos21", titulo: "Ciclos de 21 dias", subtitulo: "Eficiência reprodutiva ciclo a ciclo", rota: "/ciclos-21-dias", icone: <CalendarRange size={20} /> },
   ] },
   { secao: "sanidade", titulo: "Sanidade", cor: "var(--cat-sanidade)", iconeSecao: <ShieldPlus size={26} />, itens: [
-    { chave: "calendario", titulo: "Calendário Sanitário", subtitulo: "Próximos eventos e já aplicados", rota: "/sanidade", icone: <CalendarDays size={20} /> },
-    { chave: "cronogramas", titulo: "Acompanhamento", subtitulo: "Cronogramas em aberto — incluir/excluir, decidir veterinário", rota: "/sanidade", icone: <ClipboardCheck size={20} /> },
-    { chave: "aplicacoes", titulo: "Histórico", subtitulo: "Preventivo (vacina/exame) e curativo", rota: "/sanidade", icone: <Syringe size={20} /> },
+    { chave: "vacinacao", titulo: "Vacinação", subtitulo: "Vacinas e exames marcados para hoje e amanhã", rota: "/sanidade", icone: <CalendarDays size={20} /> },
+    { chave: "aplicacoes", titulo: "Histórico", subtitulo: "Aplicações curativas", rota: "/sanidade", icone: <Syringe size={20} /> },
     { chave: "remedios", titulo: "Remédios por Doença", subtitulo: "Consulta rápida + substitutos indicados", rota: "/sanidade", icone: <FlaskConical size={20} /> },
   ] },
   // Os 4 itens abaixo não levam `cor` própria de propósito: sem override,
@@ -114,12 +112,23 @@ const GRUPOS: Grupo[] = [
   ] },
 ];
 
+// Menu Vacinação — ponto de encaixe do Sanitário Preventivo v2 no app de campo
+// (lista de hoje/amanhã, modo tronco/grupo, pacote offline). Por enquanto só
+// o aviso de módulo em implantação, sem chamada de API.
+function VacinacaoEmConstrucao({ onVoltar }: { onVoltar: () => void }) {
+  return (
+    <div>
+      <MobVoltar titulo="Vacinação" subtitulo="Vacinas e exames" onVoltar={onVoltar} />
+      <EmConstrucao compacto titulo="Vacinação" />
+    </div>
+  );
+}
+
 const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactNode> = {
   agendaVet: AgendaVet,
   iatf: ProtocolosIatf,
   ciclos21: Ciclos21Dias,
-  calendario: CalendarioSanitario,
-  cronogramas: Cronogramas,
+  vacinacao: VacinacaoEmConstrucao,
   aplicacoes: AplicacoesSanidade,
   remedios: RemediosPorDoenca,
   plano: PlanoAlimentacao,
@@ -149,7 +158,6 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
 const CHAVES_STAT = {
   iatf: "menu_iatf_ativos", // components/mobile/menu/ProtocolosIatf.tsx — Protocolo[] (protocolos IATF ativos)
   ultimosControles: "menu_producao_controles", // components/mobile/menu/UltimosControles.tsx — { controles: ControleRow[] }
-  calendario: "menu_calendario_sanitario_visao", // components/mobile/menu/CalendarioSanitario.tsx — { janelas: JanelaCalendario[] }
   indicadores: "menu_indicadores_animais", // components/mobile/menu/Indicadores.tsx — Animal[] (fetchAnimais, usado no drill-down)
   estoque: "menu_estoque", // components/mobile/menu/Estoque.tsx — { itens: ItemEstoque[] }
 } as const;
@@ -174,13 +182,6 @@ function statUltimosControles(): string | null {
   const maisRecente = [...linhas].sort((a, b) => ((a.data || "") < (b.data || "") ? 1 : -1))[0];
   if (maisRecente.producao_kg == null) return null;
   return `${maisRecente.producao_kg.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} kg no último`;
-}
-
-function statCalendario(): string | null {
-  const dados = lerCache<{ janelas: { eventos: unknown[] }[] }>(CHAVES_STAT.calendario);
-  if (!dados) return null;
-  const total = dados.janelas.reduce((soma, j) => soma + (j.eventos?.length || 0), 0);
-  return `${total} evento${total !== 1 ? "s" : ""} nos próx. 90 dias`;
 }
 
 function statIndicadores(): string | null {
@@ -332,8 +333,7 @@ export default function Pagina() {
   const [tela, setTela] = useState<"news" | "estoque" | "recria" | "protocolos" | "controleAcesso" | "portal" | "assistente" | "aparencia" | "sincronizacao" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(() => {
     if (typeof window === "undefined") return null;
-    // Atalhos por hash: o calendário sanitário e, a partir do comunicado "Visita reprodutiva" da Agenda, a Agenda Reprodutiva.
-    if (window.location.hash === "#calendario-sanitario") return "calendario";
+    // Atalho por hash: a partir do comunicado "Visita reprodutiva" da Agenda, a Agenda Reprodutiva.
     return window.location.hash === "#agenda-reprodutiva" ? "agendaVet" : null;
   });
   const fila = usePendentes();
@@ -365,19 +365,16 @@ export default function Pagina() {
     };
   }, []);
 
-  // Atalho pós-salvar de Lançar > Sanidade (regra com "Registrar cronograma"
-  // marcado): navega para /app/menu#calendario-sanitario. Vindo de outra
-  // rota a página monta do zero, então o hash já está certo no 1º render;
-  // sem 'hashchange' aqui porque não há como cair já em /app/menu antes.
+  // Atalho por hash (#agenda-reprodutiva, comunicado "Visita reprodutiva" da
+  // Agenda) — também quando o hash muda com a página já aberta.
   useEffect(() => {
-    const abrirSeHashCalendario = () => {
-      if (window.location.hash === "#calendario-sanitario") setSub("calendario");
+    const abrirSeHashAgendaVet = () => {
       if (window.location.hash === "#agenda-reprodutiva") setSub("agendaVet");
     };
 
-    abrirSeHashCalendario();
-    window.addEventListener("hashchange", abrirSeHashCalendario);
-    return () => window.removeEventListener("hashchange", abrirSeHashCalendario);
+    abrirSeHashAgendaVet();
+    window.addEventListener("hashchange", abrirSeHashAgendaVet);
+    return () => window.removeEventListener("hashchange", abrirSeHashAgendaVet);
   }, []);
 
   const usuario = montado ? getUsuario() : null;
@@ -418,7 +415,6 @@ export default function Pagina() {
   const statsSub: Partial<Record<SubKey, string>> = montado ? {
     ...(statIatf() ? { iatf: statIatf()! } : {}),
     ...(statUltimosControles() ? { ultimosControles: statUltimosControles()! } : {}),
-    ...(statCalendario() ? { calendario: statCalendario()! } : {}),
     ...(statIndicadores() ? { indicadores: statIndicadores()! } : {}),
   } : {};
   const statEstoqueValor = montado ? statEstoque() : null;

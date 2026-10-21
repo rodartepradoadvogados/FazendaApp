@@ -12,10 +12,9 @@ import Link from "next/link";
 import { ChevronRight, ChevronLeft, Check } from "lucide-react";
 import { DefinirDataVisitaModal } from "@/components/reproducao/DefinirDataVisitaModal";
 import { MobCard, MobTitulo, MobCheck, MobAviso, RotuloCategoria, IconeCategoria, corCategoria, MobBarraProgresso } from "@/components/mobile/ui";
-import { fetchAgenda, fetchApresentacaoDieta, fetchPrincipiosAtivos, fetchEventosSanitarios, fetchLotes, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, today, type ApresentacaoDieta } from "@/lib/api";
+import { fetchAgenda, fetchApresentacaoDieta, fetchLotes, fetchMotivosMovimentacao, today, type ApresentacaoDieta } from "@/lib/api";
 import { fetchComCache, cacheEm, enviarOuEnfileirar, useOnline } from "@/lib/offline";
 import { VIAS_APLICACAO } from "@/lib/constants";
-import { AplicarPreventivoMobile, AvisoReagentesMobile, type EventoAplicarMob } from "@/components/mobile/AplicarPreventivoMobile";
 
 // Carregado só quando o cartão "Aplicação de BST hoje" é aberto — mesmo
 // componente rico (com seleção/aplicar) já usado em Lançar > Produção > BST.
@@ -128,13 +127,6 @@ type Evento = {
   grupo?: string | null;
   grupo_titulo?: string | null;
   ref?: string | null;
-  // Pendência de "dar baixa" (evento_sanitario/calendario_sanitario) — dados
-  // padrão do cadastro, pré-preenchidos e editáveis no painel inline.
-  categoria_alvo?: string | null;
-  categoria_preventiva?: string | null;
-  principio_ativo_id?: number | null;
-  veterinario?: string | null;
-  evento_sanitario_id?: number | null;
   // Compromisso "Aplicação de BST hoje" (tipo bst_aplicacao) — números dos
   // animais já embutidos no evento, sem precisar de outra chamada à API.
   aptas?: string[] | null;
@@ -143,17 +135,6 @@ type Evento = {
   // Diarista ativa sem folga marcada hoje (tipo diaria_trabalho) — id da
   // Diaria para o PUT /cadastro/diarias/{id}/dias, ver decidirDiaria.
   diaria_id?: number | null;
-  // Card-resumo "N animal(is) na janela" (tipo cronograma_sanitario_sugeridos)
-  // — leva direto ao detalhe do cronograma em Sanidade, sem decidir aqui.
-  cronograma_id?: number | null;
-  // Aplicar do preventivo pelo endpoint único (fatia 9b): quem pode aplicar, exigência de veterinário, exame e checklist.
-  fase?: "inoculacao" | "leitura" | "coleta" | null;
-  tipo_protocolo?: string | null;
-  exige_veterinario?: boolean;
-  aplicadores?: { id: number; nome: string; tipo?: string | null; crmv?: string | null; veterinario: boolean }[];
-  aplicador_sugerido_id?: number | null;
-  checklist_total?: number;
-  checklist_resolvidos?: number;
 };
 
 // Um grupo de aplicações do mesmo protocolo/dia/data (lote) — para oferecer
@@ -203,12 +184,6 @@ function linhas(e: Evento): { principal: string; detalhe: string | null } {
     return { principal: e.descricao, detalhe: `${e.animais.length} ${e.animais.length !== 1 ? "animais" : "animal"}` };
   }
   if (e.lote) return { principal: `Lote ${e.lote}`, detalhe: e.descricao || e.observacao || null };
-  // calendario_sanitario/evento_sanitario sem animal específico sempre trazem
-  // a mesma instrução padrão ("Dê baixa para gerar a aplicação...") — some
-  // no cartão porque o check já comunica a ação; poluía a tela sem informar
-  // nada de novo (ver proposta visual aprovada: cartão limpo, só categoria e
-  // título).
-  if (e.tipo === "calendario_sanitario" || e.tipo === "evento_sanitario") return { principal: e.descricao, detalhe: null };
   return { principal: e.descricao, detalhe: e.observacao || null };
 }
 
@@ -274,22 +249,6 @@ export default function AgendaMovel() {
   const [sanAberto, setSanAberto] = useState<Set<string>>(new Set());
   const [sanModo, setSanModo] = useState<Record<string, "lote" | "individual">>({});
 
-  // Cronograma sanitário — 3 cartões novos (o 4º, "animal", não precisa de
-  // estado próprio: é sempre um cartão simples com 2 botões).
-  // (2) "modo" / "urgente": expansível, com sub-tela "vet" (escolher/cadastrar
-  // veterinário) ou "adiar" (nova data + motivo).
-  const [cronModoAberto, setCronModoAberto] = useState<Set<string>>(new Set());
-  const [cronSubTela, setCronSubTela] = useState<Record<string, "vet" | "adiar" | undefined>>({});
-  const [pessoas, setPessoas] = useState<any[]>([]);
-  const [pessoasCarregando, setPessoasCarregando] = useState(false);
-  const [novoVetNome, setNovoVetNome] = useState<Record<string, string>>({});
-  const [criandoVet, setCriandoVet] = useState<Set<string>>(new Set());
-  const [cronNovaData, setCronNovaData] = useState<Record<string, string>>({});
-  const [cronMotivoAdiar, setCronMotivoAdiar] = useState<Record<string, string>>({});
-  const [adiandoCron, setAdiandoCron] = useState<Set<string>>(new Set());
-  // (3) "aplicar": mesmo padrão lote/individual do IATF.
-  const [cronAplicarAberto, setCronAplicarAberto] = useState<Set<string>>(new Set());
-
   // Alerta de nova dieta: cartão expansível que mostra a apresentação da dieta
   // (produtos, por cabeça, total/dia, total/trato e kg no vagão) para o funcionário.
   const [dietaAberta, setDietaAberta] = useState<Set<string>>(new Set());
@@ -307,28 +266,17 @@ export default function AgendaMovel() {
     }
   }
 
-  // "Dar baixa" de um evento sanitário/calendário sanitário de UM animal —
-  // painel inline (abaixo do cartão) com os campos do cadastro pré-preenchidos
-  // e editáveis, igual ao site (nunca mais silencioso/direto no toque do check
-  // — evita lançamento errado que desalinha estoque/financeiro/relatórios).
-  const [principiosAtivos, setPrincipiosAtivos] = useState<{ id: number; nome: string }[]>([]);
-  const [eventosSanitarios, setEventosSanitarios] = useState<any[]>([]);
-  useEffect(() => {
-    fetchPrincipiosAtivos().then((d: any[]) => setPrincipiosAtivos(d.filter((p) => p.ativo !== false))).catch(() => {});
-    fetchEventosSanitarios().then(setEventosSanitarios).catch(() => {});
-  }, []);
-  function ehExameSanitario(e: Evento): boolean {
-    if (e.categoria_preventiva != null) return e.categoria_preventiva === "exame";
-    return eventosSanitarios.find((x: any) => x.id === e.evento_sanitario_id)?.categoria_preventiva === "exame";
-  }
+  // "Dar baixa" de uma aplicação agendada (BST, hormônio avulso etc.) de UM
+  // animal — painel inline (abaixo do cartão) com os campos pré-preenchidos e
+  // editáveis, igual ao site (nunca silencioso/direto no toque do check —
+  // evita lançamento errado que desalinha estoque/financeiro/relatórios).
   function elegivelBaixaInline(e: Evento): boolean {
-    return (e.tipo === "evento_sanitario" || e.tipo === "calendario_sanitario" || e.tipo === "aplicacao_agendada") && !!e.numero_animal;
+    return e.tipo === "aplicacao_agendada" && !!e.numero_animal;
   }
-  type CampoBaixa = { produto: string; dose: string; unidade: string; via: string; principioAtivoId: string; veterinario: string; freqValor: string; freqUnidade: string };
+  type CampoBaixa = { produto: string; dose: string; unidade: string; via: string };
   const camposIniciaisBaixa = (e: Evento): CampoBaixa => ({
     produto: e.produto || "", dose: e.dose != null ? String(e.dose) : "", unidade: e.unidade || "",
-    via: e.via || "", principioAtivoId: e.principio_ativo_id ? String(e.principio_ativo_id) : "",
-    veterinario: e.veterinario || "", freqValor: "1", freqUnidade: "meses",
+    via: e.via || "",
   });
   const [baixaAberta, setBaixaAberta] = useState<Set<string>>(new Set());
   const [camposBaixa, setCamposBaixa] = useState<Record<string, CampoBaixa>>({});
@@ -342,8 +290,8 @@ export default function AgendaMovel() {
 
   // Descartar pendência sem aplicar (ex.: pendência antiga substituída por um
   // lançamento retroativo feito por fora) — mesmo mecanismo do "Realizado"
-  // (POST direto em /agenda/realizados), sem passar por cadastrar-preventivo,
-  // então nunca cria Sanidade nem baixa estoque. Espelha o botão do site.
+  // (POST direto em /agenda/realizados, sem produto/dose), então nunca baixa
+  // estoque. A função fica mais abaixo (descartarPendencia).
   // Sugestão de movimentação entre lotes: cartão expansível (mesmo padrão de
   // elegivelBaixaInline) — toque abre a escolha de lote (sugerido ou
   // qualquer outro) e os botões aceitar/cancelar, sem sair da Agenda.
@@ -421,38 +369,15 @@ export default function AgendaMovel() {
     setAviso(null);
     setResolvendoBaixa((p) => new Set(p).add(e.id));
     try {
-      let r: any;
-      if (e.tipo === "aplicacao_agendada") {
-        // Aplicação programada (BST, hormônio avulso etc.) — sem cadastro de
-        // recorrência (isso é exclusivo do calendário sanitário); confirma
-        // direto com os valores ajustados no painel.
-        r = await enviarOuEnfileirar("/agenda/realizados", {
-          evento_id: e.id,
-          produto: c.produto || undefined,
-          dose: c.dose ? Number(c.dose) : undefined,
-          unidade: c.unidade || undefined,
-          via: c.via || undefined,
-        }, `Concluir: ${resumo(e)}`, "POST");
-      } else {
-        const exame = ehExameSanitario(e);
-        const freq = c.freqValor.trim() === "" ? 1 : Number(c.freqValor);
-        await enviarOuEnfileirar("/sanidade/calendario/cadastrar-preventivo", {
-          evento_sanitario_id: e.evento_sanitario_id,
-          categoria_alvo: e.categoria_alvo || undefined,
-          data_evento: e.data,
-          frequencia_valor: Number.isFinite(freq) && freq >= 0 ? freq : 1,
-          frequencia_unidade: c.freqUnidade,
-          animais: e.numero_animal ? [e.numero_animal] : [],
-          aplicar: !exame,
-          veterinario: exame ? (c.veterinario || undefined) : undefined,
-          produto: exame ? undefined : (c.produto || undefined),
-          dose: exame || !c.dose ? undefined : Number(c.dose),
-          unidade: exame ? undefined : (c.unidade || undefined),
-          via: exame ? undefined : (c.via || undefined),
-          principio_ativo_id: exame || !c.principioAtivoId ? undefined : Number(c.principioAtivoId),
-        }, `Dar baixa: ${e.descricao}`, "POST");
-        r = await enviarOuEnfileirar("/agenda/realizados", { evento_id: e.id }, `Concluir: ${resumo(e)}`, "POST");
-      }
+      // Aplicação programada (BST, hormônio avulso etc.) — confirma direto
+      // com os valores ajustados no painel.
+      const r = await enviarOuEnfileirar("/agenda/realizados", {
+        evento_id: e.id,
+        produto: c.produto || undefined,
+        dose: c.dose ? Number(c.dose) : undefined,
+        unidade: c.unidade || undefined,
+        via: c.via || undefined,
+      }, `Concluir: ${resumo(e)}`, "POST");
       setFeitos((p) => new Set(p).add(e.id));
       setBaixaAberta((p) => { const n = new Set(p); n.delete(e.id); return n; });
       setAviso(r.enviado ? { tipo: "ok", msg: "Baixa registrada." } : { tipo: "offline", msg: "Guardado — será enviado quando conectar." });
@@ -608,65 +533,6 @@ export default function AgendaMovel() {
       // o cartão só cobre "hoje" e não tem contexto pra oferecer o "confirmar
       // mesmo assim" com segurança — a mensagem do backend já explica isso.
       setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
-    }
-  }
-
-  // Lista de pessoas carregada sob demanda (1ª vez que um cartão "modo" abre
-  // a escolha de veterinário) — reaproveitada por todos os cartões da tela.
-  function carregarPessoas() {
-    if (pessoas.length || pessoasCarregando) return;
-    setPessoasCarregando(true);
-    fetchPessoas().then(setPessoas).catch(() => {}).finally(() => setPessoasCarregando(false));
-  }
-  const veterinarios = pessoas.filter((p: any) =>
-    p.ativo !== false && (p.tipos || []).some((t: string) => t.toLowerCase().includes("veterinár")));
-
-  // (2) Trilha do agendamento: decidir modo (veterinário / própria) ou adiar.
-  async function confirmarCronModo(e: Evento, modo: "veterinario" | "propria", veterinarioPessoaId?: number) {
-    setAviso(null);
-    setFeitos((p) => new Set(p).add(e.id));
-    try {
-      const r = await enviarOuEnfileirar("/agenda/realizados",
-        { evento_id: e.id, modo, veterinario_pessoa_id: veterinarioPessoaId },
-        `Definir aplicação — ${e.descricao}`, "POST");
-      if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
-      else setAviso({ tipo: "ok", msg: "Aplicação definida." });
-    } catch (err) {
-      setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
-      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
-    }
-  }
-  async function cadastrarNovoVetEConfirmar(e: Evento) {
-    const nome = (novoVetNome[e.id] || "").trim();
-    if (!nome) return;
-    setCriandoVet((p) => new Set(p).add(e.id));
-    setAviso(null);
-    try {
-      const pessoa = await criarPessoa({ nome, tipos: ["Veterinário"] });
-      setPessoas((p) => [...p, pessoa]);
-      await confirmarCronModo(e, "veterinario", pessoa.id);
-    } catch (err) {
-      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível cadastrar o veterinário." });
-    } finally {
-      setCriandoVet((p) => { const n = new Set(p); n.delete(e.id); return n; });
-    }
-  }
-  async function confirmarAdiarCron(e: Evento) {
-    const novaData = cronNovaData[e.id];
-    if (!novaData) return;
-    setAdiandoCron((p) => new Set(p).add(e.id));
-    setAviso(null);
-    try {
-      const r = await enviarOuEnfileirar("/agenda/realizados",
-        { evento_id: e.id, nova_data: novaData, motivo: (cronMotivoAdiar[e.id] || "").trim() || undefined },
-        `Adiar — ${e.descricao}`, "POST");
-      setFeitos((p) => new Set(p).add(e.id));
-      if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
-      else setAviso({ tipo: "ok", msg: "Data adiada." });
-    } catch (err) {
-      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
-    } finally {
-      setAdiandoCron((p) => { const n = new Set(p); n.delete(e.id); return n; });
     }
   }
 
@@ -1242,162 +1108,6 @@ export default function AgendaMovel() {
       );
     }
 
-    // Cronograma sanitário (1): resumo "N animal(is) na janela de aplicação"
-    // — toque leva direto ao detalhe do cronograma (aba Animais) em Sanidade,
-    // onde incluir/excluir cada matriz acontece de fato (13/09/2026: deixou
-    // de decidir aqui, um card por matriz poluía a Agenda).
-    if (e.tipo === "cronograma_sanitario_sugeridos") {
-      return (
-        <Link key={e.id} href={`/sanidade?ir=cronogramas&cronograma_id=${e.cronograma_id}`} style={{ textDecoration: "none", color: "inherit" }}>
-          <MobCard alt={alt} style={{ marginBottom: "0.6rem" }} estado={atrasada ? "atrasado" : "normal"}>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
-              <IconeCategoria chave={chave} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <RotuloCategoria chave={chave} rotulo={rotulo} />
-                <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: "var(--mob-text)" }}>
-                  {e.descricao}
-                </div>
-                {e.observacao && (
-                  <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>{e.observacao}</div>
-                )}
-              </div>
-              <ChevronRight size={20} style={{ color: "var(--mob-muted)", flexShrink: 0 }} />
-            </div>
-          </MobCard>
-        </Link>
-      );
-    }
-
-    // Cronograma sanitário (2): decidir COMO vai ser aplicado — veterinário
-    // agendado (escolhido de Pessoas, ou cadastrado na hora), equipe própria,
-    // ou (só quando urgente, faltando poucos dias) adiar a data prevista.
-    if (e.tipo === "cronograma_sanitario_modo" || e.tipo === "cronograma_sanitario_urgente") {
-      const urgente = e.tipo === "cronograma_sanitario_urgente";
-      const aberto = cronModoAberto.has(e.id);
-      const sub = cronSubTela[e.id];
-      return (
-        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem", ...(urgente && !feito ? { border: "1px solid var(--mob-vermelho)" } : {}) }} estado={feito ? "feito" : atrasada ? "atrasado" : "normal"}>
-          <button type="button" onClick={() => { setCronModoAberto((p) => { const n = new Set(p); n.has(e.id) ? n.delete(e.id) : n.add(e.id); return n; }); carregarPessoas(); }}
-            style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
-            <IconeCategoria chave={chave} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <RotuloCategoria chave={chave} rotulo={rotulo} />
-              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : urgente ? "var(--mob-vermelho)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
-                {e.descricao}
-              </div>
-              {e.observacao && (
-                <div style={{ fontSize: "0.82rem", color: urgente && !feito ? "var(--mob-vermelho)" : "var(--mob-muted)", marginTop: "0.15rem" }}>{e.observacao}</div>
-              )}
-            </div>
-            {feito ? <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Feito</span> : (
-              <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
-            )}
-          </button>
-
-          {aberto && !feito && (
-            <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
-              {!sub ? (
-                <>
-                  <p style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginBottom: "0.55rem" }}>Como vai ser aplicado?</p>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                    <button type="button" className="mob-btn" onClick={() => setCronSubTela((p) => ({ ...p, [e.id]: "vet" }))}>Veterinário</button>
-                    <button type="button" className="mob-btn mob-btn-sec" onClick={() => confirmarCronModo(e, "propria")}>Aplicação própria</button>
-                    {urgente && (
-                      <button type="button" className="mob-btn mob-btn-sec" style={{ color: "var(--mob-vermelho)" }} onClick={() => setCronSubTela((p) => ({ ...p, [e.id]: "adiar" }))}>
-                        Adiar
-                      </button>
-                    )}
-                  </div>
-                </>
-              ) : sub === "vet" ? (
-                <>
-                  <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Selecione o veterinário:</p>
-                  {pessoasCarregando && !pessoas.length ? (
-                    <p style={{ fontSize: "0.8rem", color: "var(--mob-muted)" }}>Carregando…</p>
-                  ) : (
-                    <>
-                      {!veterinarios.length && (
-                        <p style={{ fontSize: "0.8rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Nenhum veterinário cadastrado ainda.</p>
-                      )}
-                      {veterinarios.map((v: any) => (
-                        <button key={v.id} type="button" className="mob-btn mob-btn-sec" style={{ marginBottom: "0.4rem" }} onClick={() => confirmarCronModo(e, "veterinario", v.id)}>
-                          {v.nome}
-                        </button>
-                      ))}
-                      <div style={{ marginTop: "0.6rem" }}>
-                        <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>+ cadastrar novo veterinário</label>
-                        <input className="mob-input" placeholder="Nome do veterinário" value={novoVetNome[e.id] || ""} onChange={(ev) => setNovoVetNome((p) => ({ ...p, [e.id]: ev.target.value }))} />
-                        <button type="button" className="mob-btn" style={{ marginTop: "0.4rem" }}
-                          disabled={!(novoVetNome[e.id] || "").trim() || criandoVet.has(e.id)} onClick={() => cadastrarNovoVetEConfirmar(e)}>
-                          {criandoVet.has(e.id) ? "Cadastrando…" : "Cadastrar e confirmar"}
-                        </button>
-                      </div>
-                    </>
-                  )}
-                  <button type="button" className="mob-btn mob-btn-sec" style={{ marginTop: "0.6rem", color: "var(--mob-muted)" }} onClick={() => setCronSubTela((p) => ({ ...p, [e.id]: undefined }))}>
-                    Voltar
-                  </button>
-                </>
-              ) : (
-                <>
-                  <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Nova data</label>
-                  <input type="date" className="mob-input" style={{ marginBottom: "0.5rem" }} value={cronNovaData[e.id] || ""} onChange={(ev) => setCronNovaData((p) => ({ ...p, [e.id]: ev.target.value }))} />
-                  <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Motivo (opcional)</label>
-                  <input className="mob-input" style={{ marginBottom: "0.6rem" }} value={cronMotivoAdiar[e.id] || ""} onChange={(ev) => setCronMotivoAdiar((p) => ({ ...p, [e.id]: ev.target.value }))} />
-                  <button type="button" className="mob-btn" disabled={!cronNovaData[e.id] || adiandoCron.has(e.id)} onClick={() => confirmarAdiarCron(e)}>
-                    {adiandoCron.has(e.id) ? "Salvando…" : "Confirmar nova data"}
-                  </button>
-                  <button type="button" className="mob-btn mob-btn-sec" style={{ marginTop: "0.5rem", color: "var(--mob-muted)" }} onClick={() => setCronSubTela((p) => ({ ...p, [e.id]: undefined }))}>
-                    Voltar
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-        </MobCard>
-      );
-    }
-
-    // Cronograma sanitário (3): dia do evento chegou, modo já definido —
-    // aplicar em lote (todos os incluídos de uma vez) ou individualizado
-    // (mesmo padrão do protocolo IATF acima).
-    if (e.tipo === "cronograma_sanitario_aplicar") {
-      // Aplicar pelo ENDPOINT ÚNICO (POST /sanidade/cronogramas/{id}/aplicar, canal "Agenda"): grava em Concluídos e no log,
-      // exige aplicador (um toque, sem digitar) e não usa mais POST /agenda/realizados (fatia 9b, item B).
-      const aberto = cronAplicarAberto.has(e.id);
-      return (
-        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }} estado={feito ? "feito" : atrasada ? "atrasado" : "normal"}>
-          <button type="button" onClick={() => setCronAplicarAberto((p) => { const n = new Set(p); n.has(e.id) ? n.delete(e.id) : n.add(e.id); return n; })}
-            aria-expanded={aberto}
-            style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
-            <IconeCategoria chave={chave} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <RotuloCategoria chave={chave} rotulo={rotulo} />
-              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
-                {e.descricao}
-              </div>
-              {e.observacao && (
-                <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>{e.observacao}</div>
-              )}
-            </div>
-            {feito ? <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Feito</span> : (
-              <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
-            )}
-          </button>
-
-          {aberto && !feito && (
-            <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
-              <AplicarPreventivoMobile
-                e={e as EventoAplicarMob} canal="Agenda"
-                onFeito={(msg, offline) => { setAviso({ tipo: offline ? "offline" : "ok", msg }); }}
-                onErro={(msg) => setAviso({ tipo: "erro", msg })}
-              />
-            </div>
-          )}
-        </MobCard>
-      );
-    }
-
     // Compromisso "Aplicação de BST hoje" — cartão expansível que, ao abrir,
     // traz o mesmo painel de seleção/aplicação usado em Lançar > Produção >
     // BST (checkbox por animal nas 3 listas + Aplicar/Marcar como inapta),
@@ -1595,14 +1305,13 @@ export default function AgendaMovel() {
       );
     }
 
-    // Dar baixa em medicamento/vacina agendado (evento sanitário ou calendário
-    // sanitário) de UM animal: o toque abre, ABAIXO do cartão, os campos de
-    // lançamento pré-preenchidos do cadastro (editáveis) — nunca aplica direto
-    // com o check, pra não desalinhar estoque/financeiro/relatórios.
+    // Dar baixa em aplicação agendada (BST, hormônio avulso etc.) de UM
+    // animal: o toque abre, ABAIXO do cartão, os campos de lançamento
+    // pré-preenchidos (editáveis) — nunca aplica direto com o check, pra não
+    // desalinhar estoque/financeiro/relatórios.
     if (elegivelBaixaInline(e)) {
       const aberto = baixaAberta.has(e.id);
       const campos = camposBaixa[e.id] || camposIniciaisBaixa(e);
-      const exame = ehExameSanitario(e);
       const set = (campo: keyof CampoBaixa, valor: string) => atualizarCampoBaixa(e.id, campo, valor);
       return (
         <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }} estado={feito ? "feito" : atrasada ? "atrasado" : "normal"}>
@@ -1628,60 +1337,30 @@ export default function AgendaMovel() {
 
           {aberto && !feito && (
             <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
-              {exame ? (
-                <div style={{ marginBottom: "0.6rem" }}>
-                  <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Veterinário</label>
-                  <input className="mob-input" value={campos.veterinario} onChange={(ev) => set("veterinario", ev.target.value)} placeholder="ex.: Dr. Carlos" />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", marginBottom: "0.6rem" }}>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Medicamento</label>
+                  <input className="mob-input" value={campos.produto} onChange={(ev) => set("produto", ev.target.value)} placeholder="Nome do produto" />
                 </div>
-              ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", marginBottom: "0.6rem" }}>
-                  <div style={{ gridColumn: "1 / -1" }}>
-                    <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Medicamento</label>
-                    <input className="mob-input" value={campos.produto} onChange={(ev) => set("produto", ev.target.value)} placeholder="ex.: VACINA RB 51" />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Princípio ativo</label>
-                    <select className="mob-input" value={campos.principioAtivoId} onChange={(ev) => set("principioAtivoId", ev.target.value)}>
-                      <option value="">—</option>
-                      {principiosAtivos.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Dosagem</label>
-                    <input type="number" inputMode="decimal" className="mob-input" value={campos.dose} onChange={(ev) => set("dose", ev.target.value)} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Unidade</label>
-                    <select className="mob-input" value={campos.unidade} onChange={(ev) => set("unidade", ev.target.value)}>
-                      <option value="">—</option>
-                      {UNIDADES_APLICACAO.map((u) => <option key={u} value={u}>{u}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Via</label>
-                    <select className="mob-input" value={campos.via} onChange={(ev) => set("via", ev.target.value)}>
-                      <option value="">—</option>
-                      {VIAS_APLICACAO.map((v) => <option key={v} value={v}>{v}</option>)}
-                    </select>
-                  </div>
+                <div>
+                  <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Dosagem</label>
+                  <input type="number" inputMode="decimal" className="mob-input" value={campos.dose} onChange={(ev) => set("dose", ev.target.value)} />
                 </div>
-              )}
-              {e.tipo !== "aplicacao_agendada" && (
-                <div style={{ marginBottom: "0.7rem" }}>
-                  <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Repetir a cada</label>
-                  <div style={{ display: "flex", gap: "0.4rem" }}>
-                    <input type="number" min={0} inputMode="numeric" className="mob-input" style={{ width: 70 }} value={campos.freqValor} onChange={(ev) => set("freqValor", ev.target.value)} title="0 = não repetir (só esta aplicação, sem agendamento futuro)" />
-                    <select className="mob-input" value={campos.freqUnidade} onChange={(ev) => set("freqUnidade", ev.target.value)}>
-                      <option value="dias">dia(s)</option>
-                      <option value="meses">mês(es)</option>
-                      <option value="anos">ano(s)</option>
-                    </select>
-                  </div>
-                  {Number(campos.freqValor) === 0 && (
-                    <p style={{ fontSize: "0.7rem", color: "var(--mob-ambar)", marginTop: "0.25rem" }}>0 = não repete: sem agendamento futuro, só esta aplicação.</p>
-                  )}
+                <div>
+                  <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Unidade</label>
+                  <select className="mob-input" value={campos.unidade} onChange={(ev) => set("unidade", ev.target.value)}>
+                    <option value="">—</option>
+                    {UNIDADES_APLICACAO.map((u) => <option key={u} value={u}>{u}</option>)}
+                  </select>
                 </div>
-              )}
+                <div>
+                  <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Via</label>
+                  <select className="mob-input" value={campos.via} onChange={(ev) => set("via", ev.target.value)}>
+                    <option value="">—</option>
+                    {VIAS_APLICACAO.map((v) => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+              </div>
               <button type="button" className="mob-btn" disabled={resolvendoBaixa.has(e.id)} onClick={() => confirmarBaixaInline(e)}>
                 <Check size={14} style={{ marginRight: 6 }} /> {resolvendoBaixa.has(e.id) ? "Salvando…" : "Confirmar baixa"}
               </button>
@@ -1800,9 +1479,6 @@ export default function AgendaMovel() {
         <DefinirDataVisitaModal dataAtual={definindoVisita.data} origem={definindoVisita.origem} intervalo={definindoVisita.intervalo} ultimaVisita={definindoVisita.ultima}
           onClose={() => setDefinindoVisita(null)} onSalvo={() => { carregar(); }} />
       )}
-
-      {/* Reagente de exame: aviso persistente (com o registro da notificação) também no app */}
-      <AvisoReagentesMobile />
 
       <div style={{ display: "flex", gap: "0.5rem", margin: "0 0 0.9rem" }}>
         <button type="button" className={`mob-pill${visualizacao === "lista" ? " ativa" : ""}`} style={{ flex: 1, textAlign: "center" }} onClick={() => setVisualizacao("lista")}>Lista</button>

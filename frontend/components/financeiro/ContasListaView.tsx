@@ -457,7 +457,6 @@ export default function ContasListaView(p: Props) {
                           {(r.tipo_documento || r.numero_documento) && <span className="st-chip" style={{ fontSize: "0.68rem", padding: "0 8px" }}>{r.tipo_documento ? `${r.tipo_documento} ` : ""}{r.numero_documento || ""}</span>}
                           {fat && <button type="button" onClick={() => p.onAbrirFatura(r)} className="st-pill fat" style={{ cursor: "pointer" }} title="Abrir a fatura desta nota"><Layers size={11} aria-hidden /> fatura</button>}
                           {fatCartao && <button type="button" onClick={p.onAbrirCartao} className="st-pill fat" style={{ cursor: "pointer" }} title="Compra no cartão: abrir Cartão de crédito"><CreditCard size={11} aria-hidden /> cartão</button>}
-                          {r.origem_preventivo && <a href="/protocolos?aba=acompanhamento" className="st-chip" style={{ fontSize: "0.68rem", padding: "0 8px", textDecoration: "none" }} title={`Nasceu do agendamento de ${r.origem_preventivo.protocolo}`}>Protocolo preventivo · {r.origem_preventivo.protocolo}</a>}
                           {(r.itens || []).some((it) => it.eh_vale) && <span className="st-chip" style={{ fontSize: "0.68rem", padding: "0 8px" }} title="Item lançado como vale — fora dos relatórios gerenciais">vale</span>}
                         </div>
                       </td>

@@ -1,16 +1,13 @@
 "use client";
 import { Fragment, useEffect, useRef, useState } from "react";
-import { CalendarClock, ClipboardList, FlaskConical, Plus, Pencil, AlertTriangle, Check, X, Trash2, Search, ChevronDown, ChevronRight, Upload, Download, Milk } from "lucide-react";
+import { ClipboardList, Plus, Pencil, AlertTriangle, Trash2, Search, Upload, Download, Milk } from "lucide-react";
 import {
   fetchPrincipiosAtivos,
   fetchDoencas,
-  fetchEventosSanitarios, criarEventoSanitario, atualizarEventoSanitario,
-  fetchExames, criarExame, atualizarExame, excluirExame,
   fetchProtocolosSanitarios, criarProtocoloSanitario, atualizarProtocoloSanitario, excluirProtocoloSanitario, importarProtocoloSanitarioExcel,
   fetchProtocolosInducaoLactacaoCadastro, criarProtocoloInducaoLactacao, atualizarProtocoloInducaoLactacao, excluirProtocoloInducaoLactacao,
-  fetchEstoque, fetchLotes,
-  fetchServicosCadastro,
-  type ProtocoloEtapa, type EventoSanitarioPayload, type ExameDefinicaoPayload,
+  fetchEstoque,
+  type ProtocoloEtapa,
   type EtapaInducaoLactacao, type ProtocoloInducaoLactacaoCadastro, type ProtocoloInducaoLactacaoPayload,
   formatarDoseEtapa,
 } from "@/lib/api";
@@ -22,7 +19,6 @@ import { CLASSIFICACOES_MEDICAMENTO } from "@/lib/api";
 import { normalizarBusca as normalizar } from "@/lib/busca";
 import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/WizardProtocolo";
 import { Modal } from "@/components/Modal";
-import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 
 const CRITERIOS: [string, string][] = [
   ["medicamento", "Medicamento"],
@@ -46,14 +42,15 @@ const unidadesCompat = (u?: string | null): string[] => {
   return GRUPOS_UNIDADE.find((g) => g.includes(norm)) || [u];
 };
 
+// Evento sanitário e Exames (preventivo antigo) saíram: vacinas e exames são
+// cadastrados na Central de Protocolos › Vacinas e exames (Sanitário
+// Preventivo v2).
 const ABAS = [
-  ["eventos", "Evento sanitário", CalendarClock],
   ["protocolos", "Protocolo sanitário", ClipboardList],
   ["inducao", "Indução de lactação", Milk],
-  ["exames", "Exames", FlaskConical],
 ] as const;
 // Reexportado para o Cadastro compor a árvore de sub-navegação (Configurações
-// › Cadastro › Sanitário › estas 4 abas) sem duplicar rótulos/ícones.
+// › Cadastro › Sanitário › estas abas) sem duplicar rótulos/ícones.
 export type AbaCadastroSanitario = (typeof ABAS)[number][0];
 export const ABAS_CADASTRO_SANITARIO = ABAS;
 
@@ -64,19 +61,16 @@ const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(-
 // Aceita controle externo (Cadastro precisa da aba ativa para compor a
 // árvore de sub-navegação Configurações › Cadastro › Sanitário) — sem props,
 // funciona como antes, com estado próprio.
-export default function CadastroSanitario({ abaControlada, onAbaChange }: {
+export default function CadastroSanitario({ abaControlada }: {
   abaControlada?: AbaCadastroSanitario; onAbaChange?: (id: AbaCadastroSanitario) => void;
 } = {}) {
-  const [abaInterna, setAbaInterna] = useState<AbaCadastroSanitario>("eventos");
+  const [abaInterna] = useState<AbaCadastroSanitario>("protocolos");
   const aba = abaControlada ?? abaInterna;
-  const setAba = onAbaChange ?? setAbaInterna;
 
   return (
     <div>
-      {aba === "eventos" && <CadastroEventosSanitarios />}
       {aba === "protocolos" && <CadastroProtocolosSanitarios />}
       {aba === "inducao" && <CadastroProtocolosInducao />}
-      {aba === "exames" && <CadastroExames />}
     </div>
   );
 }
@@ -395,14 +389,16 @@ function FormProtocolo({ form, setForm, doencas, estoque, principios, onSalvar, 
             <div><label style={labelStyle}>Finalidade</label>
               <select style={inputStyle} value={f.finalidade} onChange={(e) => sf({ ...f, finalidade: e.target.value })}>
                 <option value="curativo">Curativo (trata animal doente)</option>
-                <option value="preventivo">Preventivo (sem doença instalada)</option>
+                {/* "Preventivo" saiu das opções (decisão D3 do Sanitário Preventivo v2):
+                    só aparece num protocolo antigo que já foi gravado assim. */}
+                {f.finalidade === "preventivo" && <option value="preventivo">Preventivo (protocolo antigo)</option>}
               </select></div>
             <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
               <input type="checkbox" checked={f.eh_mastite} onChange={(e) => sf({ ...f, eh_mastite: e.target.checked })} /> É protocolo de mastite</label></div>
           </div>
           <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
-            Preventivo aqui é um cronograma de <strong>dias fixos</strong> (D0/D1/D2…) aplicado sem doença instalada — ex.: vacinação em 2 doses.
-            Rotina que <strong>se repete</strong> ("a cada 4 meses") continua no Calendário Sanitário, na aba Eventos sanitários.
+            Protocolo sanitário é o tratamento curativo em <strong>dias fixos</strong> (D0/D1/D2…). Vacinas e exames ficam na
+            Central de Protocolos › Vacinas e exames.
             Marcar "É protocolo de mastite" habilita, no lançamento, os campos de CMT, teto afetado e classificação.
           </p>
         </div>
@@ -878,651 +874,3 @@ function FormProtocoloInducao({ form, setForm, principios, onSalvar, onCancelar,
     </div>
   );
 }
-
-// ─────────────────────── Evento sanitário (cadastro rico) ───────────────────────
-const FREQ_UNIDADES = [["dias", "dia(s)"], ["meses", "mês(es)"], ["anos", "ano(s)"]] as const;
-const GATILHOS: [string, string][] = [
-  ["nascimento", "Nascimento (quando a cria nasce)"],
-  ["desmama", "Desmama"],
-  ["mudanca_recria", "Mudança para recria"],
-  ["entrada_lote", "Entrada num lote (ex.: pré-parto)"],
-  ["novilha_apta", "Aptidão (novilha atingir certa idade)"],
-  ["inseminacao", "Inseminação"],
-  ["gestacao_confirmada", "Gestação confirmada"],
-  ["secagem", "Secagem"],
-  ["parto", "Parto"],
-  ["mudanca_pre_parto", "Mudança para pré-parto"],
-];
-const GATILHO_LABEL: Record<string, string> = Object.fromEntries(GATILHOS);
-
-type EventoSanitarioRow = EventoSanitarioPayload & { id: number; doenca_nome?: string | null; condicao_evento_nome?: string | null; proxima_ocorrencia?: string | null };
-type EventoForm = {
-  nome: string; ativo: boolean; tipo_agendamento: "nenhum" | "epoca" | "evento";
-  categoria_alvo: string; sexo_alvo: string; categoria_preventiva: string; doenca_id: string;
-  data_primeiro: string; frequencia_valor: string; frequencia_unidade: string;
-  gatilho: string; gatilho_lote: string; gatilho_idade_meses: string; offset_dias: string;
-  produto_padrao: string; dose_padrao: string; unidade_padrao: string; via_padrao: string;
-  avisar_veterinario_30_dias: boolean;
-  condicao_evento_id: string;
-  exame_definicao_id: string;
-  servico_financeiro: string;
-  janela_de_valor: string; janela_de_unidade: "dias" | "meses";
-  janela_ate_valor: string; janela_ate_unidade: "dias" | "meses";
-  acao_fora_janela: string;
-  teto_etario_valor: string; teto_etario_unidade: "dias" | "meses";
-  veterinario_padrao_pessoa_id: string;
-};
-const eventoFormVazio = (): EventoForm => ({
-  nome: "", ativo: true, tipo_agendamento: "nenhum", categoria_alvo: "", sexo_alvo: "", categoria_preventiva: "vacina", doenca_id: "",
-  data_primeiro: "", frequencia_valor: "", frequencia_unidade: "meses",
-  gatilho: "nascimento", gatilho_lote: "", gatilho_idade_meses: "", offset_dias: "",
-  produto_padrao: "", dose_padrao: "", unidade_padrao: "", via_padrao: "",
-  avisar_veterinario_30_dias: false,
-  condicao_evento_id: "",
-  exame_definicao_id: "",
-  servico_financeiro: "",
-  janela_de_valor: "", janela_de_unidade: "meses",
-  janela_ate_valor: "", janela_ate_unidade: "meses",
-  acao_fora_janela: "",
-  teto_etario_valor: "", teto_etario_unidade: "meses",
-  veterinario_padrao_pessoa_id: "",
-});
-
-export function CadastroEventosSanitarios() {
-  const [itens, setItens] = useState<EventoSanitarioRow[] | null>(null);
-  const [doencas, setDoencas] = useState<{ id: number; nome: string }[]>([]);
-  const [estoque, setEstoque] = useState<EstoqueItemPicker[]>([]);
-  const [lotes, setLotes] = useState<{ codigo: string; nome?: string }[]>([]);
-  const [exames, setExames] = useState<{ id: number; nome: string }[]>([]);
-  const [servicos, setServicos] = useState<{ id: number; nome: string; ativo?: boolean }[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [editando, setEditando] = useState<number | "novo" | null>(null);
-  const [form, setForm] = useState<EventoForm>(eventoFormVazio());
-  const [salvando, setSalvando] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [busca, setBusca] = useState("");
-  const { pessoas: pessoasAtivas } = usePessoasAtivas();
-  const veterinariosZootecnistas = pessoasAtivas.filter((p) => (p.tipos || []).some((t: string) => ["Veterinário", "Zootecnista"].includes(t)));
-
-  const carregar = () => fetchEventosSanitarios().then(setItens).catch((e) => setError(e.message));
-  useEffect(() => {
-    carregar();
-    fetchDoencas().then(setDoencas).catch(() => {});
-    fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
-    fetchLotes().then(setLotes).catch(() => {});
-    fetchExames().then(setExames).catch(() => {});
-    fetchServicosCadastro().then(setServicos).catch(() => {});
-  }, []);
-
-  const abrirNovo = () => { setForm(eventoFormVazio()); setEditando("novo"); setMsg(null); };
-  const abrirEdicao = (e: EventoSanitarioRow) => {
-    setForm({
-      nome: e.nome, ativo: e.ativo ?? true, tipo_agendamento: (e.tipo_agendamento as any) || "nenhum",
-      categoria_alvo: e.categoria_alvo || "", sexo_alvo: (e as any).sexo_alvo || "", categoria_preventiva: (e as any).categoria_preventiva || "", doenca_id: e.doenca_id ? String(e.doenca_id) : "",
-      data_primeiro: e.data_primeiro || "", frequencia_valor: e.frequencia_valor ? String(e.frequencia_valor) : "",
-      frequencia_unidade: e.frequencia_unidade || "meses", gatilho: e.gatilho || "nascimento",
-      gatilho_lote: e.gatilho_lote || "", gatilho_idade_meses: e.gatilho_idade_meses ? String(e.gatilho_idade_meses) : "",
-      offset_dias: e.offset_dias ? String(e.offset_dias) : "",
-      produto_padrao: e.produto_padrao || "", dose_padrao: e.dose_padrao != null ? String(e.dose_padrao) : "",
-      unidade_padrao: e.unidade_padrao || "", via_padrao: e.via_padrao || "",
-      avisar_veterinario_30_dias: !!(e as any).agenda_dias_antes,
-      condicao_evento_id: e.condicao_evento_id ? String(e.condicao_evento_id) : "",
-      exame_definicao_id: (e as any).exame_definicao_id ? String((e as any).exame_definicao_id) : "",
-      servico_financeiro: (e as any).servico_financeiro || "",
-      janela_de_valor: (e as any).janela_de_valor != null ? String((e as any).janela_de_valor) : "",
-      janela_de_unidade: (e as any).janela_de_unidade || "meses",
-      janela_ate_valor: (e as any).janela_ate_valor != null ? String((e as any).janela_ate_valor) : "",
-      janela_ate_unidade: (e as any).janela_ate_unidade || "meses",
-      acao_fora_janela: (e as any).acao_fora_janela || "",
-      teto_etario_valor: (e as any).teto_etario_valor != null ? String((e as any).teto_etario_valor) : "",
-      teto_etario_unidade: (e as any).teto_etario_unidade || "meses",
-      veterinario_padrao_pessoa_id: (e as any).veterinario_padrao_pessoa_id ? String((e as any).veterinario_padrao_pessoa_id) : "",
-    });
-    setEditando(e.id); setMsg(null);
-  };
-  const cancelar = () => { setEditando(null); setMsg(null); };
-
-  const salvar = async () => {
-    if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return; }
-    const dados: EventoSanitarioPayload = {
-      nome: form.nome.trim(), ativo: form.ativo, tipo_agendamento: form.tipo_agendamento,
-      categoria_alvo: form.categoria_alvo.trim() || null, sexo_alvo: (form.sexo_alvo as "F" | "M" | "") || null,
-      doenca_id: form.doenca_id ? Number(form.doenca_id) : null,
-      categoria_preventiva: form.categoria_preventiva || null,
-      data_primeiro: form.tipo_agendamento === "epoca" && form.data_primeiro ? form.data_primeiro : null,
-      frequencia_valor: form.tipo_agendamento === "epoca" && form.frequencia_valor ? Number(form.frequencia_valor) : null,
-      frequencia_unidade: form.tipo_agendamento === "epoca" ? form.frequencia_unidade : null,
-      gatilho: form.tipo_agendamento === "evento" ? form.gatilho : null,
-      gatilho_lote: form.tipo_agendamento === "evento" && form.gatilho === "entrada_lote" ? form.gatilho_lote || null : null,
-      gatilho_idade_meses: form.tipo_agendamento === "evento" && form.gatilho === "novilha_apta" && form.gatilho_idade_meses ? Number(form.gatilho_idade_meses) : null,
-      offset_dias: form.tipo_agendamento === "evento" && form.offset_dias ? Number(form.offset_dias) : null,
-      produto_padrao: form.produto_padrao.trim() || null, dose_padrao: form.dose_padrao ? Number(form.dose_padrao) : null,
-      unidade_padrao: form.unidade_padrao || null, via_padrao: form.via_padrao || null,
-      agenda_dias_antes: form.categoria_preventiva === "exame" && form.avisar_veterinario_30_dias ? 30 : null,
-      condicao_evento_id: form.condicao_evento_id ? Number(form.condicao_evento_id) : null,
-      exame_definicao_id: form.categoria_preventiva === "exame" && form.exame_definicao_id ? Number(form.exame_definicao_id) : null,
-      servico_financeiro: form.servico_financeiro || null,
-      janela_de_valor: form.janela_de_valor ? Number(form.janela_de_valor) : null,
-      janela_de_unidade: form.janela_de_valor ? form.janela_de_unidade : null,
-      janela_ate_valor: form.janela_ate_valor ? Number(form.janela_ate_valor) : null,
-      janela_ate_unidade: form.janela_ate_valor ? form.janela_ate_unidade : null,
-      acao_fora_janela: form.acao_fora_janela || null,
-      teto_etario_valor: form.teto_etario_valor ? Number(form.teto_etario_valor) : null,
-      teto_etario_unidade: form.teto_etario_valor ? form.teto_etario_unidade : null,
-      veterinario_padrao_pessoa_id: form.veterinario_padrao_pessoa_id ? Number(form.veterinario_padrao_pessoa_id) : null,
-    };
-    setSalvando(true); setMsg(null);
-    try {
-      if (editando === "novo") await criarEventoSanitario(dados);
-      else if (typeof editando === "number") await atualizarEventoSanitario(editando, dados);
-      setEditando(null);
-      await carregar();
-    } catch (e: any) { setMsg(e.message || "Erro ao salvar"); }
-    finally { setSalvando(false); }
-  };
-
-  const termoBusca = normalizar(busca.trim());
-  const filtrados = (itens ?? []).filter((e) => !termoBusca || normalizar(e.nome).includes(termoBusca));
-  const unidadesProduto = unidadesCompat(estoque.find((it) => it.nome === form.produto_padrao)?.unidade);
-
-  const ACAO_FORA_JANELA_LABEL: Record<string, string> = { sair: "Sair", manter: "Manter", notificar: "Notificar urgência" };
-  const rotuloJanela = (e: EventoSanitarioRow) => {
-    const de = (e as any).janela_de_valor, ate = (e as any).janela_ate_valor;
-    if (de == null && ate == null) return "—";
-    const un = (v: number | null, unidade: string | null) => v == null ? "" : `${v} ${unidade || ""}`;
-    const faixa = de != null && ate != null ? `${un(de, (e as any).janela_de_unidade)} a ${un(ate, (e as any).janela_ate_unidade)}` : (de != null ? `de ${un(de, (e as any).janela_de_unidade)}` : `até ${un(ate, (e as any).janela_ate_unidade)}`);
-    const acao = ACAO_FORA_JANELA_LABEL[(e as any).acao_fora_janela || ""];
-    return acao ? `${faixa} · ${acao}` : faixa;
-  };
-
-  const rotuloAgendamento = (e: EventoSanitarioRow) => {
-    if (e.tipo_agendamento === "epoca")
-      return `A cada ${e.frequencia_valor} ${FREQ_UNIDADES.find((f) => f[0] === e.frequencia_unidade)?.[1] || e.frequencia_unidade}`;
-    if (e.tipo_agendamento === "evento")
-      return `Por evento: ${GATILHO_LABEL[e.gatilho || ""] || e.gatilho}${e.gatilho === "entrada_lote" && e.gatilho_lote ? ` (${e.gatilho_lote})` : ""}`;
-    return "—";
-  };
-
-  const formEl = (
-    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-        <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Nome do evento</label>
-          <input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder='ex.: "Vacina pré-parto", "Vermífugo"' /></div>
-        <div><label style={labelStyle}>Doença combatida</label>
-          <select style={inputStyle} value={form.doenca_id} onChange={(e) => setForm({ ...form, doenca_id: e.target.value })}>
-            <option value="">—</option>{doencas.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
-          </select></div>
-        <div><label style={labelStyle}>Sexo-alvo</label>
-          <select style={inputStyle} value={form.sexo_alvo} onChange={(e) => setForm({ ...form, sexo_alvo: e.target.value })}>
-            <option value="">Ambos</option>
-            <option value="F">Só fêmeas</option>
-            <option value="M">Só machos</option>
-          </select></div>
-        <div><label style={labelStyle}>Categoria preventiva</label>
-          <select style={inputStyle} value={form.categoria_preventiva} onChange={(e) => setForm({ ...form, categoria_preventiva: e.target.value })}>
-            {/* Evento "avulso" (sem categoria) não é mais uma opção nova — só
-                preservada aqui se for o valor herdado de um evento antigo, para
-                não trocar o valor por engano ao abrir a edição. */}
-            {!form.categoria_preventiva && <option value="">— (legado, escolha uma categoria)</option>}
-            <option value="vacina">Vacina</option>
-            <option value="exame">Exame</option>
-            <option value="tratamento">Tratamento</option>
-          </select></div>
-        <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
-          <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></div>
-      </div>
-
-      <label style={labelStyle}>Quando repetir</label>
-      <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
-        {([["nenhum", "Só o nome"], ["epoca", "Por época (recorrência)"], ["evento", "Por evento de vida"]] as const).map(([v, lbl]) => (
-          <button key={v} type="button" onClick={() => setForm({ ...form, tipo_agendamento: v })}
-            style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
-              border: "1px solid " + (form.tipo_agendamento === v ? "var(--dourado)" : "var(--border)"),
-              background: form.tipo_agendamento === v ? "rgba(94,26,46,0.4)" : "transparent",
-              color: form.tipo_agendamento === v ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: form.tipo_agendamento === v ? 700 : 500 }}>
-            {lbl}
-          </button>
-        ))}
-      </div>
-
-      {form.tipo_agendamento === "epoca" && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-          <div><label style={labelStyle}>Data do 1º evento</label>
-            <input type="date" style={inputStyle} value={form.data_primeiro} onChange={(e) => setForm({ ...form, data_primeiro: e.target.value })} /></div>
-          <div><label style={labelStyle}>A cada</label>
-            <input type="number" min={1} style={inputStyle} value={form.frequencia_valor} onChange={(e) => setForm({ ...form, frequencia_valor: e.target.value })} placeholder="6" /></div>
-          <div><label style={labelStyle}>Período</label>
-            <select style={inputStyle} value={form.frequencia_unidade} onChange={(e) => setForm({ ...form, frequencia_unidade: e.target.value })}>
-              {FREQ_UNIDADES.map(([v, lbl]) => <option key={v} value={v}>{lbl}</option>)}
-            </select></div>
-          <div><label style={labelStyle}>Categoria-alvo (opcional)</label>
-            <input style={inputStyle} value={form.categoria_alvo} onChange={(e) => setForm({ ...form, categoria_alvo: e.target.value })} placeholder="ex.: Bezerras" /></div>
-        </div>
-      )}
-
-      {form.tipo_agendamento === "evento" && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-          <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Gatilho</label>
-            <select style={inputStyle} value={form.gatilho} onChange={(e) => setForm({ ...form, gatilho: e.target.value })}>
-              {GATILHOS.map(([v, lbl]) => <option key={v} value={v}>{lbl}</option>)}
-            </select></div>
-          {form.gatilho === "entrada_lote" && (
-            <div><label style={labelStyle}>Lote</label>
-              <select style={inputStyle} value={form.gatilho_lote} onChange={(e) => setForm({ ...form, gatilho_lote: e.target.value })}>
-                <option value="">Selecione…</option>
-                {lotes.map((l) => <option key={l.codigo} value={l.codigo}>{l.codigo}{l.nome ? ` — ${l.nome}` : ""}</option>)}
-              </select></div>
-          )}
-          {form.gatilho === "novilha_apta" && (
-            <div><label style={labelStyle}>Idade-alvo (meses)</label>
-              <input type="number" min={1} style={inputStyle} value={form.gatilho_idade_meses} onChange={(e) => setForm({ ...form, gatilho_idade_meses: e.target.value })} placeholder="ex.: 13" /></div>
-          )}
-          {/* Some da tela assim que "Janela — de" (mais abaixo) é preenchida —
-              ela passa a decidir sozinha quando o item entra na Agenda,
-              inclusive em meses (isto aqui só sabe contar em dias). Ver
-              FormCalendarioSanitario.tsx, mesmo padrão. */}
-          {!form.janela_de_valor && (
-            <div><label style={labelStyle}>Dias após o gatilho</label>
-              <input type="number" min={0} style={inputStyle} value={form.offset_dias} onChange={(e) => setForm({ ...form, offset_dias: e.target.value })} placeholder="0" /></div>
-          )}
-          <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Condição — só agendar se NÃO tiver recebido</label>
-            <select style={inputStyle} value={form.condicao_evento_id} onChange={(e) => setForm({ ...form, condicao_evento_id: e.target.value })}>
-              <option value="">— (sempre agendar)</option>
-              {(itens || []).filter((o) => o.id !== editando).map((o) => <option key={o.id} value={o.id}>{o.nome}</option>)}
-            </select>
-            <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
-              Para alternativas de vacina/estirpe para a mesma doença — ex.: não agendar "Brucelose RB51" se o animal já recebeu "Brucelose B19".
-            </span>
-          </div>
-        </div>
-      )}
-
-      {form.tipo_agendamento !== "nenhum" && (
-        <>
-          <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.4rem" }}>Medicamento padrão (editável na hora da baixa)</p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-            <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Produto</label>
-              <EstoquePicker itens={estoque} value={form.produto_padrao} onChange={(v) => setForm({ ...form, produto_padrao: v, unidade_padrao: unidadesCompat(estoque.find((it) => it.nome === v)?.unidade)[0] || form.unidade_padrao })} /></div>
-            <div><label style={labelStyle}>Dose</label>
-              <input type="number" inputMode="decimal" style={inputStyle} value={form.dose_padrao} onChange={(e) => setForm({ ...form, dose_padrao: e.target.value })} /></div>
-            <div><label style={labelStyle}>Unidade</label>
-              <select style={inputStyle} value={form.unidade_padrao} onChange={(e) => setForm({ ...form, unidade_padrao: e.target.value })}>
-                <option value="">—</option>
-                {!unidadesProduto.includes(form.unidade_padrao) && form.unidade_padrao && <option value={form.unidade_padrao}>{form.unidade_padrao}</option>}
-                {unidadesProduto.map((u) => <option key={u} value={u}>{u}</option>)}
-              </select></div>
-            <div><label style={labelStyle}>Via</label>
-              <select style={inputStyle} value={form.via_padrao} onChange={(e) => setForm({ ...form, via_padrao: e.target.value })}>
-                <option value="">—</option>{VIAS_APLICACAO.map((v) => <option key={v}>{v}</option>)}
-              </select></div>
-          </div>
-          {form.categoria_preventiva === "exame" && (
-            <>
-              <div className="mb-3" style={{ maxWidth: 360 }}>
-                <label style={labelStyle}>Exame vinculado (Cadastro › Sanitário › Exames)</label>
-                <select style={inputStyle} value={form.exame_definicao_id} onChange={(e) => setForm({ ...form, exame_definicao_id: e.target.value })}>
-                  <option value="">— (usa diagnóstico padrão: positivo/negativo/indefinido)</option>
-                  {exames.map((ex) => <option key={ex.id} value={ex.id}>{ex.nome}</option>)}
-                </select>
-              </div>
-              <label className="flex items-center gap-2 mb-3" style={{ fontSize: "0.8rem", cursor: "pointer" }}>
-                <input type="checkbox" checked={form.avisar_veterinario_30_dias} onChange={(e) => setForm({ ...form, avisar_veterinario_30_dias: e.target.checked })} />
-                Avisar na Agenda 30 dias antes, para confirmar o exame com o veterinário
-              </label>
-            </>
-          )}
-        </>
-      )}
-
-      {!!form.categoria_preventiva && (
-        <div className="mb-3" style={{ maxWidth: 360 }}>
-          <label style={labelStyle}>Serviço financeiro (opcional)</label>
-          <select style={inputStyle} value={form.servico_financeiro} onChange={(e) => setForm({ ...form, servico_financeiro: e.target.value })}>
-            <option value="">— (sem botão "Lançar financeiro" no calendário)</option>
-            {servicos.filter((s) => s.ativo !== false).map((s) => <option key={s.id} value={s.nome}>{s.nome}</option>)}
-          </select>
-          <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
-            Liga este evento a um serviço já cadastrado (Configurações › Cadastro › Serviços), para o botão "Lançar financeiro" no calendário sanitário.
-          </span>
-        </div>
-      )}
-
-      {(form.categoria_preventiva === "vacina" || form.categoria_preventiva === "exame") && (
-        <>
-          <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.2rem" }}>Janela de aplicação</p>
-          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
-            Após o gatilho, a janela de aplicação é definida no prazo cadastrado.
-          </p>
-          <div className="flex items-end gap-2 mb-3" style={{ flexWrap: "wrap" }}>
-            <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", paddingBottom: "0.55rem" }}>De</span>
-            <div style={{ width: 80 }}><input type="number" min={0} style={inputStyle} value={form.janela_de_valor} onChange={(e) => setForm({ ...form, janela_de_valor: e.target.value })} placeholder="3" /></div>
-            <div style={{ width: 100 }}>
-              <select style={inputStyle} value={form.janela_de_unidade} onChange={(e) => setForm({ ...form, janela_de_unidade: e.target.value as "dias" | "meses" })}>
-                <option value="dias">dias</option><option value="meses">meses</option>
-              </select>
-            </div>
-            <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontWeight: 600, paddingBottom: "0.55rem" }}>até</span>
-            <div style={{ width: 80 }}><input type="number" min={0} style={inputStyle} value={form.janela_ate_valor} onChange={(e) => setForm({ ...form, janela_ate_valor: e.target.value })} placeholder="8" /></div>
-            <div style={{ width: 100 }}>
-              <select style={inputStyle} value={form.janela_ate_unidade} onChange={(e) => setForm({ ...form, janela_ate_unidade: e.target.value as "dias" | "meses" })}>
-                <option value="dias">dias</option><option value="meses">meses</option>
-              </select>
-            </div>
-            <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", paddingBottom: "0.55rem" }}>após o gatilho</span>
-          </div>
-
-          <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.2rem" }}>Ação ao sair da janela sem aplicação</p>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
-            {([
-              ["sair", "Sair", "Encerra — passa a constar como lacuna permanente no histórico"],
-              ["manter", "Manter até aplicação", "Continua pendente, mesmo fora da janela biológica"],
-              ["notificar", "Notificar urgência", "Fecha em N dias — alerta antes de sair"],
-            ] as const).map(([v, lbl, desc]) => (
-              <button key={v} type="button" onClick={() => setForm({ ...form, acao_fora_janela: v })}
-                style={{ textAlign: "left", padding: "0.6rem 0.7rem", borderRadius: "var(--r-sm)", cursor: "pointer",
-                  border: "1.5px solid " + (form.acao_fora_janela === v ? "var(--dourado)" : "var(--border)"),
-                  background: form.acao_fora_janela === v ? "rgba(94,26,46,0.25)" : "transparent" }}>
-                <span style={{ display: "block", fontSize: "0.8rem", fontWeight: 700, color: form.acao_fora_janela === v ? "var(--dourado-light)" : "var(--text)" }}>{lbl}</span>
-                <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>{desc}</span>
-              </button>
-            ))}
-          </div>
-          {form.acao_fora_janela === "manter" && (
-            <p style={{ fontSize: "0.7rem", color: "var(--dourado-light)", marginBottom: "0.5rem" }}>
-              "Manter" nunca se aplica além do teto etário abaixo, se um for informado — evita pendência indevida para animais fora da idade biológica desta regra.
-            </p>
-          )}
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-            <div><label style={labelStyle}>Veterinário padrão</label>
-              <select style={inputStyle} value={form.veterinario_padrao_pessoa_id} onChange={(e) => setForm({ ...form, veterinario_padrao_pessoa_id: e.target.value })}>
-                <option value="">— (escolher na hora)</option>
-                {veterinariosZootecnistas.map((p: any) => <option key={p.id} value={p.id}>{p.nome}</option>)}
-              </select></div>
-            <div><label style={labelStyle}>Teto etário (opcional)</label>
-              <input type="number" min={0} style={inputStyle} value={form.teto_etario_valor} onChange={(e) => setForm({ ...form, teto_etario_valor: e.target.value })} placeholder="8" /></div>
-            <div><label style={labelStyle}>Unidade do teto</label>
-              <select style={inputStyle} value={form.teto_etario_unidade} onChange={(e) => setForm({ ...form, teto_etario_unidade: e.target.value as "dias" | "meses" })}>
-                <option value="dias">dias</option><option value="meses">meses</option>
-              </select></div>
-          </div>
-        </>
-      )}
-
-      {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
-      <div className="flex items-center gap-2">
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={salvar} disabled={salvando}>
-          <Check size={14} /> {salvando ? "Salvando…" : "Salvar"}
-        </button>
-        <button className="btn-ghost" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={cancelar}>
-          <X size={14} /> Cancelar
-        </button>
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="card">
-      <div className="card-header mb-3 flex items-center justify-between">
-        <span className="flex items-center gap-2"><CalendarClock size={16} /> Eventos sanitários</span>
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
-          <Plus size={14} /> Novo
-        </button>
-      </div>
-      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-        Nome da vacina/manejo do calendário sanitário. Defina <strong>quando repetir</strong> — por época (a cada X dias/meses)
-        ou por evento de vida (nascimento, entrada num lote como pré-parto, aptidão de novilha…) — e o medicamento padrão.
-        Isso alimenta a <strong>Agenda</strong>: ao dar baixa, a aplicação e a saída de estoque são geradas (com o remédio editável na hora).
-      </p>
-
-      {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {editando === "novo" && formEl}
-
-      {itens && (
-        <>
-          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
-            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
-            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar evento sanitário…" />
-          </div>
-          <div className="overflow-x-auto">
-            <table className="fazenda-table">
-              <thead><tr><th>Nome</th><th>Agendamento</th><th>Medicamento padrão</th><th>Janela</th><th>Próxima</th><th></th></tr></thead>
-              <tbody>
-                {filtrados.map((e) => (
-                  <Fragment key={e.id}>
-                    <tr>
-                      <td style={{ fontWeight: 700 }}>
-                        {e.nome}{!e.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}
-                        {e.condicao_evento_nome && (
-                          <span style={{ display: "block", fontWeight: 400, fontSize: "0.68rem", color: "var(--text-muted)" }}>
-                            se não recebeu: {e.condicao_evento_nome}
-                          </span>
-                        )}
-                      </td>
-                      <td style={{ fontSize: "0.78rem" }}>{rotuloAgendamento(e)}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{e.produto_padrao ? `${e.produto_padrao}${e.dose_padrao != null ? ` — ${e.dose_padrao} ${e.unidade_padrao || ""}` : ""}` : "—"}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{rotuloJanela(e)}</td>
-                      <td style={{ fontSize: "0.78rem", color: "var(--dourado-light)" }}>{e.proxima_ocorrencia ? new Date(e.proxima_ocorrencia + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
-                      <td style={{ textAlign: "right" }}>
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(e)}>
-                          <Pencil size={13} /> Editar
-                        </button>
-                      </td>
-                    </tr>
-                    {editando === e.id && <tr><td colSpan={6} style={{ padding: 0 }}>{formEl}</td></tr>}
-                  </Fragment>
-                ))}
-                {!itens.length && !editando && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum evento sanitário cadastrado ainda.</td></tr>}
-                {!!itens.length && !filtrados.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────── Exames (nome + tipo de resultado) ───────────────────────
-type ExameRow = ExameDefinicaoPayload & { id: number; principio_ativo_nome?: string | null };
-type ExameForm = {
-  nome: string; ativo: boolean; principio_ativo_id: string;
-  tipo_resultado: "diagnostico" | "numerico";
-  faixa_min: string; faixa_max: string;
-  acao_abaixo: string; acao_dentro: string; acao_acima: string;
-  observacao: string;
-};
-const exameFormVazio = (): ExameForm => ({
-  nome: "", ativo: true, principio_ativo_id: "", tipo_resultado: "diagnostico",
-  faixa_min: "", faixa_max: "", acao_abaixo: "", acao_dentro: "", acao_acima: "", observacao: "",
-});
-
-function CadastroExames() {
-  const [itens, setItens] = useState<ExameRow[] | null>(null);
-  const [principios, setPrincipios] = useState<{ id: number; nome: string }[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [editando, setEditando] = useState<number | "novo" | null>(null);
-  const [form, setForm] = useState<ExameForm>(exameFormVazio());
-  const [salvando, setSalvando] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [busca, setBusca] = useState("");
-
-  const carregar = () => fetchExames().then(setItens).catch((e) => setError(e.message));
-  useEffect(() => {
-    carregar();
-    fetchPrincipiosAtivos().then(setPrincipios).catch(() => {});
-  }, []);
-
-  const abrirNovo = () => { setForm(exameFormVazio()); setEditando("novo"); setMsg(null); };
-  const abrirEdicao = (e: ExameRow) => {
-    setForm({
-      nome: e.nome, ativo: e.ativo ?? true, principio_ativo_id: e.principio_ativo_id ? String(e.principio_ativo_id) : "",
-      tipo_resultado: (e.tipo_resultado as any) || "diagnostico",
-      faixa_min: e.faixa_min != null ? String(e.faixa_min) : "", faixa_max: e.faixa_max != null ? String(e.faixa_max) : "",
-      acao_abaixo: e.acao_abaixo || "", acao_dentro: e.acao_dentro || "", acao_acima: e.acao_acima || "",
-      observacao: e.observacao || "",
-    });
-    setEditando(e.id); setMsg(null);
-  };
-  const cancelar = () => { setEditando(null); setMsg(null); };
-
-  const salvar = async () => {
-    if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return; }
-    if (form.tipo_resultado === "numerico" && (!form.faixa_min.trim() || !form.faixa_max.trim())) {
-      setMsg("Informe a faixa (de x até y) para exame numérico."); return;
-    }
-    const dados: ExameDefinicaoPayload = {
-      nome: form.nome.trim(), ativo: form.ativo,
-      principio_ativo_id: form.principio_ativo_id ? Number(form.principio_ativo_id) : null,
-      tipo_resultado: form.tipo_resultado,
-      faixa_min: form.tipo_resultado === "numerico" && form.faixa_min ? Number(form.faixa_min) : null,
-      faixa_max: form.tipo_resultado === "numerico" && form.faixa_max ? Number(form.faixa_max) : null,
-      acao_abaixo: form.tipo_resultado === "numerico" ? (form.acao_abaixo.trim() || null) : null,
-      acao_dentro: form.tipo_resultado === "numerico" ? (form.acao_dentro.trim() || null) : null,
-      acao_acima: form.tipo_resultado === "numerico" ? (form.acao_acima.trim() || null) : null,
-      observacao: form.observacao.trim() || null,
-    };
-    setSalvando(true); setMsg(null);
-    try {
-      if (editando === "novo") await criarExame(dados);
-      else if (typeof editando === "number") await atualizarExame(editando, dados);
-      setEditando(null);
-      await carregar();
-    } catch (e: any) { setMsg(e.message || "Erro ao salvar"); }
-    finally { setSalvando(false); }
-  };
-
-  const excluir = async (e: ExameRow) => {
-    if (!window.confirm(`Excluir o exame "${e.nome}"?`)) return;
-    try { await excluirExame(e.id); await carregar(); }
-    catch (err: any) { setError(err.message); }
-  };
-
-  const termoBusca = normalizar(busca.trim());
-  const filtrados = (itens ?? []).filter((e) => !termoBusca || normalizar(e.nome).includes(termoBusca));
-
-  const formEl = (
-    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "1rem", marginBottom: "1rem" }}>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-        <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Nome do exame</label>
-          <input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder='ex.: "Tuberculina", "Brucelose B19"' /></div>
-        <div><label style={labelStyle}>Princípio ativo</label>
-          <select style={inputStyle} value={form.principio_ativo_id} onChange={(e) => setForm({ ...form, principio_ativo_id: e.target.value })}>
-            <option value="">—</option>{principios.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
-          </select></div>
-        <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
-          <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></div>
-      </div>
-
-      <label style={labelStyle}>Resultados possíveis</label>
-      <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
-        {([["diagnostico", "Por diagnóstico (positivo/negativo/indefinido)"], ["numerico", "Numérico (faixa de valores)"]] as const).map(([v, lbl]) => (
-          <button key={v} type="button" onClick={() => setForm({ ...form, tipo_resultado: v })}
-            style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
-              border: "1px solid " + (form.tipo_resultado === v ? "var(--dourado)" : "var(--border)"),
-              background: form.tipo_resultado === v ? "rgba(94,26,46,0.4)" : "transparent",
-              color: form.tipo_resultado === v ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: form.tipo_resultado === v ? 700 : 500 }}>
-            {lbl}
-          </button>
-        ))}
-      </div>
-
-      {form.tipo_resultado === "diagnostico" && (
-        <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.8rem" }}>
-          No lançamento (Sanitário › Preventivo), o resultado é <strong>positivo</strong> (marca automaticamente
-          "A descartar"), <strong>negativo</strong> (liberada) ou <strong>indefinido</strong> (repetir exame) — para fins de relatório.
-        </p>
-      )}
-
-      {form.tipo_resultado === "numerico" && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-          <div><label style={labelStyle}>Faixa — de</label>
-            <input type="number" inputMode="decimal" style={inputStyle} value={form.faixa_min} onChange={(e) => setForm({ ...form, faixa_min: e.target.value })} /></div>
-          <div><label style={labelStyle}>Faixa — até</label>
-            <input type="number" inputMode="decimal" style={inputStyle} value={form.faixa_max} onChange={(e) => setForm({ ...form, faixa_max: e.target.value })} /></div>
-          <div style={{ gridColumn: "span 4" }}><label style={labelStyle}>O que fazer abaixo da faixa</label>
-            <input style={inputStyle} value={form.acao_abaixo} onChange={(e) => setForm({ ...form, acao_abaixo: e.target.value })} placeholder="ex.: Sem ação" /></div>
-          <div style={{ gridColumn: "span 4" }}><label style={labelStyle}>O que fazer dentro da faixa</label>
-            <input style={inputStyle} value={form.acao_dentro} onChange={(e) => setForm({ ...form, acao_dentro: e.target.value })} placeholder="ex.: Monitorar" /></div>
-          <div style={{ gridColumn: "span 4" }}><label style={labelStyle}>O que fazer acima da faixa</label>
-            <input style={inputStyle} value={form.acao_acima} onChange={(e) => setForm({ ...form, acao_acima: e.target.value })} placeholder="ex.: Investigar" /></div>
-        </div>
-      )}
-
-      <div className="mb-3"><label style={labelStyle}>Observação</label>
-        <input style={inputStyle} value={form.observacao} onChange={(e) => setForm({ ...form, observacao: e.target.value })} /></div>
-
-      {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
-      <div className="flex items-center gap-2">
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={salvar} disabled={salvando}>
-          <Check size={14} /> {salvando ? "Salvando…" : "Salvar"}
-        </button>
-        <button className="btn-ghost" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={cancelar}>
-          <X size={14} /> Cancelar
-        </button>
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="card">
-      <div className="card-header mb-3 flex items-center justify-between">
-        <span className="flex items-center gap-2"><FlaskConical size={16} /> Exames</span>
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
-          <Plus size={14} /> Novo
-        </button>
-      </div>
-      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-        Cadastro de exames (ex.: tuberculose, brucelose) usados em Sanitário › Preventivo. Vincule ao princípio ativo
-        e escolha o tipo de resultado: por diagnóstico (positivo/negativo/indefinido) ou numérico (faixa de x até y,
-        com o que fazer abaixo, dentro e acima dela). Depois vincule este exame ao evento sanitário correspondente
-        (aba Evento sanitário). Lançamento de exame nunca gera aplicação de medicamento nem baixa de estoque.
-      </p>
-
-      {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
-      {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {editando === "novo" && formEl}
-
-      {itens && (
-        <>
-          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
-            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
-            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar exame…" />
-          </div>
-          <div className="overflow-x-auto">
-            <table className="fazenda-table">
-              <thead><tr><th>Nome</th><th>Princípio ativo</th><th>Tipo de resultado</th><th>Faixa</th><th></th></tr></thead>
-              <tbody>
-                {filtrados.map((e) => (
-                  <Fragment key={e.id}>
-                    <tr>
-                      <td style={{ fontWeight: 700 }}>{e.nome}{!e.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{e.principio_ativo_nome || "—"}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{e.tipo_resultado === "numerico" ? "Numérico" : "Diagnóstico"}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{e.tipo_resultado === "numerico" && e.faixa_min != null ? `${e.faixa_min} a ${e.faixa_max}` : "—"}</td>
-                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                        <span style={{ display: "inline-flex", gap: "0.35rem", alignItems: "center" }}>
-                          <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(e)}>
-                            <Pencil size={13} /> Editar
-                          </button>
-                          <button title="Excluir" onClick={() => excluir(e)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", padding: 2 }}><Trash2 size={14} /></button>
-                        </span>
-                      </td>
-                    </tr>
-                    {editando === e.id && <tr><td colSpan={5} style={{ padding: 0 }}>{formEl}</td></tr>}
-                  </Fragment>
-                ))}
-                {!itens.length && !editando && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum exame cadastrado ainda.</td></tr>}
-                {!!itens.length && !filtrados.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-

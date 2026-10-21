@@ -70,7 +70,7 @@ export default function Cadastro({
   abaEstoque?: AbaCadastroEstoque; onAbaEstoqueChange?: (id: AbaCadastroEstoque) => void;
 } = {}) {
   const [abaInterna, setAbaInterna] = useState<AbaCadastro>("lotes");
-  const [abaSanitarioInterna, setAbaSanitarioInterna] = useState<AbaCadastroSanitario>("eventos");
+  const [abaSanitarioInterna, setAbaSanitarioInterna] = useState<AbaCadastroSanitario>("protocolos");
   const [abaCentralSemenInterna, setAbaCentralSemenInterna] = useState<AbaCentralSemen>("estoque-semen");
   const [abaEstoqueInterna, setAbaEstoqueInterna] = useState<AbaCadastroEstoque>("itens");
   const aba = abaExterna ?? abaInterna;

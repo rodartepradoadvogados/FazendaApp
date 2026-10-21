@@ -154,7 +154,7 @@ function AbaRotina({ manual }: { manual: ManualFazenda }) {
             <Activity size={18} />
           </div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: "0.88rem", marginBottom: "0.15rem" }}>Calendário sanitário preventivo</div>
+            <div style={{ fontWeight: 700, fontSize: "0.88rem", marginBottom: "0.15rem" }}>Protocolos sanitários</div>
             <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
               Próxima: {rotina.sanitario.proxima.protocolo} — animal {rotina.sanitario.proxima.animal} em {fmtDia(rotina.sanitario.proxima.data)}
               {rotina.sanitario.vencidas > 0 && <span style={{ color: "var(--red)", fontWeight: 700 }}> — {rotina.sanitario.vencidas} vencida(s)</span>}

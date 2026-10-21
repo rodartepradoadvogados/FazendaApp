@@ -2,7 +2,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { SlidersHorizontal, AlertTriangle, Info, Pencil, Check, Milk, Plus, X, Wallet } from "lucide-react";
 import { API, authFetch, ehAdmin, mensagemErroApi, podeModulo } from "@/lib/api";
-import RotinaListaEsperaStatus from "@/components/RotinaListaEsperaStatus";
+import EmConstrucao from "@/components/sanitario/EmConstrucao";
 import CadastroMotivosVenda from "@/components/CadastroMotivosVenda";
 import ManualFazendaParametros from "@/components/ManualFazendaParametros";
 import AlertasIndicador from "@/components/AlertasIndicador";
@@ -58,8 +58,9 @@ function ParametrosGerais() {
           financeiros (mesma tabela/endpoint, só apresentação separada). */}
       <GruposParametrosCards filtro={(id) => id !== "financeiro" && id !== "folha_rh"} />
 
+      {/* Parâmetros › Sanitário — ponto de encaixe do Sanitário Preventivo v2. */}
       <div className="mt-4">
-        <RotinaListaEsperaStatus />
+        <EmConstrucao titulo="Parâmetros › Sanitário" descricao="UF, prazos legais, antecedência padrão dos avisos e regras de lançamento das vacinas e exames." />
       </div>
 
       <div className="mt-4">
