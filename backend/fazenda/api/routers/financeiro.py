@@ -2683,8 +2683,9 @@ def candidatos_vinculo_sanitario_reprodutivo(
     últimos serviços reprodutivos (diagnóstico de gestação), as 2 últimas
     vacinas aplicadas — cada um agrupado por data (um lançamento em lote, com
     vários animais, vira um só candidato). Os exames do módulo antigo de
-    preventivo saíram em 2026; `exames` volta a ser preenchido pelo módulo
-    novo (sanitario_registro) na F8.
+    preventivo saíram em 2026; `exames` agora vem do módulo novo
+    (sanitario_registro de caixas do tipo exame, os 2 dias/grupos mais
+    recentes ainda sem vínculo).
     Usado no popup de vínculo ao salvar uma despesa numa conta gerencial
     marcada (ver PlanoContaGerencial.pede_vinculo_sanitario_reprodutivo).
     """
@@ -2733,11 +2734,35 @@ def candidatos_vinculo_sanitario_reprodutivo(
         for (produto, data), grupo in list(grupos_vacina.items())[:2]
     ]
 
-    return {"servicos": candidatos_servico, "vacinas": candidatos_vacina, "exames": []}
+    # Exames do Sanitário Preventivo v2 (sanitario_registro de caixas do tipo
+    # exame) — agrupados por (dia marcado ou data, caixa): um dia de exame com
+    # vários animais vira um só candidato. Vincula com tipo "sanitario_registro".
+    from fazenda.models import SanitarioCaixa, SanitarioRegistro
+    query_exames = select(SanitarioRegistro, SanitarioCaixa).where(
+        SanitarioRegistro.caixa_id == SanitarioCaixa.id, SanitarioCaixa.tipo == "exame",
+        SanitarioRegistro.estado == "valido", SanitarioRegistro.numero_lancamento_vinculado.is_(None),
+    )
+    if fazenda_id is not None:
+        query_exames = query_exames.where(SanitarioRegistro.fazenda_id == fazenda_id)
+    grupos_exame: dict[tuple, list] = {}
+    for reg, cx in session.exec(query_exames.order_by(SanitarioRegistro.data.desc(), SanitarioRegistro.id.desc())).all():
+        grupos_exame.setdefault((reg.dia_id or reg.data, cx.id), []).append((reg, cx))
+    candidatos_exame = [
+        {
+            "tipo": "sanitario_registro",
+            "ids": [r.id for r, _cx in grupo],
+            "rotulo": f"Exame — {grupo[0][1].nome_curto or grupo[0][1].nome} ({len(grupo)} animal(is))",
+            "data": grupo[0][0].data.isoformat(),
+            "responsavel": next((r.veterinario_texto for r, _cx in grupo if r.veterinario_texto), None),
+        }
+        for _chave, grupo in list(grupos_exame.items())[:2]
+    ]
+
+    return {"servicos": candidatos_servico, "vacinas": candidatos_vacina, "exames": candidatos_exame}
 
 
 class VincularEventoIn(BaseModel):
-    tipo: str  # "sanidade" | "servico"
+    tipo: str  # "sanidade" | "servico" | "sanitario_registro" (exame/vacina do sanitário preventivo v2)
     ids: list[int]
     numero_lancamento: str
 
@@ -2752,9 +2777,10 @@ def vincular_evento_sanitario_reprodutivo(
     # um evento de OUTRA fazenda (ou ao lançamento de outra fazenda) só
     # acertando os ids.
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    modelo = {"sanidade": Sanidade, "servico": Servico}.get(dados.tipo)
+    from fazenda.models import SanitarioRegistro
+    modelo = {"sanidade": Sanidade, "servico": Servico, "sanitario_registro": SanitarioRegistro}.get(dados.tipo)
     if modelo is None:
-        raise HTTPException(status_code=400, detail="Tipo inválido (use: sanidade, servico)")
+        raise HTTPException(status_code=400, detail="Tipo inválido (use: sanidade, servico, sanitario_registro)")
     query_lancamento = select(ContaGerencial).where(ContaGerencial.numero_lancamento == dados.numero_lancamento)
     if fazenda_id is not None:
         query_lancamento = query_lancamento.where(ContaGerencial.fazenda_id == fazenda_id)

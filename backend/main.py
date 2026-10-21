@@ -106,6 +106,7 @@ from fazenda.api.routers import (
     venda_animal,
     zapsign,
 )
+from fazenda.api.routers import sanitario as sanitario_api
 from fazenda.api.routers.telegram import registrar_webhook_telegram
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 from fazenda.api.routers.financeiro import (
@@ -888,6 +889,9 @@ app.include_router(painel_cowdata_sincronizacao.router)
 # Réguas de referência do lado do operador (diagnóstico de publicação, fila de
 # "Reportar erro", comprovante de aceite) — área "produto"; escrita só do dono.
 app.include_router(painel_cowdata_reguas.router)
+# Catálogo central do Sanitário Preventivo v2 (cockpit CowData) — mesma
+# guarda da Farmácia padrão (área "farmacia"; escrita com permissão de edição).
+app.include_router(sanitario_api.router_cowdata)
 
 # TRAVA DE TENANT (auditoria F-A-01/F-B-01/F-B-02/F-A-03): a requisição só
 # entra numa rota de fazenda se o token disser EM QUAL fazenda ela acontece.
@@ -1026,6 +1030,9 @@ app.include_router(estoque.router, dependencies=_protegido + [Depends(exigir_mod
 app.include_router(farmacia.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("sanitario"))])
 app.include_router(sanidade.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("sanitario"))])
 app.include_router(relatorio_rastreabilidade_sanitaria.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("sanitario"))])
+# Sanitário Preventivo v2 (/sanitario): caixas, dias "Vacina"/"Exame",
+# registros, consulta, app de campo — ver fazenda/api/routers/sanitario/.
+app.include_router(sanitario_api.router, dependencies=_protegido + _contrato_ativo + [Depends(exigir_modulo_contratado("sanitario"))])
 app.include_router(recria.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("produtivo"))])
 # Cadastro de lotes vive em Configurações (permissão "parametros"), mas é
 # dado de Rebanho no contrato. Cadastro de Safra é módulo "agricultura".

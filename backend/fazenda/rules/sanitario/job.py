@@ -266,6 +266,13 @@ def notas_prazos_legais(session: Session, fazenda_id: int, hoje: date) -> int:
         ultima = max(cumpridas) if cumpridas else caixa.ativada_em
         if ultima is None:
             continue
+        # Já há uma comprovação em aberto (criada pelo registro da aplicação,
+        # rules/sanitario/registro.py): não abre uma segunda.
+        if session.exec(select(SanitarioPrazoLegal.id).where(
+            SanitarioPrazoLegal.fazenda_id == fazenda_id, SanitarioPrazoLegal.caixa_id == caixa.id,
+            SanitarioPrazoLegal.tipo == "comprovacao", SanitarioPrazoLegal.estado == "aberto",
+        )).first() is not None:
+            continue
         vence = vencimento_comprovacao(v.legal_comprovacao, ultima)
         ref = f"data:{vence.isoformat()}"
         prazo = session.exec(select(SanitarioPrazoLegal).where(
@@ -435,6 +442,10 @@ def tick(session: Session, agora: Optional[datetime] = None) -> dict:
             fechados = fechar_dias_vencidos(session, fid, agora)
             session.commit()
             out[fid] = {"fechados": fechados, "diaria": executar_diaria(session, fid, agora)}
+            # Push das notas novas (aglomerou, véspera, prazos, celular offline) —
+            # depois do commit da diária; cada nota sai uma vez (push_enviado_em).
+            from fazenda.rules.sanitario.push import despachar_push_notas
+            out[fid]["push"] = despachar_push_notas(session, fid)
         except Exception:
             session.rollback()
             logger.exception("sanitario: tick da fazenda %s falhou", fid)

@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.rules.sanitario import ganchos as ganchos_sanitario
+from fazenda.rules.sanitario.leite import carencia_leite_na_data
 from fazenda.api.routers.lotes import _codigo_do_grupo, _mesmo_codigo, coletar_dados_criterios
 from fazenda.auth import exigir_admin, exigir_admin_ou_dono, get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
@@ -23,7 +24,8 @@ from fazenda.models import (
     Animal, AplicacaoAgendada, ContaGerencial, ControleLeiteiro, Dieta, DietaLancamento, EntregaLeiteMensal,
     FaixaBonificacaoQualidade, Lactacao, LancamentoItem, Lote, ParametroFazenda,
     Parto, PesagemCorporal, ProtocoloInducaoAplicacao, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa,
-    ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento, QualidadeLeite, Sanidade, Secagem, Servico, Usuario,
+    ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento, QualidadeLeite, Sanidade, SanitarioLog, Secagem, Servico,
+    Usuario,
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.parsers.utils import iter_planilha_rows, normalizar_cabecalho, parse_date, parse_float, valor_por_apelido
@@ -238,6 +240,7 @@ def _gravar_controles(
     """
     criados = []
     ignorados: list[dict] = []
+    carencias: list[dict] = []
     for entrada in dados.entradas:
         if estrito:
             lactacao_do_controle = _exigir_lactacao_aberta(
@@ -257,6 +260,28 @@ def _gravar_controles(
                     ),
                 })
                 continue
+        # D4 (Sanitário Preventivo v2): vaca em carência de leite segue o modo
+        # decidido na caixa — bloqueio recusa; descarte grava fora do tanque;
+        # tanque segue normal, registrando no log sanitário.
+        destino_leite, registro_carencia = None, None
+        reg_car = carencia_leite_na_data(session, fazenda_id, entrada.numero_matriz, dados.data_controle)
+        if reg_car is not None:
+            ate = reg_car.carencia_leite_ate.strftime("%d/%m/%Y")
+            if reg_car.carencia_modo == "bloqueio":
+                msg = (f"{entrada.numero_matriz} está em carência de leite até {ate} (bloqueio total decidido "
+                       f"no sanitário) — o leite desta vaca não pode ser lançado.")
+                if estrito:
+                    raise HTTPException(status_code=409, detail={
+                        "erro": "carencia_bloqueio", "msg": msg, "numero_matriz": entrada.numero_matriz,
+                        "liberacao_leite": reg_car.carencia_leite_ate.isoformat(), "registro_id": reg_car.id,
+                    })
+                ignorados.append({"numero_matriz": entrada.numero_matriz, "data": dados.data_controle.isoformat(),
+                                  "motivo": msg})
+                continue
+            registro_carencia = reg_car.id
+            destino_leite = "descarte" if reg_car.carencia_modo == "descarte" else None
+            carencias.append({"numero_matriz": entrada.numero_matriz, "modo": reg_car.carencia_modo or "tanque",
+                              "liberacao_leite": reg_car.carencia_leite_ate.isoformat(), "registro_id": reg_car.id})
         if entrada.total_kg is not None:
             producao_kg = round(entrada.total_kg, 2)
             o1 = o2 = o3 = None
@@ -300,10 +325,21 @@ def _gravar_controles(
         registro.ordenha2_kg = o2
         registro.ordenha3_kg = o3
         registro.usuario_id = usuario_id
+        registro.destino_leite = destino_leite
+        registro.sanitario_registro_id = registro_carencia
         session.add(registro)
         criados.append(registro)
+        if registro_carencia is not None and fazenda_id is not None:
+            session.add(SanitarioLog(
+                fazenda_id=fazenda_id, tipo="leite.descarte" if destino_leite == "descarte" else "leite.tanque_em_carencia",
+                animal_id=animal.id if animal else None, registro_id=registro_carencia, usuario_id=usuario_id,
+                decisao=destino_leite or "tanque",
+                texto_livre=(f"Controle de {dados.data_controle.strftime('%d/%m/%Y')} ({producao_kg:g} kg) de "
+                             f"{entrada.numero_matriz}: " + ("gravado como DESCARTE, fora do tanque (carência)."
+                                                             if destino_leite == "descarte" else
+                                                             "em carência, seguiu para o tanque (modo decidido)."))))
     session.commit()
-    return {"criados": len(criados), "ignorados": ignorados}
+    return {"criados": len(criados), "ignorados": ignorados, "carencia": carencias}
 
 
 # ---------------------------------------------------------------------------

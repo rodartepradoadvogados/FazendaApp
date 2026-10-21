@@ -19,6 +19,7 @@ from fazenda.models import (
     Sanidade, Secagem, Servico, Touro, VendaAnimal,
 )
 from fazenda.ordenacao import chave_numero
+from fazenda.rules.sanitario.consulta import registros_do_animal
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import get_param, pre_parto_max
 from fazenda.rules.parto_resumo import resumo_por_parto
@@ -704,6 +705,17 @@ def ficha_animal(
             "data": baixa.data_baixa, "tipo_evento": "Baixa", "descricao": f"{baixa.tipo_baixa} — {baixa.motivo}",
             "gta": None, "responsavel": baixa.responsavel,
         })
+    # Sanitário preventivo v2 (sanitario_registro): vacinas/exames entram na
+    # linha do tempo e os exames voltam a preencher `exames_resultados`.
+    registros_preventivos = registros_do_animal(session, fazenda_id, animal.id)
+    exames_resultados = [r for r in registros_preventivos if r["tipo"] == "exame"]
+    for r in registros_preventivos:
+        linha_tempo_sanitaria.append({
+            "data": date.fromisoformat(r["data"]) if r["data"] else None,
+            "tipo_evento": "Exame" if r["tipo"] == "exame" else "Vacina/preventivo",
+            "descricao": (r["caixa"] or r["outro_texto"] or "—") + (f" — {r['resultado']}" if r["resultado"] else ""),
+            "gta": None, "responsavel": r["veterinario_texto"] or r["aplicador_texto"],
+        })
     linha_tempo_sanitaria.sort(key=lambda e: e["data"] or date.min)
 
     # DEL AO VIVO (ver _del_dias_ao_vivo no topo do arquivo) — precisa ser
@@ -878,9 +890,10 @@ def ficha_animal(
         "vendas": _dump(vendas),
         "gtas": gtas,
         "ocorrencias_clinicas": _dump(ocorrencias_clinicas),
-        # Exames do módulo antigo (arquivado em 2026) saíram; a lista volta a
-        # ser preenchida pelo módulo novo (sanitario_registro) na F8.
-        "exames_resultados": [],
+        # Exames do Sanitário Preventivo v2 (sanitario_registro de caixas do
+        # tipo exame), mais recentes primeiro; vacinas em `registros_preventivos`.
+        "exames_resultados": exames_resultados,
+        "registros_preventivos": registros_preventivos,
         "linha_tempo_sanitaria": linha_tempo_sanitaria,
         # Curva média do rebanho por faixa de DEL — é a referência que a
         # "Curva de lactação" da ficha desenha por trás dos pontos do animal,
