@@ -2555,3 +2555,68 @@ button.san-kpi { cursor: pointer; width: 100%; }
 .san-nota-ag p { margin: 0; font-size: 0.84rem; }
 .san-nota-ag small { display: block; color: var(--text-muted); font-size: 0.74rem; margin-top: 0.15rem; line-height: 1.4; }
 @media (max-width: 560px) { .san-nota-ag { grid-template-columns: auto minmax(0, 1fr); } .san-nota-ag > .san-acoes { grid-column: 2; } }
+
+/* ── App de campo › Vacinação (Sanitário Preventivo v2) ─────────────────────
+   Sistema .mob-* (DESIGN.md "App de campo"): Inter, cantos 0px, alvos ≥ 56px,
+   fonte ≥ 16px nos controles, ouro (--mob-acao) = ação/ativo, estado do item
+   como filete lateral (nunca o fundo inteiro). Funciona no claro de alto
+   contraste e no escuro OLED só com os tokens --mob-*. */
+.mob-san-num { font-size: 3.4rem; line-height: 1; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--mob-text); }
+.mob-san-rotulo { display: block; font-size: var(--mob-fs-rotulo); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--mob-muted); margin: 1rem 0 0.45rem; }
+.mob-san-txt { font-size: var(--mob-fs-apoio); color: var(--mob-muted); line-height: 1.45; margin: 0.3rem 0 0; }
+.mob-san-chips { display: grid; gap: 0.5rem; }
+.mob-san-chips.duas { grid-template-columns: 1fr 1fr; }
+.mob-san-chip {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; width: 100%; text-align: left;
+  min-height: 56px; padding: 0.7rem 0.9rem; border-radius: var(--r-app); cursor: pointer;
+  background: var(--mob-surface); color: var(--mob-text); border: 2px solid var(--mob-border);
+  font-size: var(--mob-fs-body); font-weight: 700;
+}
+.mob-san-chip small { display: block; font-size: var(--mob-fs-apoio); font-weight: 500; color: var(--mob-muted); margin-top: 0.1rem; }
+.mob-san-chip[aria-pressed="true"] { border-color: var(--mob-acao); background: color-mix(in srgb, var(--mob-acao) 12%, var(--mob-surface)); }
+.mob-san-chip[aria-pressed="false"] { opacity: 0.75; }
+.mob-san-chip[aria-pressed="false"] b, .mob-san-chip[aria-pressed="false"] > span:first-child { text-decoration: line-through; }
+.mob-san-chip:disabled { opacity: 0.5; cursor: default; }
+.mob-san-linha {
+  display: flex; align-items: center; gap: 0.75rem; width: 100%; min-height: 56px; padding: 0.6rem 0.8rem;
+  background: var(--mob-surface); border: 1px solid var(--mob-border); border-left: 4px solid transparent;
+  border-radius: var(--r-app); color: var(--mob-text); text-align: left; cursor: pointer; margin-bottom: 0.5rem;
+  font-size: var(--mob-fs-body);
+}
+.mob-san-linha input[type="checkbox"], .mob-san-linha input[type="radio"] { width: 24px; height: 24px; accent-color: var(--mob-acao); flex-shrink: 0; }
+.mob-san-linha[data-estado="ok"] { border-left-color: var(--mob-verde); }
+.mob-san-linha[data-estado="alerta"] { border-left-color: var(--mob-vermelho); }
+.mob-san-linha[data-estado="atencao"] { border-left-color: var(--mob-ambar); }
+.mob-san-linha[data-estado="fila"] { border-left-color: var(--mob-aco); }
+.mob-san-faixa {
+  display: flex; gap: 0.6rem; align-items: flex-start; padding: 0.75rem 0.85rem; margin: 0 0 0.8rem;
+  border-radius: var(--r-app); border: 1px solid var(--mob-border); border-left: 4px solid var(--mob-aco);
+  background: var(--mob-surface); color: var(--mob-text); font-size: var(--mob-fs-apoio); line-height: 1.45;
+}
+.mob-san-faixa svg { flex-shrink: 0; margin-top: 2px; }
+.mob-san-faixa.alerta { border-left-color: var(--mob-vermelho); }
+.mob-san-faixa.alerta svg { color: var(--mob-vermelho); }
+.mob-san-faixa.atencao { border-left-color: var(--mob-ambar); }
+.mob-san-faixa.atencao svg { color: var(--mob-ambar); }
+.mob-san-faixa.ok { border-left-color: var(--mob-verde); }
+.mob-san-faixa.ok svg { color: var(--mob-verde); }
+.mob-san-dupla { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-top: 0.5rem; }
+.mob-san-btn-acao { min-height: 64px; font-size: 1.05rem; letter-spacing: 0.02em; }
+.mob-san-btn-perigo { color: var(--mob-vermelho) !important; }
+.mob-san-tag {
+  display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.1rem 0.45rem; font-size: var(--mob-fs-rotulo); font-weight: 800;
+  letter-spacing: 0.04em; text-transform: uppercase; border: 1px solid currentColor; border-radius: var(--r-app); color: var(--mob-muted);
+}
+.mob-san-tag.estimado, .mob-san-tag.atencao { color: var(--mob-ambar); }
+.mob-san-tag.ok { color: var(--mob-verde); }
+.mob-san-tag.alerta { color: var(--mob-vermelho); }
+.mob .san-origem { width: 32px; height: 32px; border-color: var(--mob-border); color: var(--mob-muted); }
+.mob .san-origem.manual { color: var(--mob-dourado); border-color: var(--mob-dourado-2); }
+.mob .san-origem.curral { color: var(--mob-ambar); border-color: var(--mob-ambar); }
+.mob-san-ultimos { display: grid; gap: 0.4rem; margin-top: 0.4rem; }
+.mob-san-ultimos > div {
+  display: flex; align-items: center; gap: 0.6rem; min-height: 56px; padding: 0.35rem 0.4rem 0.35rem 0.8rem;
+  border: 1px solid var(--mob-border); border-left: 4px solid var(--mob-verde); border-radius: var(--r-app); background: var(--mob-surface);
+}
+.mob-san-ultimos > div[data-fila="1"] { border-left-color: var(--mob-aco); }
+.mob-san-ultimos button { min-height: 48px; width: auto; min-width: 116px; flex-shrink: 0; padding: 0 0.8rem; }

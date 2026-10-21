@@ -728,8 +728,11 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
   let enviados = 0;
   try {
     const agora = Date.now();
+    // Itens "sanitario" ficam de fora: vão em lote pelo sincronizador próprio
+    // (registrarSincronizador, abaixo), que lê a resposta por registro.
     const elegiveis = (await listarTudo()).filter(
-      (i) => i.status !== "erro" && (!i.proximaTentativaEm || new Date(i.proximaTentativaEm).getTime() <= agora),
+      (i) => (i.tipo === "json" || i.tipo === "form") && i.status !== "erro"
+        && (!i.proximaTentativaEm || new Date(i.proximaTentativaEm).getTime() <= agora),
     );
     progressoSync = { total: elegiveis.length, feitos: 0 };
     notificarProgresso();
@@ -803,6 +806,11 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
         }
       }
     }
+    // Filas de domínio que enviam em lote (ex.: sanitário) — cada uma cuida
+    // dos próprios itens; uma falha aqui nunca derruba a rodada genérica.
+    for (const [nome, fn] of sincronizadoresExtras) {
+      try { await fn(); } catch (e) { console.warn(`[offline] sincronizador "${nome}" falhou:`, e); }
+    }
   } finally {
     sincronizando = false;
     progressoSync = null;
@@ -810,6 +818,64 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
     await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
   }
   return { enviados, restantes: (await listarTudo()).length };
+}
+
+// ── Filas de domínio com envio em lote (ex.: sanitário do app de campo) ─────
+// Reaproveitam a MESMA fila (IndexedDB, espelho, contador de pendentes, tela
+// de Sincronização, filtro por fazenda) e o MESMO transporte sem logout em 401
+// (fetch cru + ponte nativa), mas decidem sozinhas como enviar e como ler a
+// resposta. Ver lib/filaSanitario.ts.
+const sincronizadoresExtras = new Map<string, () => Promise<void>>();
+
+/** Registra (ou troca) um sincronizador de domínio, chamado ao fim de cada
+ *  rodada de sincronizar() — abertura, evento 'online', intervalo, botão. */
+export function registrarSincronizador(nome: string, fn: () => Promise<void>): void {
+  sincronizadoresExtras.set(nome, fn);
+}
+
+/** Insere um item já montado na fila (id = chave de idempotência do domínio). */
+export async function inserirNaFila(item: Omit<RegistroOutbox, "fazendaId"> & { fazendaId?: number | null }): Promise<void> {
+  await iniciar();
+  await inserirItem({ ...item, fazendaId: item.fazendaId === undefined ? (getFazendaAtual()?.id ?? null) : item.fazendaId });
+  await recarregarEspelho().catch(() => {});
+}
+
+/** Itens completos de um tipo, em ordem de criação (FIFO). */
+export async function itensDaFila(tipo: TipoItem): Promise<RegistroOutbox[]> {
+  await iniciar();
+  const resumos = (await listarTudo()).filter((i) => i.tipo === tipo);
+  const out: RegistroOutbox[] = [];
+  for (const r of resumos) {
+    const completo = await lerItemCompleto(r.id);
+    if (completo) out.push(completo);
+  }
+  return out;
+}
+
+export async function atualizarNaFila(id: string, patch: Partial<RegistroOutbox>, notificar = true): Promise<void> {
+  await iniciar();
+  await atualizarItem(id, patch);
+  if (notificar) await recarregarEspelho().catch(() => {});
+}
+
+export async function removerDaFila(ids: string[]): Promise<void> {
+  await iniciar();
+  for (const id of ids) await removerItem(id);
+  await recarregarEspelho().catch(() => {});
+}
+
+/** POST JSON pelo transporte da sincronização em segundo plano (sem logout
+ *  automático em 401; com a ponte nativa como segunda tentativa). Lança só
+ *  em falha de REDE; qualquer resposta HTTP volta para quem chamou decidir. */
+export async function postarCru(caminho: string, corpo: unknown, idempotencia: string): Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }> {
+  return fetchCruComFallbackNativo(caminho, "POST", corpo, idempotencia);
+}
+
+/** Momento de criação do item mais antigo ainda na fila (ou null). */
+export function maisAntigoDe(itens: { criadoEm: string }[]): string | null {
+  let menor: string | null = null;
+  for (const i of itens) if (!menor || i.criadoEm < menor) menor = i.criadoEm;
+  return menor;
 }
 
 /** Hook: quantidade (e lista) de pendentes, atualizada ao vivo. */

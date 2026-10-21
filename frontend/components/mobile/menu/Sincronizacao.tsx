@@ -186,7 +186,7 @@ export default function Sincronizacao({ onVoltar }: { onVoltar: () => void }) {
                   </div>
                   <div style={estiloInfo}>
                     <div>
-                      <strong>Tipo:</strong> {item.tipo === "form" ? "📷 Foto/arquivo" : "📝 Dados"}
+                      <strong>Tipo:</strong> {item.tipo === "form" ? "📷 Foto/arquivo" : item.tipo === "sanitario" ? "💉 Vacina/exame (envia em lote)" : "📝 Dados"}
                     </div>
                     <div>
                       <strong>Criado:</strong> {formatarData(item.criadoEm)}
@@ -241,7 +241,7 @@ export default function Sincronizacao({ onVoltar }: { onVoltar: () => void }) {
                   </div>
                   <div style={estiloInfo}>
                     <div>
-                      <strong>Tipo:</strong> {item.tipo === "form" ? "📷 Foto/arquivo" : "📝 Dados"}
+                      <strong>Tipo:</strong> {item.tipo === "form" ? "📷 Foto/arquivo" : item.tipo === "sanitario" ? "💉 Vacina/exame (envia em lote)" : "📝 Dados"}
                     </div>
                     <div>
                       <strong>Criado:</strong> {formatarData(item.criadoEm)}

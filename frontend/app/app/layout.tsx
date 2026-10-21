@@ -13,6 +13,8 @@ import { iniciarSincronizacaoAutomatica, useConectividadeReal, usePendentes, use
 import { ajustarStatusBar, esconderSplash, registrarBotaoVoltar, registrarPushNativo } from "@/lib/nativo";
 import { InstalarApp } from "@/components/mobile/InstalarApp";
 import { ConexaoFaixa } from "@/components/mobile/ConexaoFaixa";
+import { AvisoAtrasoSanitario } from "@/components/mobile/vacinacao/comum";
+import { iniciarCampoSanitario } from "@/lib/filaSanitario";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { NewsIcon } from "@/components/mobile/NewsIcon";
@@ -86,7 +88,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     const medir = () => { if (headerRef.current) setAlturaHeader(headerRef.current.offsetHeight); };
     medir();
     window.addEventListener("resize", medir);
-    return () => window.removeEventListener("resize", medir);
+    // Faixas que aparecem sozinhas dentro do cabeçalho (ex.: aviso de 24 h sem
+    // enviar da fila do sanitário) também mudam a altura.
+    const obs = typeof ResizeObserver !== "undefined" && headerRef.current ? new ResizeObserver(medir) : null;
+    if (obs && headerRef.current) obs.observe(headerRef.current);
+    return () => { window.removeEventListener("resize", medir); obs?.disconnect(); };
     // progressoSync entra na dependência porque a faixa de conexão (dentro do
     // cabeçalho) muda de altura conforme o estado (lasquinha fina vs. barra
     // de sincronização com 2 linhas) — sem isso o espaçador ficava com a
@@ -98,7 +104,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
-    return iniciarSincronizacaoAutomatica();
+    // A fila do sanitário (envio em lote + heartbeat) entra na mesma rodada.
+    const pararSanitario = iniciarCampoSanitario();
+    const pararSync = iniciarSincronizacaoAutomatica();
+    return () => { pararSanitario(); pararSync(); };
   }, []);
 
   // App Android nativo (Capacitor) — nenhuma destas chamadas faz nada fora
@@ -125,7 +134,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let ativo = true;
     let remover = () => {};
-    registrarPushNativo((rota) => router.push(rota)).then((r) => { if (ativo) remover = r; else r(); });
+    registrarPushNativo((rota) => {
+      router.push(rota);
+      // Mesma rota com hash novo (ex.: já em /app/menu e o push abre
+      // "#vacinacao"): pushState não dispara 'hashchange' — avisa a página.
+      if (rota.includes("#")) setTimeout(() => window.dispatchEvent(new CustomEvent("app-abrir-hash")), 60);
+    }).then((r) => { if (ativo) remover = r; else r(); });
     return () => { ativo = false; remover(); };
   }, [router]);
 
@@ -213,6 +227,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             posição fixa. */}
         <div style={{ maxWidth: 560, margin: "0 auto" }}>
           <ConexaoFaixa online={online} pendentes={fila.length} progresso={progressoSync} />
+          <AvisoAtrasoSanitario />
         </div>
       </header>
 

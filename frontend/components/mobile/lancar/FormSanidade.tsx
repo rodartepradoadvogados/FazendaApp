@@ -1,7 +1,8 @@
 "use client";
 // Sub-tela SANIDADE: espelha a estrutura do site — duas modalidades,
 // Curativa (aplicação avulsa de remédio ou protocolo sanitário) e Preventiva
-// (vacina/exame — lançamento simples do módulo novo, em implantação — e BST).
+// (vacina/exame — lançamento simples do Sanitário Preventivo v2, com fila
+// offline — e BST).
 // Endpoints: POST /sanidade/aplicacoes | POST /sanidade/protocolos/lancamentos |
 // GET /agenda/ (BST).
 import { useEffect, useMemo, useState } from "react";
@@ -10,7 +11,7 @@ import { MobCampo, MobAviso, MobVoltar, MobCard } from "@/components/mobile/ui";
 import { fetchEstoqueAtivos, fetchProtocolosSanitarios, fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas, fetchAgenda, formatDate, fetchIndicacoesDoenca, type OpcaoIndicacaoDoenca } from "@/lib/api";
 import { fetchComCache } from "@/lib/offline";
 import { EstoquePicker } from "@/components/EstoquePicker";
-import EmConstrucao from "@/components/sanitario/EmConstrucao";
+import { LancamentoPreventivo } from "@/components/mobile/vacinacao/LancamentoPreventivo";
 import { VIAS_APLICACAO } from "@/lib/constants";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import {
@@ -33,8 +34,8 @@ function itemEstoqueBaixo(estoque: EstoqueItem[], produto: string): { baixo: boo
 
 type Modalidade = "curativa" | "preventiva";
 type TipoCurativa = "aplicacao" | "protocolo";
-// "vacina" é o ponto de encaixe do lançamento simples de vacina/exame do
-// Sanitário Preventivo v2 (o preventivo antigo saiu); BST segue como sempre.
+// "vacina" = lançamento simples de vacina/exame do Sanitário Preventivo v2
+// (components/mobile/vacinacao/LancamentoPreventivo.tsx); BST segue como sempre.
 type TipoPreventiva = "vacina" | "bst";
 
 const TITULOS_PREV: Record<TipoPreventiva, string> = {
@@ -80,7 +81,7 @@ export function FormSanidade({ animais, animalFixado }: {
     return (
       <>
         <MobVoltar titulo={TITULOS_PREV[tipoPrev]} onVoltar={() => setTipoPrev(null)} />
-        {tipoPrev === "vacina" && <EmConstrucao compacto titulo="Vacina ou exame (lançamento simples)" />}
+        {tipoPrev === "vacina" && <LancamentoPreventivo />}
         {tipoPrev === "bst" && <PreventivoBst />}
       </>
     );

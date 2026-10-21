@@ -26,7 +26,7 @@ import { getUsuario, podeModulo, ehAdmin, ehDono, ehOperadorRestrito, ROTA_MODUL
 import { usePendentes, descartarPendente, lerCache } from "@/lib/offline";
 import { MobTitulo, MobVoltar, MobConfirmModal } from "@/components/mobile/ui";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
-import EmConstrucao from "@/components/sanitario/EmConstrucao";
+import ListaVacinacao from "@/components/mobile/vacinacao/ListaVacinacao";
 import AgendaVet from "@/components/mobile/menu/AgendaVet";
 import ProtocolosIatf from "@/components/mobile/menu/ProtocolosIatf";
 import AplicacoesSanidade from "@/components/mobile/menu/AplicacoesSanidade";
@@ -112,23 +112,32 @@ const GRUPOS: Grupo[] = [
   ] },
 ];
 
-// Menu Vacinação — ponto de encaixe do Sanitário Preventivo v2 no app de campo
-// (lista de hoje/amanhã, modo tronco/grupo, pacote offline). Por enquanto só
-// o aviso de módulo em implantação, sem chamada de API.
-function VacinacaoEmConstrucao({ onVoltar }: { onVoltar: () => void }) {
-  return (
-    <div>
-      <MobVoltar titulo="Vacinação" subtitulo="Vacinas e exames" onVoltar={onVoltar} />
-      <EmConstrucao compacto titulo="Vacinação" />
-    </div>
-  );
+// Menu Vacinação — app de campo do Sanitário Preventivo v2 (lista de hoje/
+// amanhã, comunicado da véspera, leite separado, execução tronco/grupo com o
+// pacote offline do dia e a fila do aparelho). Atalho por hash:
+// "#vacinacao" abre a lista; "#vacinacao-<id do dia>" abre o dia (push da véspera).
+function Vacinacao({ onVoltar }: { onVoltar: () => void }) {
+  const m = typeof window !== "undefined" ? /^#vacinacao-(\d+)$/.exec(window.location.hash) : null;
+  const voltar = () => {
+    if (window.location.hash.startsWith("#vacinacao")) history.replaceState(null, "", window.location.pathname + window.location.search);
+    onVoltar();
+  };
+  return <ListaVacinacao onVoltar={voltar} diaInicial={m ? Number(m[1]) : null} />;
+}
+
+function subDoHash(): SubKey | null {
+  if (typeof window === "undefined") return null;
+  const h = window.location.hash;
+  if (h === "#agenda-reprodutiva") return "agendaVet";
+  if (h === "#vacinacao" || /^#vacinacao-\d+$/.test(h)) return "vacinacao";
+  return null;
 }
 
 const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactNode> = {
   agendaVet: AgendaVet,
   iatf: ProtocolosIatf,
   ciclos21: Ciclos21Dias,
-  vacinacao: VacinacaoEmConstrucao,
+  vacinacao: Vacinacao,
   aplicacoes: AplicacoesSanidade,
   remedios: RemediosPorDoenca,
   plano: PlanoAlimentacao,
@@ -331,11 +340,9 @@ export default function Pagina() {
   // Aparência, News, sincronização) — mesmo mecanismo de estado interno
   // (sem navegar de rota), só que sem passar pelo mapa SUBTELAS/SubKey.
   const [tela, setTela] = useState<"news" | "estoque" | "recria" | "protocolos" | "controleAcesso" | "portal" | "assistente" | "aparencia" | "sincronizacao" | null>(null);
-  const [sub, setSub] = useState<SubKey | null>(() => {
-    if (typeof window === "undefined") return null;
-    // Atalho por hash: a partir do comunicado "Visita reprodutiva" da Agenda, a Agenda Reprodutiva.
-    return window.location.hash === "#agenda-reprodutiva" ? "agendaVet" : null;
-  });
+  // Atalho por hash: "#agenda-reprodutiva" (comunicado "Visita reprodutiva" da
+  // Agenda) e "#vacinacao[-<dia>]" (push da véspera / aviso de 24 h sem enviar).
+  const [sub, setSub] = useState<SubKey | null>(() => subDoHash());
   const fila = usePendentes();
   const [confirmarDescartarId, setConfirmarDescartarId] = useState<string | null>(null);
 
@@ -368,13 +375,16 @@ export default function Pagina() {
   // Atalho por hash (#agenda-reprodutiva, comunicado "Visita reprodutiva" da
   // Agenda) — também quando o hash muda com a página já aberta.
   useEffect(() => {
-    const abrirSeHashAgendaVet = () => {
-      if (window.location.hash === "#agenda-reprodutiva") setSub("agendaVet");
+    const abrirSeHash = () => {
+      const alvo = subDoHash();
+      if (alvo) setSub(alvo);
     };
 
-    abrirSeHashAgendaVet();
-    window.addEventListener("hashchange", abrirSeHashAgendaVet);
-    return () => window.removeEventListener("hashchange", abrirSeHashAgendaVet);
+    abrirSeHash();
+    window.addEventListener("hashchange", abrirSeHash);
+    // Toque no push com o app aberto já em /app/menu: o cabeçalho/push avisa por evento.
+    window.addEventListener("app-abrir-hash", abrirSeHash);
+    return () => { window.removeEventListener("hashchange", abrirSeHash); window.removeEventListener("app-abrir-hash", abrirSeHash); };
   }, []);
 
   const usuario = montado ? getUsuario() : null;
