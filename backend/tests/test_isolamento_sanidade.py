@@ -1,15 +1,13 @@
 """
 Isolamento por fazenda — Sanidade (Fase 4D) — garante que aplicações,
-calendário sanitário, exames (cadastro e resultado), protocolos sanitários e
-agendamento de pesagem de uma fazenda nunca aparecem nem são editáveis por
-outra.
+protocolos sanitários e agendamento de pesagem de uma fazenda nunca aparecem
+nem são editáveis por outra.
 
 `test_multi_fazenda_isolamento.py` já cobre a listagem de
-GET /sanidade/calendario e GET /farmacia/principios — este arquivo fecha o
-resto do domínio Sanidade: aplicações (GET/PUT/DELETE), mutação do
-calendário (POST/PUT/DELETE), cadastro de exames, protocolos sanitários,
-agendamento de pesagem e os relatórios de resultado de exame/lançamento de
-protocolo.
+GET /farmacia/principios — este arquivo fecha o resto do domínio Sanidade:
+aplicações (GET/PUT/DELETE), protocolos sanitários, agendamento de pesagem e
+o lançamento de protocolo. (Calendário sanitário e exames do preventivo
+antigo saíram em 2026.)
 
 Self-contained: fixture `client` própria (mesmo padrão do arquivo de
 referência), não compartilha nada com os demais arquivos de teste.
@@ -30,8 +28,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import (
-    AgendamentoPesagem, CalendarioSanitario, ContratoFazenda, ContratoFazendaModulo, Doenca, Estoque, EventoSanitario,
-    ExameDefinicao, ExameResultado, Fazenda, MovimentoEstoque, ProtocoloSanitario, ProtocoloSanitarioEtapa, Sanidade,
+    AgendamentoPesagem, ContratoFazenda, ContratoFazendaModulo, Doenca, Estoque,
+    Fazenda, MovimentoEstoque, ProtocoloSanitario, ProtocoloSanitarioEtapa, Sanidade,
 )
 from fazenda.models.planos import MODULOS_COMERCIAIS
 
@@ -59,17 +57,6 @@ def client(monkeypatch):
                 s.add(ContratoFazendaModulo(fazenda_id=fid, modulo=modulo, preco=0.0, ativo=True))
 
         # --- Dados reais da fazenda #1 — nunca devem aparecer para a #2. ---
-        ev = EventoSanitario(nome="Vermífugo", fazenda_id=1)
-        s.add(ev)
-        s.commit()
-        s.refresh(ev)
-
-        cal = CalendarioSanitario(
-            evento_sanitario_id=ev.id, fazenda_id=1, frequencia_valor=4, frequencia_unidade="meses",
-            data_evento=date(2026, 1, 1), categoria_alvo="Bezerras",
-        )
-        s.add(cal)
-
         sanidade = Sanidade(
             numero_matriz="9001", produto="Ivomec", data_aplicacao=date(2026, 1, 10),
             natureza="curativo", fazenda_id=1,
@@ -78,9 +65,6 @@ def client(monkeypatch):
 
         doenca = Doenca(nome="Brucelose", fazenda_id=1)
         s.add(doenca)
-
-        exame_def = ExameDefinicao(nome="Tuberculose", fazenda_id=1)
-        s.add(exame_def)
 
         protocolo = ProtocoloSanitario(nome="Mastite - Protocolo Fazenda 1", fazenda_id=1)
         s.add(protocolo)
@@ -98,12 +82,6 @@ def client(monkeypatch):
         )
         s.add(agendamento)
 
-        exame_resultado = ExameResultado(
-            numero_matriz="9001", evento_sanitario_id=ev.id, data_exame=date(2026, 1, 15),
-            resultado="negativo", fazenda_id=1,
-        )
-        s.add(exame_resultado)
-
         # Item de estoque exclusivo da fazenda #2 — usado por
         # TestEstoqueBaixaIsolada para garantir que a fazenda #1 nunca consegue
         # baixar (nem pelo nome, nem pelo estoque_id) o item alheio.
@@ -112,39 +90,19 @@ def client(monkeypatch):
         )
         s.add(estoque_f2)
 
-        # Evento sanitário PRÓPRIO da fazenda #2 — o cadastro é por fazenda
-        # (a listagem em cadastro/sanitario.py filtra por `fazenda_id ==`), e
-        # desde a correção do furo em `_validar_calendario` uma regra de
-        # calendário só pode apontar para um evento da própria fazenda.
-        # Antes, o teste de "criar regra fica na fazenda do criador" usava o
-        # evento da fazenda #1 por conveniência — o que é exatamente o
-        # ataque (a resposta do POST devolve nome/categoria/serviço
-        # financeiro do evento apontado, ver `_serializar`).
-        ev_f2 = EventoSanitario(nome="Vermífugo", fazenda_id=2)
-        s.add(ev_f2)
-
         s.commit()
-        s.refresh(cal)
         s.refresh(sanidade)
         s.refresh(doenca)
-        s.refresh(exame_def)
         s.refresh(etapa)
         s.refresh(agendamento)
-        s.refresh(exame_resultado)
         s.refresh(estoque_f2)
-        s.refresh(ev_f2)
 
         ids = {
-            "evento_sanitario_id": ev.id,
-            "evento_sanitario_f2_id": ev_f2.id,
-            "calendario_id": cal.id,
             "sanidade_id": sanidade.id,
             "doenca_id": doenca.id,
-            "exame_definicao_id": exame_def.id,
             "protocolo_id": protocolo.id,
             "etapa_id": etapa.id,
             "agendamento_id": agendamento.id,
-            "exame_resultado_id": exame_resultado.id,
             "estoque_f2_id": estoque_f2.id,
         }
 
@@ -224,125 +182,6 @@ class TestAplicacoesIsoladas:
 
         _como_fazenda(1)
         r = c.delete(f"/sanidade/aplicacoes/{ids['sanidade_id']}")
-        assert r.status_code == 200
-
-
-# ---------------------------------------------------------------------------
-# Calendário sanitário — POST/PUT/DELETE (GET já coberto em
-# test_multi_fazenda_isolamento.py, mas mutação nunca foi testada).
-# ---------------------------------------------------------------------------
-class TestCalendarioMutacaoIsolada:
-    def test_criar_regra_calendario_fica_na_fazenda_do_criador(self, client):
-        c, engine, ids = client
-        _como_fazenda(2)
-        body = {
-            # Evento da PRÓPRIA fazenda 2 — ver o comentário no fixture.
-            "evento_sanitario_id": ids["evento_sanitario_f2_id"],
-            "frequencia_valor": 6,
-            "frequencia_unidade": "meses",
-            "data_evento": "2026-02-01",
-        }
-        r = c.post("/sanidade/calendario", json=body)
-        assert r.status_code == 200, r.text
-        nova_id = r.json()["id"]
-        assert r.json()["fazenda_id"] == 2
-
-        with Session(engine) as s:
-            regra = s.get(CalendarioSanitario, nova_id)
-            assert regra.fazenda_id == 2
-
-        # Fazenda 1 não vê a regra da fazenda 2, e vice-versa.
-        r = c.get("/sanidade/calendario")
-        assert nova_id in {item["id"] for item in r.json()}
-        _como_fazenda(1)
-        r = c.get("/sanidade/calendario")
-        assert nova_id not in {item["id"] for item in r.json()}
-        assert ids["calendario_id"] in {item["id"] for item in r.json()}
-
-    def test_atualizar_regra_calendario_de_outra_fazenda_da_404(self, client):
-        """Bug real corrigido: PUT /sanidade/calendario/{id} não checava
-        fazenda_id — fazenda_id_seguro(fazenda_id) do ownership check estava
-        ausente (fazenda/api/routers/sanidade.py, atualizar_calendario)."""
-        c, engine, ids = client
-        body = {
-            "evento_sanitario_id": ids["evento_sanitario_id"],
-            "frequencia_valor": 12,
-            "frequencia_unidade": "meses",
-            "data_evento": "2026-03-01",
-        }
-        _como_fazenda(2)
-        r = c.put(f"/sanidade/calendario/{ids['calendario_id']}", json=body)
-        assert r.status_code == 404
-
-        _como_fazenda(1)
-        r = c.put(f"/sanidade/calendario/{ids['calendario_id']}", json=body)
-        assert r.status_code == 200
-
-    def test_excluir_regra_calendario_de_outra_fazenda_da_404(self, client):
-        """Bug real corrigido: DELETE /sanidade/calendario/{id} idem."""
-        c, engine, ids = client
-        _como_fazenda(2)
-        r = c.delete(f"/sanidade/calendario/{ids['calendario_id']}")
-        assert r.status_code == 404
-
-        with Session(engine) as s:
-            assert s.get(CalendarioSanitario, ids["calendario_id"]) is not None
-
-        _como_fazenda(1)
-        r = c.delete(f"/sanidade/calendario/{ids['calendario_id']}")
-        assert r.status_code == 200
-
-
-# ---------------------------------------------------------------------------
-# Cadastro > Sanitário > Exames — GET/POST/PUT/DELETE /cadastro/exames.
-# ---------------------------------------------------------------------------
-class TestExamesCadastroIsolados:
-    def test_listar_exames_isolado(self, client):
-        c, engine, ids = client
-        _como_fazenda(2)
-        r = c.get("/cadastro/exames")
-        assert r.status_code == 200
-        assert "Tuberculose" not in {e["nome"] for e in r.json()}
-        _como_fazenda(1)
-        r = c.get("/cadastro/exames")
-        assert "Tuberculose" in {e["nome"] for e in r.json()}
-
-    def test_criar_exame_fica_na_fazenda_do_criador(self, client):
-        c, engine, ids = client
-        _como_fazenda(2)
-        r = c.post("/cadastro/exames", json={"nome": "Brucelose"})
-        assert r.status_code == 200, r.text
-        nova_id = r.json()["id"]
-        with Session(engine) as s:
-            assert s.get(ExameDefinicao, nova_id).fazenda_id == 2
-        # Mesmo nome já usado pela fazenda #1 — não conflita (unique por fazenda).
-        assert r.json()["nome"] == "Brucelose"
-
-    def test_editar_exame_de_outra_fazenda_da_404(self, client):
-        """Bug real corrigido: PUT /cadastro/exames/{id} não checava
-        fazenda_id (fazenda/api/routers/cadastro/sanitario.py, atualizar_exame)."""
-        c, engine, ids = client
-        _como_fazenda(2)
-        r = c.put(f"/cadastro/exames/{ids['exame_definicao_id']}", json={"nome": "Sequestrado"})
-        assert r.status_code == 404
-
-        _como_fazenda(1)
-        r = c.put(f"/cadastro/exames/{ids['exame_definicao_id']}", json={"nome": "Tuberculose Bovina"})
-        assert r.status_code == 200
-        assert r.json()["nome"] == "Tuberculose Bovina"
-
-    def test_excluir_exame_de_outra_fazenda_da_404(self, client):
-        """Bug real corrigido: DELETE /cadastro/exames/{id} idem."""
-        c, engine, ids = client
-        _como_fazenda(2)
-        r = c.delete(f"/cadastro/exames/{ids['exame_definicao_id']}")
-        assert r.status_code == 404
-
-        with Session(engine) as s:
-            assert s.get(ExameDefinicao, ids["exame_definicao_id"]) is not None
-
-        _como_fazenda(1)
-        r = c.delete(f"/cadastro/exames/{ids['exame_definicao_id']}")
         assert r.status_code == 200
 
 
@@ -451,26 +290,6 @@ class TestAgendamentosPesagemIsolados:
         _como_fazenda(1)
         r = c.delete(f"/cadastro/agendamentos-pesagem/{ids['agendamento_id']}")
         assert r.status_code == 200
-
-
-# ---------------------------------------------------------------------------
-# Relatório de resultados de exame — GET /sanidade/exames/resultados.
-# ---------------------------------------------------------------------------
-class TestResultadosExameIsolado:
-    def test_listar_resultados_exame_isolado(self, client):
-        """Bug real corrigido: GET /sanidade/exames/resultados não recebia
-        fazenda_id nenhum (nem via Depends) e listava TODOS os resultados de
-        TODAS as fazendas (fazenda/api/routers/sanidade.py, listar_resultados_exame)."""
-        c, engine, ids = client
-        _como_fazenda(2)
-        r = c.get("/sanidade/exames/resultados")
-        assert r.status_code == 200
-        assert r.json() == []
-
-        _como_fazenda(1)
-        r = c.get("/sanidade/exames/resultados")
-        assert len(r.json()) == 1
-        assert r.json()[0]["numero_matriz"] == "9001"
 
 
 # ---------------------------------------------------------------------------

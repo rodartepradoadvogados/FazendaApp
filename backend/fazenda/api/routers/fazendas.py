@@ -68,9 +68,8 @@ def provisionar_fazenda_nova(session: Session, fazenda_id: int) -> None:
     - Contrato aguardando aprovação, SEM nenhum módulo ativo — nada funciona
       (nem Rebanho ou Financeiro, os módulos base) até você escolher o
       plano/módulos e aprovar/fechar o contrato (ver endpoints abaixo).
-    Pessoas e calendário sanitário nascem vazios de propósito (cada fazenda
-    cadastra os seus funcionários e sua própria agenda sanitária) — ver
-    fazenda/models/pessoal.py::Pessoa e fazenda/models/sanidade.py::CalendarioSanitario."""
+    Pessoas nascem vazias de propósito (cada fazenda cadastra os seus
+    funcionários) — ver fazenda/models/pessoal.py::Pessoa."""
     session.add_all([
         ContaCorrente(banco="Banco", agencia="", numero_conta="", fazenda_id=fazenda_id),
         ContaCorrente(banco="Carteira", agencia="", numero_conta="", fazenda_id=fazenda_id),

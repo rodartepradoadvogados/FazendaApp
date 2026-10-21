@@ -21,7 +21,7 @@ from fazenda.auth import exigir_admin, exigir_nao_consultor, get_current_user, g
 from fazenda.database import get_session
 from fastapi.responses import Response
 from fazenda.models import (
-    ApresentacaoEmbalagemEstoque, CentroCusto, ClassificacaoLancamento, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, ExameDefinicao, ExameResultado, Fazenda, FormaPagamentoCadastro, Fornecedor,
+    ApresentacaoEmbalagemEstoque, CentroCusto, ClassificacaoLancamento, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, Fazenda, FormaPagamentoCadastro, Fornecedor,
     FornecedorClienteApelido,
     LancamentoAnexo, LancamentoItem, LancamentoRecorrente, LoteEstoque, ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, Sanidade,
     SeedFlag, Servico, TipoDocumento, TransferenciaContas, Usuario, ValeAvulso, ValeFuncionario,
@@ -1609,9 +1609,6 @@ def listar_lancamentos(
         query_anexos = query_anexos.where(LancamentoAnexo.fazenda_id == fazenda_id)
     numeros_com_anexo = set(session.exec(query_anexos).all())
 
-    # Contas nascidas de um agendamento preventivo (fatia 9): link de volta ao agendamento.
-    from fazenda.rules.financeiro_preventivo import origem_preventivo_das_contas
-    origens_preventivo = origem_preventivo_das_contas(session, None, fazenda_id)
     # Regras v2 (PR 6, R3): o "caixa" da linha é a data em que o dinheiro sai
     # do banco (cartão avulso: vencimento do cartão). Sem a flag, como antes.
     regras_v2 = regras_v2_ativas(session, fazenda_id)
@@ -1623,7 +1620,6 @@ def listar_lancamentos(
         extras_v2 = {"data_caixa": dp.isoformat() if dp else None} if regras_v2 else {}
         registros.append({
             **extras_v2,
-            "origem_preventivo": origens_preventivo.get(c.id),
             "id": c.id,
             "numero_lancamento": c.numero_lancamento,
             "tipo": c.tipo,
@@ -2676,13 +2672,6 @@ def atualizar_conta_automatica(
 # número do lançamento, mesmo padrão de ManutencaoPatrimonio/FolhaPagamento),
 # nunca por FK — garante rastreabilidade sem acoplar os módulos.
 # ---------------------------------------------------------------------------
-def _rotulo_exame(exame_definicao_id: int | None, session: Session) -> str:
-    if exame_definicao_id is None:
-        return "Exame"
-    ed = session.get(ExameDefinicao, exame_definicao_id)
-    return f"Exame de {ed.nome}" if ed else "Exame"
-
-
 @router.get("/candidatos-vinculo-sanitario-reprodutivo")
 def candidatos_vinculo_sanitario_reprodutivo(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -2692,8 +2681,10 @@ def candidatos_vinculo_sanitario_reprodutivo(
     financeiro não guarda animal/matriz), os eventos sanitários/reprodutivos
     mais recentes ainda NÃO vinculados a um lançamento financeiro: os 3
     últimos serviços reprodutivos (diagnóstico de gestação), as 2 últimas
-    vacinas aplicadas e os 2 últimos exames realizados — cada um agrupado por
-    data (um lançamento em lote, com vários animais, vira um só candidato).
+    vacinas aplicadas — cada um agrupado por data (um lançamento em lote, com
+    vários animais, vira um só candidato). Os exames do módulo antigo de
+    preventivo saíram em 2026; `exames` volta a ser preenchido pelo módulo
+    novo (sanitario_registro) na F8.
     Usado no popup de vínculo ao salvar uma despesa numa conta gerencial
     marcada (ver PlanoContaGerencial.pede_vinculo_sanitario_reprodutivo).
     """
@@ -2742,30 +2733,11 @@ def candidatos_vinculo_sanitario_reprodutivo(
         for (produto, data), grupo in list(grupos_vacina.items())[:2]
     ]
 
-    # Exames realizados (ExameResultado) — agrupados por (exame, data).
-    query_exames = select(ExameResultado).where(ExameResultado.numero_lancamento_vinculado.is_(None))
-    if fazenda_id is not None:
-        query_exames = query_exames.where(ExameResultado.fazenda_id == fazenda_id)
-    exames = session.exec(query_exames.order_by(ExameResultado.data_exame.desc())).all()
-    grupos_exame: dict[tuple, list[ExameResultado]] = {}
-    for e in exames:
-        grupos_exame.setdefault((e.exame_definicao_id, e.data_exame), []).append(e)
-    candidatos_exame = [
-        {
-            "tipo": "exame",
-            "ids": [g.id for g in grupo],
-            "rotulo": f"{_rotulo_exame(exame_definicao_id, session)} ({len(grupo)} animal(is))",
-            "data": data.isoformat() if data else None,
-            "responsavel": next((g.veterinario for g in grupo if g.veterinario), None),
-        }
-        for (exame_definicao_id, data), grupo in list(grupos_exame.items())[:2]
-    ]
-
-    return {"servicos": candidatos_servico, "vacinas": candidatos_vacina, "exames": candidatos_exame}
+    return {"servicos": candidatos_servico, "vacinas": candidatos_vacina, "exames": []}
 
 
 class VincularEventoIn(BaseModel):
-    tipo: str  # "sanidade" | "exame" | "servico"
+    tipo: str  # "sanidade" | "servico"
     ids: list[int]
     numero_lancamento: str
 
@@ -2776,13 +2748,13 @@ def vincular_evento_sanitario_reprodutivo(
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     # BUG DE SEGURANÇA CORRIGIDO: nem o lançamento nem os itens (sanidade/
-    # exame/serviço) eram checados por fazenda_id — um usuário podia vincular
+    # serviço) eram checados por fazenda_id — um usuário podia vincular
     # um evento de OUTRA fazenda (ou ao lançamento de outra fazenda) só
     # acertando os ids.
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    modelo = {"sanidade": Sanidade, "exame": ExameResultado, "servico": Servico}.get(dados.tipo)
+    modelo = {"sanidade": Sanidade, "servico": Servico}.get(dados.tipo)
     if modelo is None:
-        raise HTTPException(status_code=400, detail="Tipo inválido (use: sanidade, exame, servico)")
+        raise HTTPException(status_code=400, detail="Tipo inválido (use: sanidade, servico)")
     query_lancamento = select(ContaGerencial).where(ContaGerencial.numero_lancamento == dados.numero_lancamento)
     if fazenda_id is not None:
         query_lancamento = query_lancamento.where(ContaGerencial.fazenda_id == fazenda_id)
@@ -2808,8 +2780,8 @@ def lancamentos_por_data(
     Lançamentos (agrupados por numero_lancamento) com data de EMISSÃO igual à
     informada — usado no popup de vínculo do lado sanitário/reprodutivo,
     opção "associar este evento a uma conta paga/a pagar" (a data buscada é a
-    da vacina/exame/diagnóstico, ver /calendario/cadastrar-preventivo e
-    reprodução > diagnóstico de gestação).
+    da vacina/diagnóstico, ver Sanidade e reprodução > diagnóstico de
+    gestação).
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     query = select(ContaGerencial).where(ContaGerencial.data_emissao == data, ContaGerencial.tipo == tipo)
@@ -6117,13 +6089,6 @@ def contas_a_pagar(
             and c.tipo == "despesa"
         ):
             resultado.append({**c.model_dump(), "usuario_nome": nomes_usuarios.get(c.usuario_id)})
-
-    # Conta nascida de um agendamento preventivo (fatia 9): leva o link de volta ao agendamento.
-    if resultado:
-        from fazenda.rules.financeiro_preventivo import origem_preventivo_das_contas
-        origens = origem_preventivo_das_contas(session, [r["id"] for r in resultado])
-        for r in resultado:
-            r["origem_preventivo"] = origens.get(r["id"])
 
     return sorted(resultado, key=lambda x: x["data_vencimento"])
 

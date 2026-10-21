@@ -5,7 +5,7 @@ C1 (Rebanho & Reprodução): G4 (`movimento_lote`), G5 (`secagem`). G12 é só U
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException
@@ -118,17 +118,14 @@ def _buscar_secagem(
 
 
 def _alvos_secagem(id_: str, session: Session, fazenda_id: int | None = None) -> tuple[list[str], list]:
-    """G5 — `registrar_secagem` (api/routers/producao.py) cria até quatro
-    coisas sem NENHUMA FK de volta para `Secagem`: Sanidade(atividade=
-    "Secagem"/"Vacina pré-parto") quando já aplicado na hora, ou
-    AplicacaoAgendada(observacao="Secagem"/"Vacina pré-parto") quando
+    """G5 — `registrar_secagem` (api/routers/producao.py) cria coisas sem
+    NENHUMA FK de volta para `Secagem`: Sanidade(atividade="Secagem") quando
+    já aplicado na hora, ou AplicacaoAgendada(observacao="Secagem") quando
     programado. Localizamos por heurística (matriz + data + atividade/
-    observação) — a vacina pré-parto programada nasce para o DIA SEGUINTE à
-    secagem (ver producao.py), por isso a janela de datas da AplicacaoAgendada
-    inclui data_secagem E data_secagem+1.
+    observação). (O atalho "Vacina pré-parto" da Secagem saiu em 2026.)
     O estorno de estoque das Sanidade encontradas sai de graça: `Sanidade` já
-    está em `_ORIGENS_POR_CLASSE` (exclusoes.py) com origem_tipo "secagem" e
-    "vacina_pre_parto" — basta devolvê-las na lista de objetos.
+    está em `_ORIGENS_POR_CLASSE` (exclusoes.py) com origem_tipo "secagem" —
+    basta devolvê-las na lista de objetos.
     """
     s = session.get(Secagem, int(id_))
     # Tolerância a NULL: `Secagem.fazenda_id` pode ser None em registros
@@ -141,15 +138,15 @@ def _alvos_secagem(id_: str, session: Session, fazenda_id: int | None = None) ->
         select(Sanidade).where(
             Sanidade.numero_matriz == s.numero_matriz,
             Sanidade.data_aplicacao == s.data_secagem,
-            Sanidade.atividade.in_(("Secagem", "Vacina pré-parto")),
+            Sanidade.atividade == "Secagem",
             Sanidade.fazenda_id == s.fazenda_id,
         )
     ).all()
     agendadas = session.exec(
         select(AplicacaoAgendada).where(
             AplicacaoAgendada.numero_matriz == s.numero_matriz,
-            AplicacaoAgendada.data.in_((s.data_secagem, s.data_secagem + timedelta(days=1))),
-            AplicacaoAgendada.observacao.in_(("Secagem", "Vacina pré-parto")),
+            AplicacaoAgendada.data == s.data_secagem,
+            AplicacaoAgendada.observacao == "Secagem",
             AplicacaoAgendada.aplicado == False,  # noqa: E712
             AplicacaoAgendada.fazenda_id == s.fazenda_id,
         )

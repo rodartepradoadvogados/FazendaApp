@@ -269,8 +269,6 @@ class TestFerramentas:
                 params = {"numero": "500"}
             if nome == "consultar_lote":
                 params = {"codigo": "04"}
-            if nome == "consultar_exames":
-                params = {"evento": "bruc"}
             if nome == "executar_relatorio":
                 params = {"relatorio": "fluxo_lactacao", "meses": "2"}
             if nome in ("consultar_indicadores_reprodutivos", "consultar_producao_leite"):

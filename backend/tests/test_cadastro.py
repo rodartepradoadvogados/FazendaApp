@@ -529,33 +529,6 @@ class TestPessoas:
         assert "desative" in r.json()["detail"].lower()
         assert any(p["id"] == pessoa_id for p in c.get("/cadastro/pessoas").json())
 
-    def test_bloqueia_exclusao_de_pessoa_com_cronograma_sanitario_como_veterinario(self, client):
-        """CronogramaSanitario.veterinario_pessoa_id é FK real para pessoa.id
-        (workflow de agendamento de vacina/exame, ver models/sanidade.py) —
-        checado à parte de _TABELAS_COM_PESSOA_ID por ter nome de coluna
-        diferente (ver excluir_pessoa)."""
-        c, engine = client
-        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Dra. Vet", "tipos": ["Veterinário"]}).json()["id"]
-        with Session(engine) as s:
-            from fazenda.models import CalendarioSanitario, CronogramaSanitario, EventoSanitario
-            evento = EventoSanitario(nome="Brucelose B19")
-            s.add(evento)
-            s.commit()
-            s.refresh(evento)
-            regra = CalendarioSanitario(
-                evento_sanitario_id=evento.id, frequencia_valor=1, frequencia_unidade="anos",
-                data_evento=date.today(), usa_cronograma=True,
-            )
-            s.add(regra)
-            s.commit()
-            s.refresh(regra)
-            s.add(CronogramaSanitario(calendario_sanitario_id=regra.id, data_evento=date.today(), veterinario_pessoa_id=pessoa_id))
-            s.commit()
-        r = c.delete(f"/cadastro/pessoas/{pessoa_id}")
-        assert r.status_code == 409
-        assert "cronograma" in r.json()["detail"].lower()
-
-
 class TestTipoPessoa:
     def test_lista_tipos_seedados(self, client):
         c, engine = client
@@ -1307,17 +1280,17 @@ class TestValeFuncionario:
 
 
 class TestCadastroSanitario:
-    """Princípio ativo / Doença / Evento sanitário — cadastros simples nome+ativo."""
+    """Princípio ativo / Doença — cadastros simples nome+ativo. (O evento
+    sanitário e o calendário padrão eram do preventivo antigo — saíram em 2026.)"""
 
-    def test_seed_cria_eventos_e_doencas_padrao(self, client):
+    def test_seed_cria_doencas_padrao(self, client):
         c, engine = client
         from fazenda.api.routers.cadastro import seed_cadastro_sanitario
         with Session(engine) as s:
             seed_cadastro_sanitario(s)
-        eventos = c.get("/cadastro/eventos-sanitarios").json()
         doencas = c.get("/cadastro/doencas").json()
-        assert any(e["nome"] == "Vermífugo" for e in eventos)
         assert any(d["nome"] == "Brucelose" for d in doencas)
+        assert c.get("/cadastro/eventos-sanitarios").status_code == 404
 
     def test_bootstrap_farmacia_cria_catalogo_de_principios_com_categoria(self, client):
         # O catálogo de princípios ativos (documento base) é responsabilidade de
@@ -1337,80 +1310,11 @@ class TestCadastroSanitario:
         with Session(engine) as s:
             seed_cadastro_sanitario(s)
             seed_cadastro_sanitario(s)
-        n1 = len(c.get("/cadastro/eventos-sanitarios").json())
+        n1 = len(c.get("/cadastro/doencas").json())
         with Session(engine) as s:
             seed_cadastro_sanitario(s)
-        n2 = len(c.get("/cadastro/eventos-sanitarios").json())
+        n2 = len(c.get("/cadastro/doencas").json())
         assert n1 == n2
-
-    def test_configurar_calendario_padrao_bota_brucelose_b19_no_cronograma(self, client):
-        # Brucelose B19 é "por fase fisiológica" (gatilho=nascimento, sem
-        # rastreio de rebanho) — deve entrar na lista de espera do cronograma
-        # (usa_cronograma=True) em vez de virar pendência de "aplicar agora"
-        # direto assim que a bezerra bate a idade.
-        c, engine = client
-        from fazenda.api.routers.cadastro import configurar_calendario_sanitario_padrao, seed_cadastro_sanitario
-        from fazenda.rules.farmacia import bootstrap_farmacia
-        from fazenda.models import CalendarioSanitario, EventoSanitario
-        with Session(engine) as s:
-            seed_cadastro_sanitario(s)
-            bootstrap_farmacia(s)
-            configurar_calendario_sanitario_padrao(s)
-            ev = s.exec(select(EventoSanitario).where(EventoSanitario.nome == "Brucelose B19")).first()
-            assert ev.sexo_alvo == "F"
-            regra = s.exec(select(CalendarioSanitario).where(CalendarioSanitario.evento_sanitario_id == ev.id)).first()
-            assert regra is not None
-            assert regra.usa_cronograma is True
-
-    def test_configurar_calendario_padrao_promove_regra_orfa_sem_cronograma(self, client):
-        # Uma regra "comum" (usa_cronograma=False) pré-existente pra Brucelose
-        # B19 é órfã de uma tentativa de cadastro manual que não conseguiu
-        # marcar "usar cronograma sanitário" (bug do checkbox, já corrigido em
-        # FormCalendarioSanitario.tsx) — o seed deve promovê-la no lugar de
-        # ficar bloqueado pra sempre (bug relatado: bezerras aparecendo pra
-        # "aplicar agora" + calendário atrasado de Brucelose B19, quando
-        # deveriam entrar na lista de espera do cronograma).
-        c, engine = client
-        from fazenda.api.routers.cadastro import configurar_calendario_sanitario_padrao, seed_cadastro_sanitario
-        from fazenda.rules.farmacia import bootstrap_farmacia
-        from fazenda.models import CalendarioSanitario, EventoSanitario
-        with Session(engine) as s:
-            seed_cadastro_sanitario(s)
-            bootstrap_farmacia(s)
-            ev = s.exec(select(EventoSanitario).where(EventoSanitario.nome == "Brucelose B19")).first()
-            # Simula uma regra já cadastrada manualmente pelo usuário, sem cronograma.
-            s.add(CalendarioSanitario(
-                evento_sanitario_id=ev.id, categoria_alvo="Bezerras", frequencia_valor=30,
-                frequencia_unidade="dias", data_evento=date.today(), usa_cronograma=False,
-            ))
-            s.commit()
-            configurar_calendario_sanitario_padrao(s)
-            regras = s.exec(select(CalendarioSanitario).where(CalendarioSanitario.evento_sanitario_id == ev.id)).all()
-            assert len(regras) == 1
-            assert regras[0].usa_cronograma is True
-            # A regra promovida preserva o que já estava cadastrado nela (não
-            # é substituída pelos valores do seed).
-            assert regras[0].categoria_alvo == "Bezerras"
-
-    def test_configurar_calendario_padrao_nao_mexe_em_regra_ja_com_cronograma(self, client):
-        c, engine = client
-        from fazenda.api.routers.cadastro import configurar_calendario_sanitario_padrao, seed_cadastro_sanitario
-        from fazenda.rules.farmacia import bootstrap_farmacia
-        from fazenda.models import CalendarioSanitario, EventoSanitario
-        with Session(engine) as s:
-            seed_cadastro_sanitario(s)
-            bootstrap_farmacia(s)
-            ev = s.exec(select(EventoSanitario).where(EventoSanitario.nome == "Brucelose B19")).first()
-            s.add(CalendarioSanitario(
-                evento_sanitario_id=ev.id, categoria_alvo="Bezerras (customizado)", frequencia_valor=45,
-                frequencia_unidade="dias", data_evento=date.today(), usa_cronograma=True,
-            ))
-            s.commit()
-            configurar_calendario_sanitario_padrao(s)
-            regras = s.exec(select(CalendarioSanitario).where(CalendarioSanitario.evento_sanitario_id == ev.id)).all()
-            assert len(regras) == 1
-            assert regras[0].categoria_alvo == "Bezerras (customizado)"
-            assert regras[0].frequencia_valor == 45
 
     def test_cria_e_atualiza_doenca(self, client):
         c, engine = client
@@ -1418,12 +1322,6 @@ class TestCadastroSanitario:
         r = c.put(f"/cadastro/doencas/{doenca_id}", json={"nome": "Raiva bovina", "ativo": False})
         assert r.status_code == 200
         assert r.json()["ativo"] is False
-
-    def test_nao_permite_evento_sanitario_duplicado(self, client):
-        c, engine = client
-        c.post("/cadastro/eventos-sanitarios", json={"nome": "Vacina X"})
-        r = c.post("/cadastro/eventos-sanitarios", json={"nome": "Vacina X"})
-        assert r.status_code == 409
 
     def test_cria_principio_ativo(self, client):
         c, engine = client
@@ -1457,35 +1355,20 @@ class TestCadastroSanitario:
 
 
 class TestChecklistTemplateEndpoint:
-    """GET /cadastro/checklist-template — seção 3.7.3 do redesenho do evento
-    sanitário, consumido pelo passo 4 do wizard novo (seção 3.7.0) como ponto
-    de partida do checklist de uma regra."""
+    """GET /cadastro/checklist-template — só o template do protocolo CURATIVO
+    (vacina/exame eram do preventivo antigo, removido em 2026). Cobertura
+    completa em tests/test_checklist_curativo.py."""
 
-    def _seed_template(self, engine):
-        from fazenda.models import ChecklistTemplateItem
-        with Session(engine) as s:
-            s.add(ChecklistTemplateItem(tipo="vacina", chave="estoque", nome="Estoque suficiente?", ordem=1))
-            s.add(ChecklistTemplateItem(tipo="vacina", chave="vet", nome="Confirmação com o veterinário", ordem=2))
-            s.add(ChecklistTemplateItem(tipo="exame", chave="vet", nome="Confirmação com o veterinário", ordem=1))
-            s.commit()
-
-    def test_lista_itens_do_tipo(self, client):
+    def test_curativo_continua_respondendo(self, client):
         c, engine = client
-        self._seed_template(engine)
-        r = c.get("/cadastro/checklist-template", params={"tipo": "vacina"})
+        r = c.get("/cadastro/checklist-template", params={"tipo": "curativo"})
         assert r.status_code == 200
-        assert [i["chave"] for i in r.json()] == ["estoque", "vet"]
+        assert [i["chave"] for i in r.json()] == ["estoque", "carencia", "lotes"]
 
-    def test_exame_nao_ve_itens_de_vacina(self, client):
+    def test_tipos_do_preventivo_dao_400(self, client):
         c, engine = client
-        self._seed_template(engine)
-        r = c.get("/cadastro/checklist-template", params={"tipo": "exame"})
-        assert [i["chave"] for i in r.json()] == ["vet"]
-
-    def test_tipo_invalido_da_400(self, client):
-        c, engine = client
-        r = c.get("/cadastro/checklist-template", params={"tipo": "tratamento"})
-        assert r.status_code == 400
+        for tipo in ("vacina", "exame", "tratamento"):
+            assert c.get("/cadastro/checklist-template", params={"tipo": tipo}).status_code == 400
 
 
 class TestMotivoBaixa:

@@ -1,6 +1,6 @@
 """
 Isolamento por fazenda (piloto conservador de multi-fazenda) — garante que
-ContaCorrente, CentroCusto, Pessoa e CalendarioSanitario de uma fazenda nunca
+ContaCorrente, CentroCusto e Pessoa de uma fazenda nunca
 aparecem para outra, e que o provisionamento padrão de fazenda nova (Banco/
 Carteira em branco + Pecuária Leiteira/Agricultura) funciona sem tocar nos
 dados já existentes da fazenda #1.
@@ -27,8 +27,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import (
-    Animal, BaixaAnimal, CalendarioSanitario, CentroCusto, CompraAnimal, ContaCorrente, ContratoFazenda,
-    ContratoFazendaModulo, Doenca, EventoSanitario, Fazenda, MedicamentoComercial, MetodoServicoReprodutivo,
+    Animal, BaixaAnimal, CentroCusto, CompraAnimal, ContaCorrente, ContratoFazenda,
+    ContratoFazendaModulo, Doenca, Fazenda, MedicamentoComercial, MetodoServicoReprodutivo,
     MovimentoLote, OcorrenciaClinica, Pessoa, PrincipioAtivo, TipoServicoReprodutivo, UsuarioFazenda,
     VendaAnimal,
 )
@@ -53,14 +53,6 @@ def client(monkeypatch):
         s.add(CentroCusto(nome="Pecuária Leiteira", fazenda_id=1))
         s.add(CentroCusto(nome="Financiamento 2026", fazenda_id=1))
         s.add(Pessoa(nome="Leomir Bonfim", tipo="Funcionário", fazenda_id=1))
-        ev = EventoSanitario(nome="Vermífugo", tipo="vacina", modo="epoca")
-        s.add(ev)
-        s.commit()
-        s.refresh(ev)
-        s.add(CalendarioSanitario(
-            evento_sanitario_id=ev.id, fazenda_id=1, frequencia_valor=4, frequencia_unidade="meses",
-            data_evento=date(2026, 1, 1),
-        ))
         # Farmácia (Fase 4A) — PrincipioAtivo/MedicamentoComercial da fazenda #1.
         # NOME PROPOSITALMENTE INVENTADO: o catálogo global da CowData
         # (rules/farmacia_seed.py) semeia princípios reais — "Meloxicam" entre
@@ -151,13 +143,6 @@ class TestIsolamentoEntreFazendas:
         assert r.status_code == 200
         nomes = {item["nome"] for item in r.json()}
         assert "Leomir Bonfim" not in nomes
-
-    def test_calendario_sanitario_isolado(self, client):
-        c, engine = client
-        _como_fazenda(2)
-        r = c.get("/sanidade/calendario")
-        assert r.status_code == 200
-        assert r.json() == []
 
     def test_fazenda_1_continua_vendo_seus_dados(self, client):
         c, engine = client

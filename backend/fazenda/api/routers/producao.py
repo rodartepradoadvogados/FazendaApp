@@ -1592,16 +1592,10 @@ class SecagemIn(BaseModel):
     # aplicado (ou a data é futura), não baixa estoque agora — vira uma
     # aplicação programada na Agenda, que baixa ao confirmar.
     aplicado: bool = True
-    # Vacina(s) pré-parto escolhidas (sim/não + quais). Por padrão viram
-    # pendência na Agenda para o dia seguinte à secagem; se o funcionário já
-    # aplicou na hora (vacina_pre_parto_aplicada_agora=True), gera Sanidade +
-    # baixa de estoque direto, sem duplicar a pendência na Agenda.
-    vacinas_pre_parto: list[str] = []
-    vacina_pre_parto_aplicada_agora: bool = False
-    # Resposta explícita de "aplicar vacina pré-parto?" (sim/não) — diferente
-    # de `vacinas_pre_parto` (a lista de quais vacinas, só preenchida se a
-    # resposta for sim): grava no histórico da secagem mesmo quando a
-    # resposta é "não", sem gerar pendência nenhuma na Agenda nesse caso.
+    # Resposta "aplicar vacina pré-parto?" (sim/não) — só fica gravada no
+    # histórico da secagem. O atalho que lançava as vacinas pré-parto daqui
+    # (Sanidade/Agenda) saiu em 2026 (decisão D2): a vacina pré-parto vem do
+    # módulo novo de vacinas e exames (sanitario_*).
     vacina_pre_parto: bool | None = None
     # Resposta explícita a "esta vaca já consta como seca — substituir a data
     # da secagem anterior ou cancelar este lançamento?" (ver popup no front):
@@ -1732,36 +1726,6 @@ def registrar_secagem(
 
     if dados.produtos and not materializar:
         avisos.append("Produto(s) de secagem programado(s) na Agenda — o estoque baixa quando você confirmar a aplicação.")
-
-    # Vacina(s) pré-parto: por padrão vira pendência na Agenda para o dia
-    # seguinte à secagem. Se já foi aplicada na hora (mesmo lançamento), grava
-    # direto em Sanidade e dá baixa de estoque — sem duplicar na Agenda.
-    if dados.vacinas_pre_parto and dados.vacina_pre_parto_aplicada_agora:
-        for vacina in dados.vacinas_pre_parto:
-            sanidade_vacina = Sanidade(
-                fazenda_id=fazenda_id,
-                numero_matriz=dados.numero_matriz, data_aplicacao=dados.data_secagem, produto=vacina,
-                dose=1, unidade="dose", responsavel=dados.responsavel, atividade="Vacina pré-parto",
-            )
-            session.add(sanidade_vacina)
-            session.flush()
-            estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=vacina)
-            avisos.extend(estoque_baixa.baixar(
-                session, item=estoque_item, quantidade=1, unidade="dose", data=dados.data_secagem,
-                fazenda_id=fazenda_id, observacao=f"Vacina pré-parto — matriz {dados.numero_matriz}",
-                usuario_id=_usuario_id_seguro(user), origem_tipo="vacina_pre_parto", origem_id=sanidade_vacina.id,
-                produto=vacina,
-            ))
-        avisos.append("Vacina(s) pré-parto registrada(s) em Sanidade e baixada(s) do estoque.")
-    elif dados.vacinas_pre_parto:
-        data_vacina = dados.data_secagem + timedelta(days=1)
-        for vacina in dados.vacinas_pre_parto:
-            session.add(AplicacaoAgendada(
-                fazenda_id=fazenda_id,
-                numero_matriz=dados.numero_matriz, data=data_vacina, produto=vacina,
-                responsavel=dados.responsavel, observacao="Vacina pré-parto", aplicado=False,
-            ))
-        avisos.append(f"Vacina(s) pré-parto programada(s) na Agenda para {data_vacina.strftime('%d/%m/%Y')}.")
 
     session.commit()
     return {

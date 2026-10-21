@@ -234,65 +234,34 @@ class TestRegistrarSecagem:
 
 
 class TestVacinaPreParto:
-    """Mesmo evento (vacina pré-parto), dois caminhos de confirmação — pela
-    Secagem (vacina_pre_parto_aplicada_agora=True) ou depois pela Agenda
-    (POST /agenda/realizados). Antes, só o caminho da Secagem baixava o
-    estoque; o da Agenda só marcava a pendência como feita (ver auditoria)."""
+    """O atalho que lançava a vacina pré-parto pela Secagem (Sanidade na hora
+    ou pendência na Agenda) saiu em 2026 (decisão D2): a vacina pré-parto vem
+    do módulo novo de vacinas e exames. A resposta sim/não continua só no
+    histórico da secagem."""
 
-    def test_aplicada_na_hora_pela_secagem_baixa_estoque(self, client):
+    def test_secagem_nao_lanca_mais_vacina_pre_parto(self, client):
         c, engine = client
         with Session(engine) as s:
-            from sqlmodel import select
             s.add(Animal(numero="500", raca="Girolando", del_dias=220, ativo=True))
             s.add(Lactacao(numero_matriz="500", data_inicio=date(2020, 1, 1)))
             s.add(Estoque(nome="Bovilis", quantidade=10, unidade="dose"))
             s.commit()
 
+        # Cliente antigo ainda mandando os campos do atalho: são ignorados.
         r = c.post("/producao/secagem", json={
-            "numero_matriz": "500", "data_secagem": "2026-07-08", "motivo": "rotina",
+            "numero_matriz": "500", "data_secagem": "2026-07-08", "motivo": "rotina", "vacina_pre_parto": True,
             "vacinas_pre_parto": ["Bovilis"], "vacina_pre_parto_aplicada_agora": True,
         })
         assert r.status_code == 200, r.text
 
         with Session(engine) as s:
             from sqlmodel import select
-            item = s.exec(select(Estoque).where(Estoque.nome == "Bovilis")).first()
-            assert item.quantidade == 9
-            mov = s.exec(select(MovimentoEstoque).where(MovimentoEstoque.nome_item == "Bovilis")).first()
-            assert mov is not None
-            assert mov.origem_tipo == "vacina_pre_parto"
-            assert mov.estoque_id == item.id
-
-    def test_confirmada_depois_pela_agenda_tambem_baixa_estoque(self, client):
-        # Regressão do bug mais grave da auditoria: confirmar pela Agenda tinha
-        # que baixar igual ao caminho da Secagem — antes não baixava nada.
-        c, engine = client
-        with Session(engine) as s:
-            from sqlmodel import select
-            s.add(Animal(numero="500", raca="Girolando", del_dias=220, ativo=True))
-            s.add(Lactacao(numero_matriz="500", data_inicio=date(2020, 1, 1)))
-            s.add(Estoque(nome="Bovilis", quantidade=10, unidade="dose"))
-            s.commit()
-
-        c.post("/producao/secagem", json={
-            "numero_matriz": "500", "data_secagem": "2026-07-08", "motivo": "rotina",
-            "vacinas_pre_parto": ["Bovilis"], "vacina_pre_parto_aplicada_agora": False,
-        })
-        data_vacina = date(2026, 7, 8) + timedelta(days=1)
-        evento_id = f"vacina_pre_parto_500_{data_vacina.isoformat()}"
-
-        r = c.post("/agenda/realizados", json={"evento_id": evento_id})
-        assert r.status_code == 200, r.text
-
-        with Session(engine) as s:
-            from sqlmodel import select
-            item = s.exec(select(Estoque).where(Estoque.nome == "Bovilis")).first()
-            assert item.quantidade == 9  # baixou igual ao caminho da Secagem
-            sanidade = s.exec(select(Sanidade).where(Sanidade.numero_matriz == "500", Sanidade.produto == "Bovilis")).first()
-            assert sanidade is not None
-            mov = s.exec(select(MovimentoEstoque).where(MovimentoEstoque.nome_item == "Bovilis")).first()
-            assert mov is not None
-            assert mov.origem_tipo == "vacina_pre_parto"
+            assert s.exec(select(Estoque).where(Estoque.nome == "Bovilis")).first().quantidade == 10
+            assert s.exec(select(Sanidade).where(Sanidade.produto == "Bovilis")).first() is None
+            assert s.exec(select(AplicacaoAgendada).where(AplicacaoAgendada.produto == "Bovilis")).first() is None
+            assert s.exec(select(MovimentoEstoque).where(MovimentoEstoque.nome_item == "Bovilis")).first() is None
+        eventos = c.get("/agenda/", params={"data": "2026-07-09", "dias": 10}).json()["eventos"]
+        assert not [e for e in eventos if str(e["id"]).startswith("vacina_pre_parto_")]
 
     def test_resposta_nao_fica_gravada_no_historico_sem_gerar_pendencia(self, client):
         """"Não" não pode virar pendência na Agenda, mas precisa continuar
@@ -316,7 +285,7 @@ class TestVacinaPreParto:
             pendencia = s.exec(select(AplicacaoAgendada).where(AplicacaoAgendada.numero_matriz == "501")).first()
             assert pendencia is None
 
-    def test_resposta_sim_fica_gravada_junto_com_a_pendencia(self, client):
+    def test_resposta_sim_fica_gravada_no_historico(self, client):
         c, engine = client
         with Session(engine) as s:
             s.add(Animal(numero="502", raca="Girolando", del_dias=220, ativo=True))
@@ -332,6 +301,7 @@ class TestVacinaPreParto:
             from sqlmodel import select
             secagem = s.exec(select(Secagem).where(Secagem.numero_matriz == "502")).first()
             assert secagem.vacina_pre_parto is True
+            assert s.exec(select(AplicacaoAgendada).where(AplicacaoAgendada.numero_matriz == "502")).first() is None
 
     def test_sem_resposta_fica_nulo(self, client):
         """Dado legado/sem resposta explícita — não confunde com "não"."""

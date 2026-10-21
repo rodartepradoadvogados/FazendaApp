@@ -87,7 +87,9 @@ class TestTipos:
     def test_todo_tipo_chega_com_dominio_plural_e_dica(self, client):
         c, _ = client
         tipos = c.get("/exclusoes/tipos").json()
-        assert len(tipos) >= 35
+        # 35 até 2026; saíram calendario_sanitario, evento_sanitario e exame_resultado (sanitário preventivo antigo).
+        assert len(tipos) >= 32
+        assert not {"calendario_sanitario", "evento_sanitario", "exame_resultado"} & {t["id"] for t in tipos}
         sem_meta = [t["id"] for t in tipos if not (t.get("dominio") and t.get("plural") and t.get("dica"))]
         assert sem_meta == [], f"tipos sem META_TIPOS (a tela os jogaria em 'Outros'): {sem_meta}"
         for t in tipos:
@@ -99,7 +101,6 @@ class TestTipos:
         por_id = {t["id"]: t for t in c.get("/exclusoes/tipos").json()}
         assert por_id["secagem"]["dominio"] == "reb"
         assert por_id["movimento_lote"]["dominio"] == "reb"
-        assert por_id["exame_resultado"]["dominio"] == "san"
         assert por_id["diaria"]["dominio"] == "pes"
         assert por_id["safra"]["cadastro"] is True
         # sem `cadastro` E dominio "cad" o bloco sumia da tela (a grade principal ignora "cad"):

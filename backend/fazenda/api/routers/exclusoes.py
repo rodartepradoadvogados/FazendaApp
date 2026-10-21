@@ -36,7 +36,6 @@ from fazenda.models import (
     Animal,
     CaixaMovimento,
     CaixaTimeMovimento,
-    CalendarioSanitario,
     ColostragemBezerra,
     ComissaoCorretagem,
     CompraAnimal,
@@ -47,7 +46,6 @@ from fazenda.models import (
     Doenca,
     Estoque,
     EstoqueSemen,
-    EventoSanitario,
     ExclusaoRegistro,
     ExtratoLinha,
     FaturaFornecedor,
@@ -107,9 +105,7 @@ TIPOS = [
     {"id": "pessoa", "label": "Pessoa"},
     {"id": "principio_ativo", "label": "Princípio ativo"},
     {"id": "doenca", "label": "Doença"},
-    {"id": "evento_sanitario", "label": "Evento sanitário"},
     {"id": "protocolo_sanitario", "label": "Protocolo sanitário (cadastro)"},
-    {"id": "calendario_sanitario", "label": "Evento do calendário sanitário"},
     {"id": "todos_lancamentos", "label": "Todos os lançamentos (mais recentes primeiro)"},
 ]
 
@@ -125,8 +121,6 @@ META_TIPOS: dict[str, dict] = {
     "sanidade": {"dominio": "san", "plural": "sanidades", "dica": "O remédio volta ao estoque."},
     "protocolo_sanitario_lancamento": {"dominio": "san", "plural": "aplicações de protocolo", "dica": "A aplicação sai; o protocolo continua."},
     "protocolo_iatf_lancamento": {"dominio": "san", "plural": "aplicações de IATF", "dica": "A aplicação sai; o protocolo continua."},
-    "calendario_sanitario": {"dominio": "san", "plural": "eventos do calendário", "dica": "Some o evento do calendário."},
-    "evento_sanitario": {"dominio": "san", "plural": "eventos sanitários", "dica": "Cadastro auxiliar.", "cadastro": True},
     "protocolo_sanitario": {"dominio": "san", "plural": "protocolos sanitários", "dica": "Cadastro auxiliar.", "cadastro": True},
     "doenca": {"dominio": "cad", "plural": "doenças", "dica": "Protocolos perdem a ligação.", "cadastro": True},
     "financeiro": {"dominio": "fin", "plural": "lançamentos financeiros", "dica": "Apaga a nota e suas parcelas."},
@@ -144,7 +138,6 @@ META_TIPOS: dict[str, dict] = {
     "movimento_lote": {"dominio": "reb", "plural": "movimentações de lote", "dica": "O animal volta ao lote anterior."},
     "secagem": {"dominio": "reb", "plural": "secagens", "dica": "A lactação é reaberta."},
     "pesagem_corporal": {"dominio": "reb", "plural": "pesagens", "dica": "Some o peso lançado."},
-    "exame_resultado": {"dominio": "san", "plural": "resultados de exame", "dica": "Some o resultado lançado."},
     "entrega_leite": {"dominio": "fin", "plural": "entregas de leite", "dica": "Some a entrega do mês."},
     "movimento_estoque": {"dominio": "est", "plural": "entradas e saídas manuais", "dica": "O saldo volta ao anterior."},
     "diaria": {"dominio": "pes", "plural": "diárias", "dica": "Some a diária lançada."},
@@ -175,10 +168,8 @@ META_CONTAR = {
     "sanidade": Sanidade,
     "protocolo_sanitario_lancamento": ProtocoloSanitarioLancamento,
     "protocolo_iatf_lancamento": ProtocoloIatfLancamento,
-    "calendario_sanitario": CalendarioSanitario,
     "motivo_movimentacao": MotivoMovimentacao,
     "principio_ativo": PrincipioAtivo,
-    "evento_sanitario": EventoSanitario,
     "protocolo_sanitario": ProtocoloSanitario,
     "pesagem_corporal": PesagemCorporal,
     "secagem": Secagem,
@@ -217,7 +208,7 @@ SUBTIPOS_TODOS = [
 # `TipoExclusao.sem_filtro_data` — não precisa entrar aqui.
 _TIPOS_SEM_DATA_LEGADO = {
     "animal", "estoque", "lote", "fornecedor", "motivo_movimentacao", "pessoa",
-    "principio_ativo", "doenca", "evento_sanitario", "protocolo_sanitario",
+    "principio_ativo", "doenca", "protocolo_sanitario",
 }
 
 
@@ -560,14 +551,6 @@ def _buscar_um(
         out = [{"id": d.id, "titulo": d.nome, "subtitulo": "Ativo" if d.ativo else "Inativo"} for d in rows if _contem(termo, d.nome)]
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
-    if tipo == "evento_sanitario":
-        query = select(EventoSanitario)
-        if fazenda_id is not None:
-            query = query.where(EventoSanitario.fazenda_id == fazenda_id)
-        rows = session.exec(query).all()
-        out = [{"id": e.id, "titulo": e.nome, "subtitulo": "Ativo" if e.ativo else "Inativo"} for e in rows if _contem(termo, e.nome)]
-        return sorted(out, key=lambda x: x["titulo"])[:200]
-
     if tipo == "protocolo_sanitario":
         query = select(ProtocoloSanitario)
         if fazenda_id is not None:
@@ -576,23 +559,6 @@ def _buscar_um(
         out = [
             {"id": p.id, "titulo": p.nome, "subtitulo": "Mastite" if p.eh_mastite else "—"}
             for p in rows if _contem(termo, p.nome)
-        ]
-        return sorted(out, key=lambda x: x["titulo"])[:200]
-
-    if tipo == "calendario_sanitario":
-        eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario).where(EventoSanitario.fazenda_id == fazenda_id)).all()} if fazenda_id is not None else {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
-        doencas = {d.id: d.nome for d in session.exec(select(Doenca).where(Doenca.fazenda_id == fazenda_id)).all()} if fazenda_id is not None else {d.id: d.nome for d in session.exec(select(Doenca)).all()}
-        query = select(CalendarioSanitario)
-        if fazenda_id is not None:
-            query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
-        rows = session.exec(query).all()
-        out = [
-            {"id": c.id,
-             "titulo": f"{eventos.get(c.evento_sanitario_id, '—')} — {_br(c.data_evento)}",
-             "subtitulo": f"{c.categoria_alvo or 'rebanho'} · a cada {c.frequencia_valor} {c.frequencia_unidade}"}
-            for c in rows
-            if _contem(termo, eventos.get(c.evento_sanitario_id), c.categoria_alvo, c.produto, doencas.get(c.doenca_id))
-            and _dentro_periodo(c.data_evento, data_inicio, data_fim)
         ]
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
@@ -1319,7 +1285,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
     if tipo == "principio_ativo":
         # Checagem de impacto nas 7 tabelas que hoje têm FK pra
         # principio_ativo.id (achado numa varredura, 31/08/2026 — antes só
-        # CalendarioSanitario era checado, e as outras 6 ficavam órfãs em
+        # uma era checada, e as outras 6 ficavam órfãs em
         # silêncio) — extraída pra rules/farmacia_multi_principio.py porque
         # `DELETE /farmacia/principios/{id}` usa exatamente a mesma regra.
         pa = session.get(PrincipioAtivo, int(id_))
@@ -1331,39 +1297,17 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
         doenca = session.get(Doenca, int(id_))
         if not doenca or (fazenda_id is not None and doenca.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Doença não encontrada")
-        query_calendario = select(CalendarioSanitario).where(CalendarioSanitario.doenca_id == doenca.id)
         query_protocolo = select(ProtocoloSanitario).where(ProtocoloSanitario.doenca_id == doenca.id)
         if fazenda_id is not None:
-            query_calendario = query_calendario.where(CalendarioSanitario.fazenda_id == fazenda_id)
             query_protocolo = query_protocolo.where(ProtocoloSanitario.fazenda_id == fazenda_id)
-        n_calendario = session.exec(query_calendario).all()
         n_protocolo = session.exec(query_protocolo).all()
         impacto = [f"Doença {doenca.nome}"]
-        if n_calendario or n_protocolo:
-            impacto.append(f"{len(n_calendario)} regra(s) do calendário e {len(n_protocolo)} protocolo(s) perderão esse vínculo")
-            for regra in n_calendario:
-                regra.doenca_id = None
-                session.add(regra)
+        if n_protocolo:
+            impacto.append(f"{len(n_protocolo)} protocolo(s) perderão esse vínculo")
             for prot in n_protocolo:
                 prot.doenca_id = None
                 session.add(prot)
         return impacto, [doenca]
-
-    if tipo == "evento_sanitario":
-        evento = session.get(EventoSanitario, int(id_))
-        if not evento or (fazenda_id is not None and evento.fazenda_id != fazenda_id):
-            raise HTTPException(status_code=404, detail="Evento sanitário não encontrado")
-        query_calendario = select(CalendarioSanitario).where(CalendarioSanitario.evento_sanitario_id == evento.id)
-        if fazenda_id is not None:
-            query_calendario = query_calendario.where(CalendarioSanitario.fazenda_id == fazenda_id)
-        n_calendario = len(session.exec(query_calendario).all())
-        if n_calendario:
-            raise ExclusaoBloqueada(Bloqueio(
-                titulo=f'Evento "{evento.nome}" está em uso',
-                motivo=f"há {n_calendario} regra(s) do calendário sanitário usando esse evento.",
-                fazer="Exclua essas regras primeiro.",
-            ))
-        return [f"Evento sanitário {evento.nome}"], [evento]
 
     if tipo == "protocolo_sanitario":
         protocolo = session.get(ProtocoloSanitario, int(id_))
@@ -1386,14 +1330,6 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
             impacto.append(f"{len(etapas)} etapa(s) do protocolo")
         return impacto, [protocolo, *etapas]
 
-    if tipo == "calendario_sanitario":
-        c = session.get(CalendarioSanitario, int(id_))
-        if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
-            raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
-        evento = session.get(EventoSanitario, c.evento_sanitario_id)
-        nome = evento.nome if evento else "evento"
-        return [f"Evento do calendário sanitário: {nome} — {_br(c.data_evento)}"], [c]
-
     raise HTTPException(status_code=400, detail=f"Tipo inválido: {tipo}")
 
 
@@ -1412,13 +1348,13 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 # com origem_id igual ao seu próprio id, então a busca abaixo não acha nada
 # pra ele e não reverte a mesma baixa duas vezes.
 _ORIGENS_POR_CLASSE: dict[type, list[str]] = {
-    # Aplicação avulsa em Sanidade + os três fluxos que também geram uma
-    # Sanidade 1-para-1 com a baixa (vacina pré-parto, BST, secagem) — todos
+    # Aplicação avulsa em Sanidade + os fluxos que também geram uma
+    # Sanidade 1-para-1 com a baixa (BST, secagem) — todos
     # gravam origem_id=sanidade.id. (Exceção conhecida: quando a mesma
     # Sanidade "avulsa" nasce de POST /sanidade/aplicacoes para VÁRIOS
     # animais de uma vez, só a última linha do lote carrega o origem_id —
     # limitação preexistente do registro em lote, não introduzida aqui.)
-    Sanidade: ["sanidade", "vacina_pre_parto", "bst", "secagem"],
+    Sanidade: ["sanidade", "bst", "secagem"],
     ProtocoloSanitarioAplicacao: ["protocolo_sanitario"],
     ProtocoloIatfLancamento: ["iatf"],
     Servico: ["ia_semen"],

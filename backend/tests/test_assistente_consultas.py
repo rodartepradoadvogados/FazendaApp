@@ -25,8 +25,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from fazenda.auth import MODULOS
 from fazenda.models import (
-    Animal, CalendarioSanitario, ContaGerencial, ControleLeiteiro, Cotacao, CotacaoFornecedor, CotacaoItem,
-    CotacaoResposta, CronogramaSanitario, CronogramaSanitarioAnimal, Estoque, EventoSanitario, Fazenda, Fornecedor,
+    Animal, ContaGerencial, ControleLeiteiro, Cotacao, CotacaoFornecedor, CotacaoItem,
+    CotacaoResposta, Estoque, Fazenda, Fornecedor,
     LoteEstoque, Parto, Pedido, PedidoItem, ProtocoloCustomizado, ProtocoloCustomizadoEtapa, ProtocoloIatf,
     ProtocoloIatfAplicacao, ProtocoloIatfEtapa, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa, ProtocoloSanitario, ProtocoloSanitarioAplicacao,
@@ -143,26 +143,8 @@ def engine():
             s.add(cf)
             s.commit()
             s.add(CotacaoResposta(cotacao_fornecedor_id=cf.id, cotacao_item_id=item.id, preco_unitario=12.5, fazenda_id=fid))
-        # --- sanidade preventiva ---
-        for nome, fid in (("Aftosa", 1), ("Regra SEGREDO", 2)):
-            ev = EventoSanitario(nome=nome, categoria_preventiva="vacina", produto_padrao=nome, fazenda_id=fid)
-            s.add(ev)
-            s.commit()
-            cal = CalendarioSanitario(evento_sanitario_id=ev.id, frequencia_valor=6, frequencia_unidade="meses",
-                                      data_evento=HOJE - timedelta(days=10), produto=nome, usa_cronograma=True, fazenda_id=fid)
-            s.add(cal)
-            s.commit()
-            cron = CronogramaSanitario(calendario_sanitario_id=cal.id, data_evento=HOJE - timedelta(days=10), status="aberto", fazenda_id=fid)
-            s.add(cron)
-            s.commit()
-            nums = ("500", "501") if fid == 1 else ("900",)
-            for n in nums:
-                s.add(CronogramaSanitarioAnimal(cronograma_id=cron.id, numero_matriz=n, status="sugerido",
-                                                data_sugestao=HOJE - timedelta(days=10), fazenda_id=fid))
-            if fid == 1:  # 501 JÁ recebeu Aftosa no ciclo: sai da lista de espera (a reconciliação do site gravaria isso)
-                s.add(Sanidade(numero_matriz="501", data_aplicacao=HOJE - timedelta(days=3), produto="Aftosa", fazenda_id=1))
         # --- protocolos cadastrados ---
-        for nome, fin, fid in (("Mastite A", "curativo", 1), ("Vermifugo Preventivo", "preventivo", 1), ("Prot SEGREDO", "curativo", 2)):
+        for nome, fin, fid in (("Mastite A", "curativo", 1), ("Prot SEGREDO", "curativo", 2)):
             p = ProtocoloSanitario(nome=nome, finalidade=fin, fazenda_id=fid)
             s.add(p)
             s.commit()
@@ -231,9 +213,6 @@ TIPICOS = {
     "consultar_protocolos_lancados": {},
     "consultar_bst": PERIODO,
     "consultar_protocolos_cadastrados": {},
-    "consultar_regras_preventivo": {},
-    "consultar_lista_espera_preventivo": {},
-    "consultar_agendamentos_preventivo": {"situacao": "todos"},
     "consultar_aplicacoes_sanitarias": PERIODO,
     "consultar_pedidos": {},
     "consultar_cotacoes": {},
@@ -309,24 +288,6 @@ class TestExecucaoSomenteLeitura:
         r = _rodar(engine, "consultar_contas_financeiras", {"situacao": "aberta"}, fid=2)
         assert r["total_lancamentos"] == 1 and r["a_pagar"]["valor_total"] == 999.0
 
-    def test_lista_de_espera_nao_grava_a_reconciliacao(self, engine):
-        """O endpoint do site reconcilia e ESCREVE; a ferramenta tem de devolver a mesma lista sem escrever."""
-        def _estado():
-            with Session(engine) as s:
-                return [(l.numero_matriz, l.status, l.motivo) for l in s.exec(select(CronogramaSanitarioAnimal).order_by(CronogramaSanitarioAnimal.id)).all()]
-        antes = _estado()
-        r = _rodar(engine, "consultar_lista_espera_preventivo", {})
-        assert _estado() == antes
-        assert {a["numero_matriz"] for g in r["grupos"] for a in g["animais"]} == {"500"}  # 501 já aplicou
-        # o endpoint do site chega ao MESMO resultado depois de reconciliar (e aí sim grava)
-        from fazenda.rules.cronograma_sanitario import lista_espera
-        with Session(engine) as s:
-            site = lista_espera(s, HOJE, 1, None)
-        assert {a["numero_matriz"] for g in site["grupos"] for a in g["animais"]} == {"500"}
-        assert r["total"] == site["total"] and r["atrasadas"] == site["atrasadas"]
-        assert _estado() != antes  # prova de que o caminho do site realmente escreve
-
-
 # ---------------------------------------------------------------------------
 # Permissão de módulo
 # ---------------------------------------------------------------------------
@@ -338,7 +299,7 @@ class TestPermissao:
         assert {"consultar_pedidos", "consultar_cotacoes"} <= nomes("pedidos")
         assert "consultar_producao_leite" in nomes("producao") and "consultar_bst" in nomes("producao")
         assert "consultar_indicadores_reprodutivos" in nomes("analise") and "consultar_indicadores_reprodutivos" in nomes("reproducao")
-        assert "consultar_lista_espera_preventivo" in nomes("sanidade") and "consultar_lista_espera_preventivo" not in nomes("pedidos")
+        assert "consultar_aplicacoes_sanitarias" in nomes("sanidade") and "consultar_aplicacoes_sanitarias" not in nomes("pedidos")
         assert nomes("") == set()
         assert len(nomes("") | nomes("rebanho")) == len(nomes("rebanho"))
 
@@ -612,33 +573,14 @@ class TestSanidade:
             indu = listar_protocolos_inducao(session=s, fazenda_id=1)
             prop = listar_protocolos_customizados(session=s, fazenda_id=1)
         r = _rodar(engine, "consultar_protocolos_cadastrados", {})
-        assert r["total"] == len(sanit) + len(iatf) + len(indu) + len(prop) == 5
-        assert r["por_tipo"] == {"sanitario_curativo": 1, "sanitario_preventivo": 1, "iatf": 1, "inducao": 1, "proprio": 1}
+        assert r["total"] == len(sanit) + len(iatf) + len(indu) + len(prop) == 4
+        assert r["por_tipo"] == {"sanitario_curativo": 1, "iatf": 1, "inducao": 1, "proprio": 1}
         cur = _rodar(engine, "consultar_protocolos_cadastrados", {"tipo": "sanitario_curativo"})
         assert [p["nome"] for p in cur["protocolos"]] == ["Mastite A"] and cur["protocolos"][0]["etapas"][0]["produto"] == "Ceftiofur"
-        assert [p["nome"] for p in _rodar(engine, "consultar_protocolos_cadastrados", {"tipo": "sanitario_preventivo"})["protocolos"]] == ["Vermifugo Preventivo"]
+        # "sanitario_preventivo" saiu (D3, 2026): vacinas e exames moram no módulo novo.
+        assert "erro" in _rodar(engine, "consultar_protocolos_cadastrados", {"tipo": "sanitario_preventivo"})
         assert _rodar(engine, "consultar_protocolos_cadastrados", {"nome": "iatf"})["total"] == 1
         assert "erro" in _rodar(engine, "consultar_protocolos_cadastrados", {"tipo": "outro"})
-
-    def test_regras_do_preventivo_igual_ao_calendario_do_site(self, engine):
-        from fazenda.api.routers.sanidade import listar_calendario
-        with Session(engine) as s:
-            site = listar_calendario(data_inicio="", data_fim="", evento_sanitario_id=None, session=s, fazenda_id=1)
-        r = _rodar(engine, "consultar_regras_preventivo", {})
-        assert [(x["id"], x["proxima_ocorrencia"]) for x in r["regras"]] == [(x["id"], x["proxima_ocorrencia"]) for x in site]
-        assert r["regras"][0]["evento_sanitario_nome"] == "Aftosa"
-        assert _rodar(engine, "consultar_regras_preventivo", {"nome": "nada"})["total_regras"] == 0
-        r = _rodar(engine, "consultar_regras_preventivo", {"data_inicio": str(HOJE), "data_fim": str(HOJE + timedelta(days=400))})
-        assert "ocorrencias_no_periodo" in r
-
-    def test_agendamentos_batem_com_acompanhamento_e_concluidos(self, engine):
-        from fazenda.rules import aplicacao_preventiva as ap
-        with Session(engine) as s:
-            ac_site = ap.acompanhamento(s, 1)
-            co_site = ap.concluidos(s, 1)
-        r = _rodar(engine, "consultar_agendamentos_preventivo", {"situacao": "todos"})
-        assert r["agendados"]["total"] == len(ac_site["agendamentos"]) and r["agendados"]["totais_gerais"] == ac_site["totais"]
-        assert r["concluidos"] == json.loads(json.dumps(co_site, default=str)) or r["concluidos"] == co_site
 
     def test_aplicacoes_batem_com_o_historico_do_site(self, engine):
         from fazenda.api.routers.sanidade import listar_aplicacoes

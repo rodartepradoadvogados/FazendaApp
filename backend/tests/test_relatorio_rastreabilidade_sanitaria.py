@@ -16,7 +16,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
 from fazenda.models import (
-    Animal, BaixaAnimal, CompraAnimal, EventoSanitario, ExameResultado, OcorrenciaClinica,
+    Animal, BaixaAnimal, CompraAnimal, OcorrenciaClinica,
     ProtocoloSanitario, ProtocoloSanitarioLancamento, Sanidade, VendaAnimal,
 )
 
@@ -73,13 +73,6 @@ def _popular(engine):
         s.refresh(protocolo)
         s.add(ProtocoloSanitarioLancamento(protocolo_id=protocolo.id, numero_matriz="700",
                                             data_inicio=date(2024, 5, 1), responsavel="Ana"))
-
-        evento = EventoSanitario(nome="Brucelose")
-        s.add(evento)
-        s.commit()
-        s.refresh(evento)
-        s.add(ExameResultado(numero_matriz="700", evento_sanitario_id=evento.id,
-                              data_exame=date(2024, 6, 1), resultado="negativo", veterinario="Dr. Silva"))
         s.commit()
 
 
@@ -91,7 +84,7 @@ class TestRelatorioRastreabilidadeSanitaria:
         assert r.status_code == 200
         linhas = r.json()
         tipos = {l["tipo_evento"] for l in linhas}
-        assert tipos == {"Compra", "Venda", "Aplicação sanitária", "Protocolo sanitário", "Exame", "Doença (ocorrência clínica)", "Baixa"}
+        assert tipos == {"Compra", "Venda", "Aplicação sanitária", "Protocolo sanitário", "Doença (ocorrência clínica)", "Baixa"}
         assert all(l["numero_animal"] == "700" for l in linhas)
         # Ordenado cronologicamente.
         datas = [l["data"] for l in linhas]
@@ -117,7 +110,7 @@ class TestRelatorioRastreabilidadeSanitaria:
         assert r.status_code == 200
         linhas = r.json()
         tipos = {l["tipo_evento"] for l in linhas}
-        assert tipos == {"Protocolo sanitário", "Exame"}
+        assert tipos == {"Protocolo sanitário"}
 
     def test_gta_inexistente_retorna_vazio(self, client):
         c, engine = client

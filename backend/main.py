@@ -72,7 +72,6 @@ from fazenda.api.routers import (
     painel_cowdata_farmacia,
     painel_cowdata_parametros,
     painel_cowdata_reguas,
-    rotina_lista_espera,
     painel_cowdata_sincronizacao,
     painel_cowdata_touros,
     painel_cowdata_usuarios,
@@ -119,7 +118,7 @@ from fazenda.api.routers.reproducao import (
 from fazenda.api.routers.cadastro import (
     seed_cadastro_sanitario, seed_motivos_baixa, seed_motivos_venda, seed_pessoas, seed_pessoa_robo_milknews,
     seed_servicos, seed_semen_categorias,
-    seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
+    seed_estoque_semen_inicial, atualizar_estoque_semen_202607,
     seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico, seed_protocolos_sanitarios_curativos, seed_racas_grau_sangue,
     sindicar_conta_gerencial_estoque, seed_tipos_pessoa, seed_tipo_geral, seed_tipos_papel_administrativo,
     seed_inducao_lactacao_ativos1_d0,
@@ -140,7 +139,6 @@ from fazenda.rules.farmacia import bootstrap_farmacia
 from fazenda.rules.recria_doenca import backfill_doenca_catalogo
 from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
-from fazenda.rules import rotina_lista_espera as _rotina_lista_espera
 from fazenda.rules.backup import executar_backup_se_necessario
 from fazenda.rules.manual_fazenda import enviar_manual_semanal_todas_fazendas
 from fazenda.rules.supabase_storage import garantir_buckets
@@ -231,32 +229,6 @@ async def _loop_manual_fazenda_semanal() -> None:
         await asyncio.sleep(_INTERVALO_VERIFICACAO_MANUAL_SEMANAL_SEGUNDOS)
 
 
-# A rotina da lista de espera roda no máximo 1x/dia por fazenda (o carimbo
-# `ultima_diaria_em` no banco decide, não este intervalo): checar a cada 30 min
-# só garante que uma fazenda que ligou a rotina, ou um deploy no meio do dia,
-# seja atendida sem depender de agendador externo.
-_INTERVALO_ROTINA_LISTA_ESPERA_SEGUNDOS = 30 * 60
-
-
-async def _loop_rotina_lista_espera() -> None:
-    while True:
-        try:
-            # `engine_manutencao`: enumera as fazendas com a rotina ligada
-            # antes de saber qual está processando; o recorte por fazenda é
-            # explícito em Python (fazenda_id em cada consulta) e o lock por
-            # fazenda (UPDATE atômico em rotina_lista_espera_estado) protege
-            # contra várias instâncias da API rodando este mesmo loop. O
-            # trabalho pesado vai para uma thread para não travar o event loop.
-            def _passada() -> None:
-                with Session(engine_manutencao) as session:
-                    _rotina_lista_espera.executar_todas_as_fazendas(session)
-
-            await asyncio.to_thread(_passada)
-        except Exception:
-            pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
-        await asyncio.sleep(_INTERVALO_ROTINA_LISTA_ESPERA_SEGUNDOS)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Cria tabelas e garante o admin inicial e os dados padrão (idempotente)."""
@@ -313,9 +285,6 @@ async def lifespan(app: FastAPI):
         # permite vincular um usuário de sistema a essa pessoa, como qualquer outra.
         seed_pessoa_robo_milknews(session, fazenda_id=1)
         seed_cadastro_sanitario(session)
-        # Calendário sanitário padrão (vacinas/exames sazonais e por fase
-        # fisiológica) — idempotente, só cria/compatibiliza o que falta.
-        configurar_calendario_sanitario_padrao(session)
         seed_motivos_baixa(session, fazenda_id=1)
         seed_motivos_venda(session, fazenda_id=1)
         seed_servicos(session)
@@ -417,20 +386,16 @@ async def lifespan(app: FastAPI):
     tarefa_backup = asyncio.create_task(_loop_backup_automatico())
     tarefa_push = asyncio.create_task(_loop_despacho_push())
     tarefa_manual_fazenda = asyncio.create_task(_loop_manual_fazenda_semanal())
-    tarefa_rotina_lista_espera = asyncio.create_task(_loop_rotina_lista_espera())
     yield
     tarefa_backup.cancel()
     tarefa_push.cancel()
     tarefa_manual_fazenda.cancel()
-    tarefa_rotina_lista_espera.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await tarefa_backup
     with contextlib.suppress(asyncio.CancelledError):
         await tarefa_push
     with contextlib.suppress(asyncio.CancelledError):
         await tarefa_manual_fazenda
-    with contextlib.suppress(asyncio.CancelledError):
-        await tarefa_rotina_lista_espera
 
 
 app = FastAPI(
@@ -934,8 +899,6 @@ app.include_router(agenda.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(agenda_v2.router, dependencies=_protegido + _contrato_ativo)
 # Rotina automática da lista de espera (status por fazenda e "executar agora") e
 # o resumo somente-leitura do Painel CowData (área "cockpit").
-app.include_router(rotina_lista_espera.router, dependencies=_protegido + _contrato_ativo)
-app.include_router(rotina_lista_espera.router_cowdata)
 # Protocolos customizados: lançar/listar ativos/cancelar exige só acesso
 # normal ao sistema (mesma regra da Agenda) — editar o MOLDE do protocolo
 # exige o módulo "parametros", via cadastro.router.

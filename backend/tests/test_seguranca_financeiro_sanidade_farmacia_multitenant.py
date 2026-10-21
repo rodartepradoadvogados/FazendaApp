@@ -1,8 +1,8 @@
 """
-Isolamento entre fazendas nos blocos de FARMÁCIA, SANIDADE (calendário) e
-FINANCEIRO (recibo) — os achados de severidade ALTA da auditoria cujo `local`
-aponta para esses arquivos, mais os furos da mesma família encontrados na
-varredura de hoje.
+Isolamento entre fazendas nos blocos de FARMÁCIA e FINANCEIRO (recibo) — os
+achados de severidade ALTA da auditoria cujo `local` aponta para esses
+arquivos, mais os furos da mesma família encontrados na varredura de hoje.
+(Os testes do calendário sanitário preventivo antigo saíram com o módulo, 2026.)
 
 O CowData não tem RLS: o isolamento existe só no código da aplicação. A trava
 de porta (fazenda/auth.py::exigir_fazenda_selecionada, montada em main.py)
@@ -40,12 +40,12 @@ os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.mktemp(suffix='.db')}"
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine
 
 from fazenda.auth import criar_token, hash_senha
 from fazenda.models import (
-    Animal, CalendarioSanitario, ContaGerencial, ContratoFazenda, ContratoFazendaModulo, Doenca,
-    EventoSanitario, Fazenda, Fornecedor, IndicacaoTerapeutica, MedicamentoComercial, Pessoa,
+    Animal, ContaGerencial, ContratoFazenda, ContratoFazendaModulo, Doenca,
+    Fazenda, Fornecedor, IndicacaoTerapeutica, MedicamentoComercial, Pessoa,
     PrincipioAtivo, Sanidade, Usuario, UsuarioFazenda,
 )
 from fazenda.models.planos import MODULOS_COMERCIAIS
@@ -123,20 +123,6 @@ def ambiente(monkeypatch):
         for o in (marca_global, marca1, marca2, ind1, ind2, doenca1_clone, pa_orfao):
             s.add(o)
 
-        # ── Sanidade: evento sanitário por fazenda + um órfão ──
-        ev1 = EventoSanitario(nome="Brucelose B19", fazenda_id=1, categoria_preventiva="vacina")
-        ev2 = EventoSanitario(nome="Brucelose B19", fazenda_id=2, categoria_preventiva="vacina")
-        ev_orfao = EventoSanitario(nome="Vermífugo (legado)", fazenda_id=None)
-        for o in (ev1, ev2, ev_orfao):
-            s.add(o)
-
-        # Aplicação preventiva da fazenda 1 com um produto de nome comum: é o
-        # casamento por TEXTO que _ultimo_evento_por_produto faz.
-        s.add(Sanidade(
-            numero_matriz="500", data_aplicacao=date(2026, 5, 20), produto="Ivomec Gold",
-            natureza="preventivo", fazenda_id=1,
-        ))
-
         # ── Financeiro: fornecedor e funcionário HOMÔNIMOS nas duas fazendas ──
         s.add(Fornecedor(nome="Agropecuária Central", tipo="fornecedor",
                          email="compras@fazenda1.com.br", fazenda_id=1))
@@ -162,8 +148,7 @@ def ambiente(monkeypatch):
         ))
         s.commit()
 
-        for o in (marca_global, marca1, marca2, ind1, ind2, doenca1_clone, pa_orfao,
-                  ev1, ev2, ev_orfao):
+        for o in (marca_global, marca1, marca2, ind1, ind2, doenca1_clone, pa_orfao):
             s.refresh(o)
 
         ids.update(
@@ -172,7 +157,6 @@ def ambiente(monkeypatch):
             doenca1_clone=doenca1_clone.id,
             marca_global=marca_global.id, marca1=marca1.id, marca2=marca2.id,
             ind1=ind1.id, ind2=ind2.id,
-            ev1=ev1.id, ev2=ev2.id, ev_orfao=ev_orfao.id,
         )
 
     def _get_session_override():
@@ -188,17 +172,6 @@ def ambiente(monkeypatch):
 def _cab(fazenda_id: int):
     """Token REAL do admin daquela fazenda, com a claim "fid" carimbada."""
     return {"Authorization": f"Bearer {criar_token(f'admin{fazenda_id}', fazenda_id=fazenda_id)}"}
-
-
-def _regra(evento_id: int, **extra) -> dict:
-    corpo = {
-        "evento_sanitario_id": evento_id,
-        "frequencia_valor": 12,
-        "frequencia_unidade": "meses",
-        "data_evento": D.isoformat(),
-    }
-    corpo.update(extra)
-    return corpo
 
 
 # ---------------------------------------------------------------------------
@@ -372,103 +345,6 @@ def test_detalhe_do_principio_nao_lista_marca_de_outra_fazenda(ambiente):
         f"a fazenda 1 recebeu a marca comercial da fazenda 2 no detalhe do próprio princípio: {nomes}"
     )
     assert "Ocitocina Alvo" in nomes, "controle positivo: a marca da própria fazenda sumiu"
-
-
-# ---------------------------------------------------------------------------
-# Furo novo (família do achado 29) — calendário sanitário aceitava evento alheio
-# ---------------------------------------------------------------------------
-def test_regra_do_calendario_nao_nasce_apontando_evento_de_outra_fazenda(ambiente):
-    c, engine, ids = ambiente
-    r = c.post("/sanidade/calendario", json=_regra(ids["ev1"]), headers=_cab(2))
-    assert r.status_code == 400, r.text
-    with Session(engine) as s:
-        intrusas = s.exec(
-            select(CalendarioSanitario).where(CalendarioSanitario.evento_sanitario_id == ids["ev1"])
-        ).all()
-        assert [x for x in intrusas if x.fazenda_id == 2] == [], (
-            "a fazenda 2 criou uma regra de calendário apontada para o evento sanitário da "
-            "fazenda 1 — a resposta devolve nome do protocolo, categoria e serviço financeiro dele"
-        )
-
-
-def test_regra_do_calendario_nao_aceita_evento_orfao(ambiente):
-    """O caso `fazenda_id = NULL`: evento sanitário sem dono (seed legado de
-    cadastro/sanitario.py) não pode ser o evento de qualquer um."""
-    c, engine, ids = ambiente
-    r = c.post("/sanidade/calendario", json=_regra(ids["ev_orfao"]), headers=_cab(2))
-    assert r.status_code == 400, r.text
-
-
-def test_regra_do_calendario_nao_aceita_doenca_de_outra_fazenda(ambiente):
-    c, engine, ids = ambiente
-    r = c.post(
-        "/sanidade/calendario", json=_regra(ids["ev2"], doenca_id=ids["doenca1"]), headers=_cab(2)
-    )
-    assert r.status_code == 400, r.text
-
-
-def test_regra_do_calendario_nao_aceita_principio_ativo_de_outra_fazenda(ambiente):
-    c, engine, ids = ambiente
-    r = c.post(
-        "/sanidade/calendario",
-        json=_regra(ids["ev2"], principio_ativo_id=ids["pa1"]), headers=_cab(2),
-    )
-    assert r.status_code == 400, r.text
-
-
-def test_regra_do_calendario_da_propria_fazenda_continua_sendo_criada(ambiente):
-    """Controle positivo — inclusive com doença e princípio do catálogo GLOBAL
-    (fazenda_id NULL), que é de todo mundo e não pode ser recusado junto."""
-    c, engine, ids = ambiente
-    r = c.post(
-        "/sanidade/calendario",
-        json=_regra(ids["ev2"], doenca_id=ids["doenca_global"], principio_ativo_id=ids["pa_global"]),
-        headers=_cab(2),
-    )
-    assert r.status_code == 200, r.text
-    assert r.json()["evento_sanitario_nome"] == "Brucelose B19"
-
-
-def test_editar_regra_nao_a_repontar_para_evento_de_outra_fazenda(ambiente):
-    c, engine, ids = ambiente
-    criada = c.post("/sanidade/calendario", json=_regra(ids["ev2"]), headers=_cab(2))
-    assert criada.status_code == 200, criada.text
-    regra_id = criada.json()["id"]
-    r = c.put(f"/sanidade/calendario/{regra_id}", json=_regra(ids["ev1"]), headers=_cab(2))
-    assert r.status_code == 400, r.text
-    with Session(engine) as s:
-        assert s.get(CalendarioSanitario, regra_id).evento_sanitario_id == ids["ev2"]
-
-
-# ---------------------------------------------------------------------------
-# Achado 28 — "último evento" do calendário casava por NOME DE PRODUTO
-# ---------------------------------------------------------------------------
-def test_ultimo_evento_do_calendario_nao_vem_da_outra_fazenda(ambiente):
-    """A fazenda 2 cadastra uma regra com o MESMO nome de produto que a
-    fazenda 1 já aplicou. O vocabulário de produto é compartilhado ("Ivomec
-    Gold" é o mesmo frasco nas duas), então a colisão é o caso normal."""
-    c, engine, ids = ambiente
-    criada = c.post(
-        "/sanidade/calendario", json=_regra(ids["ev2"], produto="Ivomec Gold"), headers=_cab(2)
-    )
-    assert criada.status_code == 200, criada.text
-    assert criada.json()["ultimo_evento_data"] is None, (
-        "a fazenda 2 recebeu a data da última aplicação de 'Ivomec Gold' feita pela fazenda 1"
-    )
-    assert criada.json()["ultimo_evento_id"] is None, (
-        "a fazenda 2 recebeu o id da linha Sanidade da fazenda 1 em ultimo_evento_id"
-    )
-
-    listagem = c.get("/sanidade/calendario", headers=_cab(2))
-    assert listagem.status_code == 200, listagem.text
-    assert all(r["ultimo_evento_id"] is None for r in listagem.json())
-
-    # Controle positivo: para a DONA da aplicação, o último evento aparece.
-    propria = c.post(
-        "/sanidade/calendario", json=_regra(ids["ev1"], produto="Ivomec Gold"), headers=_cab(1)
-    )
-    assert propria.status_code == 200, propria.text
-    assert propria.json()["ultimo_evento_data"] == "2026-05-20"
 
 
 # ---------------------------------------------------------------------------

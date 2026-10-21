@@ -239,7 +239,7 @@ def _resumo_relatorio_personalizado(
     # do numerador (`perdas` acima) — senão o numerador conta só as perdas do
     # período mas o denominador soma diagnósticos de todo o histórico, e o
     # percentual sai artificialmente baixo. Data do diagnóstico = mesma
-    # âncora usada em agenda_engine.py/eventos_sanitarios.py: data_diagnostico
+    # âncora usada em agenda_engine.py: data_diagnostico
     # com fallback pra data_servico (nem todo lançamento antigo tem a
     # primeira preenchida).
     diagnosticados_no_periodo = [

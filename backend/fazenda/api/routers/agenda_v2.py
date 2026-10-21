@@ -39,11 +39,10 @@ from fazenda.auth import (
 )
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, CalendarioSanitario, CronogramaSanitario, CronogramaSanitarioAnimal, Estoque, EventoSanitario,
+    Animal, Estoque,
     ProtocoloIatfAplicacao, Servico,
 )
 from fazenda.rules import repasse as repasse_rules
-from fazenda.rules import rotina_lista_espera as _rotina_lista_espera
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
 
 router = APIRouter(prefix="/agenda", tags=["agenda-v2"])
@@ -205,7 +204,6 @@ def agenda_painel(
     fazenda_id_ = fazenda_id
     base = calcular_agenda(data=hoje, dias=DIAS_JANELA_PADRAO, session=session, usuario=usuario, fazenda_id=fazenda_id_)
     modulos = _modulos(session, usuario, fazenda_id_)
-    lista_espera = base["lista_espera_sanitaria"]
     resumo_rep = resumo_repasse(session, fazenda_id_, hoje) if "reproducao" in modulos else None
     return {
         "data_referencia": base["data_referencia"],
@@ -226,15 +224,6 @@ def agenda_painel(
         "hormonios_check": base["hormonios_check"],
         "comunicados": [e for e in base["eventos"] if _eh_comunicado(e)],
         "pendencias": _pendencias(base["eventos"], hoje),
-        "lista_espera_sanitaria": lista_espera,
-        "lista_espera_total": sum(r.get("quantidade") or 0 for r in lista_espera),
-        # Card "Animais na lista de espera" (rotina automática): só com a rotina
-        # ativa E o aviso diário ligado E lista não vazia. Nunca vai ao Dia a dia.
-        "rotina_lista_espera": {
-            "mostrar_card": _rotina_lista_espera.deve_mostrar_card_no_painel(
-                session, fazenda_id_, sum(r.get("quantidade") or 0 for r in lista_espera),
-            ),
-        },
         "repasse": resumo_rep,
         "totais": base["totais"],
         "modulos": sorted(m for m in modulos if m in ("reproducao", "sanidade", "estoque", "financeiro")),
@@ -333,51 +322,6 @@ def agenda_projecao(
             "proxima_visita": base["proxima_visita_iatf"], "candidatas": len(base["candidatas_iatf"]),
         }
 
-    # Vacinas e exames (agendamentos do preventivo) ────────────────────────
-    if "sanidade" in modulos:
-        q_c = (
-            select(CronogramaSanitario, CalendarioSanitario)
-            .join(CalendarioSanitario, CalendarioSanitario.id == CronogramaSanitario.calendario_sanitario_id)
-            .where(CronogramaSanitario.status.in_(("agendado", "aguardando_confirmacao")))
-            .where(CronogramaSanitario.data_evento >= hoje, CronogramaSanitario.data_evento <= ate)
-        )
-        if q is not None:
-            q_c = q_c.where(CalendarioSanitario.fazenda_id == q)
-        pares = session.exec(q_c).all()
-        eventos_san = {e.id: e for e in session.exec(
-            select(EventoSanitario).where(EventoSanitario.fazenda_id == q) if q is not None else select(EventoSanitario)
-        ).all()}
-        incluidos: dict[int, int] = defaultdict(int)
-        if pares:
-            for linha in session.exec(
-                select(CronogramaSanitarioAnimal)
-                .where(CronogramaSanitarioAnimal.cronograma_id.in_([c.id for c, _ in pares]))
-                .where(CronogramaSanitarioAnimal.status == "incluido")
-            ).all():
-                incluidos[linha.cronograma_id] += 1
-        grupos: dict[str, list[dict]] = {"vacinas": [], "exames": []}
-        for cron, cal in pares:
-            ev = eventos_san.get(cal.evento_sanitario_id)
-            chave = "exames" if ev is not None and ev.categoria_preventiva == "exame" else "vacinas"
-            grupos[chave].append({
-                "cronograma_id": cron.id, "nome": ev.nome if ev else "Evento sanitário", "data": cron.data_evento.isoformat(),
-                "hora": cron.hora, "n_animais": incluidos.get(cron.id, 0), "checklist_pendente": None,
-            })
-        for chave, itens in grupos.items():
-            itens.sort(key=lambda i: (i["data"], i["hora"] or ""))
-            cards[chave] = {
-                "agendadas": len(itens),
-                "n_animais": sum(i["n_animais"] for i in itens),
-                "por_semana": _por_semana([(date.fromisoformat(i["data"]), 1) for i in itens], semanas),
-                "proximas": itens[:5],
-                "link": "/protocolos",
-            }
-        # Só contagem da lista de espera (R1): nenhum animal sai daqui.
-        cards["lista_espera"] = {
-            "n": sum(r.get("quantidade") or 0 for r in base["lista_espera_sanitaria"]),
-            "protocolos": len(base["lista_espera_sanitaria"]), "link": "/protocolos",
-        }
-
     # Estoque ──────────────────────────────────────────────────────────────
     if "estoque" in modulos:
         rup = []
@@ -410,8 +354,6 @@ def agenda_projecao(
     contagem: dict[tuple, dict] = {}
     for e in base["eventos"]:
         if _eh_comunicado(e) or not (hoje.isoformat() <= e["data"] <= ate.isoformat()):
-            continue
-        if str(e.get("tipo") or "").startswith("cronograma_sanitario"):
             continue
         grupo = _grupo_do_evento(e)
         if grupo == "repasse":

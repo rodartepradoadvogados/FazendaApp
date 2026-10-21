@@ -3,9 +3,9 @@ Relatório de rastreabilidade sanitária (Sanidade > Rastreabilidade) — a
 resposta completa para "esse animal (ou esse GTA) teve qual histórico
 sanitário?": reúne, numa única linha do tempo por animal, os GTAs de compra/
 venda, as aplicações sanitárias (vacina/vermífugo/curativo), os protocolos
-sanitários lançados, os resultados de exame (tuberculose, brucelose etc.) e as
-doenças/ocorrências clínicas registradas — filtrável por número do animal,
-período (de/até) ou número de GTA.
+sanitários lançados e as doenças/ocorrências clínicas registradas — filtrável por número do animal,
+período (de/até) ou número de GTA. Os resultados de exame do módulo
+preventivo antigo saíram em 2026 (voltam pelo módulo novo, sanitario_registro).
 
 Não emite GTA (documento oficial emitido pelo órgão estadual) — só registra e
 consulta o que a fazenda já lançou nas telas de Compra/Venda de animal.
@@ -20,7 +20,7 @@ from sqlmodel import Session, select
 from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, BaixaAnimal, CompraAnimal, Estoque, EventoSanitario, ExameResultado, MedicamentoComercial,
+    Animal, BaixaAnimal, CompraAnimal, Estoque, MedicamentoComercial,
     OcorrenciaClinica, ProtocoloSanitario, ProtocoloSanitarioLancamento, Sanidade, VendaAnimal,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
@@ -136,18 +136,6 @@ def relatorio(
             "numero_animal": p.numero_matriz, "tipo_evento": "Protocolo sanitário", "data": p.data_inicio,
             "gta": None, "descricao": protocolos_nomes.get(p.protocolo_id, "—"), "contraparte": None,
             "produto": None, "resultado": None, "doenca": None, "responsavel": p.responsavel,
-        })
-
-    eventos_nomes = {
-        e.id: e.nome for e in session.exec(_da_fazenda(select(EventoSanitario), EventoSanitario)).all()
-    }
-    for e in session.exec(_da_fazenda(select(ExameResultado), ExameResultado)).all():
-        if not _incluido(e.numero_matriz) or not _dentro_periodo(e.data_exame):
-            continue
-        linhas.append({
-            "numero_animal": e.numero_matriz, "tipo_evento": "Exame", "data": e.data_exame,
-            "gta": None, "descricao": eventos_nomes.get(e.evento_sanitario_id, "—"), "contraparte": None,
-            "produto": None, "resultado": e.resultado, "doenca": None, "responsavel": e.veterinario,
         })
 
     for o in session.exec(_da_fazenda(select(OcorrenciaClinica), OcorrenciaClinica)).all():

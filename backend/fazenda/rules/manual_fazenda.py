@@ -132,7 +132,7 @@ def _rotina_sanitaria(session: Session, fazenda_id: int | None, hoje: date) -> d
     vencidas = [row for row in pendentes if row[0].data_prevista < hoje]
     proxima = pendentes[0] if pendentes else None
     return {
-        "titulo": "Calendário sanitário preventivo",
+        "titulo": "Protocolos sanitários",
         "vencidas": len(vencidas),
         "proxima": (
             {"protocolo": proxima[2].nome, "data": proxima[0].data_prevista.isoformat(), "animal": proxima[1].numero_matriz}

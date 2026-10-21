@@ -17,25 +17,19 @@ from datetime import date, datetime
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from sqlmodel import Session, select
 
-from fazenda.api.routers.agenda import _baixar_aplicacao_agendada
 from fazenda.api.routers.cadastro.animais import _completar_genealogia_paterna
 from fazenda.api.routers.estoque import MovimentoIn, _criar_movimento_estoque
 from fazenda.api.routers.financeiro import ItemIn, LancamentoIn, ParcelaIn, criar_lancamento
 from fazenda.api.routers.producao import (
-    ControlesIn, OrdenhaIn, PesagensIn, PesoIn, QualidadeLeiteIn, _gravar_controles, criar_controles,
-    criar_pesagens, criar_qualidade_leite,
+    ControlesIn, OrdenhaIn, PesagensIn, PesoIn, QualidadeLeiteIn, _gravar_controles, criar_pesagens, criar_qualidade_leite,
 )
-from fazenda.api.routers.sanidade import AplicacaoIn, ItemAplicacaoIn, registrar_aplicacao
-from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
+from fazenda.auth import get_current_user, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, AplicacaoAgendada, CalendarioSanitario, ContaGerencial, CurvaABC, Dieta, Doenca, Estoque,
-    EventoRealizado, EventoSanitario, Fornecedor, LancamentoItem, Parto, Sanidade, Usuario,
+    Animal, ContaGerencial, CurvaABC, Dieta, Estoque,
+    Fornecedor, LancamentoItem, Parto, Sanidade, Usuario,
 )
 from fazenda.parsers.utils import iter_csv_rows, parse_date, parse_float, parse_int
-from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
-from fazenda.rules.calendario_sanitario import proxima_ocorrencia
-from fazenda.rules.eventos_sanitarios import _datas_gatilho
 
 router = APIRouter(prefix="/importar", tags=["importar"])
 
@@ -119,35 +113,6 @@ CATEGORIAS_NOVAS = {
         "colunas_csv": ["numero_matriz", "data_nascimento", "data_parto", "ordem_parto"],
         "exemplo": ["464", "10/03/2022", "05/06/2024", "1"],
     },
-    "calendario_sanitario": {
-        "label": "Calendário sanitário (preventivo) da fazenda",
-        "colunas": [
-            "evento (nome, ex.: Vacina pré-parto)", "categoria (vacina/exame/tratamento)", "categoria_alvo (lote/categoria)",
-            "doenca (nome, opcional)", "produto (opcional)", "dosagem (opcional)",
-            "frequencia_valor", "frequencia_unidade (dias/meses/anos)", "data_evento (DD/MM/AAAA)",
-        ],
-        "colunas_csv": [
-            "evento", "categoria", "categoria_alvo", "doenca", "produto", "dosagem",
-            "frequencia_valor", "frequencia_unidade", "data_evento",
-        ],
-        "exemplo": ["Brucelose B19", "vacina", "Bezerras (3 a 8 meses)", "Brucelose", "Vacina B19", "2 mL",
-                    "1", "anos", "10/03/2026"],
-    },
-    "baixas_pendencias_agenda": {
-        "label": "Baixa em massa de pendências antigas da Agenda (sanitário)",
-        "colunas": [
-            "tipo (evento_sanitario/calendario_sanitario/aplicacao_agendada)", "nome_evento (só p/ evento_sanitario e calendario_sanitario)",
-            "numero_animal", "data_pendencia (DD/MM/AAAA, a data original da pendência)",
-            "produto_aplicado (opcional — vazio usa o produto padrão do evento)", "dose (opcional)",
-            "unidade (opcional)", "via (opcional)", "responsavel (opcional)", "observacao (opcional)",
-        ],
-        "colunas_csv": [
-            "tipo", "nome_evento", "numero_animal", "data_pendencia", "produto_aplicado", "dose", "unidade", "via",
-            "responsavel", "observacao",
-        ],
-        "exemplo": ["evento_sanitario", "Brucelose B19", "464", "10/04/2026", "Vacina B19", "2", "ml", "Subcutânea", "Carlos", ""],
-        "precisa_data_corte": True,
-    },
 }
 
 # Categorias que já têm parser rico do Ideagri — seguem usando POST /upload/{tipo}.
@@ -181,11 +146,6 @@ CATEGORIAS_EXISTENTES = {
         "label": "Produção / controle leiteiro", "tipo_upload": "controle_leiteiro",
         "colunas_csv": ["NUMERO", "NOME_RESUMIDO", "RGD", "RACA", "DATA_LEITE", "PESO_TOTAL_LEITE", "DATA_ULTIMO_PARTO", "DATA_BAIXA"],
         "exemplo": ["464", "Estrela", "", "Girolando", "08/07/2026", "28,5", "01/05/2026", ""],
-    },
-    "sanitario": {
-        "label": "Sanitário", "tipo_upload": "sanidade",
-        "colunas_csv": ["Nº animal", "Nome", "Dt. nasc.", "Sx", "Raça", "Dt. aplic.", "Produto aplic.", "Dose", "Lote", "Atividade", "Obs. aplic."],
-        "exemplo": ["464", "Estrela", "15/03/2020", "F", "Girolando", "08/07/2026", "Ivermectina", "10", "L123", "Vacas em lactação", ""],
     },
     "estoque": {
         "label": "Estoque (inventário completo)", "tipo_upload": "estoque",
@@ -761,344 +721,6 @@ async def importar_dairycomp(
     }
 
 
-@router.post("/calendario_sanitario")
-async def importar_calendario_sanitario(
-    file: UploadFile, session: Session = Depends(get_session),
-    fazenda_id: int = Depends(get_fazenda_id_escrita),
-) -> dict:
-    """
-    Calendário sanitário (preventivo) da fazenda — uma regra por linha. Casa o
-    evento sanitário pelo nome (cria se não existir, já com a categoria
-    preventiva e a doença), casa a doença pelo nome (cria se não existir) e
-    grava a regra recorrente em CalendarioSanitario. Nunca apaga nada; só
-    acrescenta o que falta (dedup por evento+categoria_alvo+data).
-    """
-    content = await file.read()
-    criados, atualizados = 0, 0
-    erros: list[str] = []
-
-    CATS_PREVENTIVAS = {"vacina", "exame", "tratamento"}
-
-    # BUG DE SEGURANÇA CORRIGIDO: EventoSanitario/Doenca são cadastros POR
-    # FAZENDA (uq_..._nome_fazenda) — buscar/criar sem fazenda_id podia
-    # editar o evento de OUTRA fazenda com o mesmo nome, ou criar um
-    # registro órfão (fazenda_id=NULL) global a todas as fazendas.
-    def _evento(nome: str, categoria: str | None, doenca_id: int | None) -> EventoSanitario:
-        ev = session.exec(
-            select(EventoSanitario).where(EventoSanitario.nome == nome, EventoSanitario.fazenda_id == fazenda_id)
-        ).first()
-        if not ev:
-            ev = EventoSanitario(nome=nome, fazenda_id=fazenda_id)
-            session.add(ev)
-        if categoria and not ev.categoria_preventiva:
-            ev.categoria_preventiva = categoria
-        if doenca_id and not ev.doenca_id:
-            ev.doenca_id = doenca_id
-        session.flush()
-        return ev
-
-    def _doenca(nome: str) -> int | None:
-        nome = (nome or "").strip()
-        if not nome:
-            return None
-        d = session.exec(
-            select(Doenca).where(Doenca.nome == nome, Doenca.fazenda_id == fazenda_id)
-        ).first()
-        if not d:
-            d = Doenca(nome=nome, fazenda_id=fazenda_id)
-            session.add(d)
-            session.flush()
-        return d.id
-
-    for i, row in enumerate(iter_csv_rows(content), start=2):
-        nome_evento = row.get("evento", "").strip()
-        if not nome_evento:
-            erros.append(f"Linha {i}: evento é obrigatório")
-            continue
-        data_evento = parse_date(row.get("data_evento", ""))
-        if not data_evento:
-            erros.append(f"Linha {i}: data_evento é obrigatória (DD/MM/AAAA)")
-            continue
-        freq_valor = parse_int(row.get("frequencia_valor", "")) or 1
-        freq_unidade = (row.get("frequencia_unidade", "") or "meses").strip().lower()
-        if freq_unidade not in ("dias", "meses", "anos"):
-            freq_unidade = "meses"
-        categoria = (row.get("categoria", "") or "").strip().lower() or None
-        if categoria and categoria not in CATS_PREVENTIVAS:
-            categoria = None
-
-        doenca_id = _doenca(row.get("doenca", ""))
-        ev = _evento(nome_evento, categoria, doenca_id)
-        categoria_alvo = row.get("categoria_alvo", "").strip() or None
-
-        regra = session.exec(
-            select(CalendarioSanitario).where(
-                CalendarioSanitario.evento_sanitario_id == ev.id,
-                CalendarioSanitario.data_evento == data_evento,
-            )
-        ).first()
-        if regra and (regra.categoria_alvo or "") == (categoria_alvo or ""):
-            regra.doenca_id = doenca_id or regra.doenca_id
-            regra.produto = row.get("produto", "").strip() or regra.produto
-            regra.dosagem = row.get("dosagem", "").strip() or regra.dosagem
-            regra.frequencia_valor = freq_valor
-            regra.frequencia_unidade = freq_unidade
-            atualizados += 1
-        else:
-            session.add(CalendarioSanitario(
-                evento_sanitario_id=ev.id, categoria_alvo=categoria_alvo, doenca_id=doenca_id,
-                produto=row.get("produto", "").strip() or None, dosagem=row.get("dosagem", "").strip() or None,
-                frequencia_valor=freq_valor, frequencia_unidade=freq_unidade, data_evento=data_evento,
-                fazenda_id=fazenda_id,
-            ))
-            criados += 1
-
-    session.commit()
-    return {"categoria": "calendario_sanitario", "criados": criados, "atualizados": atualizados, "erros": erros}
-
-
-def _ocorrencia_valida(base: date | None, valor: int | None, unidade: str | None, alvo: date) -> bool:
-    """True quando `alvo` cai exatamente numa ocorrência da recorrência que
-    começa em `base` — usado para validar uma data de pendência antiga sem
-    limitar a busca a nenhuma janela de tempo (ao contrário de
-    `_ocorrencias_recorrentes`, feita para a Agenda ao vivo)."""
-    if not (base and valor and unidade) or valor <= 0 or alvo < base:
-        return False
-    d = base
-    guarda = 0
-    while d < alvo and guarda < 3000:
-        d = proxima_ocorrencia(d, valor, unidade)
-        guarda += 1
-    return d == alvo
-
-
-@router.post("/baixas_pendencias_agenda")
-async def importar_baixas_pendencias_agenda(
-    file: UploadFile, data_corte: str = Form(""), session: Session = Depends(get_session),
-    user: Usuario = Depends(get_current_user), fazenda_id: int = Depends(get_fazenda_id_escrita),
-) -> dict:
-    """
-    Baixa em massa de pendências antigas da Agenda (sanitário) — uma linha por
-    pendência. Resolve exatamente como o usuário resolveria uma a uma na tela
-    (mesma função `registrar_aplicacao`/`_baixar_aplicacao_agendada` de sempre):
-    grava a aplicação de verdade em Sanidade (com baixa de estoque quando a
-    unidade bate) e dispensa a pendência da Agenda (EventoRealizado). Não cria
-    nenhuma regra nova de calendário — só fecha o que já estava pendente.
-    Linhas com data_pendencia >= data_corte são ignoradas (mantidas na Agenda).
-    """
-    content = await file.read()
-    corte = parse_date(data_corte) if data_corte else None
-    criados, dispensados, erros = 0, 0, []
-
-    def _ja_realizado(eid: str) -> bool:
-        # `fazenda_id` gravado abaixo (não mais None) — filtra por ele também
-        # aqui: o par (evento_id, fazenda_id) é a chave real (uq em
-        # models/sistema.py::EventoRealizado), não só evento_id.
-        query = select(EventoRealizado).where(EventoRealizado.evento_id == eid)
-        if fazenda_id is not None:
-            query = query.where(EventoRealizado.fazenda_id == fazenda_id)
-        return session.exec(query).first() is not None
-
-    def _dispensar(eid: str) -> bool:
-        """Marca o evento como realizado; False se já estava (evita duplicar Sanidade)."""
-        if _ja_realizado(eid):
-            return False
-        # BUG DE SEGURANÇA CORRIGIDO: gravava sem `fazenda_id` (None); como
-        # agenda.py lê EventoRealizado com `fazenda_id.in_((fazenda_id, None))`
-        # (a linha NULL "dispensa para todo mundo"), um `eid` que a cadeia
-        # acima resolvesse para a REGRA de outra fazenda dispensava a
-        # pendência dela na Agenda dela — sem ela ter feito nada. Combinado
-        # com o filtro de fazenda_id nas duas seleções abaixo, `eid` agora só
-        # pode se referir a uma regra da PRÓPRIA fazenda, e fica gravado como
-        # tal.
-        session.add(EventoRealizado(evento_id=eid, fazenda_id=fazenda_id))
-        session.flush()
-        return True
-
-    for i, row in enumerate(iter_csv_rows(content), start=2):
-        tipo = (row.get("tipo", "") or "").strip().lower()
-        nome_evento = (row.get("nome_evento", "") or "").strip()
-        numeros = [n.strip() for n in (row.get("numero_animal", "") or "").replace(";", ",").split(",") if n.strip()]
-        data_pendencia = parse_date(row.get("data_pendencia", ""))
-        produto = (row.get("produto_aplicado", "") or "").strip() or None
-        dose = parse_float(row.get("dose", ""))
-        unidade = (row.get("unidade", "") or "").strip() or None
-        via = (row.get("via", "") or "").strip() or None
-        responsavel = (row.get("responsavel", "") or "").strip() or None
-        observacao = (row.get("observacao", "") or "").strip() or None
-
-        if not data_pendencia:
-            erros.append(f"Linha {i}: data_pendencia é obrigatória (DD/MM/AAAA)")
-            continue
-        if corte and data_pendencia >= corte:
-            erros.append(f"Linha {i}: data_pendencia {data_pendencia.isoformat()} não é anterior à data de corte — ignorada (mantida na Agenda)")
-            continue
-
-        try:
-            if tipo == "evento_sanitario":
-                if not nome_evento:
-                    raise ValueError("nome_evento é obrigatório para tipo evento_sanitario")
-                # BUG DE SEGURANÇA CORRIGIDO: faltava o filtro por fazenda_id
-                # (uq real é (nome, fazenda_id) — models/sanidade.py — e cada
-                # fazenda cria seu próprio "Vermífugo"/"Brucelose B19" com o
-                # mesmo nome do catálogo semeado). Sem o filtro, um nome_evento
-                # que também existisse em OUTRA fazenda podia resolver o
-                # EventoSanitario dela — produto/dose padrão e regras de
-                # gatilho alheios entrando no lançamento local.
-                query_ev = select(EventoSanitario).where(EventoSanitario.nome == nome_evento)
-                if fazenda_id is not None:
-                    query_ev = query_ev.where(EventoSanitario.fazenda_id == fazenda_id)
-                ev = session.exec(query_ev).first()
-                if not ev:
-                    raise ValueError(f'evento sanitário "{nome_evento}" não encontrado')
-
-                if ev.tipo_agendamento == "evento":
-                    if len(numeros) != 1:
-                        raise ValueError("este evento é por gatilho (por animal) — informe exatamente 1 numero_animal")
-                    numero = numeros[0]
-                    # `fazenda_id` explícito (antes ficava None por posição —
-                    # mesmo defeito do F-C-01): sem ele, a validação do
-                    # gatilho considerava animal/secagem/parto/etc. de
-                    # QUALQUER fazenda, não só da própria.
-                    candidatos = _datas_gatilho(
-                        session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, ev.offset_dias or 0, ev.sexo_alvo,
-                        fazenda_id=fazenda_id,
-                    )
-                    if not any(n == numero and d == data_pendencia for n, d in candidatos):
-                        raise ValueError(f"nenhuma ocorrência do gatilho deste evento para a matriz {numero} em {data_pendencia.isoformat()}")
-                    eid = f"evento_sanitario_{ev.id}__{numero}__{data_pendencia.isoformat()}"
-                    alvo_animais = [numero]
-                elif ev.tipo_agendamento == "epoca":
-                    if not _ocorrencia_valida(ev.data_primeiro, ev.frequencia_valor, ev.frequencia_unidade, data_pendencia):
-                        raise ValueError("data_pendencia não corresponde a nenhuma ocorrência da recorrência por época deste evento")
-                    eid = f"evento_sanitario_{ev.id}__rebanho__{data_pendencia.isoformat()}"
-                    if not numeros:
-                        raise ValueError("informe ao menos 1 numero_animal — quem de fato recebeu a aplicação")
-                    alvo_animais = numeros
-                else:
-                    raise ValueError("evento sanitário não está configurado com agendamento por época ou por gatilho")
-
-                eh_exame = ev.categoria_preventiva == "exame"
-                if not eh_exame:
-                    produto_final = produto or ev.produto_padrao
-                    dose_final = dose if dose is not None else ev.dose_padrao
-                    unidade_final = unidade or ev.unidade_padrao
-                    via_final = via or ev.via_padrao
-                    if not (produto_final and dose_final is not None and unidade_final):
-                        raise ValueError("produto_aplicado/dose/unidade são obrigatórios (ou cadastre o padrão no evento sanitário)")
-
-                # Validado — só agora dispensa a pendência (nunca antes de garantir
-                # que a aplicação de verdade também vai ser gravada com sucesso).
-                novo = _dispensar(eid)
-                if novo:
-                    if not eh_exame:
-                        registrar_aplicacao(
-                            AplicacaoIn(
-                                data_aplicacao=data_pendencia, animais=alvo_animais,
-                                itens=[ItemAplicacaoIn(produto=produto_final, via=via_final, quantidade=dose_final, unidade=unidade_final)],
-                                responsavel=responsavel, observacao=observacao or f"Baixa retroativa: {ev.nome}",
-                                aplicado=True, natureza="preventivo",
-                            ),
-                            session=session, user=user, fazenda_id=fazenda_id,
-                        )
-                        criados += len(alvo_animais)
-                    dispensados += 1
-
-            elif tipo == "calendario_sanitario":
-                if not nome_evento:
-                    raise ValueError("nome_evento é obrigatório para tipo calendario_sanitario")
-                # BUG DE SEGURANÇA CORRIGIDO: mesma omissão do ramo
-                # `evento_sanitario` acima — o JOIN casava regras de
-                # CalendarioSanitario de QUALQUER fazenda que tivesse um
-                # EventoSanitario com esse nome. `_dispensar` abaixo usa o id
-                # da regra encontrada (`c.id`) no `eid` — resolver a regra
-                # errada dispensava a pendência de OUTRA fazenda na Agenda
-                # dela (ver rules/eventos_sanitarios.py e agenda.py, mesmo
-                # padrão de filtro estrito por fazenda_id usado nesses dois
-                # arquivos para CalendarioSanitario).
-                query_regras = (
-                    select(CalendarioSanitario)
-                    .join(EventoSanitario, CalendarioSanitario.evento_sanitario_id == EventoSanitario.id)
-                    .where(EventoSanitario.nome == nome_evento, CalendarioSanitario.ativo == True)  # noqa: E712
-                )
-                if fazenda_id is not None:
-                    query_regras = query_regras.where(CalendarioSanitario.fazenda_id == fazenda_id)
-                regras = session.exec(query_regras).all()
-                validas = [c for c in regras if _ocorrencia_valida(c.data_evento, c.frequencia_valor, c.frequencia_unidade, data_pendencia)]
-                if not validas:
-                    raise ValueError(f'nenhuma regra do calendário sanitário "{nome_evento}" tem ocorrência em {data_pendencia.isoformat()}')
-                if not numeros:
-                    raise ValueError("informe ao menos 1 numero_animal — quem de fato recebeu a aplicação")
-
-                ev = session.get(EventoSanitario, validas[0].evento_sanitario_id)
-                eh_exame = (ev.categoria_preventiva if ev else None) == "exame"
-                for c in validas:
-                    eid = f"calendario_sanitario_{c.id}__{data_pendencia.isoformat()}"
-                    if not eh_exame:
-                        produto_final = produto or c.produto
-                        dose_final = dose if dose is not None else parse_float(c.dosagem or "")
-                        unidade_final = unidade or c.unidade
-                        if not (produto_final and dose_final is not None and unidade_final):
-                            raise ValueError("produto_aplicado/dose/unidade são obrigatórios (ou cadastre o padrão na regra do calendário)")
-
-                    novo = _dispensar(eid)
-                    if novo:
-                        if not eh_exame:
-                            registrar_aplicacao(
-                                AplicacaoIn(
-                                    data_aplicacao=data_pendencia, animais=numeros,
-                                    itens=[ItemAplicacaoIn(produto=produto_final, via=via, quantidade=dose_final, unidade=unidade_final)],
-                                    responsavel=responsavel, observacao=observacao or f"Baixa retroativa: {nome_evento}",
-                                    aplicado=True, natureza="preventivo",
-                                ),
-                                session=session, user=user, fazenda_id=fazenda_id,
-                            )
-                            criados += len(numeros)
-                        dispensados += 1
-
-            elif tipo == "aplicacao_agendada":
-                if len(numeros) != 1:
-                    raise ValueError("informe exatamente 1 numero_animal para tipo aplicacao_agendada")
-                numero = numeros[0]
-                # BUG DE SEGURANÇA CORRIGIDO: sem o filtro de fazenda_id, uma
-                # colisão de numero_matriz com outra fazenda (numero deixou
-                # de ser único globalmente — ver Animal.numero) podia pegar a
-                # AplicacaoAgendada PENDENTE DE OUTRA FAZENDA e, pior, o
-                # `_baixar_aplicacao_agendada` abaixo era chamado sem
-                # `fazenda_id` (ficava None por default) — perdia até a
-                # trava de segurança que a própria função já tem.
-                ag = session.exec(
-                    select(AplicacaoAgendada).where(
-                        AplicacaoAgendada.numero_matriz == numero,
-                        AplicacaoAgendada.data == data_pendencia,
-                        AplicacaoAgendada.aplicado == False,  # noqa: E712
-                        AplicacaoAgendada.fazenda_id == fazenda_id,
-                    )
-                ).first()
-                if not ag:
-                    raise ValueError(f"nenhuma aplicação agendada pendente para a matriz {numero} em {data_pendencia.isoformat()}")
-                eid = f"aplic_agendada_{ag.id}"
-                novo = _dispensar(eid)
-                if novo:
-                    _baixar_aplicacao_agendada(
-                        session, eid, produto, dose, unidade, via,
-                        fazenda_id=fazenda_id, usuario_id=usuario_id_seguro(user),
-                    )
-                    criados += 1
-                    dispensados += 1
-
-            else:
-                raise ValueError('tipo deve ser "evento_sanitario", "calendario_sanitario" ou "aplicacao_agendada"')
-
-        except HTTPException as exc:
-            erros.append(f"Linha {i}: {exc.detail}")
-        except ValueError as exc:
-            erros.append(f"Linha {i}: {exc}")
-
-    session.commit()
-    return {"categoria": "baixas_pendencias_agenda", "criados": criados, "dispensados": dispensados, "erros": erros}
-
-
 # ── CATÁLOGO DE TOUROS NAAB: SAIU DAQUI (furo de segurança, set/2026) ──────
 # `POST /importar/touros_naab` (e a categoria "touros_naab" do catálogo de
 # modelos acima) viviam aqui e agora vivem em
@@ -1124,7 +746,8 @@ def backfill_fornecedores_e_estoque(
     fazenda_id: int = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """
-    Varre os dados já importados (financeiro, curva ABC, dieta, sanidade) e
+    Varre os dados já lançados (financeiro, curva ABC, dieta, aplicações de
+    sanidade curativa) e
     cadastra automaticamente os fornecedores e itens de estoque citados neles
     que ainda não existem — idempotente, seguro de rodar quantas vezes quiser.
     Não sobrescreve nada que já existe, só preenche o que falta.

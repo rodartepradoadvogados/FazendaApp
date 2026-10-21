@@ -14,8 +14,8 @@ conformidades e cadastro de estoque):
            TODAS as fazendas.
   F-C-11 — Portal aceita destinatario_usuario_id de OUTRA fazenda em
            enviar_mensagem/delegar_tarefa (escrita cross-tenant).
-  F-C-12 — Importação de baixas de pendências resolve EventoSanitario/
-           CalendarioSanitario por nome sem fazenda_id.
+  F-C-12 — (rota de importação de baixas de pendências do preventivo
+           antigo — removida em 2026 junto com o módulo; teste retirado.)
   F-C-17 — Não conformidades soma a ContaGerencial de TODAS as fazendas no
            indicador "Custo por hectare" (chama a função Python direto, sem
            passar fazenda_id).
@@ -43,8 +43,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import (
-    Animal, ContaGerencial, ContratoFazenda, ContratoFazendaModulo, Estoque, EstoqueSemen, EventoRealizado,
-    EventoSanitario, Fazenda, Fornecedor, ParametroFazenda, PortalMensagem, Sanidade, ServicoCadastro, Usuario,
+    ContaGerencial, ContratoFazenda, ContratoFazendaModulo, Estoque, EstoqueSemen, Fazenda, Fornecedor, ParametroFazenda, PortalMensagem, ServicoCadastro, Usuario,
     UsuarioFazenda,
 )
 from fazenda.models.planos import MODULOS_COMERCIAIS
@@ -184,98 +183,6 @@ class TestPortalDestinatarioDeOutraFazenda:
         r = c.post("/portal/mensagens", json={"destinatarios_usuario_id": [3], "corpo": "oi"})
         assert r.status_code == 200, r.text
         assert r.json()["criadas"] == 1
-
-
-# ---------------------------------------------------------------------------
-# F-C-12 — POST /importar/baixas_pendencias_agenda
-# ---------------------------------------------------------------------------
-def _csv_baixas(linhas: list[list[str]]) -> bytes:
-    colunas = [
-        "tipo", "nome_evento", "numero_animal", "data_pendencia", "produto_aplicado", "dose", "unidade", "via",
-        "responsavel", "observacao",
-    ]
-    texto = ";".join(colunas) + "\r\n" + "\r\n".join(";".join(l) for l in linhas) + "\r\n"
-    return texto.encode("windows-1252")
-
-
-class TestImportarBaixasPendenciasNaoResolveEventoDeOutraFazenda:
-    def test_evento_sanitario_de_outra_fazenda_nao_e_usado_para_dispensar(self, client):
-        """POC do dossiê: CSV com `tipo=evento_sanitario,nome_evento=<nome só
-        cadastrado na fazenda B>` — a fazenda A (atacante) não tem esse
-        EventoSanitario, mas antes da correção o `.first()` sem fazenda_id
-        resolvia o da fazenda B mesmo assim, aplicando o produto/dose PADRÃO
-        secreto dela no lançamento local (e dispensando, com `eid` que
-        embute o id da regra da fazenda B, uma pendência que é dela)."""
-        c, engine = client
-        with Session(engine) as s:
-            # Fazenda A (1, atacante): só o animal "1" — nenhum EventoSanitario
-            # próprio chamado "Brucelose RB51".
-            s.add(Animal(numero="1", data_nasc=date(2026, 1, 1), sexo="F", ativo=True, fazenda_id=1))
-            # Fazenda B (2, vítima): o EventoSanitario com o mesmo nome usado
-            # no CSV, configurado com um produto padrão SIGILOSO.
-            s.add(EventoSanitario(
-                nome="Brucelose RB51", tipo_agendamento="evento", gatilho="nascimento", offset_dias=0,
-                produto_padrao="Vacina Secreta da Fazenda B", dose_padrao=2.0, unidade_padrao="ml",
-                fazenda_id=2,
-            ))
-            s.commit()
-
-        _como_fazenda(1)
-        r = c.post(
-            "/importar/baixas_pendencias_agenda",
-            files={"file": ("b.csv", _csv_baixas([
-                ["evento_sanitario", "Brucelose RB51", "1", "01/01/2026", "", "", "", "", "", ""],
-            ]), "text/csv")},
-            data={"data_corte": ""},
-        )
-        assert r.status_code == 200, r.text
-        corpo = r.json()
-
-        assert corpo["criados"] == 0, "aplicou o padrão da fazenda B na fazenda A"
-        assert corpo["dispensados"] == 0
-        assert len(corpo["erros"]) == 1, "deveria recusar por não achar o evento NA PRÓPRIA fazenda"
-
-        with Session(engine) as s:
-            aplicacoes = s.exec(select(Sanidade).where(Sanidade.fazenda_id == 1)).all()
-            assert aplicacoes == [], "não pode existir Sanidade com o produto secreto da fazenda B"
-            vazou_produto = s.exec(
-                select(Sanidade).where(Sanidade.produto == "Vacina Secreta da Fazenda B")
-            ).first()
-            assert vazou_produto is None
-
-    def test_evento_sanitario_da_propria_fazenda_continua_funcionando(self, client):
-        c, engine = client
-        with Session(engine) as s:
-            s.add(Animal(numero="1", data_nasc=date(2026, 1, 1), sexo="F", ativo=True, fazenda_id=1))
-            s.add(EventoSanitario(
-                nome="Brucelose RB51", tipo_agendamento="evento", gatilho="nascimento", offset_dias=0,
-                produto_padrao="Vacina Própria da Fazenda A", dose_padrao=2.0, unidade_padrao="ml",
-                fazenda_id=1,
-            ))
-            s.commit()
-        _como_fazenda(1)
-        r = c.post(
-            "/importar/baixas_pendencias_agenda",
-            files={"file": ("b.csv", _csv_baixas([
-                ["evento_sanitario", "Brucelose RB51", "1", "01/01/2026", "", "", "", "", "", ""],
-            ]), "text/csv")},
-            data={"data_corte": ""},
-        )
-        assert r.status_code == 200, r.text
-        corpo = r.json()
-        assert corpo["criados"] == 1, corpo
-        assert corpo["dispensados"] == 1
-        assert not corpo["erros"]
-        with Session(engine) as s:
-            aplicacoes = s.exec(select(Sanidade).where(Sanidade.fazenda_id == 1)).all()
-            assert len(aplicacoes) == 1
-            assert aplicacoes[0].produto == "Vacina Própria da Fazenda A"
-            # EventoRealizado gravado JÁ com fazenda_id (não mais None) —
-            # senão a linha "dispensa para todo mundo" (agenda.py lê com
-            # `fazenda_id.in_((fid, None))`).
-            realizado = s.exec(select(EventoRealizado)).first()
-            assert realizado is not None
-            assert realizado.fazenda_id == 1
 
 
 # ---------------------------------------------------------------------------

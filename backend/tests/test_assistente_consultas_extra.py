@@ -25,7 +25,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from fazenda.auth import MODULOS
 from fazenda.models import (
-    Animal, BaixaAnimal, CompraAnimal, ControleLeiteiro, EventoSanitario, ExameResultado, Fazenda, Lactacao, Lote,
+    Animal, BaixaAnimal, CompraAnimal, ControleLeiteiro, Fazenda, Lactacao, Lote,
     Alimento, CategoriaAlimento, Doenca, IndicacaoTerapeutica, LoteEstoque, MedicamentoComercial, PrincipioAtivo,
      CompraSemen, ConsumoAlimento, ConsumoSobra, ContaCorrente, Dieta, DietaItemProgramado, DietaLancamento,
      ContaGerencial, EntregaLeiteMensal, Estoque, EstoqueSemen, LancamentoItem, MovimentoEstoque, PlanoContaGerencial,
@@ -115,11 +115,6 @@ def _popular_ficha(s: Session) -> None:
     s.add(CompraAnimal(numero_animal="500", vendedor="Vendedor X", valor=9000.0, tipo_valor="por_animal", data_compra=date(2024, 5, 1),
                        gta="GTA-1", fazenda_id=1))
     s.add(CompraAnimal(numero_animal="500", vendedor="Vendedor SEGREDO", valor=1.0, tipo_valor="por_animal", data_compra=date(2024, 5, 1), fazenda_id=2))
-    ev = EventoSanitario(nome="Brucelose", fazenda_id=1)
-    s.add(ev)
-    s.commit()
-    s.add(ExameResultado(numero_matriz="500", evento_sanitario_id=ev.id, data_exame=date(2026, 2, 2), resultado="negativo",
-                         veterinario="Dr. A", fazenda_id=1))
     s.commit()
 
 
@@ -487,7 +482,7 @@ class TestFichaAnimal:
         assert r["lactacoes"]["quadro_por_parto"] == site["resumo_partos"]
         assert [(x["numero_lactacao"], x["aberta"]) for x in r["lactacoes"]["registros_de_lactacao"]] == [(1, False)]
         assert r["genealogia"]["mae_numero"] == "100" and r["genealogia"]["pai_nome"] == "TouroA"
-        assert r["totais"]["sanidade"] == 1 and r["totais"]["exames"] == 1 and r["totais"]["ocorrencias"] == 1
+        assert r["totais"]["sanidade"] == 1 and r["totais"]["exames"] == 0 and r["totais"]["ocorrencias"] == 1
         assert r["comercial"]["gtas"] == ["GTA-1"] and r["comercial"]["compras"][0]["vendedor"] == "Vendedor X"
         assert r["totais"]["movimentacoes"] == 1 and r["totais"]["secagens"] == 1 and r["totais"]["pesagens"] == 1
 

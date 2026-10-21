@@ -13,7 +13,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
 from fazenda.models import (
-    Animal, BaixaAnimal, ColostragemBezerra, CompraAnimal, ControleLeiteiro, EventoSanitario, ExameResultado,
+    Animal, BaixaAnimal, ColostragemBezerra, CompraAnimal, ControleLeiteiro,
     MovimentoLote, OcorrenciaClinica, Parto, PesagemCorporal,
     ProtocoloSanitario, ProtocoloSanitarioLancamento, Sanidade, Secagem, Servico, VendaAnimal,
 )
@@ -127,13 +127,6 @@ class TestFichaAnimal:
             s.add(VendaAnimal(numero_animal="600", comprador="Frigorífico Central", valor=4000.0,
                                tipo_valor="por_animal", data_venda=date(2025, 6, 1), gta="GTA-0002"))
             s.add(OcorrenciaClinica(numero_matriz="600", doenca="Mastite", data_ocorrencia=date(2024, 5, 1)))
-
-            evento = EventoSanitario(nome="Brucelose")
-            s.add(evento)
-            s.commit()
-            s.refresh(evento)
-            s.add(ExameResultado(numero_matriz="600", evento_sanitario_id=evento.id,
-                                  data_exame=date(2024, 3, 1), resultado="negativo"))
             s.commit()
 
         r = c.get("/animais/600/ficha")
@@ -149,14 +142,12 @@ class TestFichaAnimal:
         assert len(corpo["ocorrencias_clinicas"]) == 1
         assert corpo["ocorrencias_clinicas"][0]["doenca"] == "Mastite"
 
-        assert len(corpo["exames_resultados"]) == 1
-        assert corpo["exames_resultados"][0]["resultado"] == "negativo"
-        assert corpo["exames_resultados"][0]["evento_sanitario_nome"] == "Brucelose"
+        # Exames do preventivo antigo saíram (2026); voltam pelo módulo novo na F8.
+        assert corpo["exames_resultados"] == []
 
-        # Linha do tempo cronológica: compra (jan/24) -> exame (mar/24) ->
-        # doença (mai/24) -> venda (jun/25).
+        # Linha do tempo cronológica: compra (jan/24) -> doença (mai/24) -> venda (jun/25).
         tipos_em_ordem = [e["tipo_evento"] for e in corpo["linha_tempo_sanitaria"]]
-        assert tipos_em_ordem == ["Compra", "Exame", "Doença (ocorrência clínica)", "Venda"]
+        assert tipos_em_ordem == ["Compra", "Doença (ocorrência clínica)", "Venda"]
         assert corpo["linha_tempo_sanitaria"][0]["gta"] == "GTA-0001"
         assert corpo["linha_tempo_sanitaria"][-1]["gta"] == "GTA-0002"
 

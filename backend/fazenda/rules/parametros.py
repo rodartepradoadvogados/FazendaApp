@@ -35,7 +35,6 @@ GRUPO_TITULOS: dict[str, str] = {
     "financeiro": "Financeiro",
         "exclusao": "Exclusão de lançamentos",
     "alimentacao": "Alimentação",
-    "lista_espera": "Rotina da lista de espera",
 }
 
 # Sementes iniciais — só usadas por `seed_parametros()` na primeira vez que
@@ -98,11 +97,6 @@ DEFINICOES: list[dict] = [
     {"chave": "dias_adesivo_cio_max", "grupo": "reinseminacao_cio", "label": "Observação de cio (adesivo) — dias máximo", "valor": 28, "unidade": "dias"},
 
     # ---- Agenda e sistema ------------------------------------------------------
-    {"chave": "janela_eventos_sanitarios_passado", "grupo": "agenda_sistema", "label": "Janela de eventos sanitários — dias no passado", "valor": 120, "unidade": "dias"},
-    {"chave": "janela_eventos_sanitarios_futuro", "grupo": "agenda_sistema", "label": "Janela de eventos sanitários — dias no futuro", "valor": 180, "unidade": "dias"},
-    {"chave": "cronograma_sanitario_dias_aviso", "grupo": "agenda_sistema", "label": "Cronograma sanitário — aviso obrigatório antes do evento sem veterinário definido", "valor": 5, "unidade": "dias"},
-    {"chave": "cronograma_sanitario_min_animais_agrupamento", "grupo": "agenda_sistema", "label": "Calendário sanitário — mínimo de animais para sugerir chamada do veterinário", "valor": 15, "unidade": "animais"},
-    {"chave": "cronograma_sanitario_janela_agrupamento_dias", "grupo": "agenda_sistema", "label": "Calendário sanitário — janela de agrupamento entre eventos próximos", "valor": 7, "unidade": "dias"},
     {"chave": "dias_contas_a_pagar_agenda", "grupo": "agenda_sistema", "label": "Contas a pagar na agenda — próximos dias", "valor": 10, "unidade": "dias"},
     # Secagem/Parto sugerem mover o animal para o lote de secas/lote 03 — por
     # padrão, sempre PERGUNTA (janela de confirmação, ver FormSecagem.tsx/
@@ -120,15 +114,6 @@ DEFINICOES: list[dict] = [
     {"chave": "caixa_fundo_reserva", "grupo": "agenda_sistema", "label": "Caixa Real — fundo de reserva (colchão mínimo desejado em caixa; 0 = não definido)", "valor": 0, "tipo": "float", "unidade": "R$"},
     {"chave": "caixa_meses_folga_sugestao", "grupo": "agenda_sistema", "label": "Caixa Real — meses de custo que o fundo de reserva sugerido deve cobrir", "valor": 3, "tipo": "float", "unidade": "meses"},
     {"chave": "caixa_dias_projecao", "grupo": "agenda_sistema", "label": "Caixa Real — horizonte padrão da projeção de caixa", "valor": 90, "unidade": "dias"},
-
-    # ---- Rotina da lista de espera (docs/agents/auditoria-preventivo-agenda/
-    # planejamento/11-rotina-lista-de-espera.md). Padrão DESLIGADA: sem o dono
-    # da fazenda marcar, nada acontece. Só coloca animais na lista de espera
-    # das regras de vacina/exame já cadastradas — nunca aplica, baixa estoque
-    # nem agenda. Ver fazenda.rules.rotina_lista_espera.
-    {"chave": "lista_espera_rotina_ativa", "grupo": "lista_espera", "label": "Ativar a rotina automática da lista de espera?", "valor": "false", "tipo": "bool"},
-    {"chave": "lista_espera_dias_antecedencia", "grupo": "lista_espera", "label": "Dias de antecedência (antes da janela de aplicação da regra)", "valor": 15, "unidade": "dias"},
-    {"chave": "lista_espera_aviso_diario", "grupo": "lista_espera", "label": "Aviso diário nos cards do Painel da Agenda (no máximo 1 vez por dia)?", "valor": "false", "tipo": "bool"},
 
     # ---- Metas reprodutivas ----------------------------------------------------
     {"chave": "meta_del_max_1o_servico", "grupo": "metas_reproducao", "label": "DEL máximo para 1º serviço", "valor": 100, "unidade": "dias"},
@@ -549,7 +534,7 @@ def get_param_texto(chave: str, padrao: str = "") -> str:
 # ---------------------------------------------------------------------------
 # Acessores nomeados — usados pelas regras espalhadas (agenda_veterinario,
 # lote_criterios, relatorios_gerenciais, gestation, indicadores, bst,
-# scratch_pev, dry_off, eventos_sanitarios, agenda_engine) no lugar dos
+# scratch_pev, dry_off, agenda_engine) no lugar dos
 # antigos módulo-constantes fixos, para que a edição em Configurações >
 # Parâmetros passe a valer de fato em todo lugar (ver tarefa #363).
 # ---------------------------------------------------------------------------
@@ -719,37 +704,6 @@ def dias_antes_secagem_bst() -> int:
 
 def bst_ajuste_ancora_data() -> date | None:
     return get_param_date("bst_ajuste_ancora_data", None)
-
-
-def janela_eventos_sanitarios_passado() -> int:
-    return int(get_param("janela_eventos_sanitarios_passado", 120) or 120)
-
-
-def janela_eventos_sanitarios_futuro() -> int:
-    return int(get_param("janela_eventos_sanitarios_futuro", 180) or 180)
-
-
-def cronograma_sanitario_dias_aviso() -> int:
-    return int(get_param("cronograma_sanitario_dias_aviso", 5) or 5)
-
-
-def cronograma_sanitario_min_animais_agrupamento() -> int:
-    return int(get_param("cronograma_sanitario_min_animais_agrupamento", 15) or 15)
-
-
-def cronograma_sanitario_janela_agrupamento_dias() -> int:
-    return int(get_param("cronograma_sanitario_janela_agrupamento_dias", 7) or 7)
-
-
-def usar_ocorrencia_universal() -> bool:
-    """Feature flag por fazenda (R-1, docs/redesenho-evento-sanitario.md) —
-    liga a geração automática de Ocorrência (`CronogramaSanitario`) para TODA
-    regra do calendário sanitário ativa, não só as marcadas
-    `usa_cronograma=True` como hoje. False por padrão — nenhuma fazenda muda
-    de comportamento sozinha; só liga depois que o usuário confirma que
-    revisou o cadastro de Regras (rotina de "saúde do cadastro", Fase 6 do
-    redesenho)."""
-    return get_param_bool("usar_ocorrencia_universal", False)
 
 
 def patrimonio_atualizacao_valor_mercado_meses() -> int:

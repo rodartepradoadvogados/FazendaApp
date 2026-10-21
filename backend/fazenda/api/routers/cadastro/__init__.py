@@ -57,7 +57,7 @@ from .protocolos_sanitarios import (
     seed_protocolos_sanitarios_curativos,
 )
 from .rh_folha import _calcular_encargo_projetado
-from .sanitario import GATILHOS_EVENTO, configurar_calendario_sanitario_padrao, seed_cadastro_sanitario
+from .sanitario import seed_cadastro_sanitario
 from .servicos import seed_servicos, seed_tipos_metodos_servico
 
 router = APIRouter(prefix="/cadastro", tags=["cadastro"])
@@ -129,7 +129,6 @@ router.include_router(rh_vale_acoes.router, dependencies=_exige_financeiro)
 __all__ = [
     "router",
     "router_touros_leitura",
-    "GATILHOS_EVENTO",
     "_calcular_encargo_projetado",
     "seed_pessoas",
     "seed_pessoa_robo_milknews",
@@ -142,7 +141,6 @@ __all__ = [
     "sindicar_conta_gerencial_estoque",
     "seed_cadastros_estoque",
     "seed_cadastro_sanitario",
-    "configurar_calendario_sanitario_padrao",
     "seed_protocolos_inducao_lactacao",
     "seed_inducao_lactacao_ativos1_d0",
     "seed_protocolos_sanitarios_curativos",

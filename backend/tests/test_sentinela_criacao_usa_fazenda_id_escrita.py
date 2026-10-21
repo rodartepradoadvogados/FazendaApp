@@ -37,10 +37,6 @@ _PERMITIDAS: dict[tuple[str, str], str] = {
         "O fazenda_id gravado vem do parâmetro de PATH {fazenda_id}, não da "
         "dependência tolerante (que aqui só delimita escopo de autorização)."
     ),
-    ("sanidade.py", "criar_cronograma_manual"): (
-        "CronogramaSanitario herda fazenda_id do CalendarioSanitario pai "
-        "(calendario.fazenda_id), nunca da dependência injetada."
-    ),
     ("cadastro/protocolos_sanitarios.py", "migrar_dose_protocolos_sanitarios"): (
         "Utilitário de backfill/relatório sobre linhas já existentes, não "
         "cria recurso novo por pedido do usuário."

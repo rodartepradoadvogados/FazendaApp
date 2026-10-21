@@ -12,7 +12,7 @@ from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AgendaManual, BaixaAnimal, ColostragemBezerra, CompraAnimal, ControleLeiteiro, EstoqueSemen,
-    EventoSanitario, ExameResultado, MovimentoLote, OcorrenciaClinica, Parto,
+    MovimentoLote, OcorrenciaClinica, Parto,
     PesagemCorporal, ProtocoloCustomizadoAplicacao, ProtocoloCustomizadoLancamento,
     ProtocoloIatfAplicacao, ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento,
     ProtocoloSanitario, ProtocoloSanitarioLancamento, QualidadeLeite,
@@ -668,19 +668,6 @@ def ficha_animal(
 
     ocorrencias_clinicas = session.exec(query_ocorrencias.order_by(OcorrenciaClinica.data_ocorrencia)).all()
 
-    query_eventos_sanitarios = select(EventoSanitario)
-    if fazenda_id is not None:
-        query_eventos_sanitarios = query_eventos_sanitarios.where(EventoSanitario.fazenda_id == fazenda_id)
-    eventos_sanitarios_nomes = {e.id: e.nome for e in session.exec(query_eventos_sanitarios).all()}
-    query_exames = select(ExameResultado).where(ExameResultado.numero_matriz == numero)
-    if fazenda_id is not None:
-        query_exames = query_exames.where(ExameResultado.fazenda_id == fazenda_id)
-    exames_resultados_rows = session.exec(query_exames.order_by(ExameResultado.data_exame)).all()
-    exames_resultados = [
-        {**e.model_dump(), "evento_sanitario_nome": eventos_sanitarios_nomes.get(e.evento_sanitario_id)}
-        for e in exames_resultados_rows
-    ]
-
     # Linha do tempo de rastreabilidade sanitária: todos os eventos com
     # relevância sanitária/documental (GTA de compra/venda, aplicações,
     # protocolos, exames, doenças e baixa) numa única lista cronológica —
@@ -706,11 +693,6 @@ def ficha_animal(
         linha_tempo_sanitaria.append({
             "data": p.data_inicio, "tipo_evento": "Protocolo sanitário",
             "descricao": protocolos_nomes.get(p.protocolo_id, "—"), "gta": None, "responsavel": p.responsavel,
-        })
-    for e in exames_resultados:
-        linha_tempo_sanitaria.append({
-            "data": e["data_exame"], "tipo_evento": "Exame", "descricao": e.get("evento_sanitario_nome") or "—",
-            "gta": None, "responsavel": e.get("veterinario"),
         })
     for o in ocorrencias_clinicas:
         linha_tempo_sanitaria.append({
@@ -896,7 +878,9 @@ def ficha_animal(
         "vendas": _dump(vendas),
         "gtas": gtas,
         "ocorrencias_clinicas": _dump(ocorrencias_clinicas),
-        "exames_resultados": exames_resultados,
+        # Exames do módulo antigo (arquivado em 2026) saíram; a lista volta a
+        # ser preenchida pelo módulo novo (sanitario_registro) na F8.
+        "exames_resultados": [],
         "linha_tempo_sanitaria": linha_tempo_sanitaria,
         # Curva média do rebanho por faixa de DEL — é a referência que a
         # "Curva de lactação" da ficha desenha por trás dos pontos do animal,

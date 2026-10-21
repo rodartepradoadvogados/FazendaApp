@@ -20,8 +20,7 @@ Fluxo:
      uma competência específica do histórico) + seus lançamentos; o total
      soma os lançamentos ao vivo enquanto aberta (nunca um contador guardado
      — evita drift), e usa o valor congelado quando já fechada/paga.
-  3) Fechamento: preguiçoso, na leitura (mesmo padrão de
-     `cronograma_aberto()` em rules/cronograma_sanitario.py) — toda vez que
+  3) Fechamento: preguiçoso, na leitura — toda vez que
      uma fatura aberta é lida e já passou do dia de fechamento, congela
      valor_total/milhas_acumuladas e vira "fechada". Também dá pra fechar
      antes na mão (POST .../fechar).

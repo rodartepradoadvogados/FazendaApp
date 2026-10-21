@@ -385,8 +385,8 @@ def _colunas_para_desambiguar(tabela: Table, tabelas: dict[str, Table], avisos: 
     O QUE MUDOU EM 09/09/2026, e por quê. O critério antigo era "toda coluna
     não-FK de uma UNIQUE sem `fazenda_id`". Ele encostava em três restrições
     que já eram seguras por conterem FK remapeada — `DiariaDia(diaria_id,
-    data)`, `FaturaCartao(cartao_id, competencia)` e
-    `CronogramaSanitarioAnimal(cronograma_id, numero_matriz)` — e a primeira
+    data)`, `FaturaCartao(cartao_id, competencia)` e uma terceira (de uma
+    tabela do sanitário preventivo antigo, arquivada em 2026) — e a primeira
     QUEBRAVA: `data` é DATE, e o sufixo de texto grudado nela fazia o Postgres
     responder `time zone "sandbox-diaria_dia-1" not recognized`. A
     sincronização inteira morria com HTTP 500 e a Fazenda Teste ficava vazia.

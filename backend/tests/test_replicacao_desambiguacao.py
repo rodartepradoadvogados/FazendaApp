@@ -67,7 +67,6 @@ def test_as_outras_restricoes_com_fk_remapeada_tambem_saem(tabelas):
     Aqui as colunas são VARCHAR, então o sufixo não quebrava; mas desambiguar
     à toa suja o dado do sandbox com `::sandbox-...` sem necessidade."""
     assert "competencia" not in _para(tabelas, "fatura_cartao")
-    assert "numero_matriz" not in _para(tabelas, "cronograma_sanitario_animal")
 
 
 def test_o_que_precisa_de_sufixo_continua_ganhando(tabelas):

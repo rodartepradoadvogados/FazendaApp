@@ -89,7 +89,7 @@ def _bloco_rotina(rotina: dict) -> str:
         p = sanit["proxima"]
         linhas.append(f"""
           <tr>
-            <td style="padding:6px 8px;font-weight:bold;">Calendário sanitário</td>
+            <td style="padding:6px 8px;font-weight:bold;">Protocolos sanitários</td>
             <td style="padding:6px 8px;color:{COR_MUTED};">
               Próxima: {_esc(p['protocolo'])} — animal {_esc(p['animal'])} em {_fmt_data(p['data'])}
               {f" · {_esc(sanit['vencidas'])} vencida(s)" if sanit.get('vencidas') else ""}

@@ -5,9 +5,30 @@ caem numa janela da Agenda, respeitando a periodicidade e o dia da semana fixo
 """
 from __future__ import annotations
 
+import calendar
 from datetime import date, timedelta
 
-from fazenda.rules.calendario_sanitario import proxima_ocorrencia
+
+def _somar_meses(d: date, meses: int) -> date:
+    total = d.month - 1 + meses
+    ano = d.year + total // 12
+    mes = total % 12 + 1
+    dia = min(d.day, calendar.monthrange(ano, mes)[1])
+    return date(ano, mes, dia)
+
+
+def proxima_ocorrencia(data_evento: date, frequencia_valor: int, frequencia_unidade: str) -> date:
+    """Data de referência + a recorrência configurada (dias/meses/anos) — UM
+    passo adiante (negativo = um passo para trás). Morava num módulo do
+    calendário sanitário preventivo antigo, apagado em 2026; a pesagem é a
+    única usuária."""
+    if frequencia_unidade == "dias":
+        return data_evento + timedelta(days=frequencia_valor)
+    if frequencia_unidade == "meses":
+        return _somar_meses(data_evento, frequencia_valor)
+    if frequencia_unidade == "anos":
+        return _somar_meses(data_evento, frequencia_valor * 12)
+    raise ValueError(f"Unidade de frequência inválida: {frequencia_unidade}")
 
 
 def _snap_dia_semana(d: date, dia_semana: int) -> date:

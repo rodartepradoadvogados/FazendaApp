@@ -8,7 +8,7 @@ Achados cobertos aqui — numeração 1-based do relatório impresso:
   4  POST /producao/pesagens ................ gravava PesagemCorporal órfã
   5  POST /producao/qualidade-leite ......... gravava QualidadeLeite órfã
   6  POST /producao/entrega-leite ........... upsert atravessava a fazenda
-  31 POST /sanidade/cronogramas ............. gravava CronogramaSanitario órfão
+  31 (POST /sanidade/cronogramas — rota do preventivo antigo, removida em 2026)
   33 POST /cadastro/protocolos-sanitarios/dose-migrar . sem gate de papel
   54 GET  /indicadores/ ..................... select(Lote) sem fazenda_id
   58 POST /baixas/a-descartar ............... marcava o animal de outra fazenda
@@ -51,8 +51,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from fazenda.auth import criar_token, hash_senha
 from fazenda.models import (
-    Animal, CalendarioSanitario, ContratoFazenda, ContratoFazendaModulo, EntregaLeiteMensal,
-    EventoSanitario, Fazenda, Lote, PesagemCorporal, ProtocoloSanitario, ProtocoloSanitarioEtapa,
+    Animal, ContratoFazenda, ContratoFazendaModulo, EntregaLeiteMensal,
+    Fazenda, Lote, PesagemCorporal, ProtocoloSanitario, ProtocoloSanitarioEtapa,
     QualidadeLeite, Servico, Usuario, UsuarioFazenda,
 )
 from fazenda.models.planos import MODULOS_COMERCIAIS
@@ -123,17 +123,6 @@ def ambiente(monkeypatch):
         s.add(lote_v)
         s.add(lote_atacante)
 
-        # --- Achado 31: regra de calendário da fazenda 1 -------------------
-        evento_v = EventoSanitario(nome="Vermífugo", ativo=True, fazenda_id=1)
-        s.add(evento_v)
-        s.commit()
-        s.refresh(evento_v)
-        calendario_v = CalendarioSanitario(
-            evento_sanitario_id=evento_v.id, frequencia_valor=4, frequencia_unidade="meses",
-            data_evento=DATA, usa_cronograma=True, ativo=True, fazenda_id=1,
-        )
-        s.add(calendario_v)
-
         # --- Achado 33: etapa de protocolo com dose de peso vivo no texto --
         # Uma em cada fazenda: a varredura em massa não pode atravessar.
         protocolo_v = ProtocoloSanitario(nome="Pneumonia — Protocolo A", fazenda_id=1)
@@ -162,12 +151,10 @@ def ambiente(monkeypatch):
         s.add(servico_atacante)
         s.commit()
         s.refresh(entrega_v)
-        s.refresh(calendario_v)
         s.refresh(servico_atacante)
 
         ids.update(
             entrega_vitima=entrega_v.id,
-            calendario_vitima=calendario_v.id,
             etapa_vitima=etapa_v.id,
             etapa_atacante=etapa_atacante.id,
             servico_atacante=servico_atacante.id,
@@ -376,38 +363,6 @@ def test_entrega_leite_da_propria_fazenda_na_mesma_competencia_continua_funciona
     assert r.json()["fazenda_id"] == 2
     with Session(engine) as s:
         assert s.get(EntregaLeiteMensal, ids["entrega_vitima"]).quantidade_litros == 90000.0
-
-
-# ---------------------------------------------------------------------------
-# Achado 31 — POST /sanidade/cronogramas
-# ---------------------------------------------------------------------------
-def test_cronograma_com_token_sem_fazenda_e_recusado(ambiente):
-    c, _engine, ids = ambiente
-    _assert_trava_de_porta_recusa(c.post(
-        "/sanidade/cronogramas",
-        json={"calendario_sanitario_id": ids["calendario_vitima"]},
-        headers=_cab_sem_fazenda(),
-    ))
-    _desligar_trava_de_porta()
-    r = c.post(
-        "/sanidade/cronogramas",
-        json={"calendario_sanitario_id": ids["calendario_vitima"]},
-        headers=_cab_sem_fazenda(),
-    )
-    _assert_recusa_sem_fazenda(r)
-
-
-def test_cronograma_sobre_regra_de_outra_fazenda_e_recusado(ambiente):
-    c, _engine, ids = ambiente
-    r = c.post(
-        "/sanidade/cronogramas",
-        json={"calendario_sanitario_id": ids["calendario_vitima"]},
-        headers=_cab(2),
-    )
-    assert r.status_code == 404, (
-        "404, nunca 403 — um 403 já confirma que o id existe. "
-        f"Resposta: {r.status_code} {r.text[:200]}"
-    )
 
 
 # ---------------------------------------------------------------------------

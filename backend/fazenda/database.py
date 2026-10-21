@@ -234,15 +234,6 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("valor_unitario", "FLOAT"), ("local_armazenamento", "VARCHAR"),
     ],
     "touro": [("nome_completo", "VARCHAR"), ("dados_extra", "TEXT")],
-    "evento_sanitario": [
-        ("tipo_agendamento", "VARCHAR DEFAULT 'nenhum'"), ("categoria_alvo", "VARCHAR"), ("doenca_id", "INTEGER"),
-        ("data_primeiro", "DATE"), ("frequencia_valor", "INTEGER"), ("frequencia_unidade", "VARCHAR"),
-        ("gatilho", "VARCHAR"), ("gatilho_lote", "VARCHAR"), ("gatilho_idade_meses", "INTEGER"), ("offset_dias", "INTEGER"),
-        ("produto_padrao", "VARCHAR"), ("dose_padrao", "FLOAT"), ("unidade_padrao", "VARCHAR"), ("via_padrao", "VARCHAR"),
-        ("categoria_preventiva", "VARCHAR"), ("agenda_dias_antes", "INTEGER"), ("condicao_evento_id", "INTEGER"),
-        ("exame_definicao_id", "INTEGER"),
-    ],
-    "calendario_sanitario": [("veterinario", "VARCHAR"), ("unidade", "VARCHAR"), ("responsavel", "VARCHAR")],
     "protocolo_sanitario_etapa": [("criterio_tipo", "VARCHAR DEFAULT 'medicamento'"), ("observacao", "TEXT")],
     "protocolo_sanitario_aplicacao": [("produto", "VARCHAR")],
     "protocolo_sanitario_lancamento": [

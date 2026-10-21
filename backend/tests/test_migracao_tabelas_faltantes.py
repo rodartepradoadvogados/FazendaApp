@@ -60,7 +60,12 @@ class TestSchemaAlembicIgualAoSchemaDosModelos:
         from fazenda.models import SQLModel
 
         engine = sa.create_engine(f"sqlite:///{db_path}")
-        tabelas_alembic = set(sa.inspect(engine).get_table_names()) - {"alembic_version"}
+        # `arquivo_sanitario_2026__*` é o arquivo do sanitário preventivo antigo
+        # em SQLite (no Postgres é o schema arquivo_sanitario_2026, fora do
+        # public) — tabela sem model DE PROPÓSITO (migração s0a1r2q3v4o5).
+        tabelas_alembic = {
+            t for t in sa.inspect(engine).get_table_names() if not t.startswith("arquivo_sanitario_2026__")
+        } - {"alembic_version"}
         tabelas_model = set(SQLModel.metadata.tables.keys())
         engine.dispose()
 
