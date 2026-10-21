@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<style>
+@font-face{font-family:Archivo;src:url(assets/fonts/archivo-latin-400-normal.woff2);font-weight:400}
+@font-face{font-family:Archivo;src:url(assets/fonts/archivo-latin-600-normal.woff2);font-weight:600}
+@font-face{font-family:Archivo;src:url(assets/fonts/archivo-latin-700-normal.woff2);font-weight:700}
+@font-face{font-family:Archivo;src:url(assets/fonts/archivo-latin-800-normal.woff2);font-weight:800}
+html,body{margin:0;background:#1b120a}
+#palco{position:relative;width:1080px;height:1920px;overflow:hidden;font-family:Archivo,sans-serif;background:#1b120a}
+canvas{position:absolute;left:0;top:0}
+#vig{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse 75% 62% at 50% 52%,rgba(20,12,6,0) 40%,rgba(20,12,6,.55) 100%)}
+#grao{position:absolute;inset:0;pointer-events:none;background:url(assets/grao.png);background-size:cover;opacity:.10;mix-blend-mode:overlay}
+#leg{position:absolute;left:80px;width:920px;bottom:400px;text-align:center;opacity:0}
+#leg span{display:inline-block;font:800 54px/1.14 Archivo;color:#FFF8E8;background:rgba(26,16,8,.62);padding:16px 30px 18px;border-radius:18px;letter-spacing:-.005em;box-shadow:0 8px 30px rgba(0,0,0,.35)}
+#leg b{color:#E0A63C;font-weight:800}
+</style></head><body>
+<div id="palco"><div id="vig"></div><div id="grao"></div><div id="leg"><span></span></div></div>
+<script type="importmap">{"imports":{"three":"./three.module.js"}}</script>
+<script type="module">
+import * as THREE from "three";
+const W = 1080, H = 1920, U = 6.9 / 390; // unidades por px CSS da tela do app
+const palco = document.getElementById("palco");
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, powerPreference: "high-performance" });
+renderer.setPixelRatio(1); renderer.setSize(W, H);
+renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.NoToneMapping;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.VSMShadowMap;
+palco.insertBefore(renderer.domElement, palco.firstChild);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x1b120a);
+scene.fog = new THREE.Fog(0x1b120a, 55, 120);
+const cam = new THREE.PerspectiveCamera(26, W / H, 1, 300); scene.add(cam);
+const clamp01 = (x) => Math.min(1, Math.max(0, x));
+const sm = (a, b, t) => { const x = clamp01((t - a) / (b - a)); return x * x * (3 - 2 * x); };
+const eo = (a, b, t) => { const x = clamp01((t - a) / (b - a)); return 1 - Math.pow(1 - x, 3); };
+const ei = (a, b, t) => { const x = clamp01((t - a) / (b - a)); return x * x * x; };
+const eb = (a, b, t) => { const x = clamp01((t - a) / (b - a)), c = 1.2, d = c + 1; return 1 + d * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// ---------- ambiente (softboxes procedurais para reflexo do vidro e do metal) ----------
+function ambiente() {
+  const s = new THREE.Scene();
+  s.add(new THREE.Mesh(new THREE.BoxGeometry(80, 80, 80), new THREE.MeshBasicMaterial({ color: 0x2a1d12, side: THREE.BackSide })));
+  const painel = (w, h, pos, cor, k) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: new THREE.Color(cor).multiplyScalar(k), side: THREE.DoubleSide })); m.position.set(...pos); m.lookAt(0, 0, 0); s.add(m); };
+  painel(40, 24, [-22, 30, 18], 0xfff1dc, 7); painel(10, 40, [30, 14, -22], 0xe0a63c, 6); painel(34, 10, [0, 24, -30], 0xfff6e6, 3); painel(18, 18, [26, 8, 26], 0xffe8c8, 1.6);
+  const pm = new THREE.PMREMGenerator(renderer); const t = pm.fromScene(s, 0.02).texture; pm.dispose(); return t;
+}
+scene.environment = ambiente(); scene.environmentIntensity = 0.9;
+
+// ---------- luzes ----------
+const hemi = new THREE.HemisphereLight(0xfff0da, 0x6b4f33, 1.15); scene.add(hemi);
+const key = new THREE.DirectionalLight(0xfff1dc, 2.6); key.position.set(-13, 28, 15); key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048); key.shadow.radius = 7; key.shadow.blurSamples = 20; key.shadow.bias = -0.0004; key.shadow.normalBias = 0.02;
+Object.assign(key.shadow.camera, { left: -17, right: 17, top: 17, bottom: -17, near: 5, far: 80 }); scene.add(key); scene.add(key.target);
+const rim = new THREE.DirectionalLight(0xe0a63c, 2.4); rim.position.set(16, 9, -22); scene.add(rim);
+const fill = new THREE.DirectionalLight(0xffe2bd, 0.6); fill.position.set(14, 10, 22); scene.add(fill);
+
+// ---------- texturas ----------
+const loader = new THREE.TextureLoader();
+const aniso = renderer.capabilities.getMaxAnisotropy();
+const carrega = (u, srgb = true) => new Promise((ok) => loader.load(u, (t) => { if (srgb) t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = aniso; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; ok(t); }));
+const TEX = {};
+const nomes = ["menu_alim", "placa_alimentacao_aberta", "placa_reproducao", "placa_sanidade", "placa_producao", "placa_gestao", "placa_financeiro"];
+const fontesOk = Promise.all([400, 600, 700, 800].map((w) => document.fonts.load(`${w} 40px Archivo`)));
+const kraft = await carrega("assets/kraft.png");
+for (const n of nomes) TEX[n] = await carrega(`tex/${n}.png`);
+await fontesOk;
+
+// DoF barato: viés de mip por fragmento (distância ao foco) e/ou fixo, mais ilha de luz (escurece as bordas da mesa)
+const foco = { dist: 40 };
+function comDof(mat, { mesa = false } = {}) {
+  const uni = { uBias: { value: 0 }, uFoco: foco, uK: { value: mesa ? 0.16 : 0 } };
+  mat.userData.uni = uni;
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, { uBias: uni.uBias, uFoco: { get value() { return foco.dist; } }, uK: uni.uK });
+    sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nvarying vec3 vWP;").replace("#include <begin_vertex>", "#include <begin_vertex>\nvWP=(modelMatrix*vec4(transformed,1.0)).xyz;");
+    sh.fragmentShader = sh.fragmentShader.replace("#include <common>", "#include <common>\nvarying vec3 vWP; uniform float uBias; uniform float uFoco; uniform float uK;")
+      .replace("#include <map_fragment>", `
+        float bias = uBias + clamp(abs(length(vViewPosition) - uFoco) * uK - 0.6, 0.0, 3.5);
+        vec4 sampledDiffuseColor = texture2D( map, vMapUv, bias ); diffuseColor *= sampledDiffuseColor;
+        ${mesa ? "float rr = length(vWP.xz * vec2(0.9,0.62)) / 24.0; diffuseColor.rgb *= mix(vec3(1.0), vec3(0.20,0.15,0.10), smoothstep(0.18, 0.85, rr));" : ""}`);
+  };
+  return mat;
+}
+
+// ---------- mesa kraft ----------
+kraft.wrapS = kraft.wrapT = THREE.MirroredRepeatWrapping; kraft.repeat.set(2.4, 4.2);
+const mesaMat = comDof(new THREE.MeshStandardMaterial({ map: kraft, color: 0xcdbb9c, roughness: 0.96, metalness: 0 }), { mesa: true });
+const mesa = new THREE.Mesh(new THREE.PlaneGeometry(64, 110), mesaMat); mesa.rotation.x = -Math.PI / 2; mesa.receiveShadow = true; scene.add(mesa);
+
+// ---------- celular ----------
+const PW = 7.4, PL = 15.9, PT = 0.8, SW = 6.9, SH = 844 * U;
+function retRedondo(w, h, r) { const s = new THREE.Shape(), x = -w / 2, y = -h / 2; s.moveTo(x + r, y); s.lineTo(x + w - r, y); s.absarc(x + w - r, y + r, r, -Math.PI / 2, 0); s.lineTo(x + w, y + h - r); s.absarc(x + w - r, y + h - r, r, 0, Math.PI / 2); s.lineTo(x + r, y + h); s.absarc(x + r, y + h - r, r, Math.PI / 2, Math.PI); s.lineTo(x, y + r); s.absarc(x + r, y + r, r, Math.PI, Math.PI * 1.5); return s; }
+const bs = 0.14, bt = 0.14;
+const corpoGeo = new THREE.ExtrudeGeometry(retRedondo(PW - 2 * bs, PL - 2 * bs, 1.05), { depth: PT - 2 * bt, bevelEnabled: true, bevelThickness: bt, bevelSize: bs, bevelSegments: 5, curveSegments: 28 });
+corpoGeo.translate(0, 0, -(PT - 2 * bt) / 2);
+const phone = new THREE.Group();
+const corpo = new THREE.Mesh(corpoGeo, new THREE.MeshStandardMaterial({ color: 0x4a4c55, metalness: 1, roughness: 0.27 })); corpo.castShadow = true; corpo.receiveShadow = true; phone.add(corpo);
+const planoRedondo = (w, h, r, seg = 24) => new THREE.ShapeGeometry(retRedondo(w, h, r), seg);
+// vidro frontal preto
+const vidro = new THREE.Mesh(planoRedondo(PW - 0.2, PL - 0.2, 0.95), new THREE.MeshStandardMaterial({ color: 0x050506, roughness: 0.12, metalness: 0.2 })); vidro.position.z = PT / 2 + 0.001; phone.add(vidro);
+// vidro traseiro azul-petróleo
+const tras = new THREE.Mesh(planoRedondo(PW - 0.2, PL - 0.2, 0.95), new THREE.MeshStandardMaterial({ color: 0x1a2c44, roughness: 0.22, metalness: 0.55 })); tras.rotation.y = Math.PI; tras.position.z = -PT / 2 - 0.001; phone.add(tras);
+// ilha das câmeras (visto de trás: canto superior esquerdo = +x local)
+const ilha = new THREE.Group(); ilha.rotation.y = Math.PI; ilha.position.set(-(PW / 2 - 2.2), PL / 2 - 2.4, -PT / 2 - 0.002);
+const placaIlha = new THREE.Mesh(new THREE.ExtrudeGeometry(retRedondo(3.1, 3.1, 0.7), { depth: 0.08, bevelEnabled: true, bevelThickness: 0.04, bevelSize: 0.04, bevelSegments: 3, curveSegments: 16 }), new THREE.MeshStandardMaterial({ color: 0x0c1118, roughness: 0.3, metalness: 0.7 })); placaIlha.castShadow = true; ilha.add(placaIlha);
+const lente = (x, y) => { const g = new THREE.Group(); g.position.set(x, y, 0.1);
+  const aro = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.075, 16, 40), new THREE.MeshStandardMaterial({ color: 0xb9bcc4, metalness: 1, roughness: 0.2 })); aro.position.z = 0.05; g.add(aro);
+  const cil = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.46, 0.1, 40), new THREE.MeshStandardMaterial({ color: 0x03060c, roughness: 0.05, metalness: 0.6 })); cil.rotation.x = Math.PI / 2; cil.position.z = 0.03; g.add(cil);
+  const iris = new THREE.Mesh(new THREE.CircleGeometry(0.27, 32), new THREE.MeshStandardMaterial({ color: 0x1b3a8c, emissive: 0x0b1840, roughness: 0.05, metalness: 0.2 })); iris.position.z = 0.09; g.add(iris);
+  const brilho = new THREE.Mesh(new THREE.CircleGeometry(0.07, 16), new THREE.MeshBasicMaterial({ color: 0xffffff })); brilho.position.set(-0.12, 0.12, 0.095); g.add(brilho); return g; };
+ilha.add(lente(-0.7, 0.72), lente(-0.7, -0.72), lente(0.72, 0));
+const flash = new THREE.Mesh(new THREE.CircleGeometry(0.16, 20), new THREE.MeshBasicMaterial({ color: 0xffe9b0 })); flash.position.set(0.8, 1.05, 0.092); ilha.add(flash);
+phone.add(ilha);
+// botões laterais
+const botao = (y, h) => { const m = new THREE.Mesh(new THREE.BoxGeometry(0.14, h, 0.3), new THREE.MeshStandardMaterial({ color: 0x8a8d96, metalness: 1, roughness: 0.3 })); m.position.set(PW / 2 + 0.03, y, 0); phone.add(m); };
+botao(3.0, 1.5); botao(-0.5, 1.0); botao(0.9, 1.0);
+// tela: alphaMap com cantos arredondados
+const aCan = document.createElement("canvas"); aCan.width = 780; aCan.height = Math.round(780 * SH / SW); { const c = aCan.getContext("2d"); c.fillStyle = "#000"; c.fillRect(0, 0, aCan.width, aCan.height); c.fillStyle = "#fff"; const r = 0.62 / SW * aCan.width; c.beginPath(); c.roundRect(0, 0, aCan.width, aCan.height, r); c.fill(); }
+const alfa = new THREE.CanvasTexture(aCan);
+const telaZ = PT / 2 + 0.004;
+const mkTela = (tex, dz, ordem) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(SW, SH), new THREE.MeshBasicMaterial({ map: tex, alphaMap: alfa, transparent: true, opacity: 1, depthWrite: false })); m.position.z = telaZ + dz; m.renderOrder = ordem; phone.add(m); return m; };
+const tMenu = mkTela(TEX.menu_alim, 0, 1);
+// sombra projetada na tela (plano que só recebe sombra)
+const sombraTela = new THREE.Mesh(new THREE.PlaneGeometry(SW, SH), new THREE.ShadowMaterial({ opacity: 0.26, transparent: true, depthWrite: false })); sombraTela.position.z = telaZ + 0.008; sombraTela.receiveShadow = true; sombraTela.renderOrder = 4; phone.add(sombraTela);
+// reflexo do vidro: faixa diagonal suave
+const rCan = document.createElement("canvas"); rCan.width = 256; rCan.height = 512; { const c = rCan.getContext("2d"); const g = c.createLinearGradient(0, 0, 256, 512); g.addColorStop(0, "rgba(255,255,255,0)"); g.addColorStop(0.36, "rgba(255,255,255,0)"); g.addColorStop(0.46, "rgba(255,244,225,.55)"); g.addColorStop(0.53, "rgba(255,244,225,.10)"); g.addColorStop(0.60, "rgba(255,255,255,.28)"); g.addColorStop(0.7, "rgba(255,255,255,0)"); g.addColorStop(1, "rgba(255,255,255,0)"); c.fillStyle = g; c.fillRect(0, 0, 256, 512); }
+const rTex = new THREE.CanvasTexture(rCan); rTex.wrapS = rTex.wrapT = THREE.RepeatWrapping; rTex.colorSpace = THREE.SRGBColorSpace;
+const reflexo = new THREE.Mesh(planoRedondo(SW, SH, 0.62), new THREE.MeshBasicMaterial({ map: rTex, transparent: true, opacity: 0.20, blending: THREE.AdditiveBlending, depthWrite: false })); reflexo.position.z = telaZ + 0.012; reflexo.renderOrder = 5;
+{ const g = reflexo.geometry; const p = g.attributes.position, uv = new Float32Array(p.count * 2); for (let i = 0; i < p.count; i++) { uv[2 * i] = p.getX(i) / SW + 0.5; uv[2 * i + 1] = p.getY(i) / SH + 0.5; } g.setAttribute("uv", new THREE.BufferAttribute(uv, 2)); }
+phone.add(reflexo);
+// furo da câmera frontal
+const furo = new THREE.Mesh(new THREE.CircleGeometry(0.17, 24), new THREE.MeshBasicMaterial({ color: 0x000000 })); furo.position.set(0, SH / 2 - 0.42, telaZ + 0.016); furo.renderOrder = 6; phone.add(furo);
+
+const laid = new THREE.Group(); laid.rotation.x = -Math.PI / 2; laid.add(phone);
+const flip = new THREE.Group(); flip.add(laid);
+const root = new THREE.Group(); root.add(flip); scene.add(root);
+const Y0 = PT / 2; // centro do celular deitado
+// mapeia (x,y) CSS da tela -> mundo (x, z) com o celular deitado e a tela para cima
+const cx = (x) => (x - 195) * U, cz = (y) => (y - 422) * U;
+const TOPO_TELA = Y0 + telaZ - PT / 2 + 0.004; // y do vidro da tela (mundo)
+
+// ---------- placas do Menu ----------
+const PL_ESP = 0.07;
+// posições REAIS das placas no Menu com Alimentação aberta (captura: mapa.json → menu_alim.heads[].pai); a placa aberta (Alimentação) é a que avança e pousa (índice 0)
+const MP = await (await fetch("tex/mapa.json")).json(); const HP = MP.menu_alim.heads;
+const def1 = (tex, h) => ({ tex, x: h.pai.x, y: h.pai.y, w: h.pai.w, h: h.pai.h });
+const defP = [def1("placa_alimentacao_aberta", HP[2]), def1("placa_reproducao", HP[0]), def1("placa_sanidade", HP[1]), def1("placa_producao", HP[3]), def1("placa_gestao", HP[4]), def1("placa_financeiro", HP[5])];
+const placas = defP.map((d, i) => {
+  const geo = new THREE.BoxGeometry(d.w * U, PL_ESP, d.h * U);
+  const topo = comDof(new THREE.MeshStandardMaterial({ map: TEX[d.tex], roughness: 0.55, metalness: 0, transparent: true, emissive: 0xffffff, emissiveMap: TEX[d.tex], emissiveIntensity: 0.22 }));
+  const lado = new THREE.MeshStandardMaterial({ color: 0xeeeae0, roughness: 0.7, transparent: true });
+  const m = new THREE.Mesh(geo, [lado, lado, topo, lado, lado, lado]); m.castShadow = true; m.receiveShadow = true; m.renderOrder = 10; scene.add(m);
+  // fio guia (linha tracejada dourada do ponto de origem até a placa)
+  const gl = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 1, 0)]);
+  const lm = new THREE.LineDashedMaterial({ color: 0xE0A63C, dashSize: 0.28, gapSize: 0.2, transparent: true, opacity: 0.7 });
+  const ln = new THREE.Line(gl, lm); ln.renderOrder = 11; scene.add(ln);
+  return { d, m, topo, lado, ln, lm, x0: cx(d.x + d.w / 2), z0: cz(d.y + d.h / 2) };
+});
+// estado final/explodido de cada placa
+const exp = placas.map((p, i) => ({ x: (i % 2 ? 0.55 : -0.55) * (i === 0 ? 0.4 : 1), y: 1.0 + (5 - i) * 1.4, z: p.z0 * 1.12 - 0.2, ry: (i % 2 ? -0.07 : 0.07) }));
+const rep = placas[0];
+
+function atualizaPlacas(t) {
+  placas.forEach((p, i) => {
+    const E = exp[i], ini = 1.02 + 0.075 * i;
+    const e1 = eb(ini, ini + 1.15, t);
+    let x = lerp(p.x0, E.x, e1), y = lerp(TOPO_TELA + PL_ESP / 2 + 0.02, E.y, e1), z = lerp(p.z0, E.z, e1), ry = E.ry * e1, sc = 1, op = clamp01((t - (ini - 0.02)) / 0.12), bias = 0;
+    if (i === 0) { // Alimentação (a seção aberta) avança e pousa
+      const a = sm(2.35, 3.25, t), b = ei(3.45, 4.2, t);
+      const Fx = 0, Fy = 9.4, Fz = E.z + 1.6;
+      x = x + (Fx - x) * a; y = y + (Fy - y) * a; z = z + (Fz - z) * a; sc = 1 + 0.1 * a; ry = ry * (1 - a);
+      const Ly = TOPO_TELA + PL_ESP / 2 + 0.02;
+      x = x + (p.x0 - x) * b; y = y + (Ly - y) * b; z = z + (p.z0 - z) * b; sc = lerp(sc, 1, b); ry = ry * (1 - b);
+      if (t > 4.2) { y += 0.18 * Math.exp(-(t - 4.2) * 9) * Math.sin((t - 4.2) * 26); }
+      op = op * (1 - sm(4.28, 4.62, t));
+    } else {
+      const a = sm(2.35, 3.2, t), b = sm(3.25, 4.05, t);
+      const By = 0.9 + (5 - i) * 0.42, Bz = E.z * 0.93 - 0.8;
+      x = x + (E.x * 0.5 - x) * a; y = y + (By - y) * a; z = z + (Bz - z) * a; sc = 1 - 0.07 * a; bias = (window.DBG&&window.DBG.b!=null?window.DBG.b:3.6) * a; ry = ry * (1 - a * 0.6);
+      op = op * (1 - 0.5 * a);
+      const Ly = TOPO_TELA + PL_ESP / 2 + 0.02;
+      x = x + (p.x0 - x) * b; y = y + (Ly - y) * b; z = z + (p.z0 - z) * b; sc = lerp(sc, 1, b); ry = ry * (1 - b); bias *= (1 - b);
+      op = op * (1 - sm(3.55, 4.1, t));
+    }
+    p.m.position.set(x, y, z); p.m.rotation.y = ry; p.m.scale.set(sc, 1, sc);
+    p.m.visible = op > 0.01; p.topo.opacity = op; p.lado.opacity = op; p.topo.userData.uni.uBias.value = bias;
+    // fio guia vertical (do lugar de origem na tela até a placa), some quando a placa volta
+    const fio = op > 0.05 ? Math.min(op, sm(ini, ini + 0.6, t) * (1 - sm(3.2, 3.7, t))) : 0;
+    p.ln.visible = fio > 0.02; p.lm.opacity = 0.7 * fio;
+    const g = p.ln.geometry.attributes.position; g.setXYZ(0, p.x0, TOPO_TELA + 0.04, p.z0); g.setXYZ(1, x, y - PL_ESP / 2, z); g.needsUpdate = true; p.ln.computeLineDistances();
+  });
+}
+
+// ---------- fitas (etiquetas 3D com leve dobra) presas à câmera ----------
+function fitaTex(txt, w, h, cor = "#EBDDB4", tinta = "#1A2638") {
+  const c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d");
+  const z = 22; g.beginPath(); g.moveTo(0, 0); for (let i = 0; i <= 12; i++) g.lineTo((i % 2 ? 1 : 0) * 0 + (i % 2 ? z * 0.55 : 0) * 1, (i / 12) * h); g.lineTo(0, h);
+  g.moveTo(w, 0); g.closePath();
+  g.save(); g.beginPath(); g.moveTo(10, 0); for (let i = 0; i <= 10; i++) g.lineTo(i % 2 ? 2 : 14, (i / 10) * h); g.lineTo(w - 10, h); for (let i = 10; i >= 0; i--) g.lineTo(i % 2 ? w - 14 : w - 2, (i / 10) * h); g.closePath(); g.clip();
+  g.fillStyle = cor; g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 1400; i++) { g.fillStyle = `rgba(${120 + (i * 7) % 60},${95 + (i * 13) % 40},60,${0.03 + ((i * 17) % 9) / 160})`; g.fillRect((i * 97) % w, (i * 57) % h, 1 + (i % 7) * 7, 1); }
+  g.fillStyle = "rgba(255,255,255,.18)"; g.fillRect(0, 0, w, 10); g.fillStyle = "rgba(0,0,0,.07)"; g.fillRect(0, h - 10, w, 10);
+  g.fillStyle = tinta; g.font = `800 ${h * 0.58}px Archivo`; g.textAlign = "center"; g.textBaseline = "middle"; const sc = Math.min(1, (w - 120) / g.measureText(txt).width);
+  g.save(); g.translate(w / 2, h / 2 + h * 0.03); g.scale(sc, 1); g.fillText(txt, 0, 0); g.restore(); g.restore();
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = aniso; return t;
+}
+function fita(txt, larg, alt, px) {
+  const tex = fitaTex(txt, 1600, Math.round(1600 * alt / larg));
+  const geo = new THREE.PlaneGeometry(larg, alt, 60, 4); geo.userData.base = geo.attributes.position.array.slice();
+  const mat = new THREE.MeshStandardMaterial({ map: tex, transparent: true, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.9, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.45 });
+  const m = new THREE.Mesh(geo, mat); const g = new THREE.Group(); g.add(m); cam.add(g); return { g, m, geo, larg, alt, mat };
+}
+function dobra(f, t, fase, ond = 1, curl = 1) {
+  const a = f.geo.attributes.position, b = f.geo.userData.base;
+  for (let i = 0; i < a.count; i++) { const x = b[3 * i], y = b[3 * i + 1], u = x / f.larg;
+    const z = 0.16 * ond * Math.sin(u * 7 + fase + t * 1.2) + curl * 0.9 * Math.pow(clamp01((u - 0.28) / 0.22), 2) * 0.45 - 0.12 * ond * Math.abs(Math.sin(u * 3.2 + fase));
+    a.setXYZ(i, x, y + 0.05 * Math.sin(u * 5 + fase), z); }
+  a.needsUpdate = true; f.geo.computeVertexNormals();
+}
+const DIST_F = 34, PXU = H / (2 * DIST_F * Math.tan(THREE.MathUtils.degToRad(13)));
+const fMenu = fita("T3 · MENU", 7.4, 1.5);
+const fEp = fita("EP. 5", 4.3, 1.3);
+const fAg = fita("ALIMENTAÇÃO", 6.6, 1.2);
+// Posição na tela (px) -> posição local de câmera
+const naTela = (px, py) => [(px - W / 2) / PXU, (H / 2 - py) / PXU, -DIST_F];
+const DESLOC_Y = 100; // a cena inteira é deslocada para baixo (libera a zona do título)
+function atualizaFitas(t) {
+  // T3 · MENU: entra em 0,30 s (cola na mesa), sai em 2,95
+  const e1 = eb(0.3, 0.9, t), s1 = ei(4.95, 5.45, t);
+  let [x, y, z] = naTela(W / 2, 205); fMenu.g.position.set(x + (1 - e1) * -9 + s1 * 9, y + 0.0, z); fMenu.g.rotation.z = 0.045 * (1 - 0.4 * e1) - 0.02 + s1 * 0.25; fMenu.g.rotation.x = -0.18 * (1 - e1) + 0.08 * Math.sin(t * 0.9); fMenu.g.rotation.y = 0.14 * Math.sin(t * 0.7) * e1;
+  fMenu.g.visible = t > 0.28 && t < 5.5; dobra(fMenu, t, 0.3, 1, 1 - e1 * 0.5 + s1);
+  // EP. 5: "episódio cinco" 1,45
+  const e2 = eb(1.45, 1.95, t);
+  [x, y, z] = naTela(W / 2 - 185, 385); const s2 = ei(4.95, 5.45, t); fEp.g.position.set(x + (1 - e2) * 10 - s2 * 10, y + s2 * 2, z); fEp.g.rotation.z = -0.04; fEp.g.rotation.y = 0.12 * Math.sin(t * 0.8 + 1) * e2; fEp.g.rotation.x = 0.05 * Math.sin(t * 0.9); fEp.g.visible = t > 1.44 && t < 5.5; dobra(fEp, t, 1.7, 1, 0.5 * (1 - e2));
+  // ALIMENTAÇÃO: "alimentação" 2,55 (voz 2,6)
+  const e3 = eb(2.55, 3.07, t);
+  [x, y, z] = naTela(W / 2, 535); const s3 = ei(4.95, 5.45, t); fAg.g.position.set(x - (1 - e3) * 10 + s3 * 10, y + s3 * 2, z); fAg.g.rotation.z = 0.025; fAg.g.rotation.y = -0.10 * Math.sin(t * 0.75 + 2) * e3; fAg.g.rotation.x = 0.05 * Math.sin(t * 0.85 + 1); fAg.g.visible = t > 2.54 && t < 5.5; dobra(fAg, t, 2.6, 1, 0.5 * (1 - e3));
+}
+
+// ---------- câmera ----------
+const KF = [ // t, az(°), el(°), dist, alvo(x,y,z)
+  [0.0, -30, 46, 66, 0, 0.4, -0.5], [1.0, -20, 52, 62, 0, 0.8, -1], [2.4, 4, 58, 58, 0, 3.8, 0.2], [3.6, 12, 62, 52, 0, 3.0, 0.4],
+  [4.8, 8, 60, 46, 0, 1.4, 0.6], [6.6, -4, 52, 40, 0, 2.2, 0.9], [9.2, -11, 45, 36, 0, 2.6, 1.0], [10.0, -12, 44, 35.5, 0, 2.6, 1.0],
+];
+function camKF(t) {
+  let i = 0; while (i < KF.length - 2 && t >= KF[i + 1][0]) i++;
+  const a = KF[i], b = KF[i + 1]; let u = clamp01((t - a[0]) / (b[0] - a[0])); u = u * u * (3 - 2 * u);
+  // suaviza com vizinhos (Catmull-Rom leve): mistura da velocidade nas pontas
+  return a.map((v, k) => (k === 0 ? t : lerp(v, b[k], u)));
+}
+const T_JOIN = 5.6, T_BLEND = 4.8;
+const poseFrontal = (z, cxs, cys) => { // idêntica à de episodio.html em t = T_JOIN (zoom 1, centro 195,430)
+  const D0 = 38.5, d = D0 / z, alvo = phone.localToWorld(new THREE.Vector3((cxs - 195) * U, (422 - cys) * U, telaZ + 0.01));
+  const A = THREE.MathUtils.degToRad(2.5), E = THREE.MathUtils.degToRad(87);
+  return { pos: new THREE.Vector3(alvo.x + d * Math.sin(A) * Math.cos(E), alvo.y + d * Math.sin(E), alvo.z + d * Math.cos(A) * Math.cos(E)), tgt: alvo, up: new THREE.Vector3(0, 0, -1), shift: 40, d };
+};
+const poseOrb = (az, el, d, tx, ty, tz) => { const A = THREE.MathUtils.degToRad(az), E = THREE.MathUtils.degToRad(el); return { pos: new THREE.Vector3(tx + d * Math.sin(A) * Math.cos(E), ty + d * Math.sin(E), tz + d * Math.cos(A) * Math.cos(E)), tgt: new THREE.Vector3(tx, ty, tz), up: new THREE.Vector3(0, 1, 0), shift: 100, d }; };
+function atualizaCam(t) {
+  const [, az, el, d, tx, ty, tz] = camKF(Math.min(t, T_BLEND));
+  let P = poseOrb(az, el, d, tx, ty, tz); const k = sm(T_BLEND, T_JOIN, t);
+  if (k > 0) { scene.updateMatrixWorld(true); const F = poseFrontal(1, 195, 430); P = { pos: P.pos.clone().lerp(F.pos, k), tgt: P.tgt.clone().lerp(F.tgt, k), up: P.up.clone().lerp(F.up, k).normalize(), shift: lerp(P.shift, F.shift, k), d: lerp(P.d, F.d, k) }; }
+  cam.up.copy(P.up); cam.position.copy(P.pos); cam.lookAt(P.tgt); cam.setViewOffset(W, H, 0, -P.shift, W, H); foco.dist = P.d; cam.updateMatrixWorld();
+  key.target.position.set(0, 0, 0);
+  return { az: lerp(az, 0, k), el, d, k };
+}
+
+// ---------- legenda (HTML, zona segura) ----------
+const leg = document.getElementById("leg"), legSp = leg.firstElementChild;
+const LEG = [
+  [0.4, 2.35, "Temporada 3, <b>episódio 5</b>"],
+  [2.62, 5.1, "<b>Alimentação</b>:<br>plano por lote e consultar dietas"],
+];
+let legAtual = -1;
+function atualizaLeg(t) {
+  let k = -1; for (let i = 0; i < LEG.length; i++) if (t >= LEG[i][0] - 0.05 && t < LEG[i][1] + 0.3) k = i;
+  if (k !== legAtual) { legAtual = k; if (k >= 0) legSp.innerHTML = LEG[k][2]; }
+  let o = 0; if (k >= 0) { const [a, b] = LEG[k]; o = Math.min(clamp01((t - (a - 0.05)) / 0.25), 1 - clamp01((t - b) / 0.3)); }
+  leg.style.opacity = o; leg.style.transform = `translateY(${(1 - o) * 14}px)`;
+}
+
+// ---------- seek ----------
+window.seek = (t) => {
+  // celular: vira e pousa
+  const f = clamp01((t - 0.1) / 0.9), ef = f * f * (3 - 2 * f);
+  flip.rotation.z = Math.PI * (1 - ef); root.rotation.y = 0.5 * (1 - ef) + (t > 1.2 ? 0 : 0);
+  root.position.set(0, Y0 + 3.2 * Math.sin(Math.PI * f) * (f > 0 && f < 1 ? 1 : 0), 0);
+  // telas
+  tMenu.material.opacity = 1;
+  atualizaPlacas(t);
+  const c = atualizaCam(t); atualizaFitas(t); atualizaLeg(t);
+  rTex.offset.set(lerp(-c.az / 90, -0.02, c.k), lerp(c.az / 160, 0.01, c.k)); reflexo.material.opacity = lerp(0.16 + 0.1 * Math.abs(Math.sin(THREE.MathUtils.degToRad(c.az * 1.5))), 0.025, c.k);
+  key.shadow.needsUpdate = true;
+  renderer.render(scene, cam);
+};
+window.sig = (t) => "u" + t;
+window.seek(0); window.__ready = Promise.resolve(true);
+</script></body></html>
