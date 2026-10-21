@@ -29,7 +29,7 @@ from sqlalchemy import create_engine, inspect, text
 
 BACKEND = Path(__file__).resolve().parent.parent
 REV = "s0a1r2q3v4o5"
-ANTERIOR = "m4n5o6p7q8r9"
+ANTERIOR = "n5o6p7q8r9s0"
 _ARQUIVO = BACKEND / "alembic" / "versions" / "s0a1r2q3v4o5_arquivar_sanitario_preventivo.py"
 
 
