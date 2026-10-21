@@ -22,7 +22,6 @@ import { TabBar, TelaSkeleton } from "@/components/ui";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import type { ColunaExport } from "@/lib/export";
 import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/WizardProtocolo";
-import EmConstrucao from "@/components/sanitario/EmConstrucao";
 
 const FormProtocoloCustomizado = dynamic(() => import("@/components/lancamentos/FormProtocoloCustomizado").then((m) => m.FormProtocoloCustomizado), { ssr: false });
 // Os mesmos formulários já usados em Lançamentos — reaproveitados aqui, na
@@ -36,6 +35,9 @@ const FormProtocoloSanitario = dynamic(() => import("@/components/lancamentos/Fo
 const CadastroProtocolosSanitarios = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosSanitarios), { ssr: false });
 const CadastroProtocolosInducao = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosInducao), { ssr: false });
 const CadastroProtocolosCustomizados = dynamic(() => import("@/components/CadastroProtocolosCustomizados"), { ssr: false });
+// Vacinas e exames (Sanitário Preventivo v2): cadastro das caixas e os dias marcados.
+const ListaCaixas = dynamic(() => import("@/components/sanitario/cadastro/ListaCaixas").then((m) => m.ListaCaixas), { ssr: false });
+const ListaDias = dynamic(() => import("@/components/sanitario/dias/ListaDias").then((m) => m.ListaDias), { ssr: false });
 const CadastroLida = dynamic(() => import("@/components/CadastroLida"), { ssr: false });
 const FormLida = dynamic(() => import("@/components/lancamentos/FormLida").then((m) => m.FormLida), { ssr: false });
 
@@ -1065,9 +1067,28 @@ const ABAS_PROTOCOLOS: AbaProtocolos[] = ["cadastro", "aplicar", "acompanhamento
 
 type SubVacinas = "cadastro" | "marcados";
 
+// Atalhos de fora para Vacinas e exames (querystring):
+//   ?aba=vacinas&sub=marcados&marcar=<caixa>-<animal>,...  → abre "Marcar" com os animais
+//     já escolhidos (vem de Sanidade › Preventiva › Animais na janela);
+//   ?aba=vacinas&sub=marcados&caixas=1,2 → abre "Marcar" com essas vacinas;
+//   ?aba=vacinas&sub=marcados&dia=7      → abre o dia 7;
+//   ?aba=vacinas&sub=cadastro&caixa=3&passo=7 → abre o cadastro 3 na etapa 7 (Carência).
+type AtalhoVacinas = {
+  pares?: { caixa_id: number; animal_id: number }[]; caixas?: number[]; dia?: number | null;
+  caixa?: number | null; passo?: number | null;
+};
+function lerAtalhoVacinas(q: URLSearchParams): AtalhoVacinas {
+  const ints = (v: string | null) => (v || "").split(",").map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0);
+  const pares = (q.get("marcar") || "").split(",").map((x) => x.split("-").map(Number))
+    .filter(([c, a]) => Number.isInteger(c) && Number.isInteger(a) && c > 0 && a > 0).map(([c, a]) => ({ caixa_id: c, animal_id: a }));
+  const n = (v: string | null) => (v && Number.isInteger(Number(v)) ? Number(v) : null);
+  return { pares, caixas: ints(q.get("caixas")), dia: n(q.get("dia")), caixa: n(q.get("caixa")), passo: n(q.get("passo")) };
+}
+
 export default function ProtocolosPage() {
   const [aba, setAba] = useState<AbaProtocolos>("acompanhamento");
   const [subVacinas, setSubVacinas] = useState<SubVacinas>("cadastro");
+  const [atalhoVacinas, setAtalhoVacinas] = useState<AtalhoVacinas>({});
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
   useEffect(() => {
@@ -1077,9 +1098,16 @@ export default function ProtocolosPage() {
   // Atalho vindo de fora (?aba=...) — só escolhe a aba certa, mesmo padrão
   // do "ir=" de Lançamentos.
   useEffect(() => {
-    const abaQs = new URLSearchParams(window.location.search).get("aba");
+    const q = new URLSearchParams(window.location.search);
+    const abaQs = q.get("aba");
     const abaId = abaQs ? (ABAS_LEGADO[abaQs] ?? abaQs) : null;
     if (abaId && (ABAS_PROTOCOLOS as string[]).includes(abaId)) setAba(abaId as AbaProtocolos);
+    if (abaId === "vacinas") {
+      const sub = q.get("sub");
+      const at = lerAtalhoVacinas(q);
+      if (sub === "marcados" || at.pares?.length || at.caixas?.length || at.dia) setSubVacinas("marcados");
+      setAtalhoVacinas(at);
+    }
   }, []);
 
   return (
@@ -1117,8 +1145,9 @@ export default function ProtocolosPage() {
             onChange={setSubVacinas}
           />
           {subVacinas === "cadastro"
-            ? <EmConstrucao titulo="Vacinas e exames › Cadastro" descricao="Cadastro das vacinas e exames da fazenda a partir do catálogo sanitário." />
-            : <EmConstrucao titulo="Vacinas e exames marcados" descricao="Marcar o dia, escolher os animais, executar e fechar." />}
+            ? <ListaCaixas key={`c${atalhoVacinas.caixa ?? ""}`} abrirCaixaId={atalhoVacinas.caixa} abrirPasso={atalhoVacinas.passo != null ? atalhoVacinas.passo - 1 : null} />
+            : <ListaDias key={`d${atalhoVacinas.dia ?? ""}${atalhoVacinas.pares?.length ?? ""}`} paresIniciais={atalhoVacinas.pares}
+                caixasIniciais={atalhoVacinas.caixas} diaInicial={atalhoVacinas.dia} />}
         </>
       )}
     </div>

@@ -14,7 +14,7 @@ import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import type { AnimalRow } from "@/components/AnimalModal";
-import EmConstrucao from "@/components/sanitario/EmConstrucao";
+import dynamic from "next/dynamic";
 import CatalogoFarmaciaConsulta from "@/components/sanidade/CatalogoFarmaciaConsulta";
 import RemediosPorDoenca from "@/components/RemediosPorDoenca";
 import { casaBusca } from "@/lib/busca";
@@ -1210,10 +1210,14 @@ const ABAS_CURATIVA = [
   { id: "taxa_cura", label: "Taxa de cura", icon: Percent, title: "Taxa de cura dos tratamentos (aplicações e protocolos)" },
 ] as const satisfies readonly { id: AbaCurativa; label: string; icon: any; title: string }[];
 
-// Sanidade › Preventiva — ponto de encaixe do Sanitário Preventivo v2 (vacinas
-// e exames). As cinco abas são só leitura; agendar e executar fica na Central
-// de Protocolos › Vacinas e exames. Enquanto o módulo novo não chega, cada aba
-// mostra o marcador EmConstrucao (sem chamada de API).
+// Sanidade › Preventiva — Sanitário Preventivo v2 (vacinas e exames). As cinco
+// abas são só consulta; agendar e executar fica na Central de Protocolos ›
+// Vacinas e exames. Atalho: /sanidade?aba=preventiva&sub=janela&caixa=3.
+const PainelPreventivo = dynamic(() => import("@/components/sanitario/consulta/PainelPreventivo").then((m) => m.PainelPreventivo), { ssr: false });
+const AnimaisNaJanela = dynamic(() => import("@/components/sanitario/consulta/AnimaisNaJanela").then((m) => m.AnimaisNaJanela), { ssr: false });
+const CalendarioPreventivo = dynamic(() => import("@/components/sanitario/consulta/CalendarioPreventivo").then((m) => m.CalendarioPreventivo), { ssr: false });
+const AplicacoesPreventivas = dynamic(() => import("@/components/sanitario/consulta/AplicacoesPreventivas").then((m) => m.AplicacoesPreventivas), { ssr: false });
+const HistoricoPreventivo = dynamic(() => import("@/components/sanitario/consulta/HistoricoPreventivo").then((m) => m.HistoricoPreventivo), { ssr: false });
 type AbaPreventiva = "painel" | "janela" | "calendario" | "aplicacoes" | "historico";
 const ABAS_PREVENTIVA = [
   { id: "painel", label: "Painel", icon: LayoutDashboard, title: "Resumo dos próximos 30 dias: cobertura, atrasadas, carência e prazos legais" },
@@ -1227,6 +1231,22 @@ export default function SanidadePage() {
   const [aba, setAba] = useState<AbaSanidade>("curativa");
   const [abaCur, setAbaCur] = useState<AbaCurativa>("curativo");
   const [abaPrev, setAbaPrev] = useState<AbaPreventiva>("painel");
+  const [caixaJanela, setCaixaJanela] = useState<number | null>(null);
+  // Atalho de fora (?aba=preventiva&sub=painel|janela|calendario|aplicacoes|historico&caixa=ID) —
+  // o card "Vacinas previstas" da Agenda e a Central apontam para cá.
+  useEffect(() => {
+    // fora do corpo síncrono do efeito: só aplica a escolha vinda do link
+    const t = setTimeout(() => {
+      const q = new URLSearchParams(window.location.search);
+      const a = q.get("aba");
+      if (a && ABAS_SANIDADE.some((x) => x.id === a)) setAba(a as AbaSanidade);
+      const sub = q.get("sub");
+      if (a === "preventiva" && sub && ABAS_PREVENTIVA.some((x) => x.id === sub)) setAbaPrev(sub as AbaPreventiva);
+      const cx = Number(q.get("caixa"));
+      if (Number.isInteger(cx) && cx > 0) setCaixaJanela(cx);
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
 
   const subNavTree: SubNavNode[] = useMemo(() => ABAS_SANIDADE.map((a) => ({
     id: a.id, label: a.label, icon: a.icon,
@@ -1263,10 +1283,18 @@ export default function SanidadePage() {
           {abaCur === "taxa_cura" && <TaxaCuraView />}
         </>
       )}
-      {aba === "preventiva" && (() => {
-        const atual = ABAS_PREVENTIVA.find((p) => p.id === abaPrev) ?? ABAS_PREVENTIVA[0];
-        return <EmConstrucao titulo={`Preventiva › ${atual.label}`} descricao={atual.title} />;
-      })()}
+      {aba === "preventiva" && (
+        <>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", marginBottom: "0.8rem" }}>
+            Só consulta. Para marcar ou aplicar uma vacina ou exame, use a Central de Protocolos › Vacinas e exames.
+          </p>
+          {abaPrev === "painel" && <PainelPreventivo />}
+          {abaPrev === "janela" && <AnimaisNaJanela key={caixaJanela ?? 0} caixaInicial={caixaJanela} />}
+          {abaPrev === "calendario" && <CalendarioPreventivo />}
+          {abaPrev === "aplicacoes" && <AplicacoesPreventivas />}
+          {abaPrev === "historico" && <HistoricoPreventivo />}
+        </>
+      )}
       {aba === "rastreabilidade" && <RastreabilidadeSanitariaView />}
       {aba === "catalogo" && <CatalogoFarmaciaConsulta />}
     </div>

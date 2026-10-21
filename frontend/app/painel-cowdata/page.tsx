@@ -4,13 +4,13 @@ import Link from "next/link";
 import { CreditCard, Building2, Clock, TrendingUp, LifeBuoy, ShieldCheck, CheckCircle2, ExternalLink, AlertTriangle, PieChart } from "lucide-react";
 import {
   fetchResumoCowData, fetchPedidosRecentesCofre, fetchFazendas, fetchContratoFazenda, aprovarContratoFazenda, fetchFazendasCofre,
-  type ResumoCowData, type PedidoAcessoSuporte, type Fazenda, type FazendaCofre,
+  temAreaPainelCowData, type ResumoCowData, type PedidoAcessoSuporte, type Fazenda, type FazendaCofre,
 } from "@/lib/api";
 import { usePainelCowDataCor } from "@/lib/painelCowDataTema";
 import { registrarLeituraKpisCowData, calcularTendencia, type PontoHistoricoKpisCowData } from "@/lib/painelCowDataHistorico";
 import { Sparkline, SetaTendencia } from "@/components/painel-cowdata/KpiTendencia";
 import { ehAppDeCampo } from "@/lib/nativo";
-import EmConstrucao from "@/components/sanitario/EmConstrucao";
+import CatalogoSanitario from "@/components/painel-cowdata/CatalogoSanitario";
 import InicioMobilePainelCowData from "@/components/painel-cowdata/mobile/InicioMobilePainelCowData";
 
 // Ordem de exibição do rodapé "Base de fazendas por plano" — nomes batem com
@@ -268,10 +268,12 @@ export default function CockpitCowData() {
         </div>
       )}
 
-      {/* Cockpit › Catálogo sanitário — ponto de encaixe do Sanitário Preventivo v2. */}
-      <div style={{ marginBottom: "1.5rem" }}>
-        <EmConstrucao titulo="Catálogo sanitário" descricao="Catálogo central de vacinas e exames que as fazendas ativam." />
-      </div>
+      {/* Cockpit › Catálogo sanitário (Sanitário Preventivo v2) — mesma guarda da Farmácia central. */}
+      {temAreaPainelCowData("farmacia") && (
+        <div style={{ marginBottom: "1.5rem" }}>
+          <CatalogoSanitario />
+        </div>
+      )}
 
       {/* Rodapé — base de fazendas por plano. */}
       <div style={{ borderTop: `1px solid ${COR.borda}`, paddingTop: "1rem" }}>

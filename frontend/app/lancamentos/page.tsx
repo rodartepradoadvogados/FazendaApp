@@ -24,13 +24,14 @@ const BaixarAnimal = dynamic(() => import("@/components/BaixarAnimal"), { ssr: f
 const FormSecagem = dynamic(() => import("@/components/FormSecagem").then((m) => m.FormSecagem), { ssr: false });
 const FormQualidadeLeite = dynamic(() => import("@/components/FormQualidadeLeite").then((m) => m.FormQualidadeLeite), { ssr: false });
 const FormEntregaLeite = dynamic(() => import("@/components/FormEntregaLeite").then((m) => m.FormEntregaLeite), { ssr: false });
+// Lançamentos › Preventivo (Sanitário Preventivo v2): lançamento simples/retroativo e planilha.
+const LancamentoSimples = dynamic(() => import("@/components/sanitario/LancamentoSimples").then((m) => m.LancamentoSimples), { ssr: false });
 const FormInducaoLactacao = dynamic(() => import("@/components/FormInducaoLactacao").then((m) => m.FormInducaoLactacao), { ssr: false });
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { inaptidaoServico, useIdadeMinServico } from "@/components/lancamentos/_shared";
 import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
 import { PedidosEmAbertoCard } from "@/components/lancamentos/PedidosEmAbertoCard";
-import EmConstrucao from "@/components/sanitario/EmConstrucao";
 import { type PrefillPedido } from "@/components/FormFinanceiro";
 // Formulários por tipo de lançamento (reprodutivo/produção/sanidade/dieta/
 // estoque) — extraídos para components/lancamentos/*, mesmo motivo do bloco
@@ -598,7 +599,7 @@ export default function LancamentosPage() {
           {sel === "vender_animal" && <CompraVendaAnimalForm modo="venda" animais={animais} />}
           {sel === "baixar_animal" && <BaixarAnimal />}
           {sel === "exclusao" && <FormExclusao onV2={setExclusaoV2} />}
-          {sel === "sanidade_preventivo" && <EmConstrucao titulo="Lançamentos › Preventivo" descricao="Lançamento simples de vacina ou exame, com baixa de estoque e carência." />}
+          {sel === "sanidade_preventivo" && <LancamentoSimples />}
         </div>
       )}
 

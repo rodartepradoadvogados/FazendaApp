@@ -96,13 +96,14 @@ export type PassoWizard<F> = {
   id: string;
   titulo: string;
   render: (ctx: { form: F; setForm: (f: F) => void }) => React.ReactNode;
-  /** Retorna a mensagem de erro (bloqueia "Continuar") ou null/undefined se a etapa está OK. */
-  validar?: (form: F) => string | null | undefined;
+  /** Retorna a mensagem de erro (bloqueia "Continuar") ou null/undefined se a etapa está OK.
+   *  Pode ser assíncrona (ex.: Vacinas e exames validam a etapa no back). */
+  validar?: (form: F) => string | null | undefined | Promise<string | null | undefined>;
 };
 
 export function WizardProtocolo<F>({
   chaveRascunho, form, setForm, ehVazio, passos, onCancelar, onConcluir,
-  salvando, rotuloConcluir = "Concluir", erro, tituloTopo,
+  salvando, rotuloConcluir = "Concluir", erro, tituloTopo, ouroNoConcluir = false, passoInicial = 0,
 }: {
   /**
    * Chave única POR TIPO de protocolo (ex.: "wizard-protocolo:iatf") — nunca
@@ -127,8 +128,12 @@ export function WizardProtocolo<F>({
   erro?: string | null;
   /** Rótulo opcional acima do stepper (ex.: "Editando: <nome>"). */
   tituloTopo?: string;
+  /** Botão da última etapa em ouro (.btn-primary-gold: ação de confirmar). Padrão false. */
+  ouroNoConcluir?: boolean;
+  /** Etapa em que o wizard abre (ex.: direto na Carência a partir de uma nota da Agenda). Padrão 0. */
+  passoInicial?: number;
 }) {
-  const [passoAtual, setPassoAtual] = useState(0);
+  const [passoAtual, setPassoAtual] = useState(passoInicial);
   const [erroPasso, setErroPasso] = useState<string | null>(null);
   const restaurado = useRef(false);
 
@@ -178,9 +183,19 @@ export function WizardProtocolo<F>({
     setErroPasso(null);
   };
 
+  const [validando, setValidando] = useState(false);
+  // Etapa longa: o aviso de erro fica abaixo do conteúdo — rola até ele para não passar despercebido.
+  const erroRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (erroPasso || erro) erroRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [erroPasso, erro]);
   const continuar = async () => {
     const passo = passos[passoAtual];
-    const msg = passo.validar?.(form);
+    let msg: string | null | undefined = null;
+    if (passo.validar) {
+      setValidando(true);
+      try { msg = await passo.validar(form); } finally { setValidando(false); }
+    }
     if (msg) { setErroPasso(msg); return; }
     setErroPasso(null);
     if (passoAtual < passos.length - 1) { setPassoAtual((p) => p + 1); return; }
@@ -271,7 +286,7 @@ export function WizardProtocolo<F>({
           usuário já ter corrigido o campo, porque só é limpo no início do
           próximo `onConcluir()` (passo final de novo). `erroPasso` (validação
           da própria etapa) sempre pode aparecer, é sempre relevante na hora. */}
-      {(erroPasso || (erro && ultimo)) && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.8rem" }}>{erroPasso || erro}</p>}
+      {(erroPasso || (erro && ultimo)) && <p ref={erroRef} role="alert" style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.8rem", scrollMarginBottom: "5rem" }}>{erroPasso || erro}</p>}
 
       <div style={{
         position: "sticky", bottom: 0, zIndex: 3, background: "var(--surface-2)",
@@ -283,8 +298,8 @@ export function WizardProtocolo<F>({
           {passoAtual > 0 && (
             <button type="button" className="btn-ghost" style={{ fontSize: "0.8rem" }} onClick={voltar}>Voltar</button>
           )}
-          <button type="button" className="btn-primary" style={{ fontSize: "0.8rem" }} onClick={continuar} disabled={!!salvando}>
-            {salvando ? "Salvando…" : ultimo ? rotuloConcluir : "Continuar"}
+          <button type="button" className={ultimo && ouroNoConcluir ? "btn-primary-gold" : "btn-primary"} style={{ fontSize: "0.8rem" }} onClick={continuar} disabled={!!salvando || validando}>
+            {salvando ? "Salvando…" : validando ? "Conferindo…" : ultimo ? rotuloConcluir : "Continuar"}
           </button>
         </div>
       </div>

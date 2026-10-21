@@ -67,6 +67,10 @@ type Ficha = {
   gtas: string[];
   ocorrencias_clinicas: Record<string, unknown>[];
   exames_resultados: Record<string, unknown>[];
+  // Sanitário Preventivo v2: vacinas e exames (registro_dict do back —
+  // fazenda/rules/sanitario/consulta.py), mais recentes primeiro. Opcional
+  // enquanto o front novo roda contra um backend antigo.
+  registros_preventivos?: Record<string, unknown>[];
   linha_tempo_sanitaria: { data: string | null; tipo_evento: string; descricao: string | null; gta: string | null; responsavel: string | null }[];
   // Média do rebanho por faixa de DEL — a linha de referência que a curva de
   // lactação desenha por trás dos pontos deste animal.
@@ -228,9 +232,15 @@ const SECOES: { chave: keyof Ficha; titulo: string; colunas: ColunaExport[] }[] 
   { chave: "secagens", titulo: "Secagem", colunas: [
     { header: "Data", key: "data_secagemFmt" }, { header: "Motivo", key: "motivo" }, { header: "Escore corporal", key: "escore_condicao_corporal" },
   ] },
+  { chave: "registros_preventivos", titulo: "Sanidade — vacinas e exames (preventivo)", colunas: [
+    { header: "Data", key: "dataFmt" }, { header: "Vacina/exame", key: "vacinaFmt" }, { header: "Ciclo/dose", key: "cicloFmt" },
+    { header: "Produto · dose", key: "produtoFmt" }, { header: "Origem", key: "origemFmt" }, { header: "Quem", key: "quemFmt" },
+    { header: "Carência leite até", key: "carencia_leite_ateFmt" }, { header: "Situação", key: "situacaoFmt" },
+  ] },
+  // Exames do sanitário preventivo v2 (mesmo formato de `registros_preventivos`).
   { chave: "exames_resultados", titulo: "Rastreabilidade sanitária — Exames", colunas: [
-    { header: "Data", key: "data_exameFmt" }, { header: "Exame", key: "evento_sanitario_nome" }, { header: "Resultado", key: "resultado" },
-    { header: "Valor", key: "valor_numerico" }, { header: "Faixa", key: "banda" }, { header: "Veterinário", key: "veterinario" },
+    { header: "Data", key: "dataFmt" }, { header: "Exame", key: "caixa" }, { header: "Resultado", key: "resultadoFmt" },
+    { header: "Valor", key: "resultado_valor" }, { header: "Veterinário", key: "veterinario_texto" }, { header: "CRMV", key: "crmv_texto" },
   ] },
   { chave: "ocorrencias_clinicas", titulo: "Rastreabilidade sanitária — Doenças (ocorrências clínicas)", colunas: [
     { header: "Data", key: "data_ocorrenciaFmt" }, { header: "Doença", key: "doenca" }, { header: "Observação", key: "observacao" }, { header: "Origem", key: "origem" },
@@ -245,10 +255,11 @@ const DATA_KEYS: Record<string, string> = {
   partos: "data_parto", servicos: "data_servico", protocolos_iatf: "data_prevista", movimentos_lote: "data_movimento",
   controles_leiteiros: "data_controle", pesagens_corporais: "data_pesagem", qualidade_leite: "data_coleta",
   aplicacoes_sanitarias: "data_aplicacao", protocolos_sanitarios: "data_inicio", secagens: "data_secagem", eventos_agenda: "data_evento",
-  exames_resultados: "data_exame", ocorrencias_clinicas: "data_ocorrencia",
+  exames_resultados: "data", registros_preventivos: "data", ocorrencias_clinicas: "data_ocorrencia",
   inducao_lactacao: "data_prevista", protocolos_customizados: "data_prevista",
 };
 const DATA_KEYS_EXTRA: Record<string, string[]> = {
+  registros_preventivos: ["carencia_leite_ate"],
   servicos: ["data_diagnostico"], protocolos_iatf: ["data_realizacao"],
   inducao_lactacao: ["data_realizacao"], protocolos_customizados: ["data_realizacao"],
 };
@@ -274,6 +285,24 @@ export function textoPartoOriginado(l: Record<string, unknown>): string {
   return dataParto ? formatDate(dataParto) : "—";
 }
 
+// Textos das colunas de vacinas/exames do sanitário preventivo v2.
+const RESULTADO_TXT: Record<string, string> = { positivo: "Reagente", negativo: "Negativo", inconclusivo: "Inconclusivo", nao_lido: "Não lido" };
+const ORIGEM_PREV_TXT: Record<string, string> = { dia: "Dia marcado", lancamento_simples: "Lançamento simples", ficha: "Ficha de campo", importado: "Planilha (só registro)" };
+function colunasPreventivo(l: Record<string, unknown>): Record<string, unknown> {
+  const s = (k: string) => (l[k] == null ? "" : String(l[k]));
+  const dose = l.dose_valor != null ? `${String(l.dose_valor).replace(".", ",")} ${s("dose_unidade").replace("mL_por_x_kg", "mL por X kg").replace("mL_por_kg", "mL por kg")}`.trim() : "";
+  const ciclo = s("ciclo_chave").startsWith("X:") ? "" : s("ciclo_chave");
+  return {
+    vacinaFmt: s("caixa") || s("outro_texto") || "—",
+    cicloFmt: [ciclo, l.dose_num && Number(l.dose_num) > 1 ? `${l.dose_num}ª dose` : ""].filter(Boolean).join(" · ") || "—",
+    produtoFmt: [s("produto_texto"), dose].filter(Boolean).join(" · ") || "—",
+    origemFmt: (ORIGEM_PREV_TXT[s("origem")] || s("origem")) + (l.decisao_curral ? " · decisão no curral" : "") + (l.apos_fechamento ? " · após o fechamento" : "") + (l.retroativo ? " · retroativo" : ""),
+    quemFmt: [s("aplicador_texto"), s("veterinario_texto") ? `vet. ${s("veterinario_texto")}` : ""].filter(Boolean).join(" · ") || "—",
+    resultadoFmt: RESULTADO_TXT[s("resultado")] || "—",
+    situacaoFmt: l.estado === "valido" ? (l.fora_da_regra ? "fora da regra (consentido)" : "válido") : `estornado${l.estornado_motivo ? `: ${s("estornado_motivo")}` : ""}`,
+  };
+}
+
 function formatarLinhas(chave: string, linhas: Record<string, unknown>[]): Record<string, unknown>[] {
   return linhas.map((l) => {
     const nova: Record<string, unknown> = { ...l };
@@ -290,6 +319,7 @@ function formatarLinhas(chave: string, linhas: Record<string, unknown>[]): Recor
     // — badge só de leitura na Ficha, mantendo o valor bruto para ordenação.
     if (chave === "movimentos_lote") nova.origemFmt = rotuloOrigemMovimentoLote(l.origem);
     if (chave === "servicos") nova.parto = textoPartoOriginado(l);
+    if (chave === "registros_preventivos" || chave === "exames_resultados") Object.assign(nova, colunasPreventivo(l));
     return nova;
   });
 }
@@ -1145,6 +1175,8 @@ export default function FichaAnimal({ numeroInicial, contextoInicial }: {
           />
 
           {renderSecao("aplicacoes_sanitarias")}
+
+          {renderSecao("registros_preventivos")}
 
           {renderSecao("movimentos_lote")}
 

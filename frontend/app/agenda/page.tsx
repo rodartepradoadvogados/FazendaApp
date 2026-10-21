@@ -28,6 +28,7 @@ import { lerCacheAgenda, gravarCacheAgenda } from "@/components/agenda/cacheAgen
 import { PainelLancarBst } from "@/components/PainelLancarBst";
 import { casaBusca } from "@/lib/busca";
 import { moduloContratado } from "@/lib/modulos";
+import { CartaoVacinasPrevistas, NotasSanitario } from "@/components/sanitario/AgendaSanitario";
 import { categoriasAgendaVisiveis, gruposPainelVisiveis, podeVincularAnimalLote, resumoContasAgenda } from "@/lib/agendaModulos";
 import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
 import { DefinirDataVisitaModal } from "@/components/reproducao/DefinirDataVisitaModal";
@@ -1867,10 +1868,9 @@ function AgendaConteudo() {
             <CartaoPainel titulo="Incluir no próximo BST" icon={Syringe} cor="var(--cat-sanidade)" valor={bstNuncaAplicados.length}
               detalhe="nunca receberam ou pedem reanálise"
               onClick={bstNuncaAplicados.length > 0 ? () => toggleLista("bstNunca") : undefined} aberto={listaAtiva.has("bstNunca")} />
-            {/* Vacinas previstas · 30 d — ponto de encaixe do Sanitário Preventivo v2
-                (só números, com link para Sanidade › Preventiva › Painel). */}
-            <CartaoPainel titulo="Vacinas previstas" icon={Syringe} cor="var(--cat-sanidade)" href="/sanidade"
-              valor="—" desligado detalhe="Módulo novo em implantação" />
+            {/* Vacinas previstas · 30 d (Sanitário Preventivo v2): só números, com
+                link para Sanidade › Preventiva › Painel. */}
+            <CartaoVacinasPrevistas />
           </GrupoPainel>
           )}
 
@@ -1895,6 +1895,8 @@ function AgendaConteudo() {
           </GrupoPainel>
         </div>
       )}
+
+      {gruposPainel.sanidade && <NotasSanitario />}
 
       <ProjecaoAgenda dados={projAtual} carregando={projecaoCarregando} erro={projecaoErro} horizonte={horizonte} onTentar={() => carregarProjecao(horizonte)} />
 
