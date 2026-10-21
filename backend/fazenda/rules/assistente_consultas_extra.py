@@ -671,6 +671,10 @@ def _dietas_lotes(session: Session, usuario, entrada: dict, fazenda_id: int | No
             "leite_bezerros_kg_dia": d.get("leite_bezerros_kg_dia"), "observacao": d.get("observacao"),
             "qtd_animais_no_lote_hoje": ap["qtd_animais"], "itens": ap["itens"],
             "vagao_kg_dia": ap["vagao_kg_dia"], "vagao_kg_trato": ap["vagao_kg_trato"], "num_tratos": ap["num_tratos"],
+            # Tratos da própria dieta (% e kg do vagão por trato) e a posição da
+            # leitura da sobra — mesmo dado da apresentação do site/app.
+            "tratos": ap["tratos"], "tratos_configurados": ap["tratos_configurados"],
+            "sobra_posicao_leitura": ap["sobra_posicao_leitura"],
         })
     saida: dict[str, Any] = {
         "filtros": {"lote": lote, "situacao": situacao}, "total_dietas": len(lancadas), "dietas": dietas,
@@ -690,7 +694,8 @@ def _dietas_lotes(session: Session, usuario, entrada: dict, fazenda_id: int | No
             saida["necessidade_mensal_30_dias"] = calcular_necessidade_mensal(consumo["consumo_total"], estoque_por_nome, por_alimento, cadastrados)
     saida["como_ler"] = (
         "Dietas lançadas em Lançamentos › Alimentação (uma ativa por lote). 'itens' = o que o funcionário vê para conferir no vagão: "
-        "por cabeça, total/dia do lote e por trato; vagao_kg_* soma só os itens em kg. 'plano_por_lote' é o consumo/dia por ingrediente da tela "
+        "por cabeça, total/dia do lote e por trato ('por_trato', pelo % de cada trato DESTA dieta — 'tratos'; dieta sem cadastro = 2 tratos 50/50; "
+        "'total_trato'/'vagao_kg_trato' só vêm preenchidos quando todos os tratos têm o mesmo %); vagao_kg_* soma só os itens em kg. 'plano_por_lote' é o consumo/dia por ingrediente da tela "
         "Alimentação (efetivo atual × dieta, incluindo lotes que só têm a dieta do import antigo). O CUSTO por vaca/dia da dieta só existe no módulo "
         "Formulação de Dietas (restrito) — o agente não o expõe; para custo realizado use consultar_rmca (custo físico por ingrediente) ou "
         "executar_relatorio('custo_vaca_lote')."
@@ -717,7 +722,7 @@ def _consumo_sobra(session: Session, usuario, entrada: dict, fazenda_id: int | N
     dias = []
     for l, d in sorted(pares, key=lambda p: (p[1], p[0]), reverse=True):
         c = _chamar(obter_consumo, session, fazenda_id, lote=l, data=d)  # GET /alimentacao/consumo (a tela de consumo do dia)
-        dias.append({k: c[k] for k in ("lote", "data", "num_animais", "itens", "kg_fornecido_total", "sobra_kg", "sobra_pct", "dentro_da_faixa")})
+        dias.append({k: c[k] for k in ("lote", "data", "num_animais", "itens", "kg_fornecido_total", "sobra_kg", "sobra_pct", "dentro_da_faixa", "sobra_janela")})
     por_lote: dict[int, dict] = {}
     for c in dias:
         p = por_lote.setdefault(c["lote"], {"lote": c["lote"], "dias_com_lancamento": 0, "kg_fornecido": 0.0, "kg_sobra": 0.0})
@@ -734,8 +739,9 @@ def _consumo_sobra(session: Session, usuario, entrada: dict, fazenda_id: int | N
         "dias": cortados, "limitado_pela_ferramenta": cortou,
         "como_ler": (
             "Consumo = o que foi FORNECIDO ao lote (lançamentos de Alimentação, somados por dia); sobra = kg medidos no cocho. 'relatorio_sobra_do_site' é o relatório "
-            "Alimentação › Sobra (total, % médio e rateio por alimento pela proporção da dieta ativa de cada lote); em 'dias', sobra_pct = sobra ÷ fornecido do dia e "
-            "dentro_da_faixa compara com a faixa dos Parâmetros. Itens em litro/dose não convertem para kg e ficam fora das somas em kg."
+            "Alimentação › Sobra (total, % médio e rateio por alimento pela proporção da dieta ativa de cada lote); em 'dias', sobra_pct = sobra ÷ fornecido na janela da sobra e "
+            "dentro_da_faixa compara com a faixa dos Parâmetros. A sobra se refere a um ciclo de 24h (janela de tratos pela posição da leitura cadastrada na dieta): "
+            "cada dia traz a sobra cujo ciclo FECHA nele, e 'sobra_janela' diz a quais tratos ela se refere e quanto foi fornecido na janela. Itens em litro/dose não convertem para kg e ficam fora das somas em kg."
         ),
     }
 

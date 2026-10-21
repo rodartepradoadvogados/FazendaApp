@@ -5,13 +5,13 @@
 import { MobVoltar, MobCard } from "@/components/mobile/ui";
 import { fetchAlimentacao } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
+import { TRATOS_PADRAO, dividirPorTrato } from "@/lib/tratos";
 
 type Item = { ingrediente?: string | null; por_cabeca?: number | null; unidade?: string | null; efetivo?: number; consumo_dia?: number };
-type Lote = { lote: number; categoria?: string | null; efetivo: number; itens: Item[] };
+// `tratos_pct`: % de cada trato da dieta ativa do lote (cadastro por dieta);
+// cópia antiga do cache, sem o campo, cai nos 2 tratos 50/50 de antes.
+type Lote = { lote: number; categoria?: string | null; efetivo: number; itens: Item[]; tratos_pct?: number[] };
 type Resposta = { por_lote: Lote[]; consumo_total: unknown[] };
-
-// Nº de tratos por dia (fornecimentos) — hoje são 2.
-const NUM_TRATOS = 2;
 
 function num(v?: number | null): string {
   if (v == null) return "—";
@@ -27,7 +27,7 @@ export default function PlanoAlimentacao({ onVoltar }: { onVoltar: () => void })
       <MobVoltar titulo="Plano por Lote" onVoltar={onVoltar} />
       <AvisoCopia chave="menu_plano_alimentacao" mostrar={doCache} />
       <p style={{ fontSize: "0.75rem", color: "var(--mob-muted)", margin: "0 0 0.6rem" }}>
-        <strong style={{ color: "var(--mob-verde)" }}>/trato</strong> = quantidade por fornecimento ({NUM_TRATOS} tratos/dia).
+        <strong style={{ color: "var(--mob-verde)" }}>T1, T2…</strong> = quantidade de cada trato (fornecimento), pelo % cadastrado na dieta do lote.
       </p>
 
       {carregando && !dados ? (
@@ -44,7 +44,7 @@ export default function PlanoAlimentacao({ onVoltar }: { onVoltar: () => void })
                 Lote {l.lote}{l.categoria ? ` · ${l.categoria}` : ""}
               </span>
               <span style={{ fontSize: "0.78rem", color: "var(--mob-muted)", flexShrink: 0 }}>
-                {l.efetivo} {l.efetivo === 1 ? "animal" : "animais"}
+                {l.efetivo} {l.efetivo === 1 ? "animal" : "animais"} · {(l.tratos_pct ?? TRATOS_PADRAO).length} tratos ({(l.tratos_pct ?? TRATOS_PADRAO).map((p) => `${num(p)}%`).join("/")})
               </span>
             </div>
             {l.itens.length === 0 ? (
@@ -55,7 +55,7 @@ export default function PlanoAlimentacao({ onVoltar }: { onVoltar: () => void })
                   <span style={{ fontWeight: 700, fontSize: "0.92rem", flex: 1, minWidth: 0 }}>{it.ingrediente || "—"}</span>
                   <span style={{ textAlign: "right", flexShrink: 0 }}>
                     <span style={{ display: "block", fontWeight: 800, fontSize: "1rem", color: "var(--mob-verde)" }}>
-                      {num(it.consumo_dia != null ? it.consumo_dia / NUM_TRATOS : null)} {it.unidade || ""}/trato
+                      {dividirPorTrato(it.consumo_dia, l.tratos_pct ?? TRATOS_PADRAO).map((v, j) => `T${j + 1} ${num(v)}`).join(" · ")} {it.unidade || ""}
                     </span>
                     <span style={{ display: "block", fontWeight: 700, fontSize: "0.85rem", color: "var(--mob-ambar)" }}>
                       {num(it.consumo_dia)} {it.unidade || ""}/dia

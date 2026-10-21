@@ -4,6 +4,8 @@
 // dieta), lança os produtos com cálculo automático (por cabeça, total/dia,
 // total/trato e kg no vagão), datas de início e provável fim, e salva. Se já
 // houver dieta ativa no lote, pergunta se deseja encerrá-la na data de início.
+// Tratos por dia (nº, % de cada um e entre quais tratos a sobra é lida) são
+// cadastro DESTA dieta — mesmo editor do site (components/EditorTratosDieta).
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { MobVoltar, MobCampo, MobCard, MobAviso } from "@/components/mobile/ui";
@@ -11,8 +13,9 @@ import { fetchLotes, fetchEstoque, fetchContextoDieta, type ContextoDieta } from
 import { fetchComCache, enviarOuEnfileirar } from "@/lib/offline";
 import { casaBusca } from "@/lib/busca";
 import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
+import { EditorTratosDieta, erroTratosForm, tratosDoForm, tratosFormPadrao, type TratosForm } from "@/components/EditorTratosDieta";
+import { dividirPorTrato } from "@/lib/tratos";
 
-const NUM_TRATOS = 2;
 const UNIDADES = ["kg", "g", "L", "ml", "unidade", "dose", "saca 30kg", "saca 60kg"];
 const hoje = () => new Date().toISOString().slice(0, 10);
 
@@ -37,6 +40,7 @@ export default function LancarDieta({ onVoltar }: { onVoltar: () => void }) {
   const [dataInicio, setDataInicio] = useState(hoje());
   const [dataFim, setDataFim] = useState("");
   const [itens, setItens] = useState<Item[]>([{ alimento: "", quantidade: "", unidade: "kg" }]);
+  const [tratos, setTratos] = useState<TratosForm>(tratosFormPadrao);
   const [salvando, setSalvando] = useState(false);
   const [aviso, setAviso] = useState<{ tipo: "ok" | "offline" | "erro"; msg: string } | null>(null);
   // Por padrão só oferece produto de estoque com saldo positivo — marcar
@@ -76,6 +80,9 @@ export default function LancarDieta({ onVoltar }: { onVoltar: () => void }) {
 
   const nAnimais = ctx?.qtd_animais ?? lotes.find((l) => l.codigo.slice(0, 2) === loteSel)?.qtd_animais ?? 0;
   const vagaoKg = itens.reduce((s, it) => (["kg", "g"].includes(it.unidade) ? s + (Number(it.quantidade) || 0) : s), 0);
+  const pctsTratos = tratosDoForm(tratos).tratos_pct;
+  const porTratoTexto = (total: number, unidade: string) =>
+    dividirPorTrato(total, pctsTratos).map((v, i) => `T${i + 1} ${num(v)}`).join(" · ") + ` ${unidade}`;
 
   const patchItem = (idx: number, patch: Partial<Item>) => setItens((p) => p.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
   const addItem = () => setItens((p) => [...p, { alimento: "", quantidade: "", unidade: "kg" }]);
@@ -86,6 +93,8 @@ export default function LancarDieta({ onVoltar }: { onVoltar: () => void }) {
     if (!loteSel) return setAviso({ tipo: "erro", msg: "Selecione o lote." });
     const validos = itens.filter((it) => it.alimento && Number(it.quantidade) > 0);
     if (!validos.length) return setAviso({ tipo: "erro", msg: "Adicione ao menos um produto com quantidade." });
+    const erroTratos = erroTratosForm(tratos);
+    if (erroTratos) return setAviso({ tipo: "erro", msg: erroTratos });
     let encerrar = false;
     if (ctx?.ultima_dieta) {
       encerrar = window.confirm(`O lote ${loteSel} já tem uma dieta ativa. Deseja encerrar a atual na data de início desta nova dieta (${fmtData(dataInicio)})?`);
@@ -97,11 +106,13 @@ export default function LancarDieta({ onVoltar }: { onVoltar: () => void }) {
         lote: Number(loteSel), data_abertura: dataInicio, data_prevista_encerramento: dataFim || undefined,
         itens: validos.map((it) => ({ alimento: it.alimento, quantidade: Number(it.quantidade), unidade: it.unidade })),
         encerrar_anterior: encerrar,
+        ...tratosDoForm(tratos),
       }, `Dieta lote ${loteSel}`, "POST");
       setAviso(enviado
         ? { tipo: "ok", msg: `Dieta salva para o lote ${loteSel}.` }
         : { tipo: "offline", msg: "Sem internet — guardado, será enviado automaticamente ao conectar." });
       setItens([{ alimento: "", quantidade: "", unidade: "kg" }]);
+      setTratos(tratosFormPadrao());
       setDataFim("");
       if (enviado) fetchContextoDieta(Number(loteSel)).then(setCtx).catch(() => {});
     } catch (e) {
@@ -147,6 +158,10 @@ export default function LancarDieta({ onVoltar }: { onVoltar: () => void }) {
         </div>
       </div>
 
+      <div style={{ marginBottom: "0.7rem" }}>
+        <EditorTratosDieta variante="app" classeInput="mob-input" estiloInput={{ textAlign: "right" }} valor={tratos} onChange={setTratos} />
+      </div>
+
       <label className="flex items-center gap-2" style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginBottom: "0.7rem" }}>
         <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => setIncluirSemEstoque(e.target.checked)} />
         Incluir produtos sem estoque na lista
@@ -171,7 +186,7 @@ export default function LancarDieta({ onVoltar }: { onVoltar: () => void }) {
               </div>
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.9rem", fontSize: "0.8rem", marginTop: "0.2rem" }}>
-              <span style={{ color: "var(--mob-verde)", fontWeight: 800 }}>{num(q / NUM_TRATOS)} {it.unidade}/trato</span>
+              <span style={{ color: "var(--mob-verde)", fontWeight: 800 }}>{porTratoTexto(q, it.unidade)}</span>
               <span style={{ color: "var(--mob-ambar)", fontWeight: 700 }}>{num(q)} {it.unidade}/dia</span>
               <span style={{ color: "var(--mob-muted)" }}>{nAnimais ? `${num(q / nAnimais, 3)} ${it.unidade}/cab` : "—/cab"}</span>
             </div>
@@ -188,7 +203,7 @@ export default function LancarDieta({ onVoltar }: { onVoltar: () => void }) {
       </button>
 
       <div style={{ padding: "0.6rem 0.7rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", fontSize: "0.88rem", fontWeight: 800, marginBottom: "0.7rem" }}>
-        Vagão: <span style={{ color: "var(--mob-verde)" }}>{num(vagaoKg / NUM_TRATOS)} kg/trato</span> · {num(vagaoKg)} kg/dia
+        Vagão: <span style={{ color: "var(--mob-verde)" }}>{porTratoTexto(vagaoKg, "kg")}</span> · {num(vagaoKg)} kg/dia
       </div>
 
       <button className="mob-btn" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar dieta"}</button>

@@ -1475,20 +1475,20 @@ export default function AgendaMovel() {
               ) : a ? (
                 <>
                   <div style={{ fontSize: "0.82rem", fontWeight: 700, marginBottom: "0.5rem" }}>
-                    Lote {a.lote}{a.nome ? ` · ${a.nome}` : ""} — {a.qtd_animais} {a.qtd_animais === 1 ? "animal" : "animais"} · {a.num_tratos} tratos
+                    Lote {a.lote}{a.nome ? ` · ${a.nome}` : ""} — {a.qtd_animais} {a.qtd_animais === 1 ? "animal" : "animais"} · {a.num_tratos} {a.num_tratos === 1 ? "trato" : "tratos"}{a.tratos ? ` (${a.tratos.map((t) => `${num(t.pct)}%`).join("/")})` : ""}
                   </div>
                   {a.itens.map((it, i) => (
                     <div key={i} style={{ padding: "0.5rem 0", borderTop: i ? "1px solid var(--mob-border)" : "none" }}>
                       <div style={{ fontWeight: 800, fontSize: "0.98rem" }}>{it.alimento}</div>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.9rem", marginTop: "0.2rem", fontSize: "0.82rem" }}>
-                        <span style={{ color: "var(--mob-verde)", fontWeight: 800 }}>{num(it.total_trato)} {it.unidade}/trato</span>
+                        <span style={{ color: "var(--mob-verde)", fontWeight: 800 }}>{(it.por_trato ?? [it.total_trato]).map((v, j) => `T${j + 1} ${num(v)}`).join(" · ")} {it.unidade}</span>
                         <span style={{ color: "var(--mob-ambar)", fontWeight: 700 }}>{num(it.total_dia)} {it.unidade}/dia</span>
                         <span style={{ color: "var(--mob-muted)" }}>{it.por_cabeca != null ? `${num(it.por_cabeca, 3)} ${it.unidade}/cab` : "—/cab"}</span>
                       </div>
                     </div>
                   ))}
                   <div style={{ marginTop: "0.6rem", padding: "0.55rem 0.7rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", fontSize: "0.85rem", fontWeight: 800 }}>
-                    Vagão do lote: <span style={{ color: "var(--mob-verde)" }}>{num(a.vagao_kg_trato)} kg/trato</span> · {num(a.vagao_kg_dia)} kg/dia
+                    Vagão do lote: <span style={{ color: "var(--mob-verde)" }}>{(a.tratos ?? []).map((t) => `T${t.trato} ${num(t.vagao_kg)}`).join(" · ") || `${num(a.vagao_kg_trato)}`} kg</span> · {num(a.vagao_kg_dia)} kg/dia
                   </div>
                 </>
               ) : (
