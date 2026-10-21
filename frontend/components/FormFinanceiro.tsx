@@ -308,8 +308,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const [pendingErro409, setPendingErro409] = useState<{ idx: number; mensagem: string; competencias_excedidas: { competencia: string; total: number }[] } | null>(null);
 
   const [itens, setItens] = useState<Item[]>([itemVazio()]);
-  // Pré-preenchimento via query string (ex.: botão "Lançar financeiro" do
-  // calendário sanitário → /lancamentos?ir=financeiro_despesa&servico=Exame%20de%20brucelose).
+  // Pré-preenchimento via query string (ex.:
+  // /lancamentos?ir=financeiro_despesa&servico=Exame%20de%20brucelose).
   // "patrimonio_*" vem de Controle Financeiro > Patrimônio > "+ Novo
   // patrimônio" > "É uma compra agora?" — a criação do item de Patrimônio só
   // acontece quando ESTE lançamento for salvo (ver criarPatrimonio abaixo e

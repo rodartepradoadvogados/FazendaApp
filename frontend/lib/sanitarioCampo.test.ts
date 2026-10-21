@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  CAMPOS_HEARTBEAT, CAMPOS_REGISTRO_SYNC, CAMPOS_SINCRONIZAR, alvosPendentes, chaveAC, corpoHeartbeat, corpoSincronizar,
+  CAMPOS_CIENCIA, CAMPOS_HEARTBEAT, CAMPOS_REGISTRO_SYNC, corpoCiencia, CAMPOS_SINCRONIZAR, alvosPendentes, chaveAC, corpoHeartbeat, corpoSincronizar,
   decidirItem, filaAtrasada, foraDaRegra, interpretarSync, itensPreparacao, juntarResultados, pesoMedioCategoria, pesoParaDose,
   quantidadeDose, registrosDoLancamento, type CorpoSan, type ResultadoSan,
 } from "./sanitarioCampo.ts";
@@ -30,6 +30,7 @@ test("registro da fila = RegistroSyncIn; sincronizar e heartbeat batem com o bac
   assert.deepEqual([...CAMPOS_REGISTRO_SYNC].sort(), campos("RegistroSyncIn").sort());
   assert.deepEqual([...CAMPOS_SINCRONIZAR].sort(), campos("SincronizarIn").sort());
   assert.deepEqual([...CAMPOS_HEARTBEAT].sort(), campos("HeartbeatIn").sort());
+  assert.deepEqual([...CAMPOS_CIENCIA].sort(), campos("CienciaPreparacaoIn").sort());
   const corpo = corpoSincronizar("uid-1", "Celular do Zé", [{
     chave_idempotencia: "k1", dia_id: 7, animal_id: 3, caixa_id: 2, data: "2026-10-21", hora: "07:40",
     produto: { modo: "estoque", estoque_id: 5, dose_valor: 2, dose_unidade: "mL" }, peso_kg: null,
@@ -162,4 +163,16 @@ test("lançamento simples sem sinal vira registros com a mesma chave do back", (
   const outro = registrosDoLancamento({ outro_texto: "Vermífugo da loja", data: "2026-10-21", animal_ids: [1] }, "k");
   assert.equal(outro[0].caixa_id, null);
   assert.equal(outro[0].outro_texto, "Vermífugo da loja");
+  // retroativo: o motivo vai pela fila (RegistroSyncIn.retroativo_motivo)
+  const retro = registrosDoLancamento({ caixa_id: 2, data: "2026-10-01", retroativo_motivo: " sem sinal ", animal_ids: [5] }, "r");
+  assert.equal(retro[0].retroativo_motivo, "sem sinal");
+  const env = corpoSincronizar("uid", null, retro, 0).registros as Record<string, unknown>[];
+  assert.equal(env[0].retroativo_motivo, "sem sinal");
+});
+
+test("ciência da preparação: corpo bate com CienciaPreparacaoIn", () => {
+  const c = corpoCiencia({ nome: " Zé ", em: "2026-10-21T10:00:00.000Z", itens: ["Seringas"] }, "uid-1");
+  assert.deepEqual(Object.keys(c).sort(), [...CAMPOS_CIENCIA].sort());
+  assert.equal(c.texto, "Zé");
+  assert.deepEqual(c.itens_abertos, ["Seringas"]);
 });

@@ -15,7 +15,7 @@ function rotuloDia(iso: string, hoje: string) {
 
 /**
  * "O que vem": os próximos dias com tarefa, na 1ª dobra ao lado da lista (no
- * celular, logo abaixo). Só tarefas (animal em lista de espera nunca aparece
+ * celular, logo abaixo). Só tarefas (animal na janela de vacina nunca aparece
  * aqui). Títulos completos, sem cortar.
  */
 export function OQueVem({

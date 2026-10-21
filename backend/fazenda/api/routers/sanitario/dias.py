@@ -9,15 +9,16 @@ até a decisão chegar; os registros em lote respondem item a item.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from fazenda.api.routers.sanitario._comum import da_fazenda, exigir_admin_fazenda, exigir_fazenda, traduzir_erros
 from fazenda.api.routers.sanitario.schemas import (
-    CancelarDiaIn, ConflitoDecisaoIn, DesfazerIn, DiaAplicarIn, DiaCarenciaIn, DiaCriarIn, DiaEditarIn, DiaItensIn,
+    CancelarDiaIn, CienciaPreparacaoIn, ConflitoDecisaoIn, DesfazerIn, DiaAplicarIn, DiaCarenciaIn, DiaCriarIn, DiaEditarIn, DiaItensIn,
     DiaRegistrosIn, DispensarIn, EstornoIn, FecharDiaIn, ResultadoIn, SimularIn,
 )
 from fazenda.auth import get_current_user, get_fazenda_atual_id, get_fazenda_id_escrita
@@ -54,10 +55,23 @@ def dispositivo_por_uid(session: Session, fid: int, usuario_id: Optional[int], u
         SanitarioDispositivo.fazenda_id == fid, SanitarioDispositivo.usuario_id == usuario_id,
         SanitarioDispositivo.dispositivo_uid == uid)).first()
     if d is None:
-        d = SanitarioDispositivo(fazenda_id=fid, usuario_id=usuario_id, dispositivo_uid=uid, nome=nome)
-        session.add(d)
-        session.flush()
-    elif nome and d.nome != nome:
+        # Primeiro contato do aparelho. Dois envios simultâneos (lote +
+        # heartbeat) podem chegar aqui juntos: insere num SAVEPOINT e, se a
+        # chave única (fazenda × usuário × uid) já foi gravada pelo outro,
+        # desfaz só o savepoint e relê — idempotente, sem 500.
+        try:
+            with session.begin_nested():
+                d = SanitarioDispositivo(fazenda_id=fid, usuario_id=usuario_id, dispositivo_uid=uid, nome=nome)
+                session.add(d)
+                session.flush()
+            return d
+        except IntegrityError:
+            d = session.exec(select(SanitarioDispositivo).where(
+                SanitarioDispositivo.fazenda_id == fid, SanitarioDispositivo.usuario_id == usuario_id,
+                SanitarioDispositivo.dispositivo_uid == uid)).first()
+            if d is None:
+                raise
+    if nome and d.nome != nome:
         d.nome = nome
         session.add(d)
     return d
@@ -115,6 +129,42 @@ def log_do_dia(dia_id: int, session: Session = Depends(get_session),
     _dia(session, dia_id, fid)
     return [_log_dict(lg) for lg in session.exec(select(SanitarioLog).where(
         SanitarioLog.fazenda_id == fid, SanitarioLog.dia_id == dia_id).order_by(SanitarioLog.em.desc(), SanitarioLog.id.desc())).all()]
+
+
+@router.post("/dias/{dia_id}/ciencia")
+def ciencia_preparacao(dia_id: int, dados: CienciaPreparacaoIn, session: Session = Depends(get_session),
+                       user: Usuario = Depends(get_current_user),
+                       fazenda_id: int = Depends(get_fazenda_id_escrita)) -> dict:
+    """Ciência nominal da preparação pré-curral: o app manda (também pela fila
+    offline) quem começou o dia com itens da conferência em aberto. Fica em
+    `sanitario_log` tipo "preparacao.ciencia" (vale como registro, não bloqueia
+    nada). Reenvio idêntico é barrado pelo middleware de Idempotency-Key."""
+    fid = exigir_fazenda(fazenda_id)
+    dia = _dia(session, dia_id, fid)
+    texto = (dados.texto or "").strip() or None
+    if dados.pessoa_id is None and not texto:
+        raise HTTPException(status_code=400, detail="Informe quem registrou a ciência (pessoa ou nome).")
+    if dados.pessoa_id is not None:
+        from fazenda.models import Pessoa
+        p = session.get(Pessoa, dados.pessoa_id)
+        if p is None or p.fazenda_id not in (None, fid):
+            raise HTTPException(status_code=404, detail="Pessoa não encontrada.")
+        texto = texto or p.nome
+    itens = [i.strip() for i in dados.itens_abertos if i and i.strip()]
+    disp = dispositivo_por_uid(session, fid, user.id, dados.dispositivo_uid)
+    em = dados.em.astimezone(timezone.utc).replace(tzinfo=None) if dados.em and dados.em.tzinfo else dados.em
+    lg = SanitarioLog(
+        fazenda_id=fid, tipo="preparacao.ciencia", dia_id=dia.id, decisao="ciente",
+        motivo_exibido=(f"{len(itens)} {'itens não conferidos' if len(itens) != 1 else 'item não conferido'}"
+                        if itens else "Preparação conferida"),
+        texto_livre=texto, usuario_id=user.id, dispositivo_id=disp.id if disp else None,
+        payload={"itens_abertos": itens, "pessoa_id": dados.pessoa_id, "nome": texto,
+                 "em_aparelho": em.isoformat() + "Z" if em else None},
+    )
+    session.add(lg)
+    session.commit()
+    session.refresh(lg)
+    return _log_dict(lg)
 
 
 @router.get("/dias/{dia_id}/registros")

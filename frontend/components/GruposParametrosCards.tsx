@@ -34,7 +34,7 @@ export function GruposParametrosCards({ filtro }: { filtro: (idGrupo: string) =>
         await atualizarParametro(it.chave, valores[it.chave]);
       }
       await carregar();
-      // Avisa quem mostra o efeito dos parâmetros (ex.: rotina da lista de espera, que roda ao salvar).
+      // Avisa quem mostra o efeito dos parâmetros (ex.: telas que recalculam ao salvar).
       window.dispatchEvent(new Event("parametros-salvos"));
       setSalvoOk(id);
       setTimeout(() => setSalvoOk(null), 2000);

@@ -108,6 +108,19 @@ def _resolver_referencias(session: Session, fazenda_id: int, definicao: dict) ->
     return kw, cats, avisos
 
 
+def definicao_resolvida(session: Session, fazenda_id: int, definicao: dict) -> tuple[dict, list[str]]:
+    """A definição do catálogo já no formato do wizard da fazenda (categorias
+    por ID, "já/nunca recebeu" pela caixa) — SÓ LÊ. Usado pelo wizard "Do
+    catálogo", que só cria a cópia ao concluir."""
+    kw, cats, avisos = _resolver_referencias(session, fazenda_id, definicao)
+    out: dict[str, Any] = {k: definicao.get(k) for k in CAMPOS_CAIXA if k in definicao}
+    out.update(kw)
+    if isinstance(out.get("comecar_em"), date):
+        out["comecar_em"] = out["comecar_em"].isoformat()
+    out["categorias"] = cats
+    return out, avisos
+
+
 def _gravar_versao(session: Session, caixa, numero: int, definicao: dict, vigente_desde: date,
                    usuario_id: Optional[int]) -> tuple:
     from fazenda.models import SanitarioCaixaVersao, SanitarioCaixaVersaoCategoria
@@ -190,8 +203,10 @@ def nova_versao(session: Session, caixa, definicao: dict, *, usuario_id: Optiona
 
 
 def ativar_do_catalogo(session: Session, fazenda_id: int, catalogo_versao_id: int, *, estado: str = "inativa",
-                       usuario_id: Optional[int] = None, padrao_fabrica: bool = False, hoje: Optional[date] = None):
-    """Copia a definição de uma versão do catálogo central para uma caixa da fazenda."""
+                       usuario_id: Optional[int] = None, padrao_fabrica: bool = False, hoje: Optional[date] = None,
+                       definicao: Optional[dict] = None):
+    """Copia a definição de uma versão do catálogo central para uma caixa da
+    fazenda. `definicao` (wizard): a cópia já ajustada pelo administrador."""
     from fazenda.models import SanitarioCatalogo, SanitarioCatalogoVersao
 
     cv = session.get(SanitarioCatalogoVersao, catalogo_versao_id)
@@ -199,7 +214,8 @@ def ativar_do_catalogo(session: Session, fazenda_id: int, catalogo_versao_id: in
         raise ValueError("Versão de catálogo inexistente.")
     cat = session.get(SanitarioCatalogo, cv.catalogo_id)
     return criar_caixa(
-        session, fazenda_id, dict(cv.definicao or {}), estado=estado, catalogo_id=cat.id,
+        session, fazenda_id, dict(definicao if definicao is not None else (cv.definicao or {})), estado=estado,
+        catalogo_id=cat.id,
         catalogo_versao=cv.versao, padrao_fabrica=padrao_fabrica, usuario_id=usuario_id, hoje=hoje,
     )
 

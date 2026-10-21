@@ -480,7 +480,7 @@ export function DetalheDia({ diaId, onVoltar }: { diaId: number; onVoltar: () =>
       <section className="san-bloco">
         <div className="san-bloco-cab"><h3>Registro deste dia</h3>{carregando && <span className="san-nota">atualizando…</span>}</div>
         <div className="san-bloco-corpo">
-          {dados.log.length ? <div className="san-log">{dados.log.map((g) => <div key={g.id}><time>{fmtDataHora(g.em)}</time><span>{g.texto || g.tipo}</span></div>)}</div>
+          {dados.log.length ? <div className="san-log">{dados.log.map((g) => <div key={g.id}><time>{fmtDataHora(g.em)}</time><span>{textoLog(g)}</span></div>)}</div>
             : <p className="san-nota" style={{ margin: 0 }}>Nada registrado ainda.</p>}
         </div>
       </section>
@@ -535,4 +535,14 @@ export function DetalheDia({ diaId, onVoltar }: { diaId: number; onVoltar: () =>
       )}
     </div>
   );
+}
+
+/** Linha do registro (log) do dia. A ciência da preparação (app) mostra quem
+ *  e o que ficou sem conferir. */
+function textoLog(g: LogItem): string {
+  if (g.tipo === "preparacao.ciencia") {
+    const itens = Array.isArray(g.payload?.itens_abertos) ? (g.payload!.itens_abertos as string[]) : [];
+    return `Ciência da preparação: ${g.texto || "sem nome"}${itens.length ? ` — sem conferir: ${itens.join("; ")}` : ""}.`;
+  }
+  return g.texto || g.tipo;
 }

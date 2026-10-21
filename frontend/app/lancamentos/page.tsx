@@ -153,8 +153,8 @@ const TIPOS_GRUPOS = [
         ],
       },
       {
-        // Ponto de encaixe do Sanitário Preventivo v2 (lançamento simples de
-        // vacina ou exame). O preventivo antigo saiu; a folha nova entra aqui.
+        // Sanitário Preventivo v2: lançamento simples/retroativo de vacina ou
+        // exame (components/sanitario/LancamentoSimples.tsx).
         id: "sanidade_preventiva", label: "Preventivo", icon: Shield,
         desc: "Vacina ou exame aplicado fora de um dia marcado (lançamento simples).",
         subs: [

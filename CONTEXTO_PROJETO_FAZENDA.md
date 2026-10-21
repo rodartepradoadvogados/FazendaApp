@@ -37,6 +37,9 @@ CAPA · 1·PRODUÇÃO · 2·DIETA · 3·REPRODUÇÃO · 3.1·REP-RESUMO · 4·RE
 
 Encoding dos CSV: **Windows-1252 (Latin-1)**, separador `;`, decimal com vírgula.
 
+**SANIDADE.csv do Ideagri não entra mais** (desde 21/10/2026): o upload apagava e recriava a sanidade. Vacinas e exames vivem no
+Sanitário Preventivo v2 (seção 5); histórico antigo entra pela importação de planilha do sanitário (só registro, nunca apaga).
+
 ---
 
 ## 4. Esquema das abas de dados (colunas 1-based)
@@ -64,6 +67,17 @@ Encoding dos CSV: **Windows-1252 (Latin-1)**, separador `;`, decimal com vírgul
 - **Regras dos lançamentos reprodutivos (17/10/2026):** a cria com número **exige sexo** (sem sexo não grava; cria sem número = natimorto/baixa, sexo vazio aceito). Matriz em **protocolo IATF vigente** (lançamento ativo, não encerrado, sem serviço depois do D0, até 7 dias da inseminação) não recebe outro protocolo nem cio natural/monta natural — só a IATF que fecha o protocolo. Inaptas: o que o servidor aceita forçar (peso da novilha lançado abaixo do mínimo, matriz que consta gestante) aparece como «Confirmar»; idade mínima, baixada, a descartar e sexo são bloqueios duros e a tela desabilita com o motivo. **Classificação fixada (temporária):** a matriz 11153 é tratada como gestante por decisão do produtor até a causa ser achada (ver `CLASSIFICACAO_FIXADA` no README).
 - **Visita reprodutiva Alpha/ABS (Carlos):** a cada 21 dias, sexta (próxima 03/07/2026). **Data definida pelo usuário** (Agenda › comunicado "Definir nova data da visita", ou nota "Cenário projetado" em Insights › Listas › Agenda Reprodutiva, ou Parâmetros) vale no lugar do cálculo enquanto não passar; depois volta ao cálculo: **data da última visita** informada (ou o último serviço, se mais recente) + intervalo de Parâmetros, em ciclo fixo. Aviso na Agenda: "Amanhã: visita reprodutiva" e, no dia, "Visita reprodutiva" (só informa; não se marca como realizado).
 - **Tratos e sobra de cocho (21/10/2026):** o nº de tratos por dia (1 a 4) e o % de cada trato são cadastro da **dieta** de cada lote (Lançar nova dieta, site e app); dieta antiga = 2 tratos 50/50. A dieta também diz **entre quais tratos a sobra é lida** — isso define o ciclo de 24h a que cada sobra se refere (ex.: lida entre o Trato 1 e o Trato 2 em 21/10, com 3 tratos = tratos 2 e 3 de 20/10 + trato 1 de 21/10). A sobra é lançada à parte do fornecimento e o sistema sempre pede para confirmar o período. Parâmetro da fazenda "Lançar o consumo por trato?" (padrão não): ligado, cada fornecimento diz o trato; desligado, o fornecido do dia é rateado pelo % dos tratos na base da sobra %. Regras: `backend/fazenda/rules/tratos.py`.
+- **Sanitário preventivo — vacinas, exames e vermífugos (21/10/2026):** cada vacina/exame é uma **caixa** (Central de Protocolos ›
+  Vacinas e exames; wizard de 9 etapas, do catálogo central ou do zero — a cópia do catálogo só nasce ao salvar). O animal **entra na
+  caixa** quando cumpre a regra (público por sexo/categoria/idade/condição, janela por evento de vida ou por mês/período, série de
+  doses) e sai quando recebe, deixa de cumprir, é baixado ou dispensado, ou a janela fecha. **Animal na janela não é tarefa da Agenda**:
+  o sistema avisa por notas ("aglomerou", fim de janela, véspera) e o administrador **marca o dia** ("Vacina · B19 · 25/12"). No
+  curral (app › Menu › Vacinação) o dia funciona **sem sinal**: preparação com ciência nominal do que não foi conferido (vai para o
+  servidor), tronco (um a um) ou grupo, e os registros sobem em lote quando houver sinal; dois celulares no mesmo animal viram
+  conflito para o aplicador ou o administrador decidir. Fora da regra só com **consentimento** registrado; o sistema registra, o
+  produtor decide. **Carência de leite** do preventivo vale na produção por vaca conforme o modo aceito pelo administrador
+  (bloqueio, descarte ou tanque). Editar a caixa vale daqui para frente; o histórico não muda. O módulo antigo (calendário,
+  cronogramas, lista de espera) foi arquivado no schema `arquivo_sanitario_2026` (detalhes, rotas e runbook no `README.md`).
 - **Lotes:** 1 = novilhas alta lactação; 2 = vacas alta; 3 = média/final de lactação/baixa/tratamento (mastite, leite fora do tanque). Sobe de lote com ≥ 20 DEL e boa produção.
 
 ---

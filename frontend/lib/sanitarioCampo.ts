@@ -23,14 +23,25 @@ type Obj = Record<string, unknown>;
 // ════════════════════════════════════════════════════════════════════════════
 // Registro que vai pela fila (RegistroSyncIn)
 // ════════════════════════════════════════════════════════════════════════════
-export type RegistroCampo = RegistroIn & { dia_id?: number | null; outro_texto?: string | null };
+export type RegistroCampo = RegistroIn & { dia_id?: number | null; outro_texto?: string | null; retroativo_motivo?: string | null };
 /** Chaves de `RegistroSyncIn` (schemas.py) — o teste confere com o back. */
-export const CAMPOS_REGISTRO_SYNC = [...CAMPOS_REGISTRO, "dia_id", "outro_texto"] as const;
+export const CAMPOS_REGISTRO_SYNC = [...CAMPOS_REGISTRO, "dia_id", "outro_texto", "retroativo_motivo"] as const;
+/** Chaves de `CienciaPreparacaoIn` (POST /sanitario/dias/{id}/ciencia). */
+export const CAMPOS_CIENCIA = ["itens_abertos", "pessoa_id", "texto", "em", "dispositivo_uid"] as const;
 export const CAMPOS_SINCRONIZAR = ["dispositivo_uid", "nome", "registros", "fila_pendentes_restantes"] as const;
 export const CAMPOS_HEARTBEAT = ["dispositivo_uid", "nome", "fila_pendentes", "fila_mais_antigo_em"] as const;
 
 export function registroSyncParaEnvio(r: RegistroCampo): Obj {
-  return { ...registroParaEnvio(r), dia_id: r.dia_id ?? null, outro_texto: textoOuNulo(r.outro_texto) };
+  return { ...registroParaEnvio(r), dia_id: r.dia_id ?? null, outro_texto: textoOuNulo(r.outro_texto),
+    retroativo_motivo: textoOuNulo(r.retroativo_motivo) };
+}
+
+/** Corpo da ciência nominal da preparação pré-curral (vai pela fila offline
+ *  genérica, com Idempotency-Key; o back grava em sanitario_log). */
+export function corpoCiencia(c: { nome: string; em: string; itens: string[]; pessoa_id?: number | null },
+  dispositivoUid: string | null): Obj {
+  return { itens_abertos: c.itens, pessoa_id: c.pessoa_id ?? null, texto: textoOuNulo(c.nome), em: c.em,
+    dispositivo_uid: dispositivoUid || null };
 }
 
 export function corpoSincronizar(dispositivoUid: string, nome: string | null, registros: RegistroCampo[], restantes: number): Obj {
@@ -339,8 +350,7 @@ export function itensPreparacao(pacote: Pick<PacoteOffline, "caixas" | "estoques
 /** Converte o lançamento simples nos registros da fila, com a MESMA chave por
  *  animal que o back usa no POST /lancamento-simples (`<chave_lote>:<id>` /
  *  `<chave_lote>:n<brinco>`): se a mesma tela também conseguir enviar online,
- *  nada duplica. O motivo do retroativo não cabe no registro da fila
- *  (RegistroSyncIn não tem o campo) — vai junto só quando há sinal. */
+ *  nada duplica. O motivo do retroativo vai junto (RegistroSyncIn.retroativo_motivo). */
 export function registrosDoLancamento(l: LancamentoSimplesIn, chaveLote: string): RegistroCampo[] {
   const base: RegistroCampo = {
     dia_id: null, caixa_id: l.caixa_id ?? null, outro_texto: l.caixa_id ? null : textoOuNulo(l.outro_texto), data: l.data,
@@ -348,6 +358,7 @@ export function registrosDoLancamento(l: LancamentoSimplesIn, chaveLote: string)
     veterinario_pessoa_id: l.veterinario_pessoa_id ?? null, veterinario_texto: textoOuNulo(l.veterinario_texto),
     crmv_texto: textoOuNulo(l.crmv_texto), atestado_numero: textoOuNulo(l.atestado?.numero),
     atestado_destinatario: textoOuNulo(l.atestado?.destinatario), carencia: l.carencia ?? null,
+    retroativo_motivo: textoOuNulo(l.retroativo_motivo),
   };
   const cons = new Map<string, ConsentimentoIn>();
   for (const c of l.consentimentos || []) if (c.aceito) cons.set(`${c.animal_id}|${c.caixa_id ?? ""}`, c);

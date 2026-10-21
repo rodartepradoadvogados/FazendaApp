@@ -32,10 +32,19 @@ TIPOS_PUSH = {
 }
 URL_POR_TIPO = {
     "aglomerou": "/protocolos?aba=vacinas",
-    "vespera": "/agenda",
+    "vespera": "/app/menu#vacinacao",  # com dia: /app/menu#vacinacao-<id> (ver url_da_nota)
     "prazo_legal": "/sanidade?aba=preventiva",
     "celular_offline": "/agenda",
 }
+
+
+def url_da_nota(n) -> str:
+    """URL do push. A véspera abre o DIA direto no app (Menu › Vacinação,
+    "#vacinacao-<id do dia>", que o app já entende) — não depende do título.
+    As notas de administrador seguem para as telas do site (/agenda etc.)."""
+    if n.tipo == "vespera" and n.dia_id:
+        return f"/app/menu#vacinacao-{n.dia_id}"
+    return URL_POR_TIPO.get(n.tipo, "/agenda")
 
 
 def _destinatarios(session: Session, fazenda_id: int, publico: str) -> set[int]:
@@ -69,7 +78,7 @@ def despachar_push_notas(session: Session, fazenda_id: int,
         n.push_enviado_em = datetime.utcnow()
         session.add(n)
         for uid in _destinatarios(session, fazenda_id, TIPOS_PUSH[n.tipo]):
-            envios.append((uid, n.titulo, n.texto or n.titulo, URL_POR_TIPO.get(n.tipo, "/agenda")))
+            envios.append((uid, n.titulo, n.texto or n.titulo, url_da_nota(n)))
     session.commit()
     for uid, titulo, corpo, url in envios:
         try:

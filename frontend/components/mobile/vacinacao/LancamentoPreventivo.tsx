@@ -120,8 +120,7 @@ export function LancamentoPreventivo() {
           registro: reg, numero: reg.animal_id != null ? nomes.get(reg.animal_id) || `#${reg.animal_id}` : reg.numero_animal || "",
           caixa: caixa?.nome_curto || caixa?.nome || outro || "Outro", dia_nome: null,
         })));
-        concluir(`Sem sinal: ${regs.length} ${regs.length === 1 ? "registro guardado" : "registros guardados"} neste celular. Enviam sozinhos quando houver sinal.`
-          + (retro && motivoRetro.trim() ? " O motivo do retroativo não vai pela fila do celular." : ""), "info");
+        concluir(`Sem sinal: ${regs.length} ${regs.length === 1 ? "registro guardado" : "registros guardados"} neste celular. Enviam sozinhos quando houver sinal.`, "info");
       } else {
         setAviso({ tipo: "alerta", texto: mensagemDoErro(e, "Não foi possível gravar.") });
       }

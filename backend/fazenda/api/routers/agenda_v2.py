@@ -3,16 +3,15 @@ Agenda v2 (fatia 10) — endpoints de LEITURA das duas sub-abas + configuração
 do repasse.
 
   GET  /agenda/dia        Dia a dia: tarefas atrasadas, de hoje e dos próximos
-                          dias (lista/semana/mês). Sem cards, sem candidatas,
-                          sem lista de espera (R1: animal na janela NUNCA é
-                          tarefa). Único comunicado que vem aqui: a visita
+                          dias (lista/semana/mês). Sem cards, sem candidatas
+                          (R1: animal na janela de vacina NUNCA é tarefa — o
+                          sanitário v2 avisa por notas e dias marcados). Único comunicado que vem aqui: a visita
                           reprodutiva (`comunicados_dia`).
   GET  /agenda/painel     Painel: tudo o que estava nos cards da Agenda antiga
                           (candidatas IATF, BST, pendências, estoque, contas a
-                          pagar, comunicados) + atalho da lista de espera + o
-                          resumo do repasse.
+                          pagar, comunicados) + o resumo do repasse.
   GET  /agenda/projecao   Programação projetada (30/60/90 dias): repasse, BST,
-                          IATF, vacinas, exames, estoque, pendências — só
+                          IATF, estoque, pendências — só
                           números por semana, nunca a lista de animais.
   GET/PUT /agenda/repasse/config, GET /agenda/repasse/produtos,
   POST /agenda/repasse/produtos/{id}/classificar
@@ -108,7 +107,7 @@ def agenda_dia(
 ) -> dict:
     """Dia a dia: atrasadas (todas), hoje e dias seguintes até `ate` (padrão
     +10 dias). Só tarefas (`eventos`); os comunicados vão como contagem. Não
-    devolve candidatas, listas de BST nem lista de espera — isso é do Painel."""
+    devolve candidatas, nem listas de BST — isso é do Painel."""
     hoje = data or date.today()
     limite = ate or hoje + timedelta(days=DIAS_JANELA_PADRAO)
     if limite < hoje:
@@ -373,9 +372,8 @@ def agenda_projecao(
                 "data": d.isoformat(), "grupo": "repasse", "n": n, "lote": None,
                 "descricao": f"Cio de repasse — aplicar {nome_prod}" if nome_prod else "Cio de repasse — aplicar adesivo detector",
             })
-    for grupo in ("vacinas", "exames"):
-        for item in (cards.get(grupo) or {}).get("proximas", []):
-            linhas.append({"data": item["data"], "grupo": grupo, "descricao": item["nome"], "n": item["n_animais"], "lote": None})
+    # Vacinas/exames não entram na projeção: o sanitário preventivo v2 tem o
+    # próprio cartão na Agenda ("Vacinas previstas · 30 d", GET /sanitario/agenda/resumo).
     linhas.sort(key=lambda l: (l["data"], l["grupo"]))
 
     return {

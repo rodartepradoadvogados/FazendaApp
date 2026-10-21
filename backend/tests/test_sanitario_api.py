@@ -785,6 +785,11 @@ def test_push_aglomerou_so_admins_e_vespera_para_todos(api):
     vesp = next(v for k, v in por_titulo.items() if k.startswith("Amanhã"))
     assert aglo == {api.ids["adm"], api.ids["contr"]}
     assert vesp == {api.ids[k] for k in ("adm", "op", "op2", "vet", "contr")}
+    # a véspera abre o dia direto no app (não depende do título); admin segue no site
+    urls = {e["titulo"]: e["url"] for e in enviados}
+    vesp_url = next(v for k, v in urls.items() if k.startswith("Amanhã"))
+    assert vesp_url == f"/app/menu#vacinacao-{notas['vespera'].dia_id}"
+    assert next(v for k, v in urls.items() if "aglomerou" in k).startswith("/protocolos")
     # notas: operador não vê as "só administradores"
     api.como("op")
     assert {n["tipo"] for n in api.c.get("/sanitario/notas").json()} == {"vespera"}
@@ -956,3 +961,127 @@ def test_dispensar_e_descartar_com_motivo_pulavel(api):
     api.como("adm", fid=2)
     assert api.c.post("/sanitario/situacoes/dispensar",
                       json={"itens": [{"caixa_id": cx["id"], "animal_id": a1}]}).status_code == 404
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# F8) pendências: aparelho idempotente, ciência da preparação, retroativo
+# pela fila offline
+# ════════════════════════════════════════════════════════════════════════════
+def test_dispositivo_primeiro_contato_simultaneo_nao_da_500(api):
+    """Dois primeiros contatos do mesmo aparelho juntos (lote + heartbeat):
+    o segundo bate na chave única — rollback do savepoint e relê o existente,
+    sem perder o que a transação de fora já tinha feito."""
+    from fazenda.api.routers.sanitario.dias import dispositivo_por_uid
+
+    uid = api.ids["op"]
+    with api.s() as outro:  # "a outra requisição" grava primeiro
+        outro.add(SanitarioDispositivo(fazenda_id=1, usuario_id=uid, dispositivo_uid="cel-x", nome="A"))
+        outro.commit()
+    with api.s() as s:
+        reais = s.exec
+        chamadas = {"n": 0}
+
+        class _Vazio:
+            def first(self):
+                return None
+
+        def exec_atrasado(stmt, *a, **kw):  # a 1ª leitura ainda não via a linha do outro
+            chamadas["n"] += 1
+            return _Vazio() if chamadas["n"] == 1 else reais(stmt, *a, **kw)
+
+        s.add(SanitarioLog(fazenda_id=1, tipo="teste.antes"))  # trabalho anterior da mesma transação
+        s.flush()
+        s.exec = exec_atrasado
+        d = dispositivo_por_uid(s, 1, uid, "cel-x", "Celular do Zé")
+        s.exec = reais
+        assert d is not None and d.id and d.nome == "Celular do Zé"
+        s.commit()
+    with api.s() as s:
+        assert len(s.exec(select(SanitarioDispositivo).where(SanitarioDispositivo.dispositivo_uid == "cel-x")).all()) == 1
+        assert s.exec(select(SanitarioLog).where(SanitarioLog.tipo == "teste.antes")).one()
+    # pela API: heartbeat e lote do mesmo aparelho seguem 200
+    api.como("op")
+    assert api.c.post("/sanitario/dispositivos/heartbeat", json={"dispositivo_uid": "cel-x"}).status_code == 200
+    assert api.c.post("/sanitario/campo/sincronizar", json={"dispositivo_uid": "cel-x", "registros": []}).status_code == 200
+
+
+def test_ciencia_da_preparacao_ida_e_volta(api):
+    cx = criar_caixa(api, b19())
+    a = animal(api, "2401", idade=150)
+    dia = api.c.post("/sanitario/dias", json={"caixa_ids": [cx["id"]], "data": HOJE.isoformat(),
+                                              "itens": [{"animal_id": a}]}).json()
+    api.como("op")
+    corpo = {"itens_abertos": ["Seringas, agulhas e caixa térmica", "Animais apartados no curral"],
+             "texto": "Zé do Curral", "em": "2026-10-21T10:05:00-03:00", "dispositivo_uid": "cel-ze"}
+    r = api.c.post(f"/sanitario/dias/{dia['id']}/ciencia", json=corpo)
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["tipo"] == "preparacao.ciencia" and j["texto"] == "Zé do Curral" and j["dia_id"] == dia["id"]
+    assert j["payload"]["itens_abertos"] == corpo["itens_abertos"]
+    assert j["payload"]["em_aparelho"] == "2026-10-21T13:05:00Z" and j["dispositivo_id"]
+    # aparece no log do dia (o site lê de lá)
+    log = api.c.get(f"/sanitario/dias/{dia['id']}/log").json()
+    assert any(lg["tipo"] == "preparacao.ciencia" and lg["payload"]["nome"] == "Zé do Curral" for lg in log)
+    # pessoa do cadastro: o nome vem dela
+    r = api.c.post(f"/sanitario/dias/{dia['id']}/ciencia", json={"itens_abertos": [], "pessoa_id": api.ids["vet_pessoa"]})
+    assert r.status_code == 200 and r.json()["texto"] == "Dra. Ana" and r.json()["payload"]["pessoa_id"] == api.ids["vet_pessoa"]
+    # sem quem: 400; campo desconhecido: 422; dia de outra fazenda: 404
+    assert api.c.post(f"/sanitario/dias/{dia['id']}/ciencia", json={"itens_abertos": ["x"]}).status_code == 400
+    assert api.c.post(f"/sanitario/dias/{dia['id']}/ciencia", json={"texto": "Zé", "xyz": 1}).status_code == 422
+    api.como("adm", fid=2)
+    assert api.c.post(f"/sanitario/dias/{dia['id']}/ciencia", json={"texto": "Zé"}).status_code == 404
+
+
+def test_retroativo_motivo_pela_fila_offline(api):
+    cx = criar_caixa(api, b19())
+    a = animal(api, "2401", idade=150)
+    api.como("op")
+    data = (HOJE - timedelta(days=4)).isoformat()
+    r = api.c.post("/sanitario/campo/sincronizar", json={"dispositivo_uid": "cel-ze", "registros": [
+        {"dia_id": None, "animal_id": a, "caixa_id": cx["id"], "data": data, "chave_idempotencia": "lote9:%d" % a,
+         "retroativo_motivo": "Sem sinal na semana passada"}]})
+    assert r.status_code == 200, r.text
+    assert r.json()["itens"][0]["status"] == "gravado"
+    hist = api.c.get(f"/sanitario/animais/{a}/historico").json()["registros"]
+    assert hist[0]["retroativo"] is True and hist[0]["retroativo_motivo"] == "Sem sinal na semana passada"
+    with api.s() as s:
+        lg = s.exec(select(SanitarioLog).where(SanitarioLog.tipo == "registro.retroativo")).one()
+        assert "Sem sinal na semana passada" in lg.texto_livre
+
+
+def test_catalogo_wizard_so_cria_a_copia_ao_concluir(api):
+    """"Do catálogo" no wizard: abrir/cancelar não grava nada; concluir cria a
+    cópia (v1, ligada ao catálogo) já com os ajustes e o aceite da carência."""
+    api.como("dono")
+    item = api.c.post("/painel-cowdata/sanitario/catalogo", json={
+        "chave": "lepto_wiz", "nome": "Lepto wiz", "tipo": "vacina",
+        "definicao": {**_vacina_vacas(nome="Lepto wiz"), "categorias_ref": ["novilha"]}}).json()
+    api.como("adm")
+    cat = next(c for c in api.c.get("/sanitario/catalogo").json() if c["chave"] == "lepto_wiz")
+    antes = contagens(api.eng)
+    pv = api.c.get(f"/sanitario/catalogo/{cat['versao_id']}/previa-copia")
+    assert pv.status_code == 200, pv.text
+    d = pv.json()["definicao"]
+    with api.s() as s:
+        novilha = s.exec(select(CategoriaManejo.id).where(CategoriaManejo.fazenda_id == 1,
+                                                          CategoriaManejo.nome == "Novilha")).one()
+    assert d["categorias"] == [novilha] and "categorias_ref" not in d and d["nome"] == "Lepto wiz"
+    assert contagens(api.eng) == antes  # prévia não grava (cancelar = nada fica)
+    assert next(c for c in api.c.get("/sanitario/catalogo").json() if c["chave"] == "lepto_wiz")["caixas_da_fazenda"] == []
+    # concluir: uma chamada, com os ajustes
+    d["dose_valor"] = 4.0
+    r = api.c.post(f"/sanitario/catalogo/{cat['versao_id']}/ativar",
+                   json={"estado": "inativa", "definicao": d, "aceitar_carencia": True})
+    assert r.status_code == 200, r.text
+    cx = r.json()
+    assert cx["versao_numero"] == 1 and cx["catalogo"]["versao"] == 1 and cx["definicao"]["dose_valor"] == 4.0
+    assert cx["definicao"]["categorias"] == [novilha] and cx["carencia_aceita"] is True
+    # definição inválida: 422 e nada criado
+    api.como("dono")
+    item2 = api.c.post("/painel-cowdata/sanitario/catalogo", json={
+        "chave": "raiva_wiz", "nome": "Raiva wiz", "tipo": "vacina", "definicao": _vacina_vacas(nome="Raiva wiz")}).json()
+    api.como("adm")
+    ruim = {**api.c.get(f"/sanitario/catalogo/{item2['versao_id']}/previa-copia").json()["definicao"], "nome": ""}
+    assert api.c.post(f"/sanitario/catalogo/{item2['versao_id']}/ativar", json={"definicao": ruim}).status_code == 422
+    assert next(c for c in api.c.get("/sanitario/catalogo").json() if c["chave"] == "raiva_wiz")["caixas_da_fazenda"] == []
+    assert item["versao_atual"] == 1

@@ -169,6 +169,11 @@ class AceiteCarenciaIn(Esquema):
 
 class AtivarCatalogoIn(Esquema):
     estado: Literal["ativa", "inativa"] = "inativa"
+    # Wizard "Do catálogo": a cópia só é criada ao CONCLUIR, já com os ajustes
+    # feitos nas etapas (vira a versão 1, ligada ao catálogo). Sem `definicao`,
+    # copia o item do catálogo como está.
+    definicao: Optional[CaixaDefinicaoIn] = None
+    aceitar_carencia: bool = False
 
 
 class ParametrosIn(Esquema):
@@ -401,6 +406,19 @@ class LancamentoSimplesIn(Esquema):
 class RegistroSyncIn(RegistroIn):
     dia_id: Optional[int] = None
     outro_texto: Optional[str] = None
+    # Lançamento simples retroativo guardado no celular (sem dia): o motivo
+    # vai junto pela fila e fica no registro + log "registro.retroativo".
+    retroativo_motivo: Optional[str] = None
+
+
+class CienciaPreparacaoIn(Esquema):
+    """Ciência nominal da preparação pré-curral: quem começou o dia com itens
+    da conferência em aberto. Vai pela fila offline do app (Idempotency-Key)."""
+    itens_abertos: list[str] = Field(default_factory=list)
+    pessoa_id: Optional[int] = None
+    texto: Optional[str] = None
+    em: Optional[datetime] = None
+    dispositivo_uid: Optional[str] = None
 
 
 class SincronizarIn(Esquema):

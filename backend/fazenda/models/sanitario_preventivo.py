@@ -470,7 +470,7 @@ class SanitarioLog(SQLModel, table=True):
     Tipos: consentimento.fora_janela|inelegivel|legal, carencia.decisao|aceite,
     dia.data_diferente|fechado|fechado_auto, registro.retroativo|estorno,
     caixa.versao|arquivada|mesclada, catalogo.atualizado, escrita.duplicada,
-    offline.conflito."""
+    offline.conflito, preparacao.ciencia (ciência nominal pré-curral do app)."""
 
     __tablename__ = "sanitario_log"
     __table_args__ = (

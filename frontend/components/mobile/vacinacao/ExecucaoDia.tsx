@@ -1,6 +1,7 @@
 "use client";
 // Abrir um dia ("Vacina · B19 · 25/12") no celular: baixa o pacote offline e
-// guarda no aparelho; preparação com ciência nominal do que não foi conferido;
+// guarda no aparelho; preparação com ciência nominal do que não foi conferido
+// (enviada ao servidor, pela fila offline se preciso: POST /dias/{id}/ciencia);
 // quem aplica (veterinários do cadastro ou texto livre, CRMV pedido); modo
 // tronco ou grupo; incluir animais com consentimento; trocar produto/dose;
 // carência desconhecida (administrador decide; os demais seguem "tanque · sem
@@ -12,12 +13,13 @@ import { Hand, Plus, RefreshCw, Syringe, Users } from "lucide-react";
 import { MobConfirmModal, MobGaveta, MobVoltar } from "@/components/mobile/ui";
 import { LegendaOrigem } from "@/components/sanitario/comum";
 import { decidirCarenciaDia, desfazerRegistros, fecharDia, mensagemDoErro, pacoteOffline } from "@/lib/apiSanitario";
+import { enviarOuEnfileirar } from "@/lib/offline";
 import {
-  descartarDaFila, enfileirarRegistros, guardarAvisoOfflineHoras, lerResultados, marcarCampoAtivo, useFilaSanitario,
+  descartarDaFila, dispositivoUid, enfileirarRegistros, guardarAvisoOfflineHoras, lerResultados, marcarCampoAtivo, useFilaSanitario,
   type NovoRegistroSan,
 } from "@/lib/filaSanitario";
 import {
-  alvosPendentes, chaveAC, chaveAnimal, dosePorPeso, horaAgora, itensPreparacao, produtoEfetivo,
+  alvosPendentes, chaveAC, chaveAnimal, corpoCiencia, dosePorPeso, horaAgora, itensPreparacao, produtoEfetivo,
   type AlvoDia, type RegistroCampo,
 } from "@/lib/sanitarioCampo";
 import {
@@ -183,7 +185,13 @@ export function ExecucaoDia({ diaId, onVoltar }: { diaId: number; onVoltar: () =
   if (!exec.preparacao.concluida) {
     return <Preparacao cabecalho={cabecalho} itens={prep} marcados={exec.preparacao.marcados}
       onMarcar={(m) => setExec((e) => ({ ...e, preparacao: { ...e.preparacao, marcados: m } }))}
-      onConcluir={(ciencia) => setExec((e) => ({ ...e, preparacao: { ...e.preparacao, ciencia, concluida: true } }))} />;
+      onConcluir={(ciencia) => {
+        setExec((e) => ({ ...e, preparacao: { ...e.preparacao, ciencia, concluida: true } }));
+        // A ciência nominal vai para o servidor (sanitario_log) — sem sinal,
+        // entra na fila offline do app e segue sozinha depois.
+        if (ciencia) enviarOuEnfileirar(`/sanitario/dias/${diaId}/ciencia`, corpoCiencia(ciencia, dispositivoUid()),
+          `Ciência da preparação · ${dia.nome || "dia"}`).catch((e) => setMsg(mensagemDoErro(e, "Ciência não enviada.")));
+      }} />;
   }
 
   // ── 2. quem aplica ──

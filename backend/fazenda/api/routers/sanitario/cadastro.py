@@ -330,6 +330,20 @@ def catalogo_da_fazenda(session: Session = Depends(get_session),
     return out
 
 
+@router.get("/catalogo/{versao_id}/previa-copia")
+def previa_copia_do_catalogo(versao_id: int, session: Session = Depends(get_session),
+                             fazenda_id: Optional[int] = Depends(get_fazenda_atual_id)) -> dict:
+    """A definição do item do catálogo como ficaria na fazenda (categorias e
+    histórico resolvidos) — NÃO grava. O wizard abre isto e só cria a cópia
+    ao concluir (POST /catalogo/{versao_id}/ativar com `definicao`)."""
+    fid = exigir_fazenda(fazenda_id)
+    cv = session.get(SanitarioCatalogoVersao, versao_id)
+    if cv is None:
+        raise HTTPException(status_code=404, detail="Versão de catálogo não encontrada.")
+    d, avisos = regras_def.definicao_resolvida(session, fid, dict(cv.definicao or {}))
+    return {"versao_id": cv.id, "versao": cv.versao, "definicao": d, "avisos": avisos}
+
+
 @router.post("/catalogo/{versao_id}/ativar")
 def ativar_do_catalogo(versao_id: int, dados: AtivarCatalogoIn, session: Session = Depends(get_session),
                        user: Usuario = Depends(get_current_user),
@@ -340,7 +354,10 @@ def ativar_do_catalogo(versao_id: int, dados: AtivarCatalogoIn, session: Session
     cv = session.get(SanitarioCatalogoVersao, versao_id)
     if cv is None:
         raise HTTPException(status_code=404, detail="Versão de catálogo não encontrada.")
-    nome = (cv.definicao or {}).get("nome") or ""
+    ajustada = dados.definicao.para_definicao() if dados.definicao is not None else None
+    if ajustada is not None:
+        _validar_ou_422(session, fid, ajustada)
+    nome = (ajustada if ajustada is not None else (cv.definicao or {})).get("nome") or ""
     dup = session.exec(select(SanitarioCaixa).where(
         SanitarioCaixa.fazenda_id == fid, SanitarioCaixa.nome_normalizado == regras_def.normalizar(nome),
         SanitarioCaixa.estado != "arquivada")).first()
@@ -348,9 +365,14 @@ def ativar_do_catalogo(versao_id: int, dados: AtivarCatalogoIn, session: Session
         raise HTTPException(status_code=409, detail={"codigo": "nome_duplicado", "caixa_id": dup.id,
                                                      "mensagem": f'Já existe "{dup.nome}" nesta fazenda.'})
     try:
-        cx = regras_def.ativar_do_catalogo(session, fid, cv.id, estado=dados.estado, usuario_id=user.id)
+        cx = regras_def.ativar_do_catalogo(session, fid, cv.id, estado=dados.estado, usuario_id=user.id,
+                                           definicao=ajustada)
         _log(session, fid, "catalogo.ativado", caixa_id=cx.id, usuario_id=user.id,
-             texto_livre=f"{cx.nome} v{cv.versao} copiado do catálogo central ({dados.estado}).")
+             texto_livre=f"{cx.nome} v{cv.versao} copiado do catálogo central ({dados.estado})"
+                         f"{', com ajustes do cadastro' if ajustada is not None else ''}.")
+        if dados.aceitar_carencia and ajustada is not None:
+            _aceitar(session, fid, cx, user.id, ajustada.get("car_modo_leite"), ajustada.get("car_leite_dias"),
+                     ajustada.get("car_carne_dias"))
         if cx.estado == "ativa":
             recalcular(session, fid, caixa_ids=[cx.id], motivo="catalogo.ativado")
         session.commit()

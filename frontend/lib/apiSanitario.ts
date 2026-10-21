@@ -93,8 +93,17 @@ export const aceitarCarenciaCaixa = (id: number, modoLeite: ModoLeite, leiteDias
     carne_dias: number | null; aceito_em: string }>(`/caixas/${id}/carencia/aceite`,
     { modo_leite: modoLeite, leite_dias: leiteDias ?? null, carne_dias: carneDias ?? null });
 export const catalogoDaFazenda = () => get<CatalogoItemFazenda[]>("/catalogo", undefined, "Não foi possível carregar o catálogo.");
-export const ativarDoCatalogo = (versaoId: number, estado: "ativa" | "inativa" = "inativa") =>
-  post<CaixaDetalhe>(`/catalogo/${versaoId}/ativar`, { estado }, "Não foi possível ativar do catálogo.");
+/** Copia o item do catálogo para a fazenda. Com `definicao` (wizard), a cópia
+ *  nasce já ajustada — o wizard só chama isto ao CONCLUIR. */
+export const ativarDoCatalogo = (versaoId: number, estado: "ativa" | "inativa" = "inativa",
+  definicao?: Partial<DefinicaoCaixa> | null, aceitarCarencia = false) =>
+  post<CaixaDetalhe>(`/catalogo/${versaoId}/ativar`, definicao
+    ? { estado, definicao: definicaoParaEnvio(definicao), aceitar_carencia: aceitarCarencia } : { estado },
+  "Não foi possível ativar do catálogo.");
+/** A definição do item do catálogo como ficaria na fazenda — não grava nada. */
+export const previaCopiaCatalogo = (versaoId: number) =>
+  get<{ versao_id: number; versao: number; definicao: Partial<DefinicaoCaixa>; avisos: string[] }>(
+    `/catalogo/${versaoId}/previa-copia`, undefined, "Não foi possível abrir o item do catálogo.");
 export const atualizarDoCatalogo = (caixaId: number) =>
   post<CaixaDetalhe>(`/caixas/${caixaId}/atualizar-do-catalogo`, {}, "Não foi possível atualizar a cópia.");
 export const obterParametros = () => get<Parametros>("/parametros");

@@ -179,7 +179,7 @@ function AbaRotina({ manual }: { manual: ManualFazenda }) {
           </div>
         </div>
       )}
-      {nada && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma rotina automática configurada ainda — cadastre BST, manejo reprodutivo e calendário sanitário para o manual projetar as próximas datas.</p>}
+      {nada && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma rotina automática configurada ainda — cadastre BST, manejo reprodutivo e protocolos sanitários para o manual projetar as próximas datas.</p>}
     </div>
   );
 }

@@ -2,8 +2,10 @@
 // Central de Protocolos › Vacinas e exames › Cadastro — WIZARD de 9 etapas que
 // deslizam (casco: components/protocolos/WizardProtocolo.tsx, que respeita
 // prefers-reduced-motion). Começa por "do catálogo ou do zero":
-//   - do catálogo: POST /sanitario/catalogo/{versao}/ativar copia o item para a
-//     fazenda (inativo) e o wizard abre a cópia para ajustar (salvar = versão nova);
+//   - do catálogo: GET /sanitario/catalogo/{versao}/previa-copia traz a definição
+//     já resolvida para a fazenda (NÃO grava); o wizard abre essa definição e só
+//     ao CONCLUIR faz POST /catalogo/{versao}/ativar com os ajustes (vira a v1,
+//     ligada ao catálogo). Cancelar não deixa cópia nenhuma;
 //   - do zero: definição em branco; salvar = POST /sanitario/caixas.
 // Cada "Continuar" valida a etapa no back (POST /caixas/validar); a Revisão
 // mostra "entram / ficam de fora e por quê" (POST /caixas/previa) sem gravar.
@@ -14,7 +16,7 @@ import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/Wizar
 import { TelaSkeleton } from "@/components/ui";
 import {
   ativarDoCatalogo, catalogoDaFazenda, criarCaixa, errosValidacaoDoErro, listarCaixas, mensagemDoErro, mudarEstadoCaixas,
-  novaVersaoCaixa, obterCaixa, obterParametros, previaCaixa, validarCaixa,
+  novaVersaoCaixa, obterCaixa, obterParametros, previaCaixa, previaCopiaCatalogo, validarCaixa,
 } from "@/lib/apiSanitario";
 import {
   AO_FECHAR, COLUNAS_FICHA, CONDICOES, DOSE_UNIDADES, EVENTO_TIPOS, MESES_CURTOS, MODOS_LEITE, AJUDA_MODO_LEITE,
@@ -651,7 +653,7 @@ function Comecar({ onZero, onCatalogo, ocupado, erro }: { onZero: () => void; on
     <div className="san-bloco">
       <div className="san-bloco-cab"><h3>Escolher do catálogo ou criar do zero</h3></div>
       <div className="san-bloco-corpo san-wiz-etapa">
-        <p className="san-nota" style={{ margin: 0 }}>O catálogo central da CowData traz cadastros prontos e revisados. Escolher um copia para a sua fazenda como <b>inativo</b>; você ajusta o que quiser nas próximas etapas.</p>
+        <p className="san-nota" style={{ margin: 0 }}>O catálogo central da CowData traz cadastros prontos e revisados. Escolha um, ajuste o que quiser nas próximas etapas e, ao salvar, ele é copiado para a sua fazenda. Cancelar não copia nada.</p>
         {erro && <Faixa tipo="alerta">{erro}</Faixa>}
         {erroCat ? <Faixa tipo="alerta">{erroCat} <button type="button" className="san-link" onClick={recarregar}>Tentar de novo</button></Faixa>
           : carregando ? <div className="skeleton" style={{ height: "8rem" }} role="status" aria-label="Carregando o catálogo" /> : (
@@ -695,6 +697,8 @@ export function WizardCaixa({ caixaId: caixaIdInicial = null, passoInicial = 0, 
   const [salvando, setSalvando] = useState(false);
   const [erroSalvar, setErroSalvar] = useState<string | null>(null);
   const [copiadoDoCatalogo, setCopiadoDoCatalogo] = useState<string | null>(null);
+  // Item do catálogo escolhido e ainda NÃO copiado (a cópia só nasce ao concluir).
+  const [doCatalogo, setDoCatalogo] = useState<{ versaoId: number; versao: number; nome: string } | null>(null);
   const [tentativa, setTentativa] = useState(0);
 
   useEffect(() => {
@@ -732,12 +736,13 @@ export function WizardCaixa({ caixaId: caixaIdInicial = null, passoInicial = 0, 
     if (!c.versao_id) return;
     setOcupado(true);
     try {
-      const det = await ativarDoCatalogo(c.versao_id, "inativa");
-      setDetalhe(det); setCaixaId(det.id);
-      setForm({ def: definicaoCompleta(det.definicao), ativo: false, aceitarCarencia: det.carencia_aceita });
-      setCopiadoDoCatalogo(`${det.nome} foi copiado do catálogo v${c.versao_atual} para a fazenda, como inativo. Ajuste o que quiser; salvar cria a versão 2.`);
+      const pv = await previaCopiaCatalogo(c.versao_id);
+      setDoCatalogo({ versaoId: pv.versao_id, versao: pv.versao, nome: c.nome });
+      setForm({ def: definicaoCompleta(pv.definicao), ativo: false, aceitarCarencia: false });
+      setCopiadoDoCatalogo(`Do catálogo: ${c.nome} v${pv.versao}. Ajuste o que quiser; a cópia só é criada na fazenda quando você salvar.`
+        + (pv.avisos.length ? ` ${pv.avisos.join(" ")}` : ""));
     } catch (e) {
-      setErroComecar(mensagemDoErro(e, "Não foi possível copiar do catálogo."));
+      setErroComecar(mensagemDoErro(e, "Não foi possível abrir o item do catálogo."));
     } finally { setOcupado(false); }
   }
 
@@ -797,6 +802,9 @@ export function WizardCaixa({ caixaId: caixaIdInicial = null, passoInicial = 0, 
         const queroAtiva = form.ativo, estaAtiva = det.estado === "ativa";
         if (queroAtiva !== estaAtiva && det.estado !== "arquivada") await mudarEstadoCaixas([det.id], queroAtiva ? "ativar" : "inativar");
         onSair(`${det.nome} salvo como v${det.versao_numero}. Vale daqui para frente.`);
+      } else if (doCatalogo) {
+        det = await ativarDoCatalogo(doCatalogo.versaoId, form.ativo ? "ativa" : "inativa", form.def, aceitar);
+        onSair(`${det.nome} copiado do catálogo v${doCatalogo.versao} ${form.ativo ? "e ativo" : "como inativo"}.`);
       } else {
         det = await criarCaixa(form.def, form.ativo ? "ativa" : "inativa", aceitar);
         onSair(`${det.nome} criado ${form.ativo ? "e ativo" : "como inativo"}.`);
@@ -816,18 +824,18 @@ export function WizardCaixa({ caixaId: caixaIdInicial = null, passoInicial = 0, 
     <div className="san-pagina">
       {copiadoDoCatalogo && <Faixa tipo="ok">{copiadoDoCatalogo}</Faixa>}
       <WizardProtocolo<Form>
-        chaveRascunho={caixaId ? null : "wizard-sanitario:nova-caixa"}
+        chaveRascunho={caixaId || doCatalogo ? null : "wizard-sanitario:nova-caixa"}
         form={form} setForm={setForm}
         ehVazio={(f) => !(f.def.nome || "").trim()}
         passos={passos}
         passoInicial={Math.min(Math.max(passoInicial, 0), 8)}
-        onCancelar={() => onSair(copiadoDoCatalogo ? "A cópia do catálogo ficou na lista como inativa." : undefined)}
+        onCancelar={() => onSair()}
         onConcluir={salvar}
         salvando={salvando}
         erro={erroSalvar}
         ouroNoConcluir
         rotuloConcluir={caixaId ? "Salvar versão nova" : "Salvar cadastro"}
-        tituloTopo={editando ? `Editando ${editando.nome} (v${editando.versao ?? 1})` : "Novo cadastro"}
+        tituloTopo={editando ? `Editando ${editando.nome} (v${editando.versao ?? 1})` : doCatalogo ? `Do catálogo: ${doCatalogo.nome}` : "Novo cadastro"}
       />
     </div>
   );

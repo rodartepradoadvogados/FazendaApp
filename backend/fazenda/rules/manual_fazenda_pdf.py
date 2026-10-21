@@ -9,8 +9,8 @@ padding/border/background-color simples. Identidade visual CowData
 frontend/lib/export.ts.
 
 BUG DE SEGURANÇA CORRIGIDO (CWE-918 via CWE-80): quase todo texto que entra
-neste template (nome de item de estoque, protocolo/número de animal do
-calendário sanitário, responsável pelo manejo reprodutivo, sugestão
+neste template (nome de item de estoque, protocolo/número de animal dos
+protocolos sanitários, responsável pelo manejo reprodutivo, sugestão
 cadastrada pelo usuário) é texto livre gravável por um usuário comum — sem
 gate de admin — e entrava CRU nas f-strings de HTML abaixo (`<td>{...}</td>`
 etc.), sem `html.escape` nenhum. Como `gerar_pdf_manual` chama

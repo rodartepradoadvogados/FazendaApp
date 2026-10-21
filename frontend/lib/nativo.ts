@@ -81,11 +81,10 @@ export async function registrarBotaoVoltar(estaNaRaiz: () => boolean): Promise<(
 // /app; só a Agenda tem equivalente dentro dela. Demais rotas abrem mesmo
 // assim (o site inteiro carrega dentro da WebView, só sem a casca do /app).
 //
-// Sanitário (F7): o push da véspera ("Amanhã: Vacina · B19 · 25/12" /
-// "Amanhã: Exame · …", ver backend/fazenda/rules/sanitario/push.py) vem com a
-// URL da Agenda; no app ele abre direto Menu › Vacinação, onde está o
-// comunicado da véspera e o dia de amanhã. Uma URL já do app (/app/…, ex.:
-// "/app/menu#vacinacao-<id do dia>") passa como veio.
+// Sanitário: o push da véspera já vem com a URL do app
+// "/app/menu#vacinacao-<id do dia>" (url_da_nota em
+// backend/fazenda/rules/sanitario/push.py) e passa como veio. As regras por
+// título abaixo só cobrem push antigo ainda na bandeja (véspera com /agenda).
 export function rotaDoApp(url: string, titulo?: string | null): string {
   if (url.startsWith("/app")) return url;
   if (/^amanhã:\s*(vacina|exame)\b/i.test((titulo || "").trim())) return "/app/menu#vacinacao";

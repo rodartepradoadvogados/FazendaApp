@@ -126,8 +126,71 @@ Acesse: http://localhost:3000
 | POST | `/alimentacao/consumo` | Fornecimento do dia (soma). Com o parâmetro **"Lançar o consumo por trato?"** (`alimentacao_consumo_por_trato`, Parâmetros › Alimentação, padrão não) ligado, exige `trato` (1..N da dieta ativa); desligado, vale o dia inteiro como sempre |
 | GET | `/alimentacao/sobra/janela?lote=&data=` | Resumo pré-montado do **ciclo de 24h** da sobra lida em `data` pela posição da leitura cadastrada na dieta ("A sobra se refere aos tratos 2 e 3 do dia 20/10 e ao trato 1 do dia 21/10?"), com o fornecido na janela e a sobra já lançada para o ciclo. `posicao_leitura`/`dia_civil` = "Selecionar outro período" |
 | POST | `/alimentacao/sobra` | Grava a sobra de UM ciclo (relançar o mesmo ciclo substitui). `consumo_sobra.data` = data de **fechamento** do ciclo (dia do último trato da janela; registro antigo = o próprio dia). Base da sobra % = fornecido na janela: lançamento por trato entra se o trato está na janela; lançamento do dia entra rateado pelo % dos tratos (`rules/tratos.py`) |
+| — | `/sanitario/*` | Sanitário Preventivo v2 (vacinas e exames) — ver a seção própria abaixo |
 | GET | `/financeiro/dre` | DRE por período e regime |
 | GET | `/financeiro/contas-a-pagar` | Contas próximas |
+
+## Sanitário Preventivo v2 (vacinas, exames e vermífugos)
+
+Substituiu em 21/10/2026 o módulo antigo (calendário/regras, eventos sanitários, cronogramas, lista de espera, aplicações e
+exames preventivos), que saiu do código e foi **arquivado** (nada apagado). Curativo, BST e Indução continuam onde estavam.
+
+**Arquitetura de caixas** (`backend/fazenda/models/sanitario_preventivo.py`, regras em `backend/fazenda/rules/sanitario/`):
+- **Caixa** = o cadastro de uma vacina/exame/vermífugo (`sanitario_caixa`). Editar cria **versão** nova (`sanitario_caixa_versao`,
+  vale dali para frente). Cada animal **entra na caixa** quando cumpre a regra (público, janela por evento/período, série de doses)
+  e sai quando recebe, deixa de cumprir, é baixado, dispensado ou a janela fecha. **Só o motor** (`rules/sanitario/motor.py::recalcular`)
+  escreve `sanitario_situacao`; nenhuma leitura grava. Chave única animal × caixa × ciclo × dose.
+- **Dia** marcado ("Vacina · B19 · 25/12") = `sanitario_dia` + `sanitario_dia_caixa` + `sanitario_dia_item`. **Registro** por animal
+  (`sanitario_registro`) é o histórico único (dia, lançamento simples, ficha de campo, planilha); toda escrita passa por
+  `rules/sanitario/registro.py::registrar` (idempotente por `chave_idempotencia`, baixa de estoque por animal, carência, prazos legais).
+  Aplicar **nunca** cria caixa: só o wizard e o catálogo criam.
+- Decisões e consentimentos (fora da regra, data diferente, carência, estorno, conflito entre aparelhos, ciência da preparação
+  pré-curral `preparacao.ciencia`) ficam em `sanitario_log`. Outras tabelas: `sanitario_catalogo`/`_catalogo_versao`/`_norma`
+  (globais, cockpit CowData), `_caixa_versao_categoria`, `_carencia_aceite`, `_prazo_legal`, `_nota_agenda`, `_dispositivo`,
+  `_parametros`, `_job_estado`. Todas com `fazenda_id NOT NULL` (menos as globais).
+- **Catálogo central** (Painel CowData › Sanitário, `/painel-cowdata/sanitario/catalogo`): ativar = **copiar** para a fazenda.
+  No wizard "Do catálogo", `GET /sanitario/catalogo/{versao}/previa-copia` abre a definição já resolvida (não grava) e a cópia só
+  nasce ao concluir (`POST /sanitario/catalogo/{versao}/ativar` com `definicao`). Versão nova no catálogo só **avisa** a fazenda.
+  Padrão de fábrica por fazenda: B19, exame de tuberculose e de brucelose, **inativos**, uma vez (`seed_flag`).
+
+**Rotas** (`backend/fazenda/api/routers/sanitario/`, prefixo `/sanitario`, módulo contratado `sanitario`): `cadastro.py` (caixas,
+wizard `validar`/`previa`, catálogo da fazenda, parâmetros), `dias.py` (dias, registros, aplicar no grupo, desfazer 10 s, estorno,
+resultado de exame, fechar/cancelar, dispensar, conflitos, `POST /dias/{id}/ciencia`), `campo.py` (app: `GET /campo/hoje`,
+`/dias/{id}/pacote-offline`, `POST /campo/sincronizar` em lote com resposta por registro, `POST /dispositivos/heartbeat`),
+`consulta.py` (painel, janela, calendário, histórico, notas, prazos, leite separado — só leitura), `lancamento.py`
+(lançamento simples/retroativo, ficha, importação de planilha só-registro), `cockpit.py` (`/painel-cowdata/sanitario`).
+
+**Migrações** (cadeia `… → n5o6p7q8r9s0 → s0a1r2q3v4o5 → s1n2o3v4o5m6 → t1c2a3r4e5n6`):
+- `s0a1r2q3v4o5` (**A**): move as 13 tabelas antigas e as linhas preventivas das tabelas compartilhadas (sanidade, aplicacao_agendada,
+  evento_realizado, parametro_fazenda, checklist) para o schema **`arquivo_sanitario_2026`** (SQLite: prefixo `arquivo_sanitario_2026__`).
+  BST, Indução e linhas nascidas de protocolo ficam. Protocolo de etapas "preventivo" vira "curativo". Downgrade devolve tudo.
+- `s1n2o3v4o5m6` (**B**): cria as 18 tabelas `sanitario_*`, o catálogo central v1 e o padrão de fábrica das fazendas existentes.
+- `t1c2a3r4e5n6`: `controle_leiteiro.destino_leite` (tanque/descarte) e `sanitario_registro_id` — **carência na produção**: no
+  lançamento de produção por vaca, a vaca em carência segue o modo da caixa (bloqueio recusa; descarte grava fora do tanque;
+  tanque segue com log), `rules/sanitario/leite.py`. A lista "Leite separado" junta curativo e preventivo.
+
+**Ideagri**: `SANIDADE.csv` não é mais aceito no upload (apagava e recriava a sanidade). Vacinas antigas entram pela importação de
+planilha do sanitário (só registro, nunca apaga).
+
+**Onde fica na tela**: site — Central de Protocolos › Vacinas e exames (cadastro/wizard, marcar dia), Sanidade › Preventiva
+(painel, animais na janela, calendário, aplicações, histórico), Lançamentos › Preventivo, Agenda (cartão "Vacinas previstas" e
+notas), Parâmetros › Sanitário. App — **Menu › Vacinação** (`frontend/components/mobile/vacinacao/`): dias de hoje/amanhã, pacote
+offline, preparação com ciência nominal (enviada ao servidor), tronco ou grupo, fila offline em lote (`lib/filaSanitario.ts`) com
+heartbeat; Lançar › Preventiva (o motivo do retroativo também vai pela fila).
+
+**Job e ganchos**: `rules/sanitario/job.py::tick` roda no loop de 30 min do `main.py` (diária uma vez por dia local: recalcular,
+notas "aglomerou"/fim de janela/véspera/prazos/carência sem aceite/celular offline, fechamento automático D+1 23:59) e despacha o
+push das notas (`rules/sanitario/push.py`; a véspera abre `/app/menu#vacinacao-<id do dia>`, as de administrador vão para o site).
+`rules/sanitario/ganchos.py`: parto, diagnóstico, serviço, perda de prenhez, secagem, baixa, venda, compra e cadastro de animal
+avisam o motor na mesma transação (falha nunca derruba a escrita; o job corrige).
+
+**Runbook de deploy** (banco real — nunca rodar com `DATABASE_URL` de produção na máquina de desenvolvimento sem querer):
+1. **Antes**: `DATABASE_URL=… python backend/scripts/relatorio_sanitario_legado.py [--amostras 10] [--json]` — só lê; conta o que
+   vai para o arquivo por fazenda e mostra amostras para o dono aprovar.
+2. Deploy normal (Railway roda `alembic upgrade head`): a migração A arquiva no schema `arquivo_sanitario_2026`, a B cria as tabelas
+   novas, a `t1c2…` adiciona o destino do leite. Conferir `python backend/scripts/check_alembic_heads.py` (uma cabeça).
+3. **Depois**: `DATABASE_URL=… python backend/scripts/exportar_arquivo_sanitario.py DIRETORIO [--fazenda-id N]` exporta o arquivo
+   para JSON (uma tabela por arquivo). Guardar no Drive; nunca no repositório.
 
 ## Planos comerciais e módulos contratados
 
@@ -151,7 +214,7 @@ nasce `aguardando_aprovacao` e sem módulo até o dono da plataforma aprovar o c
 - **Estoque**: sem o módulo `estoque` contratado, nenhum efeito colateral (Pedidos, lançamentos do Financeiro) grava estoque (`rules/estoque_baixa.py`).
 - **Custo do estoque (15/10/2026)**: toda compra de produto estocável pelo Financeiro grava o **último custo por unidade de estoque** em
   `Estoque.valor_unitario` (valor unitário da linha ÷ tamanho da embalagem, quando a compra é por embalagem; ou valor total ÷ quantidade).
-  É esse campo que dá custo à aplicação de medicamento (`rules/aplicacao_preventiva.py`). Só atualiza quando a unidade é segura e a compra é a mais recente (não mexe em item de sêmen, nem em item com embalagem padrão comprado sem escolher a embalagem, nem com data anterior à última compra). `LoteEstoque.valor_unitario` guarda o preço de
+  É esse campo que dá custo à aplicação de medicamento (curativo e a baixa por animal do sanitário preventivo, `rules/sanitario/registro.py`). Só atualiza quando a unidade é segura e a compra é a mais recente (não mexe em item de sêmen, nem em item com embalagem padrão comprado sem escolher a embalagem, nem com data anterior à última compra). `LoteEstoque.valor_unitario` guarda o preço de
   **uma embalagem**, como digitado — nenhum relatório lê esse campo hoje. Política = último custo; média ponderada é decisão pendente.
 - **Lançamento financeiro (15/10/2026)**: despesa por **embalagem** (`apresentacao_id` por item, nº de embalagens × tamanho = unidade do estoque);
   fornecedor sugere o resto pelo último lançamento dele (só campos vazios); confirmação com **Desfazer** (usa o fluxo de Excluir lançamento) e
@@ -169,7 +232,7 @@ nasce `aguardando_aprovacao` e sem módulo até o dono da plataforma aprovar o c
   Cards e tabelas da Agenda Reprodutiva (site e app) ganham as colunas Toque/confirmação e Retoque/reconfirmação (data + P/V/I), a Situação, o selo dourado (pulsa só com ≤ 3 dias) e o filtro A tocar / A reconfirmar / Reconfirmadas (`components/reproducao/FaseToque.tsx`, `lib/fasesToque.ts`). Os cards carregam por `POST /agenda-reprodutiva/cards` (uma chamada, em vez de uma por card).
 - **Exportar agenda reprodutiva (17/10/2026)**: o botão abre um pop-up (`components/reproducao/ExportarAgendaReprodutivaModal.tsx`) com todos os cards configurados e as "Outras pendências", cada um com a contagem; "Aplicar o filtro que está na tela" (marcado por padrão) limita o arquivo a A tocar / A reconfirmar / Reconfirmadas. `lib/exportAgendaReprodutiva.ts` monta as seções: **PDF em A4 paisagem** (capa com data de referência, filtro e próxima visita; totais por situação; uma seção por lista com Matriz, Categoria, Lote, DEL, Dias da IA, Toque, Retoque e Situação; linhas AINDA NÃO em dourado; legenda; rodapé "Página X de N") e **Excel** (uma aba por lista, todas as colunas, números como número, cabeçalho congelado e filtro). `lib/export.ts` ganhou `gerarFichaPDFBlob`/`gerarMultiExcelBlob` (devolvem o arquivo, sem entregar) e opções extras (`larguraPdf`, `destacar`, orientação, resumo, legenda, rodapé) — sem as opções, os demais relatórios saem como antes.
   Os cards da agenda deixaram de ficar só no `localStorage`: ficam no servidor, por fazenda (`useCardsSalvos`); quem já tinha cards só neste navegador sobe esses cards na primeira leitura com o servidor vazio, e o `localStorage` virou cache offline.
-- **Adesivo de detecção de cio de repasse (17/10/2026)**: tudo em **Configurações › Parâmetros › Reinseminação e observação de cio** (`components/PainelAdesivoCio.tsx`); `GET/PUT /agenda/repasse/config` é a fonte única (`rules/repasse.py`). A chave mestra `usa_adesivo_deteccao_cio` liga o aviso na Agenda, a lista Observação de cio e o método "Cio de repasse" no diagnóstico (`usa_adesivo_vigente()` lê a linha de `repasse_config` e, sem linha, cai no parâmetro, padrão **Não**). **Avisar na agenda após (dias)** vazio = não avisa (`avisar_apos_dias` null → `mostrar_na_agenda=false`); o aviso automático de 14 dias deixou de existir sem configuração. **Produtos vinculados** = vários itens de estoque (`estoque_ids`, coluna `estoque_ids_json`, migração `m4n5o6p7q8r9` copia o `estoque_id` antigo); lista vazia = escolha livre. A tela de Calendário sanitário só mostra um resumo com link para Parâmetros. Pendente: ainda não existe lançamento de aplicação de adesivo, então a restrição "só aceita os produtos vinculados" não tem tela onde valer.
+- **Adesivo de detecção de cio de repasse (17/10/2026)**: tudo em **Configurações › Parâmetros › Reinseminação e observação de cio** (`components/PainelAdesivoCio.tsx`); `GET/PUT /agenda/repasse/config` é a fonte única (`rules/repasse.py`). A chave mestra `usa_adesivo_deteccao_cio` liga o aviso na Agenda, a lista Observação de cio e o método "Cio de repasse" no diagnóstico (`usa_adesivo_vigente()` lê a linha de `repasse_config` e, sem linha, cai no parâmetro, padrão **Não**). **Avisar na agenda após (dias)** vazio = não avisa (`avisar_apos_dias` null → `mostrar_na_agenda=false`); o aviso automático de 14 dias deixou de existir sem configuração. **Produtos vinculados** = vários itens de estoque (`estoque_ids`, coluna `estoque_ids_json`, migração `m4n5o6p7q8r9` copia o `estoque_id` antigo); lista vazia = escolha livre. (O antigo resumo em Lançamentos › Calendário sanitário saiu junto com o módulo preventivo antigo.) Pendente: ainda não existe lançamento de aplicação de adesivo, então a restrição "só aceita os produtos vinculados" não tem tela onde valer.
 - **Lançamento do diagnóstico de gestação (17/10/2026)**: nova tela (`components/lancamentos/FormDiagnostico.tsx`, site, e `components/mobile/lancar/DiagnosticoGestacao.tsx`, app) em quatro passos — origem (Animais / Lotes / Agenda do veterinário) → situação (A tocar / A reconfirmar / Reconfirmadas) → animais (tabela com caixas de seleção, agrupada por lote, com busca; no app, dois passos com barra de ação fixa) → resultado, data e método. A lista vem de `GET /reproducao/diagnostico/candidatas` (mesma regra `fase_toque` da Agenda, então as duas telas não discordam). **Resultados por situação**: a tocar → Positivo — para retoque / Positivo — reconfirmada / Negativo / Indefinido; a reconfirmar → Positivo — reconfirmada / Negativo / Indefinido / Aborto; reconfirmadas → só Aborto. O AINDA NÃO só avisa: "Selecionar todas" marca apenas quem está no prazo, e dá para marcar os outros um a um. Em Animais nada vem marcado; em Lotes e Agenda vêm marcados os que estão no prazo; em Reconfirmadas nada. O método **Cio de repasse** só existe em fazenda que usa adesivo e só com resultado Negativo (backend recusa o resto). Depois de salvar Negativo, o botão **Lançar inseminação para estas N vacas** abre a Inseminação com os animais marcados (no app, "Salvar e lançar inseminação"; a Inseminação do app aceita vários animais vindos de lá). Indefinido sobre toque positivo agora é a reconfirmação inconclusiva: grava em `diagnostico_reconfirmacao` e **preserva o 1º toque** (antes sobrescrevia o positivo). Quem falhou ao salvar continua marcado para nova tentativa. O popup "Vincular ao financeiro?" deste lançamento não tem mais o botão Cancelar, que excluía o serviço (a inseminação) inteiro. Lógica de tela pura e testada em `lib/diagnosticoLancamento.ts`.
 - **Excluir lançamento › Diagnóstico de gestação e ordem das listas (17/10/2026)**: a lista de cada tipo de exclusão ordenava pelo **texto** do título ("<matriz> — data") e cortava em 200, então o lançamento de hoje de uma matriz de número baixo sumia e a tela mostrava 2023–2024; agora é por data, do mais recente (`recentes_primeiro` em `rules/exclusao_tipos/_base.py`, em todos os tipos com data). O diagnóstico passou a ser item excluível por si (tipo `diagnostico`, `rules/exclusao_tipos/rebanho.py`): toque, retoque/reconfirmação e perda de prenhez de um serviço são itens separados (`<id do serviço>:toque|reconfirmacao|perda`) e apagar **desfaz só aquele exame** — a inseminação fica, o animal volta a «a tocar» / «a reconfirmar». Ordem de desfazer: perda → retoque → toque (o motor recusa tirar o toque com retoque ou perda por trás). "Serviço / IA" continua apagando a inseminação inteira, e o rótulo agora diz isso. Em lote, itens que só desfazem campo (sem linha a apagar) deixaram de ser recusados.
 - **Telas gerenciais de Lançamentos (17/10/2026)**: Excluir lançamento (3 passos: tipo → registros → confirmar, com lote ≤ 50 só para admin), Inseminação, Protocolo IATF, Indução de cio, Parto/nascimento, Controle leiteiro, Pesagem corporal, Secagem, Qualidade do leite, Indução de lactação, Venda mensal e BST seguem o padrão do Diagnóstico (kit `components/gerencial/kit.tsx` + classes `.gv-*`: faixa de números, passos numerados, tabela de seleção por lote, barra fixa com Salvar em ouro e retorno dentro da barra). Os formulários antigos mantêm export e props (inclusive as de injeção offline do app de campo); Pesagem, Secagem, Indução de lactação, Qualidade e Venda abrem na gaveta de 1320px. Regras novas: **sexo da cria é obrigatório** quando há cria com número (422 em `/reproducao/parto` e `/reproducao/encerramento-gestacao`; o Telegram deixou de assumir «F»); **matriz em protocolo IATF vigente não é lançada de novo** (409 `em_protocolo` em `protocolo-iatf`, `protocolo-iatf/{id}/animais` e `servico-lote` para cio natural/monta; em `POST /reproducao/servico` só a **monta natural** é barrada, porque o app de campo lança a IA do D11 por essa rota sem `protocolo`); `adicionar_animais_iatf` passou a validar aptidão (`forcar`); `/protocolo-iatf/ativos` devolve `tem_etapa_confirmada` e não lista protocolo cancelado/encerrado; novo `GET /producao/secagem-lista`; `/exclusoes/tipos` devolve `dominio/plural/dica/cadastro/contagem` e `/buscar` devolve `data`; `POST /producao/entrega-leite` recusa mês inválido e quantidade ≤ 0 (400, como o PUT).
