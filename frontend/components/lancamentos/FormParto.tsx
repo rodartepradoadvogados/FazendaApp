@@ -26,13 +26,16 @@ import { hojeLocal, somaDias } from "@/lib/financeiroSituacao";
 import { invalidarEstadosReprodutivos, useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 import { normalizarBusca } from "@/lib/busca";
 import {
-  abortosSemResposta, baixada2Efetiva, baixadaEfetiva, chaveCria, colostroTemDado, colostroVazio, ehAborto, linhaEfetiva,
+  abortosSemResposta, baixada2Efetiva, baixadaEfetiva, chaveCria, colostroTemDado, colostroVazio, delDesdeParto, ehAborto, linhaEfetiva,
   linhaVazia, payloadColostragem, payloadParto, problemasDeSalvar, relativoPrevisto, resumoDosPartos, TIPOS_PARTO_LOTE,
   type Colostro, type EfetivaParto, type LinhaParto,
 } from "@/lib/partoLancamento";
 
 type Modo = "animal" | "lote" | "categoria";
-type PendenciaLote = { numero: string; rotuloAnimal: string; loteSugerido: LoteSugeridoEvento; motivo: string; data: string };
+// `loteSugerido` null = nenhum lote bate nos critérios (não há lote pré-definido): a revisão PERGUNTA o destino.
+type PendenciaLote = { numero: string; rotuloAnimal: string; loteSugerido: LoteSugeridoEvento | null; motivo: string; data: string };
+// Resultado de alocar sem perguntar: movido, "sem lote pré-definido" (então pergunta) ou falha (já registrada em `falhas`).
+type Alocacao = { rotulo: string } | { semSugestao: true } | null;
 type ErroComMsg = { message?: string };
 const msgDe = (e: unknown) => (e as ErroComMsg | null)?.message;
 type Retorno = { ok: string; atencao: string[]; erros: string[]; movidos: string[] };
@@ -214,7 +217,8 @@ export function FormParto({ animais, lotes, onSalvo }: { animais: AnimalRow[]; l
   ): Promise<PendenciaLote | null> {
     try {
       const { lote_sugerido } = await sugestaoLoteEvento({ numero_matriz: numero, categoria_abrev: categoriaAbrev, ...extra });
-      if (!lote_sugerido) return null; // nenhum lote bate nos critérios — segue sem perguntar
+      // Nenhum lote bate nos critérios: não há lote pré-definido — pergunta para onde o usuário quer mandar (antes pulava calado).
+      if (!lote_sugerido) return { numero, rotuloAnimal, loteSugerido: null, motivo, data };
       if (loteAtualRotulo && lote_sugerido.rotulo === loteAtualRotulo) return null; // já está lá
       return { numero, rotuloAnimal, loteSugerido: lote_sugerido, motivo, data };
     } catch (e) {
@@ -223,18 +227,27 @@ export function FormParto({ animais, lotes, onSalvo }: { animais: AnimalRow[]; l
     }
   }
   // Aloca sem perguntar (parâmetro ligado, ou cria no Lote/Categoria). Só afirma "movido" se o servidor confirmar.
-  async function alocarSemConfirmar(numero: string, categoriaAbrev: string, extra: { del_dias?: number | null; data_nasc?: string | null }, motivo: string, data: string, falhas: string[]) {
+  async function alocarSemConfirmar(numero: string, categoriaAbrev: string, extra: { del_dias?: number | null; data_nasc?: string | null }, motivo: string, data: string, falhas: string[]): Promise<Alocacao> {
     try {
       const { lote_sugerido } = await sugestaoLoteEvento({ numero_matriz: numero, categoria_abrev: categoriaAbrev, ...extra });
-      if (!lote_sugerido) return null;
+      if (!lote_sugerido) return { semSugestao: true };
       const r = await criarMovimentacao({ data_movimento: data, motivo, lote_destino_codigo: lote_sugerido.codigo, animais: [numero], origem: "sugestao_automatica" });
       const moveuDeFato = (r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(numero);
       if (!moveuDeFato) { falhas.push(`${numero} não foi movido para o lote ${lote_sugerido.rotulo} (a movimentação não foi confirmada pelo servidor)`); return null; }
-      return lote_sugerido.rotulo as string;
+      return { rotulo: lote_sugerido.rotulo as string };
     } catch (e) {
       falhas.push(`alocação do animal ${numero} não pôde ser feita${msgDe(e) ? `: ${msgDe(e)}` : ""}`);
     }
     return null;
+  }
+  // Alocação automática de quem NÃO fica só na revisão: se o motor não achou lote, vira pergunta em vez de ficar parado.
+  async function alocarOuPerguntar(
+    numero: string, rotuloAnimal: string, categoriaAbrev: string, extra: { del_dias?: number | null; data_nasc?: string | null },
+    motivo: string, data: string, falhas: string[], movidos: string[], pendencias: PendenciaLote[],
+  ) {
+    const r = await alocarSemConfirmar(numero, categoriaAbrev, extra, motivo, data, falhas);
+    if (r && "rotulo" in r) movidos.push(`${numero} → ${r.rotulo}`);
+    else if (r) pendencias.push({ numero, rotuloAnimal, loteSugerido: null, motivo, data });
   }
 
   async function confirmarLotes(escolhas: Record<string, string>) {
@@ -279,8 +292,7 @@ export function FormParto({ animais, lotes, onSalvo }: { animais: AnimalRow[]; l
             const loteAtual = porNum.get(n)?.grupo_primario || null;
             const delDias = r.del_dias ?? 0;
             if (transferenciaAutomatica) {
-              const destino = await alocarSemConfirmar(n, "Vaca", { del_dias: delDias }, "Aborto", l.data, falhasEfeito);
-              if (destino) movidosAuto.push(`${n} → ${destino}`);
+              await alocarOuPerguntar(n, "a vaca", "Vaca", { del_dias: delDias }, "Aborto", l.data, falhasEfeito, movidosAuto, pendencias);
             } else {
               const pend = await prepararPendenciaLote(n, "a vaca", "Vaca", { del_dias: delDias }, loteAtual, "Aborto", l.data, falhasEfeito);
               if (pend) pendencias.push(pend);
@@ -302,15 +314,15 @@ export function FormParto({ animais, lotes, onSalvo }: { animais: AnimalRow[]; l
           for (const c of criadas) await alocarSemConfirmar(c, categoriaDa(c), { data_nasc: l.data }, "Nascimento", l.data, falhasEfeito);
         } else {
           const loteAtualMae = porNum.get(n)?.grupo_primario || null;
+          // DEL real da mãe (parto retroativo de 2 dias = DEL 2): é ele que faz o motor achar o lote "Pós-parto".
+          const delMae = delDesdeParto(l.data, hoje);
           if (transferenciaAutomatica) {
-            const loteMae = await alocarSemConfirmar(n, "Vaca", { del_dias: 0 }, "Parto", l.data, falhasEfeito);
-            if (loteMae) movidosAuto.push(`${n} → ${loteMae}`);
+            await alocarOuPerguntar(n, "a vaca", "Vaca", { del_dias: delMae }, "Parto", l.data, falhasEfeito, movidosAuto, pendencias);
             for (const c of criadas) {
-              const loteCria = await alocarSemConfirmar(c, categoriaDa(c), { data_nasc: l.data }, "Nascimento", l.data, falhasEfeito);
-              if (loteCria) movidosAuto.push(`${c} → ${loteCria}`);
+              await alocarOuPerguntar(c, sexoDa(c) === "M" ? "o bezerro" : "a bezerra", categoriaDa(c), { data_nasc: l.data }, "Nascimento", l.data, falhasEfeito, movidosAuto, pendencias);
             }
           } else {
-            const pendMae = await prepararPendenciaLote(n, "a vaca", "Vaca", { del_dias: 0 }, loteAtualMae, "Parto", l.data, falhasEfeito);
+            const pendMae = await prepararPendenciaLote(n, "a vaca", "Vaca", { del_dias: delMae }, loteAtualMae, "Parto", l.data, falhasEfeito);
             if (pendMae) pendencias.push(pendMae);
             for (const c of criadas) {
               const pendCria = await prepararPendenciaLote(c, sexoDa(c) === "M" ? "o bezerro" : "a bezerra", categoriaDa(c), { data_nasc: l.data }, null, "Nascimento", l.data, falhasEfeito);
@@ -345,7 +357,7 @@ export function FormParto({ animais, lotes, onSalvo }: { animais: AnimalRow[]; l
     if (movidosAuto.length) partes.push(`transferido(s) automaticamente: ${movidosAuto.join(", ")}`);
     if (modoLote && partosOk.length) partes.push("a mãe não é movida de lote neste modo (Rebanho › Movimentar animais)");
     setRetorno({ ok: salvos.length ? `✓ ${partes.join(" · ")}.` : "", atencao: falhasEfeito, erros, movidos: [] });
-    if (pendencias.length) setFilaLotes(pendencias);
+    if (pendencias.length) { setFilaLotes(pendencias); setLotesAberto(true); }
 
     if (salvos.length) {
       invalidarEstadosReprodutivos();
@@ -382,7 +394,7 @@ export function FormParto({ animais, lotes, onSalvo }: { animais: AnimalRow[]; l
     ? `Salvar ${efetivas.length || ""} ${efetivas.length === 1 ? "parto" : "partos"}`.replace("  ", " ")
     : `Lançar ${efetivas.length || ""} ${efetivas.length === 1 ? "registro" : "registros"}`.replace("  ", " ");
 
-  const itensRevisao: ItemRevisaoLote[] = filaLotes.map((p) => ({ numero: p.numero, rotulo: p.rotuloAnimal, sugerido: p.loteSugerido.codigo }));
+  const itensRevisao: ItemRevisaoLote[] = filaLotes.map((p) => ({ numero: p.numero, rotulo: p.rotuloAnimal, sugerido: p.loteSugerido?.codigo ?? "", semSugestao: !p.loteSugerido }));
   const vazioTabela = modoLote
     ? (modo === "lote" ? (lote ? "Nenhuma matriz neste lote." : "Escolha um lote acima para ver as matrizes.") : (cats.length ? (carregandoCats ? "Carregando as matrizes das categorias…" : "Nenhuma matriz nesta(s) categoria(s).") : "Escolha uma ou mais categorias acima para ver as matrizes."))
     : "Adicione a matriz que pariu, nas sugestões acima ou pela busca.";
@@ -467,8 +479,8 @@ export function FormParto({ animais, lotes, onSalvo }: { animais: AnimalRow[]; l
           : problemas.semData.length ? <span className="rp-err" role="alert">Informe a data do parto de {problemas.semData.join(", ")}.</span>
           : efetivas.length === 0 ? (modoLote ? "Marque ao menos uma matriz na tabela do passo 2" : "Adicione ao menos uma matriz no passo 2")
           : modoLote ? "Ao salvar, cada cria é alocada no lote sugerido; a mãe não é movida neste modo."
-          : transferenciaAutomatica ? "Ao salvar, mãe e crias vão sozinhas para o lote sugerido (parâmetro ligado)."
-          : "Ao salvar, sugere o lote da mãe e de cada cria; você confirma antes de mover."}
+          : transferenciaAutomatica ? "Ao salvar, mãe e crias vão sozinhas para o lote sugerido (parâmetro ligado); sem lote que bata nos critérios, o sistema pergunta."
+          : "Ao salvar, sugere o lote da mãe e de cada cria; você confirma antes de mover. Sem lote que bata nos critérios, o sistema pergunta para onde mandar."}
         retorno={retorno && (
           <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", width: "100%", maxHeight: "45vh", overflowY: "auto" }}>
             <div className="rp-retorno-linha">

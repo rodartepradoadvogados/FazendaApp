@@ -438,6 +438,36 @@ def test_parto_normal_tambem_reescreve_categoria_de_gestante_para_vazia(client, 
         assert s.exec(select(Animal).where(Animal.numero == "17")).one().categoria_completa == "Vaca vazia"
 
 
+def test_post_parto_reescreve_categoria_abreviada_do_ideagri(client, engine):
+    """Vaca 206 (19/10/2026): lançou o parto e seguiu "Vaca ges. lac." — o
+    `POST /reproducao/parto` nem sincronizava a categoria, e a troca só
+    conhecia a palavra "gestante", não o "ges." que o GERAL.csv realmente traz."""
+    _add(engine, Animal(numero="206", sexo="F", ativo=True, categoria_completa="Vaca ges. lac.", categoria_abrev="Vaca ges. lac."))
+    r = client.post("/reproducao/parto", json={"numero_matriz": "206", "data_parto": HOJE.isoformat(), "crias": []})
+    assert r.status_code == 200
+    with Session(engine) as s:
+        a = s.exec(select(Animal).where(Animal.numero == "206")).one()
+        assert a.categoria_completa == "Vaca vaz. pev lac."
+        assert a.categoria_abrev == "Vaca vaz. pev lac."
+
+
+def test_parto_de_vaca_seca_gestante_passa_a_lactacao(client, engine):
+    """"Vaca ges. sec." que pare abre lactação: vira "vaz. pev lac.", não "vaz. pev sec."."""
+    _add(engine, Animal(numero="207", sexo="F", ativo=True, categoria_completa="Vaca ges. sec.", categoria_abrev="Vaca ges. sec."))
+    r = client.post("/reproducao/parto", json={"numero_matriz": "207", "data_parto": HOJE.isoformat(), "crias": []})
+    assert r.status_code == 200
+    with Session(engine) as s:
+        assert s.exec(select(Animal).where(Animal.numero == "207")).one().categoria_abrev == "Vaca vaz. pev lac."
+
+
+def test_categoria_sem_gestacao_so_mexe_com_marca_de_gestacao():
+    assert regras.categoria_sem_gestacao("Vaca ges. lac.", abriu_lactacao=True) == "Vaca vaz. pev lac."
+    assert regras.categoria_sem_gestacao("Vaca ges. sec.", abriu_lactacao=False) == "Vaca vaz. pev sec."  # aborto sem lactação: segue seca
+    assert regras.categoria_sem_gestacao("Vaca gestante 3ª lact.") == "Vaca vazia 3ª lact."
+    assert regras.categoria_sem_gestacao("Vaca vaz. apt. lac.", abriu_lactacao=True) == "Vaca vaz. apt. lac."
+    assert regras.categoria_sem_gestacao(None) is None
+
+
 def test_aborto_sem_abrir_lactacao_ainda_cria_o_parto(client, engine):
     """Responder "não" no popup registra o aborto do mesmo jeito — é o `Parto`
     que tira a matriz do estado "gestante" na Ficha."""

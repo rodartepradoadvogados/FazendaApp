@@ -188,3 +188,11 @@ export function relativoPrevisto(prev: string, hoje: string): string {
   const dif = Math.round((Date.UTC(a, m - 1, d) - Date.UTC(a2, m2 - 1, d2)) / 86400000);
   return dif === 0 ? "hoje" : dif === -1 ? "ontem" : dif === 1 ? "amanhã" : dif < 0 ? `${-dif} d atrás` : `em ${dif} d`;
 }
+
+/** DEL da mãe NO MOMENTO do lançamento: dias entre a data do parto e hoje (parto retroativo de 2 dias = DEL 2, não 0).
+ *  O motor de critérios de lote (POST /producao/sugestao-lote-evento) usa isto para escolher o lote "Pós-parto" certo. */
+export function delDesdeParto(dataParto: string, hoje: string): number {
+  const [a, m, d] = dataParto.split("-").map(Number); const [a2, m2, d2] = hoje.split("-").map(Number);
+  if (![a, m, d, a2, m2, d2].every(Number.isFinite)) return 0;
+  return Math.max(0, Math.round((Date.UTC(a2, m2 - 1, d2) - Date.UTC(a, m - 1, d)) / 86400000));
+}
