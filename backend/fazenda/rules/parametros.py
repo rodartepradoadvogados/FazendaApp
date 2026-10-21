@@ -311,6 +311,14 @@ DEFINICOES: list[dict] = [
     {"chave": "modo_lancamento_alimentacao", "grupo": "alimentacao",
      "label": "Como lançar a alimentação (fornecido_sobra | baixa_automatica | nao_lancar)",
      "valor": "fornecido_sobra", "tipo": "texto"},
+    # Tratos por dia (2026-10-21): o nº de tratos e o % de cada um são da DIETA
+    # do lote; isto só decide se o FORNECIMENTO é lançado por trato (cada
+    # lançamento diz de qual trato — 1..N da dieta ativa) ou pelo dia inteiro,
+    # como sempre foi. Vale para todos os lotes da fazenda. Padrão DESLIGADO:
+    # ninguém muda de comportamento sem escolher. Desligado, a base da sobra %
+    # rateia o fornecido de cada dia pelo % dos tratos (rules/tratos.py).
+    {"chave": "alimentacao_consumo_por_trato", "grupo": "alimentacao",
+     "label": "Lançar o consumo (fornecimento) por trato?", "valor": "false", "tipo": "bool"},
 
 ]
 

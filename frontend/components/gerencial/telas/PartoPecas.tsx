@@ -188,7 +188,8 @@ export function PainelColostro({ crias, dados, onMuda, baixadas }: {
 }
 
 /* ───────────────────────────── revisão de lotes (mãe e crias) ───────────────────────────── */
-export type ItemRevisaoLote = { numero: string; rotulo: string; sugerido: string };
+/** `semSugestao`: nenhum lote bate nos critérios — nada vem pré-selecionado e o usuário escolhe o destino. */
+export type ItemRevisaoLote = { numero: string; rotulo: string; sugerido: string; semSugestao?: boolean };
 export type OpcaoLote = { codigo: string; rotulo: string };
 
 export function PainelLotes({ itens, opcoes, ocupado, onConfirmar, onFechar }: {
@@ -203,7 +204,7 @@ export function PainelLotes({ itens, opcoes, ocupado, onConfirmar, onFechar }: {
       <div className="rp-grade-3 pt-rolagem-lotes">
         {itens.map((i) => (
           <div className="gv-campo" key={i.numero}>
-            <label htmlFor={`${uid}-${i.numero}`}>Movimentar {i.rotulo} Nº {i.numero} para</label>
+            <label htmlFor={`${uid}-${i.numero}`}>Movimentar {i.rotulo} Nº {i.numero} para{i.semSugestao ? " (sem lote pré-definido — escolha)" : ""}</label>
             <select id={`${uid}-${i.numero}`} className="rp-select" value={escolhas[i.numero] ?? ""} onChange={(e) => setEscolhas((p) => ({ ...p, [i.numero]: e.target.value }))} disabled={ocupado}>
               <option value="">Não movimentar</option>
               {opcoes.map((o) => <option key={o.codigo} value={o.codigo}>{o.rotulo}</option>)}

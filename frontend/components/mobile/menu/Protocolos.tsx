@@ -9,13 +9,22 @@
 // de marcar uma etapa como realizada e escondia a etapa cujo dia tinha
 // passado: protocolo que perdia o dia travava em "em andamento" para sempre.
 // No curral é justamente onde se descobre que faltou dar baixa.
+//
+// A baixa segue a do site (app/protocolos/page.tsx › DetalheProtocolo): mostra
+// o que aplicar no dia, pergunta de qual frasco/lote saiu e mostra os avisos
+// de estoque da resposta. O `medicamentos` do POST sai de lib/baixaProtocolo.ts,
+// o mesmo montador do site — as duas telas não podem divergir no formato.
 import { useState } from "react";
 import { MobVoltar, MobCard, MobCampo, MobAviso } from "@/components/mobile/ui";
 import {
   fetchCentralProtocolosAcompanhamento, fetchCentralProtocolosHistorico, formatDate,
   fetchDetalheProtocolo,
-  type LinhaCentralProtocolos, type DetalheCentralProtocolo,
+  type LinhaCentralProtocolos, type DetalheCentralProtocolo, type HormonioProtocolo,
 } from "@/lib/api";
+import {
+  hormoniosDoDia, montarMedicamentosBaixa, mensagemBaixa, opcaoEfetiva, diaInseminacaoIatf,
+  type EscolhaPorHormonio,
+} from "@/lib/baixaProtocolo";
 import { enviarOuEnfileirar } from "@/lib/offline";
 import { exportarFolhaCampoPDF } from "@/lib/folhaProtocolo";
 import { Printer } from "lucide-react";
@@ -139,6 +148,17 @@ function DetalheProtocoloApp({ origem, origemId, onVoltar }: {
   const [dataBaixa, setDataBaixa] = useState("");
   const [animaisFora, setAnimaisFora] = useState<string[]>([]);
   const [exportando, setExportando] = useState(false);
+  // Frasco e lote escolhidos para cada medicamento do dia em baixa (índice do
+  // medicamento → índice da opção em `h.opcoes` / id do lote). Zera ao abrir
+  // outro dia e ao trocar a lista de opções (os índices mudam de sentido).
+  const [frasco, setFrasco] = useState<EscolhaPorHormonio>({});
+  const [lote, setLote] = useState<EscolhaPorHormonio>({});
+  // "Incluir todos (inclusive sem estoque)" — igual ao site: lista toda marca
+  // comercial cadastrada do princípio ativo, para registrar o que foi de fato
+  // usado mesmo sem frasco em Estoque. Precisa de conexão (relê o detalhe);
+  // offline ficam as opções da cópia salva.
+  const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
+  const [carregandoOpcoes, setCarregandoOpcoes] = useState(false);
 
   const cache = useCarregar<DetalheCentralProtocolo>(
     `menu_protocolo_${origem}_${origemId}`, () => fetchDetalheProtocolo(origem, origemId),
@@ -150,7 +170,19 @@ function DetalheProtocoloApp({ origem, origemId, onVoltar }: {
     setDiaBaixa(dia);
     setDataBaixa(info && info.data_prevista < hoje() ? info.data_prevista : hoje());
     setAnimaisFora([]);
+    setFrasco({}); setLote({});
     setAviso(null);
+  }
+
+  async function alternarSemEstoque(v: boolean) {
+    setCarregandoOpcoes(true); setErro(null);
+    try {
+      setDet(await fetchDetalheProtocolo(origem, origemId, v));
+      setIncluirSemEstoque(v);
+      setFrasco({}); setLote({});
+    } catch {
+      setErro("Não foi possível carregar a lista completa de medicamentos — precisa de conexão.");
+    } finally { setCarregandoOpcoes(false); }
   }
 
   async function confirmar() {
@@ -161,6 +193,10 @@ function DetalheProtocoloApp({ origem, origemId, onVoltar }: {
     const marcados = pendentes.filter((n) => !animaisFora.includes(n));
     if (!marcados.length) { setAviso({ tipo: "erro", msg: "Selecione ao menos um animal." }); return; }
 
+    // Sem medicamento no dia (customizado, lida, D11) vem `undefined` e o
+    // campo nem vai no corpo — o backend usa os cadastrados, como antes.
+    const medicamentos = montarMedicamentosBaixa(origem, hormoniosDoDia(origem, d, diaBaixa), frasco, lote);
+
     setSalvando(true); setErro(null);
     try {
       const r = await enviarOuEnfileirar(
@@ -169,18 +205,26 @@ function DetalheProtocoloApp({ origem, origemId, onVoltar }: {
           dia: diaBaixa,
           animais: marcados.length === pendentes.length ? null : marcados,
           data_realizacao: dataBaixa || null,
+          ...(medicamentos ? { medicamentos } : {}),
         },
         `Baixa do protocolo ${d.nome} — D${diaBaixa}`,
         "POST",
       );
       setDiaBaixa(null);
-      setAviso(r.enviado
-        ? { tipo: "ok", msg: "Baixa registrada." }
-        : { tipo: "offline", msg: "Guardado — será enviado quando conectar." });
       if (r.enviado) {
+        // Avisos de estoque (saldo insuficiente, frasco não achado…) em âmbar,
+        // como alerta — a baixa foi gravada mesmo assim.
+        const temAvisos = !!r.resposta?.avisos?.length;
+        setAviso({ tipo: temAvisos ? "offline" : "ok", msg: mensagemBaixa(r.resposta) });
         // Só relê do servidor quando o envio de fato aconteceu; offline, o
         // recarregamento traria de volta a grade sem a baixa.
-        await fetchDetalheProtocolo(origem, origemId).then(setDet).catch(() => {});
+        await fetchDetalheProtocolo(origem, origemId, incluirSemEstoque).then(setDet).catch(() => {});
+      } else {
+        // A fila offline (lib/offline.ts › sincronizar) não guarda o corpo da
+        // resposta: os avisos de estoque deste envio não voltam para a tela.
+        setAviso({ tipo: "offline", msg: medicamentos
+          ? "Guardado — será enviado quando conectar, com o frasco escolhido. O estoque só é conferido no envio: depois de sincronizar, confira o saldo em Estoque."
+          : "Guardado — será enviado quando conectar." });
       }
     } catch (e: any) {
       setErro(e?.message || "Não foi possível salvar.");
@@ -210,6 +254,8 @@ function DetalheProtocoloApp({ origem, origemId, onVoltar }: {
 
   const pendentesDoDia = diaBaixa == null ? [] :
     d.animais.filter((a) => a.celulas.some((c) => c.dia === diaBaixa && !c.realizada));
+  const hormonios = hormoniosDoDia(origem, d, diaBaixa);
+  const diaInseminacao = diaInseminacaoIatf(origem, d.dias);
 
   return (
     <div>
@@ -245,9 +291,13 @@ function DetalheProtocoloApp({ origem, origemId, onVoltar }: {
         d.dias.map((dia) => {
           const feito = dia.realizadas >= dia.total;
           const atrasado = !feito && dia.data_prevista < hoje();
+          // Dia de inseminação do IATF: não dá baixa por aqui (o backend
+          // recusa) — mesma regra do site, ver diaInseminacaoIatf.
+          const ehInseminacao = dia.dia === diaInseminacao;
+          const podeBaixar = !feito && !d.encerrado_em && !ehInseminacao;
           return (
             <MobCard key={dia.dia} style={{ marginBottom: "0.6rem" }}
-                     onClick={feito || d.encerrado_em ? undefined : () => abrirBaixa(dia.dia)}>
+                     onClick={podeBaixar ? () => abrirBaixa(dia.dia) : undefined}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.5rem" }}>
                 <span style={{ fontWeight: 800, fontSize: "0.95rem" }}>{dia.rotulo}</span>
                 <span style={{ fontSize: "0.78rem", color: "var(--mob-muted)" }}>{formatDate(dia.data_prevista)}</span>
@@ -259,9 +309,15 @@ function DetalheProtocoloApp({ origem, origemId, onVoltar }: {
                             color: COR_ESTADO[feito ? "realizada" : atrasado ? "atrasada" : "pendente"] }}>
                 {feito ? `✓ ${dia.total} aplicada(s)` : `${dia.realizadas}/${dia.total} — ${atrasado ? "atrasado" : "a vencer"}`}
               </div>
-              {!feito && !d.encerrado_em && (
+              {podeBaixar && (
                 <div style={{ fontSize: "0.76rem", color: "var(--mob-acao)", marginTop: "0.3rem", fontWeight: 700 }}>
                   Toque para dar baixa →
+                </div>
+              )}
+              {!feito && !d.encerrado_em && ehInseminacao && (
+                <div style={{ fontSize: "0.76rem", color: "var(--mob-ambar)", marginTop: "0.3rem" }}>
+                  A inseminação não se confirma aqui: registre o serviço (touro/sêmen) em Lançar › Inseminação,
+                  que fecha esta etapa sozinho.
                 </div>
               )}
             </MobCard>
@@ -295,6 +351,18 @@ function DetalheProtocoloApp({ origem, origemId, onVoltar }: {
             </div>
           </MobCampo>
 
+          {hormonios.length > 0 && (
+            <MedicamentosDoDia hormonios={hormonios} frasco={frasco} lote={lote}
+                               incluirSemEstoque={incluirSemEstoque} carregandoOpcoes={carregandoOpcoes}
+                               onFrasco={(idx, v) => {
+                                 setFrasco((p) => ({ ...p, [idx]: v }));
+                                 // Trocou o frasco — o lote escolhido antes não vale para o novo.
+                                 setLote((p) => ({ ...p, [idx]: "" }));
+                               }}
+                               onLote={(idx, v) => setLote((p) => ({ ...p, [idx]: v }))}
+                               onIncluirSemEstoque={alternarSemEstoque} />
+          )}
+
           <button type="button" className="mob-btn" onClick={confirmar} disabled={salvando}>
             {salvando ? "Salvando…" : "Confirmar baixa"}
           </button>
@@ -304,6 +372,80 @@ function DetalheProtocoloApp({ origem, origemId, onVoltar }: {
           </button>
         </>
       )}
+    </div>
+  );
+}
+
+// ───────────── "O que aplicar neste dia" + de qual frasco/lote ─────────────
+// Versão de polegar do bloco "Qual medicamento/frasco você está usando?" do
+// site: um cartão por medicamento, com o seletor de frasco (opções do
+// detalhe, saldo ao lado) e, quando o frasco tem mais de um lote de compra
+// aberto, o de lote — vazio deixa o backend tirar do mais antigo (FIFO).
+function MedicamentosDoDia({ hormonios, frasco, lote, incluirSemEstoque, carregandoOpcoes, onFrasco, onLote, onIncluirSemEstoque }: {
+  hormonios: HormonioProtocolo[]; frasco: EscolhaPorHormonio; lote: EscolhaPorHormonio;
+  incluirSemEstoque: boolean; carregandoOpcoes: boolean;
+  onFrasco: (idx: number, v: number | "") => void; onLote: (idx: number, v: number | "") => void;
+  onIncluirSemEstoque: (v: boolean) => void;
+}) {
+  return (
+    <div style={{ marginBottom: "0.9rem" }}>
+      <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--mob-muted)", marginBottom: "0.4rem" }}>
+        O que aplicar neste dia
+      </div>
+      {hormonios.map((h, idx) => {
+        const sel = opcaoEfetiva(h, frasco[idx]);
+        const opcao = sel === "" ? undefined : h.opcoes?.[sel];
+        const lotes = opcao?.lotes || [];
+        const detalhe = [
+          h.dose != null ? `${h.dose}${h.unidade ? ` ${h.unidade}` : ""}` : null,
+          h.via,
+        ].filter(Boolean).join(" · ");
+        return (
+          <MobCard key={idx} style={{ marginBottom: "0.6rem" }}>
+            <div style={{ fontWeight: 800, fontSize: "0.92rem" }}>{h.produto}</div>
+            {detalhe && <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>{detalhe}</div>}
+            <div style={{ marginTop: "0.6rem" }}>
+              {(h.opcoes?.length ?? 0) === 0 ? (
+                <p style={{ fontSize: "0.8rem", color: "var(--mob-ambar)", margin: 0 }}>
+                  Sem medicamento em estoque para este princípio.
+                  {!incluirSemEstoque && " Marque \"incluir mesmo sem estoque\" abaixo para registrar o que foi usado."}
+                </p>
+              ) : (
+                <MobCampo label="De qual frasco?">
+                  <select className="mob-input" value={sel} disabled={carregandoOpcoes}
+                          onChange={(e) => onFrasco(idx, e.target.value === "" ? "" : Number(e.target.value))}>
+                    <option value="">Selecione o frasco…</option>
+                    {h.opcoes.map((o, oi) => (
+                      <option key={oi} value={oi}>
+                        {o.nome}{o.marca ? ` · ${o.marca}` : ""}
+                        {o.sem_estoque ? " — sem frasco em estoque" : ` — saldo ${o.saldo} ${o.unidade || ""}${!o.estoque_inicializado ? " (sem estoque inicial)" : ""}`}
+                      </option>
+                    ))}
+                  </select>
+                </MobCampo>
+              )}
+              {lotes.length > 1 && (
+                <MobCampo label="De qual lote?">
+                  <select className="mob-input" value={lote[idx] ?? ""}
+                          onChange={(e) => onLote(idx, e.target.value === "" ? "" : Number(e.target.value))}>
+                    <option value="">Automático — mais antigo primeiro</option>
+                    {lotes.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.numero_lote ? `Lote ${l.numero_lote}` : `Comprado em ${formatDate(l.data_compra)}`} — saldo {l.quantidade_restante}
+                      </option>
+                    ))}
+                  </select>
+                </MobCampo>
+              )}
+            </div>
+          </MobCard>
+        );
+      })}
+      <label style={{ display: "flex", alignItems: "center", gap: "0.6rem", fontSize: "0.85rem", padding: "0.3rem 0.2rem" }}>
+        <input type="checkbox" checked={incluirSemEstoque} disabled={carregandoOpcoes} style={{ width: 22, height: 22 }}
+               onChange={(e) => onIncluirSemEstoque(e.target.checked)} />
+        {carregandoOpcoes ? "Carregando…" : "Incluir todos os medicamentos (inclusive sem estoque)"}
+      </label>
     </div>
   );
 }

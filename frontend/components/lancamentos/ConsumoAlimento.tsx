@@ -3,9 +3,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Wheat, Users, Scale, PlusCircle, Trash2, CheckCircle2, TriangleAlert, Info, Loader2, Truck } from "lucide-react";
 import {
   fetchLotes, fetchAlimentos, fetchParametros,
-  fetchDietaDoLote, fetchConsumoDoDia, lancarConsumo, lancarSobra,
-  type ItemDietaDoLote, type ConsumoDoDia, type ConsumoItemIn,
+  fetchDietaDoLote, fetchConsumoDoDia, fetchJanelaSobra, lancarConsumo, lancarSobra,
+  type ConsumoDoDia, type ConsumoItemIn, type DietaDoLote, type JanelaSobra,
 } from "@/lib/api";
+import { opcoesPosicaoLeitura } from "@/lib/tratos";
 import { Campo, inputStyle, nota } from "@/components/lancamentos/comumForms";
 import { UNIDADES } from "@/components/lancamentos/_shared";
 
@@ -33,6 +34,13 @@ import { UNIDADES } from "@/components/lancamentos/_shared";
    cliente" que o modo "por nº de animais" já tinha). Só os itens cuja
    unidade não converte para kg (litro, dose, unidade) continuam com input
    manual — não tem como saber que fração de um vagão em quilos é "1 dose".
+
+   Tratos por dieta (21/10/2026): com o parâmetro "lançar consumo por trato"
+   ligado (Parâmetros > Alimentação), cada fornecimento diz de qual trato da
+   dieta é. A sobra se refere a um CICLO DE 24h definido pela posição da
+   leitura cadastrada na dieta (entre quais tratos é lida — lib/tratos.ts), e
+   antes de gravar a tela sempre mostra o período pré-montado para Confirmar /
+   Selecionar outro período / Cancelar (GET /alimentacao/sobra/janela).
    ───────────────────────────────────────────────────────────────────── */
 
 type LoteCadastro = {
@@ -95,20 +103,26 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
   const [quantidadesKg, setQuantidadesKg] = useState<Record<string, string>>({});
   const [extras, setExtras] = useState<ItemExtra[]>([]);
 
-  // Sobra tem data PRÓPRIA (item novo, 23/09/2026): em regra é o dia
-  // ANTERIOR ao do fornecimento (o funcionário mede a sobra de ontem antes
-  // de abastecer o vagão de hoje) — por isso o padrão é "ontem", não "hoje"
-  // como o card de fornecimento.
+  // Sobra tem data PRÓPRIA (item novo, 23/09/2026). Dieta SEM posição da
+  // leitura cadastrada (comportamento antigo): é o dia do fornecimento a que
+  // a sobra se refere — em regra o dia ANTERIOR (o funcionário mede a sobra
+  // de ontem antes de abastecer o vagão de hoje), por isso o padrão "ontem".
+  // Dieta COM posição: é a data da LEITURA (padrão hoje) e o período sai da
+  // posição — ex.: lida entre o Trato 2 e o Trato 1 hoje = tratos de ontem.
   const [dataSobra, setDataSobra] = useState(ontemIso);
   const [kgSobra, setKgSobra] = useState("");
+  // Confirmação do período ("A sobra se refere ao…?") e "Selecionar outro
+  // período": undefined = posição da dieta; "civil" = dia inteiro do
+  // fornecimento (comportamento antigo); número = outra posição da leitura.
+  const [confirmandoSobra, setConfirmandoSobra] = useState(false);
+  const [outroPeriodo, setOutroPeriodo] = useState(false);
+  const [escolhaSobra, setEscolhaSobra] = useState<number | "civil" | undefined>(undefined);
+  const [janela, setJanela] = useState<JanelaSobra | null>(null);
+  const [trato, setTrato] = useState("");
 
   // undefined = ainda carregando · null = lote sem dieta ativa (404 do backend)
-  const [dietaInfo, setDietaInfo] = useState<{ itens: ItemDietaDoLote[]; base_quantidade: string; kg_total_dieta: number } | null | undefined>(undefined);
+  const [dietaInfo, setDietaInfo] = useState<DietaDoLote | null | undefined>(undefined);
   const [consumoHoje, setConsumoHoje] = useState<ConsumoDoDia | null>(null);
-  // Consumo do DIA DA SOBRA (pode ser diferente do dia do fornecimento acima)
-  // — é contra ELE que o percentual de sobra é calculado, já que sobra e
-  // fornecido têm de ser do mesmo dia para o percentual fazer sentido.
-  const [consumoDiaSobra, setConsumoDiaSobra] = useState<ConsumoDoDia | null>(null);
 
   const [enviando, setEnviando] = useState(false);
   const [enviandoSobra, setEnviandoSobra] = useState(false);
@@ -125,7 +139,11 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
     if (!loteSel) { setDietaInfo(undefined); return; }
     let cancelado = false;
     setDietaInfo(undefined);
-    fetchDietaDoLote(loteSel).then((d) => { if (!cancelado) setDietaInfo(d); }).catch(() => { if (!cancelado) setDietaInfo(null); });
+    fetchDietaDoLote(loteSel).then((d) => {
+      if (cancelado) return;
+      setDietaInfo(d);
+      setDataSobra(d?.sobra_posicao_leitura != null ? hojeIso() : ontemIso());
+    }).catch(() => { if (!cancelado) setDietaInfo(null); });
     return () => { cancelado = true; };
   }, [loteSel]);
 
@@ -136,22 +154,32 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
     return () => { cancelado = true; };
   }, [loteSel, data]);
 
+  // Período (janela de tratos) a que a sobra lida em `dataSobra` se refere,
+  // com o fornecido nessa janela (base da sobra %) e a sobra já lançada para
+  // o mesmo ciclo — é o resumo que a confirmação mostra.
+  const [versaoSobra, setVersaoSobra] = useState(0);
   useEffect(() => {
-    if (!loteSel) { setConsumoDiaSobra(null); return; }
+    if (!loteSel) { setJanela(null); return; }
     let cancelado = false;
-    fetchConsumoDoDia(loteSel, dataSobra).then((d) => { if (!cancelado) setConsumoDiaSobra(d); }).catch(() => { if (!cancelado) setConsumoDiaSobra(null); });
+    fetchJanelaSobra({
+      lote: loteSel, data: dataSobra,
+      posicao_leitura: typeof escolhaSobra === "number" ? escolhaSobra : null, dia_civil: escolhaSobra === "civil",
+    }).then((j) => { if (!cancelado) setJanela(j); }).catch(() => { if (!cancelado) setJanela(null); });
     return () => { cancelado = true; };
-  }, [loteSel, dataSobra]);
+  }, [loteSel, dataSobra, escolhaSobra, versaoSobra]);
 
   const itensDieta = dietaInfo?.itens ?? [];
   // Itens da dieta sem conversão para kg — ficam fora da tabela automática
   // (Fornecimento) e fora do rateio de sobra (Sobra de cocho), sempre pelo
   // mesmo critério (`converte_para_kg`/`percentual_dieta` null).
   const itensSemConversao = itensDieta.filter((it) => !it.converte_para_kg);
+  // Parâmetro da fazenda "lançar consumo por trato" (Parâmetros > Alimentação).
+  const porTrato = !!dietaInfo?.consumo_por_trato;
 
   function selecionarLote(codigo: string) {
     setLoteCodigo(codigo);
-    setNumAnimais(""); setQuantidadesKg({}); setExtras([]); setKgVagao(""); setKgSobra("");
+    setNumAnimais(""); setQuantidadesKg({}); setExtras([]); setKgVagao(""); setKgSobra(""); setTrato("");
+    setConfirmandoSobra(false); setOutroPeriodo(false); setEscolhaSobra(undefined);
     setErro(null); setAvisos([]); setSucesso(null); setErroSobra(null); setSucessoSobra(null);
   }
 
@@ -186,6 +214,7 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
     setErro(null); setSucesso(null); setAvisos([]);
     if (!loteSel) { setErro("Selecione um lote."); return; }
     if (dietaInfo === null) { setErro("Este lote não tem dieta ativa — cadastre uma em Insumos e sanidade > Alimentação > Lançar nova dieta."); return; }
+    if (porTrato && !trato) { setErro("Informe de qual trato é este fornecimento."); return; }
     if (origem === "animais" && !(Number(numAnimais) > 0)) { setErro("Informe o número de animais."); return; }
     if (origem === "kg" && !(Number(kgVagao) > 0)) { setErro("Informe o kg total ofertado no vagão."); return; }
     const itens = montarItens();
@@ -197,10 +226,11 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
         origem: origem === "kg" ? "vagao" : "animais",
         kg_vagao: origem === "kg" ? Number(kgVagao) : null,
         itens,
+        ...(porTrato ? { trato: Number(trato) } : {}),
       });
       setAvisos(resp.avisos || []);
       setSucesso("Consumo lançado.");
-      setNumAnimais(""); setQuantidadesKg({}); setExtras([]); setKgVagao("");
+      setNumAnimais(""); setQuantidadesKg({}); setExtras([]); setKgVagao(""); setTrato("");
       setConsumoHoje(await fetchConsumoDoDia(loteSel, data));
       onSalvo?.();
     } catch (e: any) {
@@ -213,8 +243,8 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
     }
   }
 
-  const kgFornecidoDiaSobra = consumoDiaSobra?.kg_fornecido_total ?? 0;
-  const previewPct = kgSobra !== "" && kgFornecidoDiaSobra > 0 ? (Number(kgSobra) / kgFornecidoDiaSobra) * 100 : null;
+  const kgFornecidoJanela = janela?.kg_fornecido_janela ?? 0;
+  const previewPct = kgSobra !== "" && kgFornecidoJanela > 0 ? (Number(kgSobra) / kgFornecidoJanela) * 100 : null;
   const statusFaixa = (pct: number | null): "abaixo" | "dentro" | "acima" | null => {
     if (pct == null) return null;
     if (pct < paramAlim.min) return "abaixo";
@@ -223,6 +253,21 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
   };
   const corFaixa = (s: "abaixo" | "dentro" | "acima" | null) => (s === "dentro" ? "var(--green-light)" : s === null ? "var(--text-muted)" : "var(--amber)");
 
+  // Registrar sobra = primeiro mostrar o período pré-montado; só "Confirmar"
+  // grava (decisão do dono — a confirmação aparece SEMPRE).
+  function pedirConfirmacaoSobra() {
+    setErroSobra(null); setSucessoSobra(null);
+    if (!loteSel) { setErroSobra("Selecione um lote."); return; }
+    if (kgSobra.trim() === "" || !(Number(kgSobra) >= 0)) { setErroSobra("Informe a sobra em kg."); return; }
+    if (!janela) { setErroSobra("Não foi possível montar o período da sobra — confira a conexão e tente de novo."); return; }
+    setOutroPeriodo(false);
+    setConfirmandoSobra(true);
+  }
+
+  function cancelarSobra() {
+    setConfirmandoSobra(false); setOutroPeriodo(false); setEscolhaSobra(undefined);
+  }
+
   async function enviarSobra() {
     setErroSobra(null); setSucessoSobra(null);
     if (!loteSel) { setErroSobra("Selecione um lote."); return; }
@@ -230,10 +275,14 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
     if (!(kg >= 0)) { setErroSobra("Informe a sobra em kg."); return; }
     setEnviandoSobra(true);
     try {
-      await lancarSobra({ lote: loteSel, data: dataSobra, kg_sobra: kg });
-      setSucessoSobra("Sobra registrada.");
+      const r = await lancarSobra({
+        lote: loteSel, data: dataSobra, kg_sobra: kg,
+        ...(escolhaSobra === "civil" ? { dia_civil: true } : typeof escolhaSobra === "number" ? { posicao_leitura: escolhaSobra } : {}),
+      });
+      setSucessoSobra(`${r.substituiu ? "Sobra substituída" : "Sobra registrada"}${r.sobra_pct != null ? ` — ${fmt(r.sobra_pct)}% do fornecido no período` : ""}.`);
       setKgSobra("");
-      setConsumoDiaSobra(await fetchConsumoDoDia(loteSel, dataSobra));
+      cancelarSobra();
+      setVersaoSobra((v) => v + 1);
       onSalvo?.();
     } catch (e: any) {
       setErroSobra(e.message || "Erro ao lançar sobra.");
@@ -266,6 +315,9 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
   }
 
   const kgVagaoNum = Number(kgVagao) || 0;
+  const posicaoDieta = dietaInfo?.sobra_posicao_leitura ?? null;
+  const posicaoSobra = escolhaSobra === undefined ? posicaoDieta : escolhaSobra === "civil" ? null : escolhaSobra;
+  const nTratos = dietaInfo?.num_tratos ?? 2;
   const itensComPercentual = itensDieta.filter((it) => it.percentual_dieta != null);
 
   return (
@@ -322,6 +374,19 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
                 <input type="date" style={inputStyle} value={data} onChange={(e) => setData(e.target.value)} />
               </Campo>
             </div>
+
+            {porTrato && (
+              <div style={{ marginBottom: "0.8rem" }}>
+                <p style={{ ...nota, marginLeft: 0, marginBottom: "0.3rem" }}>De qual trato é este fornecimento? (a fazenda lança o consumo por trato)</p>
+                <div className="flex flex-wrap gap-2">
+                  {Array.from({ length: dietaInfo.num_tratos }, (_, i) => String(i + 1)).map((t) => (
+                    <button key={t} type="button" className={trato === t ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }} onClick={() => setTrato(t)}>
+                      Trato {t} ({fmt(dietaInfo.tratos_pct[Number(t) - 1] ?? 0)}%)
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="flex flex-wrap gap-2 mb-3">
               <button type="button" className={origem === "animais" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => setOrigem("animais")}>
@@ -489,6 +554,12 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
                 <p style={{ fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--dourado-light)", marginBottom: "0.4rem" }}>
                   Já lançado em {fmtDataBR(data)} ({fmt(consumoHoje.kg_fornecido_total)} kg no total)
                 </p>
+                {(consumoHoje.por_trato?.length ?? 0) > 0 && (
+                  <p style={{ ...nota, marginLeft: 0, marginBottom: "0.4rem" }}>
+                    {consumoHoje.por_trato!.map((t) => `Trato ${t.trato}: ${fmt(t.kg)} kg`).join(" · ")}
+                    {(consumoHoje.kg_sem_trato ?? 0) > 0 && ` · sem trato: ${fmt(consumoHoje.kg_sem_trato!)} kg`}
+                  </p>
+                )}
                 <div className="overflow-x-auto">
                   <table className="fazenda-table" style={{ margin: 0 }}>
                     <thead><tr><th>Alimento</th><th style={{ textAlign: "right" }}>Quantidade</th></tr></thead>
@@ -507,8 +578,8 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
         {loteSel && subTab === "sobra" && (
           <>
             <div style={{ maxWidth: "12rem", marginBottom: "0.4rem" }}>
-              <Campo label="Data da sobra">
-                <input type="date" style={inputStyle} value={dataSobra} onChange={(e) => { setDataSobra(e.target.value); setKgSobra(""); setErroSobra(null); setSucessoSobra(null); }} />
+              <Campo label={posicaoDieta == null ? "Data da sobra (dia do fornecimento)" : "Data da leitura da sobra"}>
+                <input type="date" style={inputStyle} value={dataSobra} onChange={(e) => { setDataSobra(e.target.value); setKgSobra(""); setErroSobra(null); setSucessoSobra(null); setConfirmandoSobra(false); }} />
               </Campo>
             </div>
 
@@ -517,16 +588,24 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
                 (claro/misto/escuro) — pedido explícito do produtor, por isso
                 cores fixas em vez dos tokens de tema (--amber/--surface)
                 usados no resto da tela. Não "corrija" para var(...) achando
-                que é inconsistência. */}
+                que é inconsistência. O texto muda conforme a dieta tenha (ou
+                não) a posição da leitura cadastrada (21/10/2026). */}
             <div style={{ marginTop: "0.2rem", marginBottom: "0.9rem", padding: "0.7rem 0.9rem", borderRadius: "var(--r-sm)", background: "#161616", border: "1px solid #3a2f14" }}>
               <p style={{ margin: 0, fontSize: "0.72rem", fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: "#B8860B" }}>
                 Atenção
               </p>
-              <p style={{ margin: "0.35rem 0 0", fontSize: "0.8rem", color: "#f2f2f2", lineHeight: 1.5 }}>
-                O lançamento da sobra de cocho se refere, em regra, à data do dia anterior à do fornecimento.<br />
-                Hoje: {fmtDataBR(hojeIso())}<br />
-                Sobra de cocho - ontem: {fmtDataBR(ontemIso())}
-              </p>
+              {posicaoDieta == null ? (
+                <p style={{ margin: "0.35rem 0 0", fontSize: "0.8rem", color: "#f2f2f2", lineHeight: 1.5 }}>
+                  O lançamento da sobra de cocho se refere, em regra, à data do dia anterior à do fornecimento.<br />
+                  Hoje: {fmtDataBR(hojeIso())}<br />
+                  Sobra de cocho - ontem: {fmtDataBR(ontemIso())}
+                </p>
+              ) : (
+                <p style={{ margin: "0.35rem 0 0", fontSize: "0.8rem", color: "#f2f2f2", lineHeight: 1.5 }}>
+                  Informe o dia em que a sobra foi LIDA. A dieta deste lote diz que a leitura é feita entre o Trato {posicaoDieta} e o
+                  Trato {posicaoDieta >= nTratos ? 1 : posicaoDieta + 1} — o período (ciclo de 24h) é montado sozinho e você confirma antes de gravar.
+                </p>
+              )}
             </div>
 
             <div style={{ maxWidth: "12rem", marginBottom: "0.6rem" }}>
@@ -534,33 +613,36 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
                 <input type="number" inputMode="decimal" min={0} style={inputStyle} value={kgSobra} onChange={(e) => setKgSobra(e.target.value)} />
               </Campo>
             </div>
-            <p style={nota}>Lançar de novo na mesma data substitui o valor anterior — sobra é a medição do dia, não soma.</p>
+            <p style={nota}>Uma sobra por ciclo de 24h — lançar de novo para o mesmo período substitui o valor anterior, não soma.</p>
+
+            {janela && (
+              <p style={{ ...nota, marginLeft: 0, marginTop: "0.4rem" }}>
+                Período: {janela.descricao.replace(/^A sobra se refere /, "").replace(/\?$/, "")} · fornecido nesse período: {fmt(janela.kg_fornecido_janela)} kg
+              </p>
+            )}
 
             {/* Item D6: percentual calculado + status da faixa, antes mesmo
                 de o usuário confirmar — é a mesma conta que gera o alerta na
                 central e na agenda (Frente C), só que aqui é prévia. Sempre
-                em relação ao fornecido NA DATA DA SOBRA, não na data do card
-                de fornecimento (podem ser dias diferentes). */}
+                em relação ao fornecido NO PERÍODO (janela de tratos) da sobra. */}
             {previewPct != null && (
               <p style={{ fontSize: "0.85rem", marginTop: "0.5rem", display: "flex", alignItems: "center", gap: "0.4rem", color: corFaixa(statusFaixa(previewPct)) }}>
                 {statusFaixa(previewPct) === "dentro" ? <CheckCircle2 size={15} /> : <TriangleAlert size={15} />}
-                <strong>{fmt(previewPct)}%</strong> do fornecido em {fmtDataBR(dataSobra)}
+                <strong>{fmt(previewPct)}%</strong> do fornecido no período
                 {statusFaixa(previewPct) === "dentro" && " — dentro da faixa aceitável"}
                 {statusFaixa(previewPct) === "abaixo" && ` — abaixo do mínimo (${paramAlim.min}%)`}
                 {statusFaixa(previewPct) === "acima" && ` — acima do máximo (${paramAlim.max}%)`}
               </p>
             )}
-            {previewPct == null && kgSobra !== "" && kgFornecidoDiaSobra === 0 && (
-              <p style={{ ...nota, marginLeft: 0 }}>Sem consumo lançado em {fmtDataBR(dataSobra)} ainda — não dá para calcular o percentual.</p>
+            {previewPct == null && kgSobra !== "" && janela && kgFornecidoJanela === 0 && (
+              <p style={{ ...nota, marginLeft: 0 }}>Sem consumo lançado nesse período ainda — não dá para calcular o percentual.</p>
             )}
             <p style={nota}>Alvo: {paramAlim.alvo}% · aceitável entre {paramAlim.min}% e {paramAlim.max}%.</p>
 
-            {consumoDiaSobra?.sobra_kg != null && (
+            {janela?.kg_sobra_existente != null && (
               <p style={{ fontSize: "0.8rem", marginTop: "0.4rem", color: "var(--text-muted)" }}>
-                Já registrado em {fmtDataBR(dataSobra)}: <strong style={{ color: "var(--text)" }}>{fmt(consumoDiaSobra.sobra_kg)} kg</strong>
-                {consumoDiaSobra.sobra_pct != null && ` (${fmt(consumoDiaSobra.sobra_pct)}%)`}
-                {consumoDiaSobra.dentro_da_faixa === true && <span style={{ color: "var(--green-light)" }}> — dentro da faixa</span>}
-                {consumoDiaSobra.dentro_da_faixa === false && <span style={{ color: "var(--amber)" }}> — fora da faixa (veja a central de alertas)</span>}
+                Já registrado para esse período: <strong style={{ color: "var(--text)" }}>{fmt(janela.kg_sobra_existente)} kg</strong>
+                {kgFornecidoJanela > 0 && ` (${fmt((janela.kg_sobra_existente / kgFornecidoJanela) * 100)}%)`}
               </p>
             )}
 
@@ -574,9 +656,53 @@ export function ConsumoAlimento({ onSalvo }: { onSalvo?: () => void }) {
             {erroSobra && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erroSobra}</p>}
             {sucessoSobra && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucessoSobra}</p>}
 
-            <button className="btn-primary mt-3" style={{ fontSize: "0.85rem" }} disabled={enviandoSobra} onClick={enviarSobra}>
-              {enviandoSobra ? "Registrando..." : "Registrar sobra"}
-            </button>
+            {!confirmandoSobra ? (
+              <button className="btn-primary mt-3" style={{ fontSize: "0.85rem" }} disabled={enviandoSobra} onClick={pedirConfirmacaoSobra}>
+                Registrar sobra
+              </button>
+            ) : (
+              <div className="mt-3" style={{ padding: "0.8rem 0.9rem", borderRadius: "var(--r-sm)", border: "1px solid var(--dourado)", background: "var(--surface-2)", maxWidth: "36rem" }}>
+                <p style={{ margin: 0, fontSize: "0.9rem", fontWeight: 700 }}>{janela?.descricao}</p>
+                <p style={{ ...nota, marginLeft: 0, marginTop: "0.3rem" }}>
+                  {kgSobra} kg de sobra{previewPct != null ? ` = ${fmt(previewPct)}% de ${fmt(kgFornecidoJanela)} kg fornecidos no período` : ""}
+                  {janela?.kg_sobra_existente != null ? ` · substitui os ${fmt(janela.kg_sobra_existente)} kg já lançados para esse período` : ""}.
+                </p>
+
+                {outroPeriodo && (
+                  <div className="mt-2">
+                    <div style={{ maxWidth: "12rem", marginBottom: "0.5rem" }}>
+                      <Campo label={escolhaSobra === "civil" ? "Dia do fornecimento" : "Data da leitura"}>
+                        <input type="date" style={inputStyle} value={dataSobra} onChange={(e) => setDataSobra(e.target.value)} />
+                      </Campo>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {opcoesPosicaoLeitura(nTratos).map((o) => (
+                        <button key={o.valor} type="button" className={posicaoSobra === o.valor ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.76rem" }}
+                          onClick={() => setEscolhaSobra(o.valor)}>
+                          Lida entre {o.rotulo}
+                        </button>
+                      ))}
+                      <button type="button" className={posicaoSobra == null ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.76rem" }}
+                        onClick={() => setEscolhaSobra("civil")}>
+                        Dia inteiro do fornecimento
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-2 mt-3">
+                  <button className="btn-primary" style={{ fontSize: "0.82rem" }} disabled={enviandoSobra || !janela} onClick={enviarSobra}>
+                    {enviandoSobra ? "Registrando..." : "Confirmar"}
+                  </button>
+                  {!outroPeriodo && (
+                    <button className="btn-secondary" style={{ fontSize: "0.82rem" }} disabled={enviandoSobra} onClick={() => setOutroPeriodo(true)}>
+                      Selecionar outro período
+                    </button>
+                  )}
+                  <button className="btn-ghost" style={{ fontSize: "0.82rem" }} disabled={enviandoSobra} onClick={cancelarSobra}>Cancelar</button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>

@@ -11,10 +11,13 @@ import {
   fetchPrincipiosAtivos,
   formatDate,
   type ProtocoloIatfMolde, type EtapaProtocoloIatf, type LinhaCentralProtocolos,
-  type DetalheCentralProtocolo, type MedicamentoIatf,
+  type DetalheCentralProtocolo,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { exportarFolhaCampoPDF, exportarFolhaCampoExcel } from "@/lib/folhaProtocolo";
+import {
+  hormoniosDoDia, montarMedicamentosBaixa, mensagemBaixa, diaInseminacaoIatf as diaInseminacaoDoIatf,
+} from "@/lib/baixaProtocolo";
 import type { AnimalRow } from "@/components/AnimalModal";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { UNIDADES_PROTOCOLO } from "@/lib/constants";
@@ -486,9 +489,7 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
     setAviso(null);
   }
 
-  const hormoniosDoDiaBaixa = (origem === "iatf" || origem === "inducao" || origem === "sanitario") && diaBaixa != null
-    ? det?.dias.find((d) => d.dia === diaBaixa)?.hormonios || []
-    : [];
+  const hormoniosDoDiaBaixa = hormoniosDoDia(origem, det, diaBaixa);
 
   async function confirmarBaixa() {
     if (diaBaixa == null) return;
@@ -503,22 +504,11 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
       // nível abaixo do frasco — ver loteSelecionado). Sem hormônios
       // cadastrados (protocolo ad-hoc, ou D11/inseminação), não manda nada —
       // mesmo comportamento de antes (backend cai nos medicamentos
-      // cadastrados no lançamento).
-      let medicamentos: MedicamentoIatf[] | undefined;
-      if ((origem === "iatf" || origem === "inducao" || origem === "sanitario") && hormoniosDoDiaBaixa.length) {
-        const sel = medSelecionado[diaBaixa] || {};
-        const loteSel = loteSelecionado[diaBaixa] || {};
-        medicamentos = hormoniosDoDiaBaixa.map((h, idx) => {
-          const optIdx = sel[idx] ?? (h.opcoes?.length === 1 ? 0 : "");
-          const opcao = optIdx === "" ? undefined : h.opcoes?.[optIdx];
-          const loteIdx = loteSel[idx];
-          return {
-            produto: opcao?.nome ?? h.produto, estoque_id: opcao?.estoque_id ?? undefined,
-            lote_id: loteIdx != null && loteIdx !== "" ? loteIdx : undefined,
-            dose: h.dose, unidade: h.unidade, via: h.via,
-          };
-        }).filter((m) => m.produto);
-      }
+      // cadastrados no lançamento). A montagem vive em lib/baixaProtocolo.ts,
+      // a mesma que o app usa (Menu › Protocolos).
+      const medicamentos = montarMedicamentosBaixa(
+        origem, hormoniosDoDiaBaixa, medSelecionado[diaBaixa], loteSelecionado[diaBaixa],
+      );
       const r = await darBaixaProtocolo(origem, origemId, {
         dia: diaBaixa,
         animais: todos ? null : animaisBaixa,
@@ -526,7 +516,7 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
         medicamentos,
       });
       setDiaBaixa(null);
-      setAviso(r.avisos?.length ? r.avisos.join(" ") : "Baixa registrada.");
+      setAviso(mensagemBaixa(r));
       await carregar(); onMudou();
     } catch (e: any) { setErro(e.message); }
     finally { setSalvando(false); }
@@ -615,7 +605,7 @@ function DetalheProtocolo({ origem, origemId, onFechar, onMudou }: {
   // ver fazenda.rules.protocolo_iatf.dia_inseminacao) — "dar baixa" nele não
   // registra o Servico (touro/sêmen), então nunca deve ser oferecido aqui
   // (ver bloqueio equivalente no backend, central_protocolos.dar_baixa).
-  const diaInseminacaoIatf = origem === "iatf" && det.dias.length > 1 ? Math.max(...det.dias.map((d) => d.dia)) : null;
+  const diaInseminacaoIatf = diaInseminacaoDoIatf(origem, det.dias);
 
   return (
     <Modal title={det.nome} onClose={onFechar} width="960px">

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  abortosSemResposta, avisoFreemartin, chaveCria, classeColostro, classeEficiencia, classeSoro, colostroTemDado, colostroVazio,
+  abortosSemResposta, avisoFreemartin, delDesdeParto, chaveCria, classeColostro, classeEficiencia, classeSoro, colostroTemDado, colostroVazio,
   criasDaLinha, enriquecimento, erroSexo, erroSexo2, intervaloColostroHoras, linhaEfetiva, linhaVazia, payloadColostragem, payloadParto,
   problemasDeSalvar, relativoPrevisto, resumoDosPartos,
 } from "./partoLancamento.ts";
@@ -147,4 +147,12 @@ test("relativo da data prevista", () => {
   assert.equal(relativoPrevisto("2026-10-18", HOJE), "amanhã");
   assert.equal(relativoPrevisto("2026-10-14", HOJE), "3 d atrás");
   assert.equal(relativoPrevisto("2026-10-21", HOJE), "em 4 d");
+});
+
+test("DEL da mãe conta os dias desde a data do parto (retroativo não é DEL 0) e nunca fica negativo", () => {
+  assert.equal(delDesdeParto("2026-10-17", "2026-10-17"), 0);
+  assert.equal(delDesdeParto("2026-10-19", "2026-10-21"), 2);
+  assert.equal(delDesdeParto("2026-09-30", "2026-10-02"), 2);
+  assert.equal(delDesdeParto("2026-10-25", "2026-10-21"), 0);
+  assert.equal(delDesdeParto("", "2026-10-21"), 0);
 });

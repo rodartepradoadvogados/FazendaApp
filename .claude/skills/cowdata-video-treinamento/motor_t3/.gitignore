@@ -1,0 +1,9 @@
+# gerados localmente — não versionar
+cena/three.module.js
+cena/assets/
+cena/tex/
+cena/tex2/
+captura/shots*/
+aud/*.wav
+*.log
+*.mp4

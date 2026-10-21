@@ -2059,6 +2059,11 @@ def registrar_parto(
     regras_lactacao.sincronizar_del_do_animal(
         session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id,
     )
+    # A gestação acabou: "gestante"/"ges." no texto congelado deixou de ser
+    # verdade (caso da vaca 206 — pariu e seguiu "Vaca ges. lac.").
+    regras_lactacao.sincronizar_categoria_do_animal(
+        session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id, abriu_lactacao=True,
+    )
 
     ganchos_sanitario.animal_mudou(
         session, fazenda_id, numeros=[dados.numero_matriz, *crias_criadas], evento="parto",
@@ -2207,7 +2212,7 @@ def encerrar_gestacao(
     # "gestante" até o próximo upload do GERAL.csv, que pode nunca vir (caso
     # relatado: novilha "14", abortou, categoria seguiu "Novilha gestante").
     regras_lactacao.sincronizar_categoria_do_animal(
-        session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id,
+        session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id, abriu_lactacao=lactacao is not None,
     )
 
     ganchos_sanitario.animal_mudou(session, fazenda_id, numeros=[dados.numero_matriz], evento="parto")

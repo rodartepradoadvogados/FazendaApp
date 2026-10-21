@@ -240,9 +240,10 @@ export function MobGaveta({ aberto, titulo, onFechar, children }: { aberto: bool
  * colateral (ex.: mover um animal de lote) que precisa de "sim" explícito do
  * usuário antes de acontecer. Fecha só pelos botões Confirmar/Cancelar.
  */
-export function MobConfirmModal({ titulo, children, onConfirmar, onCancelar, confirmando, textoConfirmar = "Confirmar", textoCancelar = "Cancelar" }: {
+export function MobConfirmModal({ titulo, children, onConfirmar, onCancelar, confirmando, confirmarDesabilitado, textoConfirmar = "Confirmar", textoCancelar = "Cancelar" }: {
   titulo: string; children: ReactNode; onConfirmar: () => void; onCancelar: () => void;
-  confirmando?: boolean; textoConfirmar?: string; textoCancelar?: string;
+  /** `confirmando` trava os dois botões ("Movendo…"); `confirmarDesabilitado` trava só o de confirmar (ex.: falta escolher uma opção). */
+  confirmando?: boolean; confirmarDesabilitado?: boolean; textoConfirmar?: string; textoCancelar?: string;
 }) {
   return (
     <div role="presentation"
@@ -253,7 +254,7 @@ export function MobConfirmModal({ titulo, children, onConfirmar, onCancelar, con
         <div style={{ fontSize: "0.9rem", color: "var(--mob-text)", lineHeight: 1.45, marginBottom: "1.1rem" }}>{children}</div>
         <div style={{ display: "flex", gap: "0.6rem" }}>
           <button type="button" className="mob-btn-2" onClick={onCancelar} disabled={confirmando} style={{ flex: 1 }}>{textoCancelar}</button>
-          <button type="button" className="mob-btn" onClick={onConfirmar} disabled={confirmando} style={{ flex: 1 }}>{confirmando ? "Movendo…" : textoConfirmar}</button>
+          <button type="button" className="mob-btn" onClick={onConfirmar} disabled={confirmando || confirmarDesabilitado} style={{ flex: 1 }}>{confirmando ? "Movendo…" : textoConfirmar}</button>
         </div>
       </div>
     </div>

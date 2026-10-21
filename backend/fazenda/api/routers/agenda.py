@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import and_, or_
 from sqlmodel import Session, select
 
 from fazenda.auth import (
@@ -37,6 +38,7 @@ from fazenda.api.routers.portal import usuarios_da_fazenda
 from fazenda.api.routers.reproducao import ATIVIDADE_INDUCAO_CIO
 from fazenda.ordenacao import chave_numero
 from fazenda.rules import caixa_funcionario as caixa_funcionario_rules
+from fazenda.rules import tratos as regras_tratos
 from fazenda.rules import caixa_time as caixa_time_rules
 from fazenda.rules.agenda_engine import DIAS_CONTAS_VENCIDAS_NA_AGENDA, AgendaEngine, AgendaItem
 from fazenda.rules.cura_protocolo import protocolo_terminado
@@ -1299,28 +1301,47 @@ def calcular_agenda(
     # nunca a janela de `dias` — o alerta é "do mesmo dia" (C1), não uma
     # cobrança retroativa.
     eventos_alerta_sobra = []
+    # "Do dia" = LIDA no dia: com a leitura antes do 1º trato, a sobra lida
+    # hoje fecha o ciclo de ontem (`ConsumoSobra.data` = fechamento, ver
+    # rules/tratos.py) e o alerta continua sendo de hoje. Registro antigo,
+    # sem `data_leitura`, segue pela data de sempre.
     sobras_hoje = session.exec(
-        _da_fazenda(select(ConsumoSobra).where(ConsumoSobra.data == data), ConsumoSobra)
+        _da_fazenda(
+            select(ConsumoSobra).where(or_(
+                ConsumoSobra.data_leitura == data,
+                and_(ConsumoSobra.data_leitura == None, ConsumoSobra.data == data),  # noqa: E711
+            )),
+            ConsumoSobra,
+        )
     ).all()
     if sobras_hoje:
         sobra_min = float(get_param("sobra_min_pct", 3) or 3)
         sobra_max = float(get_param("sobra_max_pct", 7) or 7)
         sobra_alvo = float(get_param("sobra_alvo_pct", 5) or 5)
         for s in sobras_hoje:
+            # Base = fornecido NA JANELA da sobra (ciclo de 24h pela posição da
+            # leitura cadastrada na dieta — ver rules/tratos.py). Registro
+            # antigo (sem ciclo gravado) = o próprio dia, a conta de sempre.
+            itens_janela, pcts_tratos = regras_tratos.ciclo_do_registro(s)
+            dias_janela = sorted({d for d, _ in itens_janela})
             consumo_lote = session.exec(
                 _da_fazenda(
-                    select(ConsumoAlimento).where(ConsumoAlimento.lote == s.lote, ConsumoAlimento.data == s.data),
+                    select(ConsumoAlimento).where(
+                        ConsumoAlimento.lote == s.lote,
+                        ConsumoAlimento.data >= dias_janela[0], ConsumoAlimento.data <= dias_janela[-1],
+                    ),
                     ConsumoAlimento,
                 )
             ).all()
             if not consumo_lote:
                 continue  # sem fornecido lançado — não dá para calcular % nem instrução, sem inventar
-            kg_por_alimento: dict[str, float] = {}
+            consumos_kg = []
             for c in consumo_lote:
                 kg = kg_equivalente(c.quantidade, c.unidade)
                 if kg is None:
                     continue  # C6 — litro/dose/unidade não entram na conta nem na instrução
-                kg_por_alimento[c.alimento] = kg_por_alimento.get(c.alimento, 0.0) + kg
+                consumos_kg.append((c.data, c.trato, c.alimento, kg))
+            kg_por_alimento = regras_tratos.fornecido_na_janela(consumos_kg, itens_janela, pcts_tratos)
             kg_total = sum(kg_por_alimento.values())
             if kg_total <= 0:
                 continue  # só havia alimento sem conversão para kg — sem denominador, sem percentual
@@ -1345,7 +1366,7 @@ def calcular_agenda(
             if chave in realizados:
                 continue
             eventos_alerta_sobra.append({
-                "id": chave, "data": s.data.isoformat(), "categoria": "alimentacao",
+                "id": chave, "data": (s.data_leitura or s.data).isoformat(), "categoria": "alimentacao",
                 "descricao": texto, "numero_animal": None,
                 "observacao": "Sobra fora da faixa aceitável — só um comunicado, sem lançamento a fazer aqui.",
                 "fonte": "auto", "cor": "var(--dourado)", "ref": str(s.id), "tipo": "alerta_sobra", "lote": s.lote,

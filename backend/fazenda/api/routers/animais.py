@@ -26,7 +26,7 @@ from fazenda.rules.parto_resumo import resumo_por_parto
 from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
 from fazenda.rules.gestation import dias_gestacao_da_raca
 from fazenda.rules.lactacao import em_lactacao_por_matriz as lactacoes_abertas_por_matriz
-from fazenda.rules.lactacao import lactacao_aberta, lactacoes_da_matriz
+from fazenda.rules.lactacao import categoria_sem_gestacao, lactacao_aberta, lactacoes_da_matriz
 from fazenda.rules.parto import eh_parto_produtivo
 from fazenda.rules.producao_leiteira import com_fallback_animal, del_dias_ao_vivo, ultimo_controle_por_animal
 from fazenda.rules.relatorios_gerenciais import GESTACAO_DIAS, LIMITE_SECAGEM_RETROATIVA_DIAS
@@ -40,7 +40,22 @@ router = APIRouter(prefix="/animais", tags=["animais"])
 _del_dias_ao_vivo = del_dias_ao_vivo
 
 
-def _categoria_ao_vivo(categoria_completa: str | None, categoria_abrev: str | None, ult_parto: date | None, ult_secagem: date | None) -> tuple[str | None, str | None]:
+# Janela em que um texto "gestante"/"ges." logo depois de um parto é, com certeza prática, texto congelado velho: a
+# nova prenhez só se confirma depois do PEV + diagnóstico (bem mais que isso). Passada a janela, quem diz "ges." pode
+# ser um GERAL.csv mais novo que o parto — aí o texto manda.
+JANELA_GESTACAO_ENCERRADA_DIAS = 45
+
+
+def _gestacao_encerrada_no_texto(ancora_lactacao: date | None, tem_gestacao_em_curso: bool, hoje: date) -> bool:
+    """O animal pariu há pouco e não tem serviço positivo vigente: a marca "ges." do texto congelado já não vale. Cobre
+    os partos lançados ANTES de `registrar_parto` passar a sincronizar a categoria (vaca 206, 19/10/2026)."""
+    return bool(ancora_lactacao) and not tem_gestacao_em_curso and 0 <= (hoje - ancora_lactacao).days <= JANELA_GESTACAO_ENCERRADA_DIAS
+
+
+def _categoria_ao_vivo(
+    categoria_completa: str | None, categoria_abrev: str | None, ult_parto: date | None, ult_secagem: date | None,
+    gestacao_encerrada: bool = False,
+) -> tuple[str | None, str | None]:
     """Corrige "Novilha ..." para "Vaca ..." quando o app já tem um parto
     lançado para o animal — uma novilha que pariu vira vaca imediatamente, não
     só no próximo upload do GERAL.csv. Só mexe em categorias que ainda dizem
@@ -49,6 +64,9 @@ def _categoria_ao_vivo(categoria_completa: str | None, categoria_abrev: str | No
     temos como reconstruir aqui (ex.: número da lactação)."""
     if ult_parto is None:
         return categoria_completa, categoria_abrev
+    if gestacao_encerrada:
+        categoria_completa = categoria_sem_gestacao(categoria_completa, abriu_lactacao=True)
+        categoria_abrev = categoria_sem_gestacao(categoria_abrev, abriu_lactacao=True)
 
     def _corrige(texto: str | None) -> str | None:
         if not texto or "novilha" not in texto.lower():
@@ -176,6 +194,7 @@ def listar_animais(
             d["del_dias"] = (hoje - lact.data_inicio).days
         d["categoria_completa"], d["categoria_abrev"] = _categoria_ao_vivo(
             d["categoria_completa"], d["categoria_abrev"], _ancora_lactacao(pp_produtivo, lact), sec,
+            gestacao_encerrada=_gestacao_encerrada_no_texto(_ancora_lactacao(pp_produtivo, lact), sp is not None, hoje),
         )
         producao_kg, producao_data = com_fallback_animal(a.numero, producao_ao_vivo, a)
         d["producao_kg"] = producao_kg
@@ -798,6 +817,9 @@ def ficha_animal(
     animal_dump["categoria_completa"], animal_dump["categoria_abrev"] = _categoria_ao_vivo(
         animal_dump["categoria_completa"], animal_dump["categoria_abrev"],
         _ancora_lactacao(ultimo_parto_produtivo_data, lactacao_atual), ultima_secagem_data,
+        gestacao_encerrada=_gestacao_encerrada_no_texto(
+            _ancora_lactacao(ultimo_parto_produtivo_data, lactacao_atual), bool(servicos_positivos), date.today(),
+        ),
     )
 
     # Mãe: prioridade 1 é o cadastro manual (Animal.mae_numero, preenchido em

@@ -68,6 +68,31 @@ class TestListarAnimaisAoVivo:
         assert animal["categoria_completa"] == "Vaca em lactação"
         assert animal["categoria_abrev"] == "Vaca em lactação"
 
+    def test_vaca_que_pariu_antes_do_conserto_deixa_de_aparecer_gestante(self, client):
+        """Vaca 206: parto lançado em 19/10 com a categoria congelada "Vaca ges. lac." (a gravação não a corrigia).
+        Sem serviço positivo vigente e dentro da janela, a leitura mostra a situação real."""
+        c, engine = client
+        hoje = date.today()
+        with Session(engine) as s:
+            s.add(Animal(numero="206", sexo="F", ativo=True, categoria_completa="Vaca ges. lac.", categoria_abrev="Vaca ges. lac."))
+            s.add(Parto(numero_matriz="206", data_parto=hoje - timedelta(days=2), ordem_parto=3))
+            s.commit()
+        animal = next(a for a in c.get("/animais/", params={"ativo": True}).json() if a["numero"] == "206")
+        assert animal["categoria_abrev"] == "Vaca vaz. pev lac."
+        ficha = c.get("/animais/206/ficha").json()
+        assert ficha["animal"]["categoria_abrev"] == "Vaca vaz. pev lac."
+
+    def test_ges_legitimo_depois_da_janela_do_parto_nao_e_mexido(self, client):
+        """Parto antigo + texto "ges." (GERAL.csv novo, nova prenhez confirmada no Ideagri): o texto manda."""
+        c, engine = client
+        hoje = date.today()
+        with Session(engine) as s:
+            s.add(Animal(numero="300", sexo="F", ativo=True, categoria_completa="Vaca ges. lac.", categoria_abrev="Vaca ges. lac."))
+            s.add(Parto(numero_matriz="300", data_parto=hoje - timedelta(days=150), ordem_parto=2))
+            s.commit()
+        animal = next(a for a in c.get("/animais/", params={"ativo": True}).json() if a["numero"] == "300")
+        assert animal["categoria_abrev"] == "Vaca ges. lac."
+
     def test_vaca_ja_seca_nao_conta_del_e_mostra_seca(self, client):
         c, engine = client
         hoje = date.today()

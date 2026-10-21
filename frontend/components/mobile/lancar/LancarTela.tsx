@@ -8,7 +8,7 @@
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { Activity, Milk, Syringe, Wheat, ArrowLeftRight, Skull, Search, X, ChevronRight, Landmark, Boxes, Trash2, ListChecks, MoreHorizontal, Sun } from "lucide-react";
+import { Activity, Milk, Syringe, Wheat, Scale, ArrowLeftRight, Skull, Search, X, ChevronRight, Landmark, Boxes, Trash2, ListChecks, MoreHorizontal, Sun } from "lucide-react";
 import { MobTitulo, MobBloco, MobVoltar, MobGaveta } from "@/components/mobile/ui";
 import { fetchAnimais, podeModulo } from "@/lib/api";
 import { type Animal, useCache, filtrarAnimais, rotuloAnimal } from "./comum";
@@ -19,6 +19,9 @@ const FormReprodutivo = dynamic(() => import("./FormReprodutivo").then((m) => m.
 const FormProducao = dynamic(() => import("./FormProducao").then((m) => m.FormProducao), { ssr: false });
 const FormSanidade = dynamic(() => import("./FormSanidade").then((m) => m.FormSanidade), { ssr: false });
 const FormAlimentacao = dynamic(() => import("./FormAlimentacao").then((m) => m.FormAlimentacao), { ssr: false });
+// Sobra do cocho é entrada PRÓPRIA (21/10/2026): uma leitura por ciclo de 24h
+// entre tratos, separada do fornecimento — ver FormSobraCocho.tsx.
+const FormSobraCocho = dynamic(() => import("./FormSobraCocho").then((m) => m.FormSobraCocho), { ssr: false });
 const FormProtocolos = dynamic(() => import("./FormProtocolos").then((m) => m.FormProtocolos), { ssr: false });
 const Movimentar = dynamic(() => import("@/components/mobile/rebanho/Movimentar"), { ssr: false });
 const Baixar = dynamic(() => import("@/components/mobile/rebanho/Baixar"), { ssr: false });
@@ -26,13 +29,14 @@ const FormFinanceiroApp = dynamic(() => import("./FormFinanceiroApp"), { ssr: fa
 const BalancoEstoque = dynamic(() => import("./BalancoEstoque"), { ssr: false });
 const FormExclusao = dynamic(() => import("@/components/FormExclusao").then((m) => m.FormExclusao), { ssr: false });
 
-type Tela = "reprodutivo" | "producao" | "sanidade" | "alimentacao" | "protocolos" | "movimentar" | "baixar" | "financeiro" | "estoque" | "exclusao";
+type Tela = "reprodutivo" | "producao" | "sanidade" | "alimentacao" | "sobra" | "protocolos" | "movimentar" | "baixar" | "financeiro" | "estoque" | "exclusao";
 
 const TITULOS: Record<Tela, string> = {
   reprodutivo: "Reprodutivo",
   producao: "Produção (leite)",
   sanidade: "Sanidade",
   alimentacao: "Alimentação",
+  sobra: "Sobra do cocho",
   protocolos: "Protocolos",
   movimentar: "Movimentar animais",
   baixar: "Baixar animal",
@@ -76,6 +80,7 @@ export function LancarTela() {
         {tela === "producao" && <FormProducao animais={animais.dados} animalFixado={fixado?.numero || null} />}
         {tela === "sanidade" && <FormSanidade animais={animais.dados} animalFixado={fixado?.numero || null} />}
         {tela === "alimentacao" && <FormAlimentacao />}
+        {tela === "sobra" && <FormSobraCocho />}
         {tela === "protocolos" && <FormProtocolos animais={animais.dados} animalFixado={fixado?.numero || null} />}
         {tela === "movimentar" && <Movimentar />}
         {tela === "baixar" && <Baixar />}
@@ -134,6 +139,7 @@ export function LancarTela() {
       <div className="mob-secao">Outros lançamentos frequentes</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.7rem" }}>
         <MobBloco icone={<Wheat size={22} />} label="Alimentação" onClick={() => setTela("alimentacao")} />
+        <MobBloco icone={<Scale size={22} />} label="Sobra do cocho" onClick={() => setTela("sobra")} />
         <MobBloco icone={<ListChecks size={22} />} label="Protocolos" onClick={() => setTela("protocolos")} />
         <MobBloco icone={<ArrowLeftRight size={22} />} label="Movimentar" onClick={() => setTela("movimentar")} />
       </div>
