@@ -55,3 +55,13 @@ cd .. && ./copiar_telas_t3e3.sh && python3 cena/montar_episodio_t3e3.py && ./ren
 node aud/exportar_roteiro_audio_t3e3.mjs   # → aud/roteiro_t3e3.json; depois trilha_app.py + norm.sh como no Ep. 1
 ```
 Armadilhas: (1) "De qual lote?" só existe no protocolo sanitário (o backend só devolve `lotes` para `origem == "sanitario"`): o IATF mostra só o frasco, por isso o stub tem um sanitário fictício (id 401); (2) selects nativos não abrem no headless: lista aberta = `<select size=N>`; (3) o texto do aviso de estoque vem do POST `/baixa` do stub, no formato de `rules/estoque_baixa.py`; (4) `__reset` do stub reinicia estoque e baixas (rode antes de cada captura).
+
+## Episódio 4 — Ciclos de 21 dias (Menu › Reprodução; fecha o módulo)
+Arquivos `*_t3e4`: `cena/index_t3e4.html` (abertura "T3 · MENU / EP. 4 / CICLOS DE 21 DIAS"), `cena/episodio_roteiro_t3e4.js` + `cena/episodio_corpo_t3e4.js` (`python3 cena/montar_episodio_t3e4.py` → `cena/episodio_t3e4.html`), `captura/capturar_t3e4_ep.mjs` (+ `captura/t3e4.mjs`, `EP=t3e4` no stub), `beats_t3e4.json`, `copiar_telas_t3e4.sh`, `render_ep4.sh`, `aud/exportar_roteiro_audio_t3e4.mjs`.
+```bash
+cd ../../../../frontend && npx next start -p 3400 &        # .next atual (sem mudança de frontend desde o PR #943)
+cd captura && (EP=t3e4 STUB_PORT=8400 node stub-api.mjs &) ; STUB=8400 APP=3400 node capturar_t3e4_ep.mjs   # shots_ep/ + mapa.json (menu, ci0 e cd0 altas)
+cd .. && ./copiar_telas_t3e4.sh && python3 cena/montar_episodio_t3e4.py && ./render_ep4.sh ../q   # TOTAL=2310 quadros (77 s)
+node aud/exportar_roteiro_audio_t3e4.mjs   # → aud/roteiro_t3e4.json; depois trilha_app.py + norm.sh como no Ep. 1
+```
+Armadilhas: (1) a fita 3D das taxas fica a 26 unidades da câmera (o celular fica a ~32 no zoom 1,2); (2) `SEED_CICLOS` muda o sorteio dos baldes do stub (padrão 12 dá resumo verde/âmbar/verde); (3) ciclos 5 e 6 em apuração por regra real (28 dias); (4) página alta do detalhe só rola até `docH − 844` (389 px): ajuste a câmera, não o scroll, para o último grupo.
