@@ -12,8 +12,8 @@ Prova, num banco erguido pelas próprias migrações:
   - o downgrade devolve tudo (linhas, tabelas, finalidade e, no Postgres, as
     FKs que cruzavam a fronteira).
 
-SQLite sempre. Postgres só com `FAZENDA_TEST_PG_URL` apontando para um banco
-VAZIO descartável (o teste roda `alembic upgrade` nele).
+SQLite sempre. Postgres com `DATABASE_URL_POSTGRES_TESTE` (job "Testes que
+exigem PostgreSQL" do CI): o teste cria um banco vazio descartável e o apaga.
 """
 from __future__ import annotations
 
@@ -247,10 +247,17 @@ def test_relatorio_e_exportacao_leem_o_arquivo(tmp_path):
     assert (tmp_path / "saida" / "sanidade_preventiva.json").exists()
 
 
-@pytest.mark.skipif(not os.environ.get("FAZENDA_TEST_PG_URL"), reason="defina FAZENDA_TEST_PG_URL (banco Postgres vazio)")
+@pytest.mark.skipif(not os.environ.get("DATABASE_URL_POSTGRES_TESTE"),
+                    reason="precisa de PostgreSQL: defina DATABASE_URL_POSTGRES_TESTE")
 def test_postgres_set_schema_fks_e_downgrade():
+    from tests.test_migracao_sanitario_alimentacao_compat import banco_pg_vazio
+
+    with banco_pg_vazio() as url:
+        _postgres_set_schema_fks_e_downgrade(url)
+
+
+def _postgres_set_schema_fks_e_downgrade(url: str) -> None:
     mig = _mig()
-    url = os.environ["FAZENDA_TEST_PG_URL"]
     _alembic(url, "upgrade", ANTERIOR)
     engine = create_engine(url)
     _semear(engine)

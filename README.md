@@ -184,7 +184,9 @@ push das notas (`rules/sanitario/push.py`; a véspera abre `/app/menu#vacinacao-
 `rules/sanitario/ganchos.py`: parto, diagnóstico, serviço, perda de prenhez, secagem, baixa, venda, compra e cadastro de animal
 avisam o motor na mesma transação (falha nunca derruba a escrita; o job corrige).
 
-**Runbook de deploy** (banco real — nunca rodar com `DATABASE_URL` de produção na máquina de desenvolvimento sem querer):
+**Runbook de deploy** (banco real — nunca rodar com `DATABASE_URL` de produção na máquina de desenvolvimento sem querer).
+Passo a passo completo do dono (backup, relatório com a conexão de DONO — a do app está sob RLS e veria zero —, leitura e
+reversão): `docs/sanitario-v2-passo-a-passo-dono.md`.
 1. **Antes**: `DATABASE_URL=… python backend/scripts/relatorio_sanitario_legado.py [--amostras 10] [--json]` — só lê; conta o que
    vai para o arquivo por fazenda e mostra amostras para o dono aprovar.
 2. Deploy normal (Railway roda `alembic upgrade head`): a migração A arquiva no schema `arquivo_sanitario_2026`, a B cria as tabelas
