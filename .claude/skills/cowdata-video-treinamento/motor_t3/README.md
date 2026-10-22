@@ -65,3 +65,13 @@ cd .. && ./copiar_telas_t3e4.sh && python3 cena/montar_episodio_t3e4.py && ./ren
 node aud/exportar_roteiro_audio_t3e4.mjs   # → aud/roteiro_t3e4.json; depois trilha_app.py + norm.sh como no Ep. 1
 ```
 Armadilhas: (1) a fita 3D das taxas fica a 26 unidades da câmera (o celular fica a ~32 no zoom 1,2); (2) `SEED_CICLOS` muda o sorteio dos baldes do stub (padrão 12 dá resumo verde/âmbar/verde); (3) ciclos 5 e 6 em apuração por regra real (28 dias); (4) página alta do detalhe só rola até `docH − 844` (389 px): ajuste a câmera, não o scroll, para o último grupo.
+
+## Episódio 5 — Alimentação: Plano por lote e Consultar dietas (Menu › Alimentação)
+Arquivos `*_t3e5`: `cena/index_t3e5.html` (abertura "T3 · MENU / EP. 5 / ALIMENTAÇÃO"; a placa que avança é a seção Alimentação aberta, posições das placas lidas de `tex/mapa.json`), `cena/episodio_roteiro_t3e5.js` + `cena/episodio_corpo_t3e5.js` (`python3 cena/montar_episodio_t3e5.py` → `cena/episodio_t3e5.html`; páginas = Menu, Plano, Lançar nova dieta, Consultar dietas, dieta aberta; fitas 3D de texto `FITAS_TXT`), `captura/capturar_t3e5_ep.mjs` (+ `captura/t3e5.mjs`, `EP=t3e5` no stub), `beats_t3e5.json`, `copiar_telas_t3e5.sh`, `render_ep5.sh`, `aud/exportar_roteiro_audio_t3e5.mjs`.
+```bash
+cd ../../../../frontend && npx next build && npx next start -p 3500 &      # precisa do build com os tratos por dieta (PR #949)
+cd captura && (EP=t3e5 STUB_PORT=8500 node stub-api.mjs &) ; STUB=8500 APP=3500 node capturar_t3e5_ep.mjs   # shots_ep/ + mapa.json (pl0, ld0, cs0, cs1 altas)
+cd .. && ./copiar_telas_t3e5.sh && python3 cena/montar_episodio_t3e5.py && ./render_ep5.sh ../q   # TOTAL=2088 quadros (69,6 s)
+node aud/exportar_roteiro_audio_t3e5.mjs   # → aud/roteiro_t3e5.json; depois trilha_app.py + norm.sh como no Ep. 1
+```
+Armadilhas: (1) o texto do cabeçalho do Plano é vários nós: `trecho()` concatena nós antes do regex; (2) o app mostra "Lote 1 · Alta"; (3) Voltar fica no topo da página (a rolagem volta a 0 antes do toque); (4) o efetivo da apresentação de dieta encerrada é o atual do lote; (5) âncoras do plano de produção vieram adiantadas: remapeie pelas palavras da voz real.

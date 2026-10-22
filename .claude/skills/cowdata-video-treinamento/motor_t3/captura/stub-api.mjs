@@ -4,8 +4,9 @@ import { t3e1 } from "./t3e1.mjs";
 import { t3e2 } from "./t3e2.mjs";
 import { t3e3 } from "./t3e3.mjs";
 import { t3e4 } from "./t3e4.mjs";
+import { t3e5 } from "./t3e5.mjs";
 import { animais, lotes, SEED_MOTIVOS, estadosEp2, candidatasEp3, DATA_REF, pesagensRel, secagemLista, ESTOQUE7, ESTOQUE8, PESSOAS8, bst, ESTOQUE9, DOENCAS9, PRINCIPIOS9, MED_POR_DOENCA, INDICACOES_MASTITE, EVENTOS9, PROTOCOLOS10, DIETA11, PROTOCOLOS12 } from "./dados.mjs";
-const EP12 = ["t2e12","t3e1","t3e2","t3e3","t3e4"].includes(process.env.EP); // Ep. 12: Protocolos — lançar protocolo personalizado (herda o Ep. 11)
+const EP12 = ["t2e12","t3e1","t3e2","t3e3","t3e4","t3e5"].includes(process.env.EP); // Ep. 12: Protocolos — lançar protocolo personalizado (herda o Ep. 11)
 const EP11 = process.env.EP === "t2e11" || EP12; // Ep. 11: Alimentação — consumo e sobra de cocho (herda o Ep. 10)
 const EP10 = process.env.EP === "t2e10" || EP11; // Ep. 10: Sanidade — protocolo sanitário (herda o Ep. 9)
 const EP9 = process.env.EP === "t2e9" || EP10; // Ep. 9: Sanidade — aplicação de medicamentos (herda o Ep. 8)
@@ -45,10 +46,11 @@ http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") { res.statusCode = 204; return res.end(); }
   const send = (obj, status = 200) => { res.statusCode = status; res.end(JSON.stringify(obj)); };
   if (p === "/health") return send({ ok: true });
-  if (process.env.EP === "t3e4") { const r = await t3e4(req, res, p, u, send, corpo); if (r !== false) return; } // T3 Ep. 4: Ciclos de 21 dias (Menu › Reprodução; herda t3e3/t3e2/t3e1)
-  if (["t3e3","t3e4"].includes(process.env.EP)) { const r = await t3e3(req, res, p, u, send, corpo); if (r !== false) return; } // T3 Ep. 3: Baixa e aplicação do protocolo (Menu › Protocolos; herda t3e2/t3e1)
-  if (["t3e2","t3e3","t3e4"].includes(process.env.EP)) { const r = await t3e2(req, res, p, u, send, corpo); if (r !== false) return; } // T3 Ep. 2: Protocolos IATF em andamento (herda t3e1)
-  if (["t3e1","t3e2","t3e3","t3e4"].includes(process.env.EP)) { const r = await t3e1(req, res, p, u, send, corpo); if (r !== false) return; } // T3 Ep. 1: Agenda Reprodutiva (cards com estado, listas, ficha)
+  if (process.env.EP === "t3e5") { const r = await t3e5(req, res, p, u, send, corpo); if (r !== false) return; } // T3 Ep. 5: Alimentação — Plano por lote e Consultar dietas (herda t3e4/t3e3/t3e2/t3e1)
+  if (["t3e4","t3e5"].includes(process.env.EP)) { const r = await t3e4(req, res, p, u, send, corpo); if (r !== false) return; } // T3 Ep. 4: Ciclos de 21 dias (Menu › Reprodução; herda t3e3/t3e2/t3e1)
+  if (["t3e3","t3e4","t3e5"].includes(process.env.EP)) { const r = await t3e3(req, res, p, u, send, corpo); if (r !== false) return; } // T3 Ep. 3: Baixa e aplicação do protocolo (Menu › Protocolos; herda t3e2/t3e1)
+  if (["t3e2","t3e3","t3e4","t3e5"].includes(process.env.EP)) { const r = await t3e2(req, res, p, u, send, corpo); if (r !== false) return; } // T3 Ep. 2: Protocolos IATF em andamento (herda t3e1)
+  if (["t3e1","t3e2","t3e3","t3e4","t3e5"].includes(process.env.EP)) { const r = await t3e1(req, res, p, u, send, corpo); if (r !== false) return; } // T3 Ep. 1: Agenda Reprodutiva (cards com estado, listas, ficha)
   if (EP12) { // Ep. 12: Protocolos › Personalizado — lista de protocolos e o POST que cria o lançamento com as etapas na agenda
     if (p === "/protocolos-customizados" && req.method === "GET") return send(PROTOCOLOS12);
     if (p === "/protocolos-customizados/lancar" && req.method === "POST") {
