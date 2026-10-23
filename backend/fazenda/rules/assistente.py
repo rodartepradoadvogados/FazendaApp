@@ -31,6 +31,7 @@ from fazenda.rules import assistente_consultas_extra as _consultas_extra
 from fazenda.rules import assistente_llm
 from fazenda.rules import ferramentas_pagina as _pagina
 from fazenda.rules.auditoria import fazenda_id_seguro
+from fazenda.rules.conta_baixa import conta_em_aberto
 from fazenda.rules.indicadores import calcular_indicadores
 
 MODEL = assistente_llm.MODELO_PADRAO[assistente_llm.PROVEDOR_ANTHROPIC]  # compatibilidade
@@ -310,7 +311,7 @@ def _tool_consultar_financeiro(session: Session, fazenda_id: int | None = None) 
     if fazenda_id is not None:
         query = query.where(ContaGerencial.fazenda_id == fazenda_id)
     contas = session.exec(query).all()
-    abertas = [c for c in contas if (c.valor_pago or 0) < (c.valor_total or 0)]
+    abertas = [c for c in contas if conta_em_aberto(c.data_pagamento)]
     total_pagar = sum(c.valor_total or 0 for c in abertas if c.tipo == "despesa")
     total_receber = sum(c.valor_total or 0 for c in abertas if c.tipo == "receita")
     vencidas = [c for c in abertas if c.data_vencimento and c.data_vencimento < hoje]

@@ -16,6 +16,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from fazenda.api.routers.animais import _del_dias_ao_vivo
+from fazenda.rules.conta_baixa import conta_em_aberto
 from fazenda.rules.bst import GRUPOS_LACTACAO, ResultadoBST, avaliar_bst
 from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules.gestation import calcular_parto_provavel, dias_gestacao_secagem_pre_parto
@@ -795,7 +796,7 @@ class AgendaEngine:
             c for c in contas
             if c.get("data_vencimento")
             and data_referencia - timedelta(days=DIAS_CONTAS_VENCIDAS_NA_AGENDA) <= c["data_vencimento"] <= limite_contas
-            and (c.get("valor_pago") or 0) < (c.get("valor_total") or 0)
+            and conta_em_aberto(c.get("data_pagamento"))
         ]
         result.contas_a_pagar = sorted(contas_proximas, key=lambda c: c["data_vencimento"])
         for conta in result.contas_a_pagar:
