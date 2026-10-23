@@ -6,13 +6,15 @@
 // já só aparece para quem tem acesso (ver app/app/menu/page.tsx), mas os
 // endpoints também travam sozinhos (403) se alguém chegar aqui sem permissão.
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Sparkles, Send, BookOpen, Plus, Pencil, Trash2, X, Check } from "lucide-react";
 import { MobVoltar, MobCard } from "@/components/mobile/ui";
 import { LinhaPills, MobPill } from "@/components/mobile/lancar/comum";
 import {
-  perguntarAssistente, fetchEnsinamentos, criarEnsinamento, atualizarEnsinamento, excluirEnsinamento,
+  fetchEnsinamentos, criarEnsinamento, atualizarEnsinamento, excluirEnsinamento,
   fetchAssistenteStatus, type AssistenteEnsinamento, type AssistenteStatus,
 } from "@/lib/api";
+import { conversar } from "@/lib/assistenteConversa";
 
 type Mensagem = { autor: "usuario" | "assistente" | "erro"; texto: string };
 type Aba = "conversa" | "ensinamentos";
@@ -41,6 +43,8 @@ function ConversaView() {
   const [historico, setHistorico] = useState<any[]>([]);
   const [pergunta, setPergunta] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [naTela, setNaTela] = useState(false);
+  const router = useRouter();
   const fimRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -54,12 +58,16 @@ function ConversaView() {
     setMensagens((m) => [...m, { autor: "usuario", texto }]);
     setEnviando(true);
     try {
-      const r = await perguntarAssistente(texto, historico);
+      const r = await conversar(texto, historico, {
+        navegar: (caminho) => router.push(caminho),
+        aoExecutarNaTela: () => setNaTela(true),
+      });
       setMensagens((m) => [...m, { autor: "assistente", texto: r.resposta }]);
       setHistorico(r.historico);
     } catch (e: any) {
       setMensagens((m) => [...m, { autor: "erro", texto: e.message || "Erro ao consultar o assistente." }]);
     } finally {
+      setNaTela(false);
       setEnviando(false);
     }
   }
@@ -83,7 +91,11 @@ function ConversaView() {
             {m.texto}
           </div>
         ))}
-        {enviando && <p style={{ color: "var(--mob-muted)", fontSize: "0.82rem" }}>Consultando…</p>}
+        {enviando && (
+          <p style={{ color: "var(--mob-muted)", fontSize: "0.82rem" }}>
+            {naTela ? "Olhando a tela…" : "Consultando…"}
+          </p>
+        )}
         <div ref={fimRef} />
       </div>
 

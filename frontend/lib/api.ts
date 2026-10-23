@@ -8906,9 +8906,18 @@ export const atualizarNotaCapa = (d: { titulo: string; texto: string; ativa: boo
 // ── Assistente Claude (protótipo — conversa aberta a qualquer usuário
 // logado da fazenda piloto; treino restrito a admin, ver
 // backend/fazenda/api/routers/assistente.py) ──
-export type AssistenteResposta = { resposta: string; historico: any[] };
-export async function perguntarAssistente(mensagem: string, historico: any[] = []): Promise<AssistenteResposta> {
-  return _rSend(`/assistente/perguntar`, "POST", { mensagem, historico });
+export type AssistenteResposta = {
+  resposta: string;
+  historico: any[];
+  /** Ferramentas de TELA que o frontend deve executar na aba do usuário. */
+  aguardando?: import("./ferramentasPagina").PedidoPagina[];
+};
+export async function perguntarAssistente(
+  mensagem: string,
+  historico: any[] = [],
+  resultadosPagina: import("./ferramentasPagina").ResultadoPagina[] = [],
+): Promise<AssistenteResposta> {
+  return _rSend(`/assistente/perguntar`, "POST", { mensagem, historico, resultados_pagina: resultadosPagina });
 }
 // Nunca dá 403 — `liberado` diz se pode conversar, `pode_treinar` se pode
 // ver a aba/tela de Ensinamentos (admin).

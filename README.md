@@ -270,4 +270,3 @@ Todas as regras da Seção 5 do `CONTEXTO_PROJETO_FAZENDA.md` estão em `backend
 **Vercel** (alternativa para o frontend):
 - Deploy `frontend/` no Vercel
 - Setar `NEXT_PUBLIC_API_URL` apontando para o Railway
-# Trigger Railway deploy

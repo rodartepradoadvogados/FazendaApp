@@ -71,8 +71,14 @@ def _exigir_admin(
 
 
 class PerguntaIn(BaseModel):
-    mensagem: str
+    mensagem: str = ""
     historico: list[dict] = []
+    # Resultados das ferramentas de tela (pagina_*) que o FRONTEND executou na
+    # aba do próprio usuário, no formato [{"id": ..., "resultado": ...}].
+    # Ver fazenda/rules/ferramentas_pagina.py: o backend só pede, quem executa
+    # é o navegador de quem perguntou — nada de Chromium no servidor e nada de
+    # sessão de outra pessoa.
+    resultados_pagina: list[dict] | None = None
 
 
 @router.post("/perguntar")
@@ -82,10 +88,15 @@ def perguntar(
     usuario: Usuario = Depends(_exigir_fazenda_piloto),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    if not dados.mensagem.strip():
+    if not dados.mensagem.strip() and not dados.resultados_pagina:
         raise HTTPException(status_code=400, detail="Mensagem vazia")
+    if len(dados.resultados_pagina or []) > 12:
+        raise HTTPException(status_code=400, detail="Resultados de tela demais numa requisição")
     try:
-        return responder(dados.mensagem.strip(), dados.historico, session, usuario, fazenda_id)
+        return responder(
+            dados.mensagem.strip(), dados.historico, session, usuario, fazenda_id,
+            resultados_pagina=dados.resultados_pagina,
+        )
     except assistente_llm.ErroAssistente as e:
         # Usuário comum: só "temporariamente indisponível". Administrador:
         # também a dica técnica curta (sem segredo). O detalhe já foi pro log.
