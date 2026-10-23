@@ -5,10 +5,10 @@
 // internet) e liga a sincronização automática da fila offline.
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { PlusCircle, Sun, Moon, CloudUpload } from "lucide-react";
 import { aplicarTema } from "@/components/ThemeSwitcher";
-import { fetchAgenda, today } from "@/lib/api";
+import { fetchAgenda, getFazendaAtual, today } from "@/lib/api";
 import { iniciarSincronizacaoAutomatica, useConectividadeReal, usePendentes, useSincProgresso } from "@/lib/offline";
 import { ajustarStatusBar, esconderSplash, registrarBotaoVoltar, registrarPushNativo } from "@/lib/nativo";
 import { InstalarApp } from "@/components/mobile/InstalarApp";
@@ -20,6 +20,10 @@ import { CowDataMark } from "@/components/brand/CowDataMark";
 import { NewsIcon } from "@/components/mobile/NewsIcon";
 import { CalendarColorfulIcon, MenuTricolorIcon } from "@/components/mobile/AppIcons";
 import { CowIcon } from "@/components/CowIcon";
+
+// A fazenda atual só muda num login/troca de conta (sem evento próprio): o
+// snapshot é relido a cada renderização do layout — a troca de rota já basta.
+const semAssinatura = () => () => {};
 
 // `cor`: identidade própria de cada aba (ver --mob-nav-* em globals.css) —
 // exposta como var(--aba) no <Link> (abaixo) e usada pelo CSS (.mob-nav
@@ -71,6 +75,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // faixa de segurança do topo (notch) — para reservar o mesmo espaço abaixo.
   const headerRef = useRef<HTMLElement | null>(null);
   const [alturaHeader, setAlturaHeader] = useState(64);
+  // Nome da fazenda ATUAL (a escolhida no login/troca de conta) no cabeçalho.
+  // BUG CORRIGIDO: era o nome fixo de uma fazenda cliente, para qualquer conta.
+  // No servidor não há localStorage: o snapshot do servidor é vazio, e o do
+  // cliente lê a fazenda guardada — sem divergir na hidratação. Sem fazenda
+  // conhecida, fica vazio em vez do nome de outra.
+  const nomeFazenda = useSyncExternalStore(semAssinatura, () => getFazendaAtual()?.nome?.trim() || "", () => "");
 
   // Tema: no app só existe claro (alto contraste) e escuro (OLED); o "misto"
   // do site é tratado como claro aqui.
@@ -188,7 +198,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 }}
               />
             </p>
-            <p style={{ fontSize: "0.68rem", opacity: 0.85 }}>Estreito Ponte de Pedra</p>
+            {nomeFazenda && <p style={{ fontSize: "0.68rem", opacity: 0.85 }}>{nomeFazenda}</p>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
             {fila.length > 0 && (
