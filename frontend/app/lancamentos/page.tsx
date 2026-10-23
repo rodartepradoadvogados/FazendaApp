@@ -467,7 +467,7 @@ export default function LancamentosPage() {
           ) : sel === "sanidade_aplicacao" ? (
             <><strong style={{ color: "var(--text)" }}>Sanidade já grava de verdade.</strong> Aceita vários produtos por lançamento; a baixa de estoque só acontece quando a unidade escolhida bate com a do estoque.</>
           ) : sel === "sanidade_preventivo" ? (
-            <><strong style={{ color: "var(--text)" }}>Vacina e exame estão sendo refeitos.</strong> O lançamento simples do preventivo novo entra aqui; até lá, nada é gravado nesta folha.</>
+            <><strong style={{ color: "var(--text)" }}>Vacina e exame já gravam de verdade.</strong> Vai para o mesmo histórico da Central de Protocolos; para marcar um dia de vacina ou exame, use Central › Aplicar › Sanitário › Preventivo.</>
           ) : sel === "bst" ? (
             <><strong style={{ color: "var(--text)" }}>BST — somatotropina bovina.</strong> Vacas aptas e excluídas do dia, com a próxima visita de BST.</>
           ) : sel === "protocolo_sanitario" ? (

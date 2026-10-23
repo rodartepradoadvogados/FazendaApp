@@ -11,7 +11,7 @@ import { AlertTriangle, CalendarCheck, CheckCircle2, Hand, Info, UserPlus } from
 import { fetchCategoriasManejo, fetchEstoqueAtivos } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { desfazerRegistros, meuPapel, mensagemDoErro } from "@/lib/apiSanitario";
-import { ROTULO_SITUACAO, type EuSanitario } from "@/lib/sanitarioTipos";
+import { ROTULO_SITUACAO, ehItemFarmacia, type EuSanitario, type ItemEstoqueClassificavel } from "@/lib/sanitarioTipos";
 
 // ── papel do usuário (cache por sessão de página) ──
 let _eu: Promise<EuSanitario> | null = null;
@@ -156,17 +156,25 @@ export function BarraDesfazer({ registroIds, ate, texto, onDesfeito, onFim }: {
 }
 
 // ── listas de apoio (estoque, categorias), guardadas enquanto a página está aberta ──
-export type ItemEstoqueSan = { id: number; nome: string; unidade: string | null; quantidade: number | null };
+// O estoque vem INTEIRO, com a marca `farmacia` (lib/sanitarioTipos.ehItemFarmacia):
+// a lista de ESCOLHA mostra só o que é da Farmácia (opcoesEstoqueSan), mas o
+// nome de um item já gravado fora dela continua aparecendo (lookup por id).
+export type ItemEstoqueSan = { id: number; nome: string; unidade: string | null; quantidade: number | null; farmacia?: boolean };
 let _estoque: Promise<ItemEstoqueSan[]> | null = null;
 export function carregarEstoqueSan(): Promise<ItemEstoqueSan[]> {
   if (!_estoque) {
-    _estoque = fetchEstoqueAtivos().then((d: { itens?: { id: number; nome: string; unidade?: string | null; quantidade?: number | null }[] }) =>
+    _estoque = fetchEstoqueAtivos().then((d: { itens?: (ItemEstoqueClassificavel & { id: number; nome: string; unidade?: string | null; quantidade?: number | null })[] }) =>
       (d.itens || []).filter((i) => typeof i.id === "number")
-        .map((i) => ({ id: i.id, nome: i.nome, unidade: i.unidade ?? null, quantidade: i.quantidade ?? null }))
+        .map((i) => ({ id: i.id, nome: i.nome, unidade: i.unidade ?? null, quantidade: i.quantidade ?? null, farmacia: ehItemFarmacia(i) }))
         .sort((a, b) => a.nome.localeCompare(b.nome)));
     _estoque.catch(() => { _estoque = null; });
   }
   return _estoque;
+}
+/** Itens oferecidos no <select> "Item do estoque": só Farmácia, mais o já escolhido (para não sumir ao editar). */
+export function opcoesEstoqueSan<T extends ItemEstoqueSan>(lista: T[] | null | undefined, selecionado?: number | string | null): T[] {
+  const sel = selecionado == null || selecionado === "" ? null : Number(selecionado);
+  return (lista || []).filter((e) => e.farmacia !== false || e.id === sel);
 }
 let _categorias: Promise<{ id: number; nome: string }[]> | null = null;
 export function carregarCategoriasSan(): Promise<{ id: number; nome: string }[]> {

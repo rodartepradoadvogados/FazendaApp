@@ -4,7 +4,7 @@
 // ser por animal ou por peso. A lista do estoque vem da cópia local (funciona
 // sem sinal com a última lista vista).
 import { useMemo, useState } from "react";
-import { carregarEstoqueSan, type ItemEstoqueSan } from "@/components/sanitario/comum";
+import { carregarEstoqueSan, opcoesEstoqueSan, type ItemEstoqueSan } from "@/components/sanitario/comum";
 import { DOSE_UNIDADES, ROTULO_UNIDADE, numOuNulo, type DoseUnidade, type ProdutoIn } from "@/lib/sanitarioTipos";
 import { FaixaSan, Rotulo, useComCopia } from "./comum";
 
@@ -24,9 +24,10 @@ export function TrocarProduto({ titulo, atual, padraoTexto, estoquesPacote, perm
   const estoques = useMemo(() => {
     const m = new Map<number, { id: number; nome: string; unidade: string | null; saldo: number | null }>();
     for (const e of estoquesPacote || []) m.set(e.id, e);
-    for (const e of lista.dados || []) if (!m.has(e.id)) m.set(e.id, { id: e.id, nome: e.nome, unidade: e.unidade, saldo: e.quantidade });
+    // Só Farmácia (lib/sanitarioTipos.ehItemFarmacia); a cópia antiga sem a marca conta como Farmácia.
+    for (const e of opcoesEstoqueSan(lista.dados, atual?.estoque_id)) if (!m.has(e.id)) m.set(e.id, { id: e.id, nome: e.nome, unidade: e.unidade, saldo: e.quantidade });
     return [...m.values()].sort((a, b) => a.nome.localeCompare(b.nome));
-  }, [estoquesPacote, lista.dados]);
+  }, [estoquesPacote, lista.dados, atual?.estoque_id]);
   const [modo, setModo] = useState<Modo>(!atual ? (permitirPadrao ? "padrao" : "vazio") : (atual.modo as Modo) || "vazio");
   const [estoqueId, setEstoqueId] = useState<number | null>(atual?.estoque_id ?? null);
   const [texto, setTexto] = useState(atual?.texto || "");

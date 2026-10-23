@@ -1286,7 +1286,7 @@ export default function SanidadePage() {
       {aba === "preventiva" && (
         <>
           <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", marginBottom: "0.8rem" }}>
-            Só consulta. Para marcar ou aplicar uma vacina ou exame, use a Central de Protocolos › Vacinas e exames.
+            Só consulta. Para cadastrar uma vacina ou exame, use a Central de Protocolos › Cadastro › Sanidade › Preventiva; para marcar e aplicar, Aplicar › Sanitário › Preventivo.
           </p>
           {abaPrev === "painel" && <PainelPreventivo />}
           {abaPrev === "janela" && <AnimaisNaJanela key={caixaJanela ?? 0} caixaInicial={caixaJanela} />}

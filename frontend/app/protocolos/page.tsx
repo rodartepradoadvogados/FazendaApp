@@ -25,6 +25,11 @@ import { TabBar, TelaSkeleton } from "@/components/ui";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import type { ColunaExport } from "@/lib/export";
 import { WizardProtocolo, type PassoWizard } from "@/components/protocolos/WizardProtocolo";
+import { obterCaixa, obterDia } from "@/lib/apiSanitario";
+import {
+  ROTULO_GRUPO, grupoDoDia, grupoDoTipo, lerUrlCentral, navPadrao, navParaAba, urlCentral,
+  type AbaCentral, type AtalhoCentral, type GrupoPreventivo, type NavCentral,
+} from "@/lib/protocolosNavegacao";
 
 const FormProtocoloCustomizado = dynamic(() => import("@/components/lancamentos/FormProtocoloCustomizado").then((m) => m.FormProtocoloCustomizado), { ssr: false });
 // Os mesmos formulários já usados em Lançamentos — reaproveitados aqui, na
@@ -38,9 +43,12 @@ const FormProtocoloSanitario = dynamic(() => import("@/components/lancamentos/Fo
 const CadastroProtocolosSanitarios = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosSanitarios), { ssr: false });
 const CadastroProtocolosInducao = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosInducao), { ssr: false });
 const CadastroProtocolosCustomizados = dynamic(() => import("@/components/CadastroProtocolosCustomizados"), { ssr: false });
-// Vacinas e exames (Sanitário Preventivo v2): cadastro das caixas e os dias marcados.
+// Sanitário Preventivo v2 (vacinas, exames e outros preventivos): cadastro das
+// caixas, os dias marcados, as pendências e o que foi aplicado.
 const ListaCaixas = dynamic(() => import("@/components/sanitario/cadastro/ListaCaixas").then((m) => m.ListaCaixas), { ssr: false });
 const ListaDias = dynamic(() => import("@/components/sanitario/dias/ListaDias").then((m) => m.ListaDias), { ssr: false });
+const PendenciasPreventivo = dynamic(() => import("@/components/sanitario/dias/PendenciasPreventivo").then((m) => m.PendenciasPreventivo), { ssr: false });
+const AplicacoesPreventivas = dynamic(() => import("@/components/sanitario/consulta/AplicacoesPreventivas").then((m) => m.AplicacoesPreventivas), { ssr: false });
 const CadastroLida = dynamic(() => import("@/components/CadastroLida"), { ssr: false });
 const FormLida = dynamic(() => import("@/components/lancamentos/FormLida").then((m) => m.FormLida), { ssr: false });
 
@@ -296,48 +304,94 @@ function CadastroIatf() {
 
 // Seletor visual "de que tipo é o protocolo?" — mesmo desenho nas abas
 // Cadastro e Lançamento (o usuário achou bonito o de Cadastro e pediu para
-// repetir). Genérico o bastante para os dois conjuntos de tipos, que não são
-// os mesmos: Cadastro tem 4 tipos (não inclui nada que não se cadastra por
-// aqui); Lançamento também tem 4, na mesma ordem, por familiaridade.
-function SeletorTipoProtocolo<T extends string>({ titulo, tipos, tipo, onChange }: {
+// repetir). Genérico o bastante para os conjuntos de tipos das quatro abas e
+// para os níveis de baixo da hierarquia (Curativo | Preventivo e Vacina |
+// Exame | Outros), que usam a versão `compacta` (sem cartão próprio, menor).
+const COLUNAS_SELETOR: Record<number, string> = {
+  2: "grid grid-cols-2 gap-2", 3: "grid grid-cols-1 sm:grid-cols-3 gap-2", 4: "grid grid-cols-2 md:grid-cols-4 gap-2",
+  5: "grid grid-cols-2 md:grid-cols-5 gap-2", 6: "grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2",
+};
+function SeletorTipoProtocolo<T extends string>({ titulo, tipos, tipo, onChange, compacto = false }: {
   titulo: string;
   tipos: readonly { id: T; label: string; desc: string }[];
   tipo: T;
   onChange: (t: T) => void;
+  compacto?: boolean;
 }) {
+  const grade = (
+    <div className={COLUNAS_SELETOR[tipos.length] || COLUNAS_SELETOR[4]} role="group" aria-label={titulo}>
+      {tipos.map((t) => {
+        const ativo = t.id === tipo;
+        return (
+          <button
+            key={t.id} type="button" onClick={() => onChange(t.id)} title={t.desc} aria-pressed={ativo}
+            style={{
+              textAlign: "left", padding: compacto ? "0.45rem 0.7rem" : "0.6rem 0.75rem", borderRadius: "var(--r-sm)", cursor: "pointer",
+              border: `1px solid ${ativo ? "var(--dourado)" : "var(--border)"}`,
+              background: ativo ? "var(--pill-active-bg)" : "transparent",
+              color: ativo ? "var(--dourado-light)" : "var(--text)",
+            }}
+          >
+            <span style={{ display: "block", fontWeight: 700, fontSize: compacto ? "0.8rem" : "0.85rem" }}>{t.label}</span>
+            <span style={{ display: "block", fontSize: "0.7rem", color: ativo ? "var(--pill-active-fg)" : "var(--text-muted)", opacity: ativo ? 0.85 : 1, marginTop: "0.15rem" }}>{t.desc}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+  if (compacto) {
+    return (
+      <div className="mb-3" style={{ paddingLeft: "0.75rem", borderLeft: "2px solid var(--dourado)" }}>
+        <div style={{ fontSize: "0.7rem", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "0.35rem" }}>{titulo}</div>
+        {grade}
+      </div>
+    );
+  }
   return (
     <div className="card mb-3">
       <div className="card-header mb-2">{titulo}</div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-        {tipos.map((t) => {
-          const ativo = t.id === tipo;
-          return (
-            <button
-              key={t.id} type="button" onClick={() => onChange(t.id)} title={t.desc}
-              style={{
-                textAlign: "left", padding: "0.6rem 0.75rem", borderRadius: "var(--r-sm)", cursor: "pointer",
-                border: `1px solid ${ativo ? "var(--dourado)" : "var(--border)"}`,
-                background: ativo ? "var(--pill-active-bg)" : "transparent",
-                color: ativo ? "var(--dourado-light)" : "var(--text)",
-              }}
-            >
-              <span style={{ display: "block", fontWeight: 700, fontSize: "0.85rem" }}>{t.label}</span>
-              <span style={{ display: "block", fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>{t.desc}</span>
-            </button>
-          );
-        })}
-      </div>
+      {grade}
     </div>
   );
 }
 
+// Níveis de baixo do Sanitário (iguais nas quatro abas; só o gênero muda no Cadastro).
+const LADOS_CADASTRO = [
+  { id: "curativo", label: "Curativa", desc: "Protocolo de tratamento: etapas em dias fixos (D0/D1/D2…)" },
+  { id: "preventivo", label: "Preventiva", desc: "Vacinas, exames e outros preventivos: o animal entra pela regra (janela)" },
+] as const;
+const LADOS_USO = [
+  { id: "curativo", label: "Curativo", desc: "Protocolos de tratamento com etapas em dias fixos" },
+  { id: "preventivo", label: "Preventivo", desc: "Vacinas, exames e outros preventivos, por dia marcado" },
+] as const;
+const GRUPOS_SELETOR = [
+  { id: "vacina", label: "Vacina", desc: "B19, raiva, clostridiose…" },
+  { id: "exame", label: "Exame", desc: "Tuberculose, brucelose…" },
+  { id: "outros", label: ROTULO_GRUPO.outros, desc: "Vermífugo e demais preventivos" },
+] as const;
+
+/** Curativo | Preventivo e, no preventivo, Vacina | Exame | Outros — o mesmo par de seletores nas quatro abas. */
+function SeletorSanitario({ nav, onNav, cadastro = false }: { nav: NavCentral; onNav: (n: NavCentral) => void; cadastro?: boolean }) {
+  return (
+    <>
+      <SeletorTipoProtocolo compacto titulo={cadastro ? "Sanidade curativa ou preventiva?" : "Curativo ou preventivo?"}
+        tipos={cadastro ? LADOS_CADASTRO : LADOS_USO} tipo={nav.san} onChange={(san) => onNav({ ...nav, san })} />
+      {nav.san === "preventivo" && (
+        <SeletorTipoProtocolo compacto titulo="Qual preventivo?" tipos={GRUPOS_SELETOR} tipo={nav.grupo} onChange={(grupo) => onNav({ ...nav, grupo })} />
+      )}
+    </>
+  );
+}
+
 // Cadastro único: escolhe-se DE QUE protocolo se trata e abre-se o editor
-// daquele tipo. Os três já existentes (sanitário, indução, customizado) são
-// os MESMOS componentes usados em Configurações > Cadastro — mesmo formulário,
-// mesmo endpoint, mesmos protocolos já cadastrados. Não há cópia nem tabela
-// paralela: cadastrar aqui ou lá é indiferente.
+// daquele tipo. Os já existentes (sanitário curativo, indução, customizado)
+// são os MESMOS componentes usados em Configurações > Cadastro — mesmo
+// formulário, mesmo endpoint, mesmos protocolos já cadastrados. Não há cópia
+// nem tabela paralela: cadastrar aqui ou lá é indiferente.
+// Sanidade › Preventiva › Vacina | Exame | Outros é o cadastro das caixas do
+// Sanitário Preventivo v2 (ListaCaixas + WizardCaixa, filtrados pelo grupo).
 const TIPOS_CADASTRO = [
-  { id: "sanitario", label: "Sanitário curativo", desc: "Cronograma de etapas em dias fixos (D0/D1/D2…). Vacinas e exames ficam na aba Vacinas e exames" },
+  { id: "sanitario", label: "Sanidade", desc: "Curativa (etapas em dias fixos) e preventiva (vacinas, exames e outros preventivos)" },
   { id: "iatf", label: "IATF", desc: "Hormônios em dias livres (D0/D7/D9 ou outro espaçamento)" },
   { id: "inducao", label: "Indução de lactação", desc: "Medicamento, implante e manejo por dia" },
   { id: "customizado", label: "Customizado", desc: "Roteiro livre de etapas, para qualquer rotina" },
@@ -345,21 +399,18 @@ const TIPOS_CADASTRO = [
 ] as const;
 type TipoCadastro = typeof TIPOS_CADASTRO[number]["id"];
 
-// O sanitário aqui é só o curativo (cronograma de etapas em dias fixos).
-// Vacinas e exames (Sanitário Preventivo v2) têm aba própria na Central.
-function CadastroTab() {
-  const [tipo, setTipo] = useState<TipoCadastro>("sanitario");
-  // Atalho vindo de fora (?tipo=iatf etc.) — abre direto no tipo pedido.
-  useEffect(() => {
-    const tipoQs = new URLSearchParams(window.location.search).get("tipo");
-    if (tipoQs && TIPOS_CADASTRO.some((t) => t.id === tipoQs)) setTipo(tipoQs as TipoCadastro);
-  }, []);
-
+function CadastroTab({ nav, onNav, atalho }: { nav: NavCentral; onNav: (n: NavCentral) => void; atalho: AtalhoCentral }) {
+  const tipo = (nav.area || "sanitario") as TipoCadastro;
   return (
     <div>
-      <SeletorTipoProtocolo titulo="Do que se trata o protocolo?" tipos={TIPOS_CADASTRO} tipo={tipo} onChange={setTipo} />
+      <SeletorTipoProtocolo titulo="Do que se trata o protocolo?" tipos={TIPOS_CADASTRO} tipo={tipo} onChange={(area) => onNav({ ...nav, area })} />
 
-      {tipo === "sanitario" && <CadastroProtocolosSanitarios />}
+      {tipo === "sanitario" && <SeletorSanitario cadastro nav={nav} onNav={onNav} />}
+      {tipo === "sanitario" && nav.san === "curativo" && <CadastroProtocolosSanitarios />}
+      {tipo === "sanitario" && nav.san === "preventivo" && (
+        <ListaCaixas key={`c-${nav.grupo}-${atalho.caixa ?? ""}`} grupo={nav.grupo} abrirCaixaId={atalho.caixa}
+          abrirPasso={atalho.passo != null ? atalho.passo - 1 : null} />
+      )}
       {tipo === "iatf" && <CadastroIatf />}
       {tipo === "inducao" && <CadastroProtocolosInducao />}
       {tipo === "customizado" && <CadastroProtocolosCustomizados />}
@@ -368,7 +419,7 @@ function CadastroTab() {
   );
 }
 
-// ─────────────────────────── Aba Lançamento ───────────────────────────
+// ─────────────────────────── Aba Aplicar ───────────────────────────
 // Os 4 tipos lançam AQUI também — não só em Lançamentos. É redundância
 // proposital (o mesmo pedido que já valeu para os cards do app: IATF em
 // Reprodutivo E em Protocolos, Sanitário em Sanidade E em Protocolos): a
@@ -378,8 +429,10 @@ function CadastroTab() {
 // endpoint; lançar aqui ou lá é o idêntico lançamento, só muda o caminho até
 // a tela. Só o Customizado nasce exclusivamente aqui (nunca existiu em
 // Lançamentos, e não faz sentido duplicar essa é a única exceção).
+// Sanitário › Preventivo › Vacina | Exame | Outros são os dias marcados do
+// Sanitário Preventivo v2 (ListaDias: marcar, executar, fechar, ficha).
 const TIPOS_LANCAMENTO = [
-  { id: "sanitario", label: "Sanitário curativo", desc: "Aplicar um protocolo curativo cadastrado a um animal" },
+  { id: "sanitario", label: "Sanitário", desc: "Curativo (protocolo cadastrado num animal) ou preventivo (dia de vacina/exame)" },
   { id: "iatf", label: "IATF", desc: "Hormônios num lote — molde de dias livres ou digitado na hora" },
   { id: "inducao", label: "Indução de lactação", desc: "Cronograma completo, com baixa de estoque" },
   { id: "customizado", label: "Customizado", desc: "Roteiro livre, por matriz(es) ou tarefa da fazenda" },
@@ -387,26 +440,37 @@ const TIPOS_LANCAMENTO = [
 ] as const;
 type TipoLancamento = typeof TIPOS_LANCAMENTO[number]["id"];
 
-function LancamentoTab({ animais, estoque }: { animais: AnimalRow[]; estoque: EstoqueItem[] }) {
-  const [tipo, setTipo] = useState<TipoLancamento>("sanitario");
+function LancamentoTab({ animais, estoque, nav, onNav, atalho }: {
+  animais: AnimalRow[]; estoque: EstoqueItem[]; nav: NavCentral; onNav: (n: NavCentral) => void; atalho: AtalhoCentral;
+}) {
+  const tipo = (nav.area || "sanitario") as TipoLancamento;
+  const preventivo = tipo === "sanitario" && nav.san === "preventivo";
 
   return (
     <div>
-      <SeletorTipoProtocolo titulo="O que você quer aplicar?" tipos={TIPOS_LANCAMENTO} tipo={tipo} onChange={setTipo} />
+      <SeletorTipoProtocolo titulo="O que você quer aplicar?" tipos={TIPOS_LANCAMENTO} tipo={tipo} onChange={(area) => onNav({ ...nav, area })} />
+      {tipo === "sanitario" && <SeletorSanitario nav={nav} onNav={onNav} />}
 
-      <div className="card mb-3">
-        <div className="card-header mb-2">Aplicar {TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label.toLowerCase()}</div>
-        {tipo === "iatf" && <FormProtocoloIatf animais={animais} />}
-        {tipo === "inducao" && <FormInducaoLactacao animais={animais} />}
-        {tipo === "sanitario" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
-        {tipo === "customizado" && <FormProtocoloCustomizado animais={animais as any} />}
-        {tipo === "lida" && <FormLida animais={animais as any} />}
-      </div>
+      {preventivo ? (
+        <ListaDias key={`d-${nav.grupo}-${atalho.dia ?? ""}-${atalho.pares.length}-${atalho.caixas.join(",")}`} grupo={nav.grupo}
+          paresIniciais={atalho.pares} caixasIniciais={atalho.caixas} diaInicial={atalho.dia} />
+      ) : (
+        <div className="card mb-3">
+          <div className="card-header mb-2">Aplicar {tipo === "sanitario" ? "sanitário curativo" : TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label.toLowerCase()}</div>
+          {tipo === "iatf" && <FormProtocoloIatf animais={animais} />}
+          {tipo === "inducao" && <FormInducaoLactacao animais={animais} />}
+          {tipo === "sanitario" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
+          {tipo === "customizado" && <FormProtocoloCustomizado animais={animais as any} />}
+          {tipo === "lida" && <FormLida animais={animais as any} />}
+        </div>
+      )}
 
       <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-        {tipo === "customizado" || tipo === "lida"
-          ? `${TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label} só é lançado aqui — não existe em Lançamentos.`
-          : "Mesmo lançamento de Lançamentos — lance aqui ou lá, dá no mesmo registro."}
+        {preventivo
+          ? "Vacina ou exame já feito, sem dia marcado (simples ou retroativo)? Lance em Lançamentos › Sanitário › Preventivo — vai para o mesmo histórico."
+          : tipo === "customizado" || tipo === "lida"
+            ? `${TIPOS_LANCAMENTO.find((t) => t.id === tipo)?.label} só é lançado aqui — não existe em Lançamentos.`
+            : "Mesmo lançamento de Lançamentos — lance aqui ou lá, dá no mesmo registro."}
       </p>
     </div>
   );
@@ -914,10 +978,11 @@ const COLUNAS_EXPORT: ColunaExport[] = [
 // customizado/lida), não pela categoria produtivo/reprodutivo/sanitário
 // que o backend usa em `tipo` — essa distinção fica só no client, a lista
 // completa já vem do endpoint (o campo de busca por nome ainda vai ao
-// backend, já que esse sim é decidido lá).
+// backend, já que esse sim é decidido lá). O seletor mora na página
+// (AcompanhamentoTab), que acrescenta Sanitário › Curativo | Preventivo.
 const TIPOS_ACOMPANHAMENTO = [
-  { id: "", label: "Todos", desc: "Todos os protocolos" },
-  { id: "sanitario", label: "Sanitário", desc: "Protocolos curativos" },
+  { id: "", label: "Todos", desc: "Todos os protocolos com etapas (o preventivo fica em Sanitário › Preventivo)" },
+  { id: "sanitario", label: "Sanitário", desc: "Curativo (protocolos) e preventivo (vacinas, exames e outros)" },
   { id: "iatf", label: "IATF", desc: "Hormônios em lote" },
   { id: "inducao", label: "Indução de lactação", desc: "Cronograma com baixa de estoque" },
   { id: "customizado", label: "Customizado", desc: "Roteiro livre" },
@@ -929,12 +994,17 @@ export type OrigemAcompanhamento = typeof TIPOS_ACOMPANHAMENTO[number]["id"];
 // de lactação" (ver app/producao/page.tsx::HistoricoInducaoLactacao):
 // mesma lista/exportação/detalhe de sempre, só travando o filtro de origem
 // e escondendo o seletor (redundante quando a própria aba já diz qual é).
-export function ListaProtocolos({ historico, origemFixa }: { historico: boolean; origemFixa?: OrigemAcompanhamento }) {
+// `semSeletor` — a própria Central já mostra o seletor (Todos/Sanitário/...)
+// acima, então aqui ele some mesmo sem origem fixa ("Todos").
+export function ListaProtocolos({ historico, origemFixa, semSeletor = false }: {
+  historico: boolean; origemFixa?: OrigemAcompanhamento; semSeletor?: boolean;
+}) {
   const [linhas, setLinhas] = useState<LinhaCentralProtocolos[] | null>(null);
   const [nome, setNome] = useState("");
   const [origem, setOrigem] = useState<OrigemAcompanhamento>(origemFixa ?? "");
   // Sanitário aqui só cobre o Curativo (lançamentos com etapas — ver
-  // _linhas_sanitario no backend). Vacinas e exames têm aba própria.
+  // _linhas_sanitario no backend). Vacinas e exames ficam em Sanitário ›
+  // Preventivo, na própria Central (AcompanhamentoTab).
   const [erro, setErro] = useState<string | null>(null);
   const [aberto, setAberto] = useState<{ origem: string; id: number } | null>(null);
   const [recarga, setRecarga] = useState(0);
@@ -974,7 +1044,7 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
 
   return (
     <div>
-      {!origemFixa && <SeletorTipoProtocolo titulo="Filtrar por protocolo" tipos={TIPOS_ACOMPANHAMENTO} tipo={origem} onChange={setOrigem} />}
+      {!origemFixa && !semSeletor && <SeletorTipoProtocolo titulo="Filtrar por protocolo" tipos={TIPOS_ACOMPANHAMENTO} tipo={origem} onChange={setOrigem} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <div style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto", paddingRight: "0.4rem" }}>
@@ -1044,102 +1114,108 @@ export function ListaProtocolos({ historico, origemFixa }: { historico: boolean;
   );
 }
 
+// Acompanhamento e Concluídos: o mesmo seletor; Sanitário abre Curativo
+// (ListaProtocolos de sempre, origem sanitário) | Preventivo (Vacina | Exame |
+// Outros): em Acompanhamento, as pendências e os dias em aberto; em
+// Concluídos, os dias fechados e o que foi aplicado.
+function AcompanhamentoTab({ historico, nav, onNav }: { historico: boolean; nav: NavCentral; onNav: (n: NavCentral) => void }) {
+  const preventivo = nav.area === "sanitario" && nav.san === "preventivo";
+  return (
+    <div>
+      <SeletorTipoProtocolo titulo="Filtrar por protocolo" tipos={TIPOS_ACOMPANHAMENTO} tipo={nav.area} onChange={(area) => onNav({ ...nav, area })} />
+      {nav.area === "sanitario" && <SeletorSanitario nav={nav} onNav={onNav} />}
+      {preventivo ? (historico ? (
+        <div className="san-pagina">
+          <ListaDias key={`f-${nav.grupo}`} grupo={nav.grupo} estados="fechados" />
+          <section>
+            <h2 style={{ fontSize: "1rem", margin: "0.4rem 0 0.2rem" }}>O que foi aplicado</h2>
+            <p className="san-nota" style={{ margin: "0 0 0.6rem" }}>Cada registro do histórico: dias fechados, lançamentos simples, fichas e planilha.</p>
+            <AplicacoesPreventivas key={`a-${nav.grupo}`} grupo={nav.grupo} />
+          </section>
+        </div>
+      ) : (
+        <div className="san-pagina">
+          <PendenciasPreventivo key={`p-${nav.grupo}`} grupo={nav.grupo} />
+          <ListaDias key={`a-${nav.grupo}`} grupo={nav.grupo} estados="abertos" />
+        </div>
+      )) : (
+        <ListaProtocolos key={`${historico}-${nav.area}`} historico={historico} origemFixa={nav.area || undefined} semSeletor />
+      )}
+    </div>
+  );
+}
+
 // ─────────────────────────── Página ───────────────────────────
 // Vocabulário do fluxo aprovado (mockup fluxo-completo): Cadastro › Aplicar ›
 // Acompanhamento › Concluídos. "Aplicar" era "Lançamento" e "Concluídos" era
 // "Histórico"; os ids antigos (?aba=lancamento / ?aba=historico) continuam
 // valendo como atalho para não quebrar links já salvos.
-// "Vacinas e exames" é o ponto de encaixe do Sanitário Preventivo v2
-// (Cadastro | Vacinas e exames marcados); o preventivo antigo saiu.
-type AbaProtocolos = "cadastro" | "aplicar" | "acompanhamento" | "concluidos" | "vacinas";
-const ABAS_LEGADO: Record<string, AbaProtocolos> = { lancamento: "aplicar", historico: "concluidos" };
-const ABAS_PROTOCOLOS: AbaProtocolos[] = ["cadastro", "aplicar", "acompanhamento", "concluidos", "vacinas"];
-
-type SubVacinas = "cadastro" | "marcados";
-
-// Atalhos de fora para Vacinas e exames (querystring):
-//   ?aba=vacinas&sub=marcados&marcar=<caixa>-<animal>,...  → abre "Marcar" com os animais
-//     já escolhidos (vem de Sanidade › Preventiva › Animais na janela);
-//   ?aba=vacinas&sub=marcados&caixas=1,2 → abre "Marcar" com essas vacinas;
-//   ?aba=vacinas&sub=marcados&dia=7      → abre o dia 7;
-//   ?aba=vacinas&sub=cadastro&caixa=3&passo=7 → abre o cadastro 3 na etapa 7 (Carência).
-type AtalhoVacinas = {
-  pares?: { caixa_id: number; animal_id: number }[]; caixas?: number[]; dia?: number | null;
-  caixa?: number | null; passo?: number | null;
-};
-function lerAtalhoVacinas(q: URLSearchParams): AtalhoVacinas {
-  const ints = (v: string | null) => (v || "").split(",").map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0);
-  const pares = (q.get("marcar") || "").split(",").map((x) => x.split("-").map(Number))
-    .filter(([c, a]) => Number.isInteger(c) && Number.isInteger(a) && c > 0 && a > 0).map(([c, a]) => ({ caixa_id: c, animal_id: a }));
-  const n = (v: string | null) => (v && Number.isInteger(Number(v)) ? Number(v) : null);
-  return { pares, caixas: ints(q.get("caixas")), dia: n(q.get("dia")), caixa: n(q.get("caixa")), passo: n(q.get("passo")) };
-}
+// A aba "Vacinas e exames" (Sanitário Preventivo v2) deixou de existir em
+// 10/2026: o cadastro foi para Cadastro › Sanidade › Preventiva e os dias
+// marcados para Aplicar/Acompanhamento/Concluídos › Sanitário › Preventivo,
+// cada um em Vacina | Exame | Outros preventivos. O esquema de URL (novo e os
+// atalhos antigos ?aba=vacinas&sub=...) está em lib/protocolosNavegacao.ts.
+const ATALHO_VAZIO: AtalhoCentral = { caixa: null, passo: null, dia: null, pares: [], caixas: [] };
 
 export default function ProtocolosPage() {
-  const [aba, setAba] = useState<AbaProtocolos>("acompanhamento");
-  const [subVacinas, setSubVacinas] = useState<SubVacinas>("cadastro");
-  const [atalhoVacinas, setAtalhoVacinas] = useState<AtalhoVacinas>({});
+  const [nav, setNav] = useState<NavCentral>(() => navPadrao());
+  const [atalho, setAtalho] = useState<AtalhoCentral>(ATALHO_VAZIO);
+  // Lendo a URL (e, se preciso, descobrindo pela API se a caixa/dia é Vacina, Exame ou Outros).
+  const [pronto, setPronto] = useState(false);
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
   useEffect(() => {
     fetchAnimais().then(setAnimais).catch(() => {});
     fetchEstoqueAtivos().then((d) => setEstoque(d.itens || [])).catch(() => {});
   }, []);
-  // Atalho vindo de fora (?aba=...) — só escolhe a aba certa, mesmo padrão
-  // do "ir=" de Lançamentos.
+  // Atalho vindo de fora (?aba=... novo ou antigo) — posiciona nos seletores,
+  // mesmo padrão do "ir=" de Lançamentos. A URL antiga é reescrita na nova.
   useEffect(() => {
-    const q = new URLSearchParams(window.location.search);
-    const abaQs = q.get("aba");
-    const abaId = abaQs ? (ABAS_LEGADO[abaQs] ?? abaQs) : null;
-    if (abaId && (ABAS_PROTOCOLOS as string[]).includes(abaId)) setAba(abaId as AbaProtocolos);
-    if (abaId === "vacinas") {
-      const sub = q.get("sub");
-      const at = lerAtalhoVacinas(q);
-      if (sub === "marcados" || at.pares?.length || at.caixas?.length || at.dia) setSubVacinas("marcados");
-      setAtalhoVacinas(at);
-    }
+    let vivo = true;
+    const { nav: n, atalho: at, resolver } = lerUrlCentral(new URLSearchParams(window.location.search));
+    const aplicar = (grupo?: GrupoPreventivo) => {
+      if (!vivo) return;
+      const final = grupo ? { ...n, grupo } : n;
+      setNav(final); setAtalho(at); setPronto(true);
+      if (window.location.search) window.history.replaceState(window.history.state, "", urlCentral(final, at));
+    };
+    if (!resolver) aplicar();
+    else if ("dia" in resolver) obterDia(resolver.dia).then((d) => aplicar(grupoDoDia(d))).catch(() => aplicar());
+    else obterCaixa(resolver.caixa).then((c) => aplicar(grupoDoTipo(c.tipo))).catch(() => aplicar());
+    return () => { vivo = false; };
   }, []);
+
+  // Mudança feita pelo usuário: troca o lugar, esquece o atalho (caixa/dia) e atualiza a URL.
+  function irPara(n: NavCentral) {
+    setNav(n); setAtalho(ATALHO_VAZIO);
+    window.history.replaceState(window.history.state, "", urlCentral(n));
+  }
 
   return (
     <div className="p-6">
       <h1 className="text-xl font-bold mb-1" style={{ color: "var(--dourado-light)" }}>Central de Protocolos</h1>
       <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginBottom: "1.2rem" }}>
-        Cadastre o protocolo, aplique, acompanhe o que está agendado e consulte os concluídos — IATF, indução de lactação, sanitário curativo e protocolos próprios num só lugar.
-        IATF, Indução e Sanitário curativo continuam também em Lançamentos — é o mesmo lançamento, dois caminhos. Vacinas e exames têm aba própria.
+        Cadastre o protocolo, aplique, acompanhe o que está agendado e consulte os concluídos — sanidade (curativa e preventiva), IATF, indução de lactação e protocolos próprios num só lugar.
+        Vacinas, exames e outros preventivos ficam em Sanidade › Preventiva (Cadastro) e Sanitário › Preventivo (nas outras abas). IATF, Indução e Sanitário curativo continuam também em Lançamentos — é o mesmo lançamento, dois caminhos.
       </p>
 
-      <TabBar<AbaProtocolos>
+      <TabBar<AbaCentral>
         abas={[
-          { id: "cadastro", label: "Cadastro", title: "Moldes de cada protocolo" },
-          { id: "aplicar", label: "Aplicar", title: "Aplicar IATF, indução, curativo ou protocolo próprio" },
+          { id: "cadastro", label: "Cadastro", title: "Moldes de cada protocolo, vacinas e exames" },
+          { id: "aplicar", label: "Aplicar", title: "Aplicar IATF, indução, curativo, protocolo próprio ou marcar vacina/exame" },
           { id: "acompanhamento", label: "Acompanhamento", title: "O que já está agendado ou em andamento" },
           { id: "concluidos", label: "Concluídos", title: "Aplicados e cancelados, com exportação" },
-          { id: "vacinas", label: "Vacinas e exames", title: "Cadastro das vacinas e exames e os dias marcados" },
         ]}
-        ativa={aba}
-        onChange={setAba}
+        ativa={nav.aba}
+        onChange={(aba) => irPara(navParaAba(nav, aba))}
       />
 
-      {aba === "cadastro" && <CadastroTab />}
-      {aba === "aplicar" && <LancamentoTab animais={animais} estoque={estoque} />}
-      {aba === "acompanhamento" && <ListaProtocolos historico={false} />}
-      {aba === "concluidos" && <ListaProtocolos historico />}
-      {aba === "vacinas" && (
-        <>
-          <TabBar<SubVacinas>
-            abas={[
-              { id: "cadastro", label: "Cadastro", title: "Vacinas e exames da fazenda, a partir do catálogo" },
-              { id: "marcados", label: "Vacinas e exames marcados", title: "Dias de vacina e exame marcados, execução e fechamento" },
-            ]}
-            ativa={subVacinas}
-            onChange={setSubVacinas}
-          />
-          {subVacinas === "cadastro"
-            ? <ListaCaixas key={`c${atalhoVacinas.caixa ?? ""}`} abrirCaixaId={atalhoVacinas.caixa} abrirPasso={atalhoVacinas.passo != null ? atalhoVacinas.passo - 1 : null} />
-            : <ListaDias key={`d${atalhoVacinas.dia ?? ""}${atalhoVacinas.pares?.length ?? ""}`} paresIniciais={atalhoVacinas.pares}
-                caixasIniciais={atalhoVacinas.caixas} diaInicial={atalhoVacinas.dia} />}
-        </>
-      )}
+      {!pronto ? <TelaSkeleton kpis={0} label="Abrindo a Central de Protocolos" /> : <>
+        {nav.aba === "cadastro" && <CadastroTab nav={nav} onNav={irPara} atalho={atalho} />}
+        {nav.aba === "aplicar" && <LancamentoTab animais={animais} estoque={estoque} nav={nav} onNav={irPara} atalho={atalho} />}
+        {nav.aba === "acompanhamento" && <AcompanhamentoTab historico={false} nav={nav} onNav={irPara} />}
+        {nav.aba === "concluidos" && <AcompanhamentoTab historico nav={nav} onNav={irPara} />}
+      </>}
     </div>
   );
 }

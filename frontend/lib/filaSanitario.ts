@@ -269,7 +269,7 @@ async function enviarLote(lote: ItemFilaSan[], naFila: number): Promise<{ enviad
     // "requer" também fica como status "erro" na fila genérica: a tela de
     // Sincronização mostra o motivo em vez de "aguardando envio".
     else await atualizarNaFila(a.id, { corpo: a.corpo, status: "erro",
-      erro: a.erro ?? (a.corpo.motivo ? `${a.corpo.motivo} Decida em Menu › Vacinação.` : undefined),
+      erro: a.erro ?? (a.corpo.motivo ? `${a.corpo.motivo} Decida em Menu › Vacinas e exames.` : undefined),
       tentativas: 0, proximaTentativaEm: undefined }, false);
   }
   if (remover.length) await removerDaFila(remover);

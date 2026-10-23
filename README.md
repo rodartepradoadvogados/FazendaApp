@@ -172,9 +172,27 @@ resultado de exame, fechar/cancelar, dispensar, conflitos, `POST /dias/{id}/cien
 **Ideagri**: `SANIDADE.csv` não é mais aceito no upload (apagava e recriava a sanidade). Vacinas antigas entram pela importação de
 planilha do sanitário (só registro, nunca apaga).
 
-**Onde fica na tela**: site — Central de Protocolos › Vacinas e exames (cadastro/wizard, marcar dia), Sanidade › Preventiva
-(painel, animais na janela, calendário, aplicações, histórico), Lançamentos › Preventivo, Agenda (cartão "Vacinas previstas" e
-notas), Parâmetros › Sanitário. App — **Menu › Vacinação** (`frontend/components/mobile/vacinacao/`): dias de hoje/amanhã, pacote
+**Onde fica na tela**: site — Central de Protocolos (`app/protocolos/page.tsx`; a aba "Vacinas e exames" saiu em 23/10/2026 e o
+conteúdo foi para dentro das quatro abas, sempre em **Vacina | Exame | Outros preventivos** — "Outros" = vermífugo, outro e qualquer
+tipo que não seja vacina/exame):
+- **Cadastro › Sanidade › Curativa | Preventiva** — Curativa é o `CadastroProtocolosSanitarios` de sempre; Preventiva é a lista de
+  caixas (`ListaCaixas`) e o wizard (`WizardCaixa`) filtrados pelo grupo: o catálogo do "Novo cadastro" vem filtrado e o "Criar do
+  zero" já vem com o tipo. "Item do estoque" lista só Farmácia (`lib/sanitarioTipos.ts › ehItemFarmacia`: finalidade
+  *Medicamento*, vínculo de farmácia ou categoria de medicamento; o item já escolhido nunca some). "Depende de outra vacina?" só
+  oferece caixas do tipo vacina (sem a própria e sem as arquivadas).
+- **Aplicar › Sanitário › Curativo | Preventivo** — Curativo é o `FormProtocoloSanitario`; Preventivo é `ListaDias` (marcar dia,
+  executar, fechar, ficha) filtrada pelo grupo.
+- **Acompanhamento** (Todos | Sanitário | IATF | Indução | Customizado | Lida) › Sanitário › Preventivo: `PendenciasPreventivo`
+  (carência sem aceite, prazos legais, celular sem enviar) + `ListaDias estados="abertos"`. **Concluídos** › Sanitário › Preventivo:
+  `ListaDias estados="fechados"` + `AplicacoesPreventivas` do grupo.
+- **URL** (`frontend/lib/protocolosNavegacao.ts`, com teste): `?aba=cadastro&area=sanidade&san=preventiva&tipo=vacina[&caixa=3&passo=7]`,
+  `?aba=aplicar&area=sanitario&san=preventivo&tipo=exame[&dia=7|&caixas=1,2|&marcar=<caixa>-<animal>,...]`. Sem `tipo`, a página
+  descobre o grupo pela caixa/dia (API). Os atalhos antigos `?aba=vacinas&sub=cadastro|marcados&...` continuam aceitos e são
+  reescritos na URL nova. O push "aglomerou" abre `?aba=aplicar&area=sanitario&san=preventivo&caixas=<id>`.
+
+Fora da Central: Sanidade › Preventiva (painel, animais na janela, calendário, aplicações, histórico — só consulta),
+Lançamentos › Sanitário › Preventivo (lançamento simples; "Imprimir ficha vazia" sempre abre a ficha — genérica se nada escolhido), Agenda (cartão "Vacinas previstas" e
+notas), Parâmetros › Sanitário. App — **Menu › Vacinas e exames** (chave/âncora `vacinacao` mantida; `frontend/components/mobile/vacinacao/`): dias de hoje/amanhã, pacote
 offline, preparação com ciência nominal (enviada ao servidor), tronco ou grupo, fila offline em lote (`lib/filaSanitario.ts`) com
 heartbeat; Lançar › Preventiva (o motivo do retroativo também vai pela fila).
 

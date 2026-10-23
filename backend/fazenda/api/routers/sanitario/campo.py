@@ -36,7 +36,7 @@ def _utc(dt: Optional[datetime]) -> Optional[datetime]:
 @router.get("/campo/hoje")
 def campo_hoje(session: Session = Depends(get_session),
                fazenda_id: Optional[int] = Depends(get_fazenda_atual_id)) -> dict:
-    """Dias abertos de hoje e de amanhã (menu Vacinação / véspera)."""
+    """Dias abertos de hoje e de amanhã (menu Vacinas e exames do app / véspera)."""
     fid = exigir_fazenda(fazenda_id)
     hoje = hoje_local()
     dias = session.exec(select(SanitarioDia).where(

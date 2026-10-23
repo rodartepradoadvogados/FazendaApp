@@ -8,6 +8,7 @@ import { ShieldCheck } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import { listarCaixas, mensagemDoErro, obterParametros, salvarParametros } from "@/lib/apiSanitario";
 import { FUSO, fmtDataHora, type Parametros } from "@/lib/sanitarioTipos";
+import { linkCentral } from "@/lib/protocolosNavegacao";
 import { Faixa, useCarregar, useEuSanitario } from "./comum";
 
 const UFS = ["AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT", "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO"];
@@ -76,7 +77,7 @@ export default function ParametrosSanitario() {
             <span>Prazo para corrigir uma aplicação: <b>até fechar o dia</b></span>
             <span>Fuso do módulo: <b>{FUSO}</b></span>
             <span>Obrigatórias (entram na cobertura): <b>{obrigatorias.length ? obrigatorias.map((c) => c.nome_curto || c.nome).join(", ") : "nenhuma"}</b></span>
-            <Link href="/protocolos?aba=vacinas&sub=cadastro" className="san-link">Marcar no cadastro de cada vacina</Link>
+            <Link href={linkCentral.cadastroPreventivo({}, "vacina")} className="san-link">Marcar no cadastro de cada vacina</Link>
           </div>
           {!admin && <p className="san-nota" style={{ margin: 0 }}>Só administradores podem editar.</p>}
           {erroSalvar && <p className="san-erro-txt" role="alert" style={{ margin: 0 }}>{erroSalvar}</p>}

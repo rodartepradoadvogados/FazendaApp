@@ -30,8 +30,12 @@ TIPOS_PUSH = {
     "prazo_legal": "admins",
     "celular_offline": "admins",
 }
+# Central de Protocolos › Aplicar › Sanitário › Preventivo (esquema de URL em
+# frontend/lib/protocolosNavegacao.ts; o antigo "?aba=vacinas" continua aceito
+# pelo site como atalho, para push já entregue).
+URL_APLICAR_PREVENTIVO = "/protocolos?aba=aplicar&area=sanitario&san=preventivo"
 URL_POR_TIPO = {
-    "aglomerou": "/protocolos?aba=vacinas",
+    "aglomerou": URL_APLICAR_PREVENTIVO,  # com caixa: &caixas=<id> abre "Marcar" com ela (ver url_da_nota)
     "vespera": "/app/menu#vacinacao",  # com dia: /app/menu#vacinacao-<id> (ver url_da_nota)
     "prazo_legal": "/sanidade?aba=preventiva",
     "celular_offline": "/agenda",
@@ -39,11 +43,15 @@ URL_POR_TIPO = {
 
 
 def url_da_nota(n) -> str:
-    """URL do push. A véspera abre o DIA direto no app (Menu › Vacinação,
+    """URL do push. A véspera abre o DIA direto no app (Menu › Vacinas e exames,
     "#vacinacao-<id do dia>", que o app já entende) — não depende do título.
-    As notas de administrador seguem para as telas do site (/agenda etc.)."""
+    As notas de administrador seguem para as telas do site (/agenda etc.);
+    "aglomerou" abre a Central já em "Marcar" com a caixa (o site descobre se
+    é Vacina, Exame ou Outros pela própria caixa)."""
     if n.tipo == "vespera" and n.dia_id:
         return f"/app/menu#vacinacao-{n.dia_id}"
+    if n.tipo == "aglomerou" and getattr(n, "caixa_id", None):
+        return f"{URL_APLICAR_PREVENTIVO}&caixas={n.caixa_id}"
     return URL_POR_TIPO.get(n.tipo, "/agenda")
 
 

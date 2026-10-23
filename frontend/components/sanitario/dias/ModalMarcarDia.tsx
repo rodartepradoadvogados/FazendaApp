@@ -24,7 +24,8 @@ import {
   type CaixaResumo, type ConsentimentoIn, type DecisaoRiscos, type Dia, type DiaItemIn, type ItemForaRegra, type ProdutoIn,
   type Simulacao, type Veterinarios,
 } from "@/lib/sanitarioTipos";
-import { Faixa, carregarEstoqueSan, type ItemEstoqueSan } from "../comum";
+import { tipoNoGrupo, type GrupoPreventivo } from "@/lib/protocolosNavegacao";
+import { Faixa, carregarEstoqueSan, opcoesEstoqueSan, type ItemEstoqueSan } from "../comum";
 import { SeletorAnimais, carregarAnimaisSan, type Elegibilidade } from "../SeletorAnimais";
 import { ModalConsentimento, type ItemConsentimento } from "../ModalConsentimento";
 import { PainelRiscos, idsEmRisco, temRiscos, textoDecisao, type EscolhaRiscos } from "../PainelRiscos";
@@ -41,7 +42,7 @@ export function elegibilidadeDaSimulacao(sim: Simulacao, ids: number[]): Map<num
   return m;
 }
 
-export function ModalMarcarDia({ dia, caixasIniciais = [], paresIniciais, onFechar, onSalvo }: {
+export function ModalMarcarDia({ dia, caixasIniciais = [], paresIniciais, onFechar, onSalvo, grupo = null }: {
   /** Editar este dia (precisa vir com `itens`). */
   dia?: Dia | null;
   caixasIniciais?: number[];
@@ -49,8 +50,11 @@ export function ModalMarcarDia({ dia, caixasIniciais = [], paresIniciais, onFech
   paresIniciais?: { caixa_id: number; animal_id: number; numero?: string | null }[];
   onFechar: () => void;
   onSalvo: (dias: Dia[], mensagem: string) => void;
+  /** Aberto de Aplicar › Preventivo › Vacina | Exame | Outros: mostra primeiro as caixas desse grupo (as outras, a um clique). */
+  grupo?: GrupoPreventivo | null;
 }) {
   const editando = !!dia;
+  const [verTodas, setVerTodas] = useState(false);
   const [caixas, setCaixas] = useState<CaixaResumo[] | null>(null);
   const [vets, setVets] = useState<Veterinarios | null>(null);
   const [estoque, setEstoque] = useState<ItemEstoqueSan[]>([]);
@@ -272,16 +276,22 @@ export function ModalMarcarDia({ dia, caixasIniciais = [], paresIniciais, onFech
               <span className="san-rot">Vacinas e exames deste dia</span>
               {editando ? (
                 <p style={{ margin: 0, fontSize: "0.84rem" }}>{dia?.caixas.map((c) => c.nome_curto).join(" · ")} <span className="san-nota">(para mudar, marque outro dia)</span></p>
-              ) : caixas.length ? (
+              ) : caixas.length ? (<>
                 <div className="san-opcs">
-                  {caixas.map((c) => (
+                  {caixas.filter((c) => verTodas || cx.has(c.id) || tipoNoGrupo(c.tipo, grupo)).map((c) => (
                     <label key={c.id} className="san-opc">
                       <input type="checkbox" checked={cx.has(c.id)} onChange={(e) => alternarCaixa(c.id, e.target.checked)} />
                       <span>{c.nome_curto || c.nome}<small className="san-num">{c.na_caixa} na caixa</small></span>
                     </label>
                   ))}
                 </div>
-              ) : <Faixa tipo="atencao">Nenhuma vacina ou exame ativo. Ative em Cadastro.</Faixa>}
+                {grupo && !verTodas && !caixas.some((c) => cx.has(c.id) || tipoNoGrupo(c.tipo, grupo)) && (
+                  <span className="san-nota">Nenhum cadastro ativo deste tipo. Ative em Cadastro › Sanidade › Preventiva.</span>
+                )}
+                {grupo && !verTodas && caixas.some((c) => !tipoNoGrupo(c.tipo, grupo) && !cx.has(c.id)) && (
+                  <button type="button" className="san-link" style={{ alignSelf: "flex-start" }} onClick={() => setVerTodas(true)}>Mostrar também as outras vacinas e exames ativos</button>
+                )}
+              </>) : <Faixa tipo="atencao">Nenhuma vacina ou exame ativo. Ative em Cadastro.</Faixa>}
             </div>
             <div className="san-linha">
               <div className="san-campo medio">
@@ -325,7 +335,7 @@ export function ModalMarcarDia({ dia, caixasIniciais = [], paresIniciais, onFech
                       setProdutos((x) => ({ ...x, [id]: novo }));
                     }}>
                       <option value="vazio">Escolher no dia</option>
-                      {estoque.map((e) => <option key={e.id} value={`e:${e.id}`}>{e.nome}{e.quantidade != null ? ` · saldo ${e.quantidade}` : ""}</option>)}
+                      {opcoesEstoqueSan(estoque, p.estoque_id).map((e) => <option key={e.id} value={`e:${e.id}`}>{e.nome}{e.quantidade != null ? ` · saldo ${e.quantidade}` : ""}</option>)}
                       <option value="sem">Produto sem estoque</option>
                       <option value="nada">Sem produto</option>
                     </select>

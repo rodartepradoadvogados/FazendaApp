@@ -9,6 +9,7 @@ import Link from "next/link";
 import { ErroCarregamento, TelaSkeleton } from "@/components/ui";
 import { calendario, listarCaixas, listarDias, obterCaixa } from "@/lib/apiSanitario";
 import { MESES_CURTOS, fmtData, hojeISO, textoJanela, type CaixaDetalhe } from "@/lib/sanitarioTipos";
+import { grupoDoDia, linkCentral } from "@/lib/protocolosNavegacao";
 import { Chip, Seg, useCarregar } from "../comum";
 
 export function CalendarioPreventivo() {
@@ -56,7 +57,7 @@ export function CalendarioPreventivo() {
         <span>Contagem: <b>animais distintos</b>, rebanho de hoje projetado</span>
         <span>Data-base dos períodos: <b>por vacina</b> (padrão dia 15)</span>
         <span>Mínimo e antecedência: <b>por vacina</b> (coluna)</span>
-        <Link href="/protocolos?aba=vacinas&sub=cadastro" className="san-link">Mudar na Central</Link>
+        <Link href={linkCentral.cadastroPreventivo()} className="san-link">Mudar na Central</Link>
       </div>
       {!cal.dados ? <TelaSkeleton kpis={0} label="Carregando o calendário" /> : (
         <section className="san-bloco" style={cal.carregando ? { opacity: 0.6 } : undefined}>
@@ -96,14 +97,14 @@ export function CalendarioPreventivo() {
         </section>
       )}
       <section className="san-bloco">
-        <div className="san-bloco-cab"><h3>Próximos dias marcados</h3><Link href="/protocolos?aba=vacinas&sub=marcados" className="san-link">Abrir na Central</Link></div>
+        <div className="san-bloco-cab"><h3>Próximos dias marcados</h3><Link href={linkCentral.aplicarPreventivo()} className="san-link">Abrir na Central</Link></div>
         {dias.erro ? <div className="san-bloco-corpo"><ErroCarregamento mensagem={dias.erro} onRetry={dias.recarregar} /></div>
           : !dias.dados ? <div className="san-bloco-corpo"><div className="skeleton" style={{ height: "3rem" }} /></div>
             : dias.dados.length ? dias.dados.map((d) => (
               <div key={d.id} className="san-nota-ag">
                 <span className="ico" aria-hidden="true">{fmtData(d.data, true).slice(0, 2)}</span>
                 <div><p><b>{d.nome}</b>{d.hora ? ` · ${d.hora}` : ""}</p><small className="san-num">{d.contagens.animais} animais distintos · {d.contagens.pendentes + d.contagens.feitos} aplicações previstas</small></div>
-                <div className="san-acoes"><Link className="btn-ghost san-btn-sm" href={`/protocolos?aba=vacinas&sub=marcados&dia=${d.id}`}>Abrir</Link></div>
+                <div className="san-acoes"><Link className="btn-ghost san-btn-sm" href={linkCentral.aplicarPreventivo({ dia: d.id }, grupoDoDia(d))}>Abrir</Link></div>
               </div>
             )) : <div className="san-bloco-corpo san-nota">Nenhum dia marcado.</div>}
       </section>

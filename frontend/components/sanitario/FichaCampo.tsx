@@ -98,8 +98,15 @@ export function ModalFicha({ diaId, caixaIds, linhas = 25, onFechar }: {
   return (
     <Modal title={diaId ? "Ficha de campo" : "Ficha vazia"} onClose={onFechar} width="960px" zIndex={110}>
       <div className="san-modal-corpo">
-        <p className="san-modal-sub">{diaId ? "Pré-preenchida a partir do dia marcado. Plano B para curral sem celular."
-          : "Para imprimir, levar ao curral e lançar depois."}</p>
+        {/* Imprimir também no topo: com 25 linhas a folha passa da altura do pop-up e o botão do rodapé
+            ficava escondido na rolagem — parecia que "Imprimir ficha vazia" não fazia nada. */}
+        <div className="san-acoes" style={{ justifyContent: "space-between" }}>
+          <p className="san-modal-sub" style={{ margin: 0 }}>{diaId ? "Pré-preenchida a partir do dia marcado. Plano B para curral sem celular."
+            : "Para imprimir, levar ao curral e lançar depois."}</p>
+          <button type="button" className="btn-primary san-btn-sm" onClick={imprimirFolha} disabled={!ficha}>
+            <Printer size={13} aria-hidden="true" style={{ verticalAlign: "-2px", marginRight: 5 }} />Imprimir
+          </button>
+        </div>
         {erro ? <Faixa tipo="alerta">{erro}</Faixa> : !ficha ? <div className="skeleton" style={{ height: "16rem" }} role="status" aria-label="Montando a ficha" />
           : <div style={{ overflowX: "auto" }}>{ficha.tipo === "vazia" ? <FolhaVazia ficha={ficha} /> : <FolhaPrePreenchida ficha={ficha} />}</div>}
       </div>

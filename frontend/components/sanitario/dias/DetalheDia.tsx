@@ -21,7 +21,7 @@ import {
   type ModoLeite, type ProdutoIn, type Registro, type Resultado, type ResultadoRegistro, type Veterinarios,
 } from "@/lib/sanitarioTipos";
 import {
-  BarraDesfazer, CampoPessoa, Faixa, LegendaOrigem, OrigemIcone, Seg, carregarEstoqueSan, useCarregar, useEuSanitario,
+  BarraDesfazer, CampoPessoa, Faixa, LegendaOrigem, OrigemIcone, Seg, carregarEstoqueSan, opcoesEstoqueSan, useCarregar, useEuSanitario,
   type ItemEstoqueSan, type PessoaEscolhida,
 } from "../comum";
 import { SeletorAnimais, type Elegibilidade } from "../SeletorAnimais";
@@ -131,7 +131,7 @@ function ModalTrocarProduto({ dia, caixa, estoque, onFeito, onFechar }: {
           <div className="san-campo"><label htmlFor="tpE">Item</label>
             <select id="tpE" className="san-input" value={p.estoque_id ?? ""} onChange={(e) => setP({ ...p, estoque_id: intOuNulo(e.target.value) })}>
               <option value="">Escolha…</option>
-              {estoque.map((e) => <option key={e.id} value={e.id}>{e.nome}{e.quantidade != null ? ` · saldo ${e.quantidade} ${e.unidade || ""}` : ""}</option>)}
+              {opcoesEstoqueSan(estoque, p.estoque_id).map((e) => <option key={e.id} value={e.id}>{e.nome}{e.quantidade != null ? ` · saldo ${e.quantidade} ${e.unidade || ""}` : ""}</option>)}
             </select></div>
         )}
         {p.modo === "sem_estoque" && (

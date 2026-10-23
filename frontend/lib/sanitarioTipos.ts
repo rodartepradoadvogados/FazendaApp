@@ -726,3 +726,30 @@ export function novaChave(prefixo = "san"): string {
   const id = c?.randomUUID ? c.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   return `${prefixo}:${id}`;
 }
+
+/**
+ * Item do estoque que pode ir num cadastro/lançamento preventivo: só o que é
+ * da Farmácia (medicamento, vacina, vermífugo, exame/tuberculina), nunca
+ * ração/material/equipamento/sêmen. Mesmo critério de `_eh_medicamento` no
+ * back (routers/estoque.py), mais a categoria de compra:
+ *   - finalidade preenchida decide sozinha ("Medicamento" entra, o resto sai);
+ *   - vínculo de farmácia (princípio ativo, classificação, categoria de medicamento) entra;
+ *   - categoria "Medicamentos e produtos veterinários" entra; outra categoria sai;
+ *   - item sem nenhuma classificação só entra se o nome diz o que é (vacina, vermífugo, tuberculina…).
+ */
+export type ItemEstoqueClassificavel = {
+  nome?: string | null; finalidade?: string | null; categoria?: string | null; classificacao_medicamento?: string | null;
+  principio_ativo?: string | null; principio_ativo_id?: number | null; medicamento_comercial_id?: number | null;
+  categoria_medicamento_ids?: number[] | null; categoria_alimento_id?: number | null;
+};
+const semAcento = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+export function ehItemFarmacia(i: ItemEstoqueClassificavel): boolean {
+  const fin = semAcento(i.finalidade || "");
+  if (fin) return fin === "medicamento";
+  if (i.categoria_alimento_id != null) return false;
+  if ((i.classificacao_medicamento || "").trim() || (i.principio_ativo || "").trim() || i.principio_ativo_id != null
+    || i.medicamento_comercial_id != null || (i.categoria_medicamento_ids || []).length) return true;
+  const cat = semAcento(i.categoria || "");
+  if (cat) return cat.includes("medicament") || cat.includes("produtos veterinarios") || cat.includes("farmacia");
+  return /\b(vacina|vermifug|tuberculin|antigeno|medicament|brucel)/.test(semAcento(i.nome || ""));
+}

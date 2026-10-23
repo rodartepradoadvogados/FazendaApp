@@ -1,5 +1,5 @@
 "use client";
-// Peças do app de campo › Vacinação (Sanitário Preventivo v2), no sistema
+// Peças do app de campo › Vacinas e exames (Sanitário Preventivo v2), no sistema
 // .mob-* (DESIGN.md "App de campo"): faixas de aviso, leitura com cópia local
 // (fetchComCache), papel do usuário, consentimento e carência em tela grande,
 // "quem aplica" e o painel da fila do aparelho (resultado por registro,
