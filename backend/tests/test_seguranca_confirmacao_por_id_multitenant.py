@@ -164,15 +164,7 @@ def ambiente(monkeypatch):
             numero_matriz="A100", data=D0, produto="Vermífugo Alvo", dose=1.0, unidade="ml",
             aplicado=False, fazenda_id=1,
         )
-        # Vacina pré-parto: a busca é por (numero_matriz, data, observação) —
-        # texto livre, sem FK. As duas fazendas têm um animal "500", que é
-        # exatamente como a colisão acontece na vida real.
-        vacina_a = AplicacaoAgendada(
-            numero_matriz="500", data=D0, produto="Vacina pré-parto A", observacao="Vacina pré-parto",
-            aplicado=False, fazenda_id=1,
-        )
         s.add(ag)
-        s.add(vacina_a)
 
         # --- Achado 37: dieta ativa da fazenda 1 ---------------------------
         dieta = DietaLancamento(
@@ -336,7 +328,8 @@ def test_lida_da_propria_fazenda_continua_confirmando(ambiente):
 
 
 # ---------------------------------------------------------------------------
-# Achado 24 — protocolo sanitário, aplicação agendada e vacina pré-parto
+# Achado 24 — protocolo sanitário e aplicação agendada (o atalho da vacina
+# pré-parto saiu em 2026, decisão D2)
 # ---------------------------------------------------------------------------
 def test_protocolo_sanitario_de_outra_fazenda_nao_e_confirmado(ambiente):
     c, engine, ids = ambiente
@@ -391,23 +384,6 @@ def test_aplicacao_agendada_da_propria_fazenda_continua_confirmando(ambiente):
     assert c.post("/agenda/realizados", json={"evento_id": evento}, headers=_cab(1)).status_code == 200
     with Session(engine) as s:
         assert s.get(AplicacaoAgendada, ids["aplicacao_agendada"]).aplicado is True
-
-
-def test_vacina_pre_parto_nao_atravessa_por_colisao_de_numero_de_animal(ambiente):
-    """O evento_id da vacina pré-parto é `numero_matriz` + data — texto livre,
-    sem FK. Duas fazendas com uma vaca "500" é o normal."""
-    c, engine, ids = ambiente
-    evento = f"vacina_pre_parto_500_{D0.isoformat()}"
-    r = c.post("/agenda/realizados", json={"evento_id": evento}, headers=_cab(2))
-    assert r.status_code == 200, r.text
-    with Session(engine) as s:
-        vacina = s.exec(
-            select(AplicacaoAgendada).where(AplicacaoAgendada.observacao == "Vacina pré-parto")
-        ).first()
-        assert vacina.aplicado is False, (
-            "a fazenda 2 confirmou a vacina pré-parto da vaca 500 da fazenda 1 — o número do "
-            "animal coincidir entre tenants não pode dar acesso ao registro"
-        )
 
 
 # ---------------------------------------------------------------------------

@@ -5,8 +5,7 @@ Fonte de tarefas da Agenda vinda dos protocolos personalizados do usuário
 Fonte ADITIVA: `eventos_agenda` devolve uma lista de dicts no mesmo formato
 dos outros blocos de calcular_agenda (ver fazenda/api/routers/agenda.py) e é
 apenas concatenada em `eventos_visiveis`. Não toca no AgendaEngine nem em
-nenhuma regra existente — mesmo espírito de fazenda/rules/eventos_sanitarios.py,
-a única outra fonte da Agenda já externalizada num módulo de regras próprio.
+nenhuma regra existente.
 
 Ao contrário do protocolo sanitário/indução de lactação, marcar um evento
 como realizado aqui NÃO gera Sanidade nem baixa de estoque — o insumo do

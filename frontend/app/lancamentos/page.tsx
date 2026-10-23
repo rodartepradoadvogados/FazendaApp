@@ -24,6 +24,8 @@ const BaixarAnimal = dynamic(() => import("@/components/BaixarAnimal"), { ssr: f
 const FormSecagem = dynamic(() => import("@/components/FormSecagem").then((m) => m.FormSecagem), { ssr: false });
 const FormQualidadeLeite = dynamic(() => import("@/components/FormQualidadeLeite").then((m) => m.FormQualidadeLeite), { ssr: false });
 const FormEntregaLeite = dynamic(() => import("@/components/FormEntregaLeite").then((m) => m.FormEntregaLeite), { ssr: false });
+// Lançamentos › Preventivo (Sanitário Preventivo v2): lançamento simples/retroativo e planilha.
+const LancamentoSimples = dynamic(() => import("@/components/sanitario/LancamentoSimples").then((m) => m.LancamentoSimples), { ssr: false });
 const FormInducaoLactacao = dynamic(() => import("@/components/FormInducaoLactacao").then((m) => m.FormInducaoLactacao), { ssr: false });
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
@@ -140,7 +142,7 @@ const TIPOS_GRUPOS = [
   },
   {
     id: "sanidade", label: "Sanitário", icon: HeartPulse,
-    desc: "Tratamento curativo. Vacina e exame (preventivo) são aplicados em Protocolos.",
+    desc: "Tratamento curativo e lançamento simples de vacina ou exame (preventivo).",
     grupos: [
       {
         id: "sanidade_curativa", label: "Curativa", icon: HeartPulse,
@@ -148,6 +150,15 @@ const TIPOS_GRUPOS = [
         subs: [
           { id: "sanidade_aplicacao", label: "Avulso", icon: Syringe, desc: "Aplicação avulsa de medicamento curativo — por animal, categoria, vários animais ou lote." },
           { id: "protocolo_sanitario", label: "Protocolo sanitário", icon: ClipboardList, desc: "Aplicar um protocolo cadastrado (mastite e outros) a um animal — gera um evento na Agenda por dia (D1, D2...)." },
+        ],
+      },
+      {
+        // Sanitário Preventivo v2: lançamento simples/retroativo de vacina ou
+        // exame (components/sanitario/LancamentoSimples.tsx).
+        id: "sanidade_preventiva", label: "Preventivo", icon: Shield,
+        desc: "Vacina ou exame aplicado fora de um dia marcado (lançamento simples).",
+        subs: [
+          { id: "sanidade_preventivo", label: "Vacina ou exame", icon: Shield, desc: "Lançamento simples de vacina ou exame, um ou vários animais." },
         ],
       },
     ],
@@ -249,9 +260,6 @@ export default function LancamentosPage() {
   // Atalho vindo da Agenda (ex.: "Ir para Inseminação" de um lembrete D11 de protocolo IATF).
   useEffect(() => {
     const ir = new URLSearchParams(window.location.search).get("ir");
-    // Vacina/exame (preventivo) não se lança mais aqui: links antigos
-    // (?ir=preventivo_aplicacao e ?ir=calendario_sanitario) levam a Protocolos.
-    if (ir === "preventivo_aplicacao" || ir === "calendario_sanitario") { window.location.replace("/protocolos?aba=aplicar"); return; }
     if (ir && TIPOS_LEAFS.some((t) => t.id === ir)) {
       setSel(ir);
       // `ir` é só o atalho de ENTRADA: depois de usado sai da URL. Se ficasse, ao trocar de aba o `sub=` mudava mas o
@@ -458,6 +466,8 @@ export default function LancamentosPage() {
             <><strong style={{ color: "var(--text)" }}>Consumo já grava de verdade.</strong> Dá baixa em estoque na hora. Só oferece os alimentos da dieta ativa do lote — fora da dieta ou sem saldo só entra se o cadastro do lote permitir.</>
           ) : sel === "sanidade_aplicacao" ? (
             <><strong style={{ color: "var(--text)" }}>Sanidade já grava de verdade.</strong> Aceita vários produtos por lançamento; a baixa de estoque só acontece quando a unidade escolhida bate com a do estoque.</>
+          ) : sel === "sanidade_preventivo" ? (
+            <><strong style={{ color: "var(--text)" }}>Vacina e exame estão sendo refeitos.</strong> O lançamento simples do preventivo novo entra aqui; até lá, nada é gravado nesta folha.</>
           ) : sel === "bst" ? (
             <><strong style={{ color: "var(--text)" }}>BST — somatotropina bovina.</strong> Vacas aptas e excluídas do dia, com a próxima visita de BST.</>
           ) : sel === "protocolo_sanitario" ? (
@@ -481,15 +491,6 @@ export default function LancamentosPage() {
           ) : null}
         </p>
       </div>}
-
-      {(sel === "sanidade_aplicacao" || sel === "protocolo_sanitario") && (
-        <div role="note" className="card mb-4" style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap", borderLeft: "3px solid var(--dourado)" }}>
-          <p style={{ flex: "1 1 280px", fontSize: "0.82rem", color: "var(--text-muted)", margin: 0 }}>
-            <strong style={{ color: "var(--text)" }}>Vacina e exame mudaram de lugar.</strong> O preventivo (vacina ou exame) agora é agendado e aplicado em Protocolos, com janela de aplicação e lista de espera. Aqui ficam o curativo, o BST e os demais lançamentos.
-          </p>
-          <a className="btn-primary" href="/protocolos?aba=aplicar" style={{ fontSize: "0.78rem", textDecoration: "none" }}>Aplicar vacina ou exame em Protocolos</a>
-        </div>
-      )}
 
       {ehGaveta ? (
         <div className="card">
@@ -598,6 +599,7 @@ export default function LancamentosPage() {
           {sel === "vender_animal" && <CompraVendaAnimalForm modo="venda" animais={animais} />}
           {sel === "baixar_animal" && <BaixarAnimal />}
           {sel === "exclusao" && <FormExclusao onV2={setExclusaoV2} />}
+          {sel === "sanidade_preventivo" && <LancamentoSimples />}
         </div>
       )}
 

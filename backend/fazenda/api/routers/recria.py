@@ -443,7 +443,7 @@ def _parametros_estado_vivo() -> tuple[int, int, int, float, int, int]:
     vez só — cada chamador desta função (composicao_categorias, ficha do
     animal, critérios de lote) roda `classificar_animal` em loop por animal,
     e cada parâmetro lido por `get_param`/os acessores de parametros.py abre
-    uma sessão de banco própria (ver mesmo cuidado em eventos_sanitarios.py e
+    uma sessão de banco própria (ver mesmo cuidado em
     agenda.py::calcular_agenda) — ler dentro do loop multiplicaria a mesma
     consulta uma vez por animal."""
     del_max = int(get_param("meta_del_max_1o_servico", 100) or 100)

@@ -11,9 +11,10 @@ const TIPOS = [
   { id: "estoque",          label: "ESTOQUE.csv",                    desc: "Inventário de insumos e hormônios" },
   { id: "controle_leiteiro",label: "Controle_Leiteiro.csv",          desc: "Histórico de pesagens de leite por vaca" },
   { id: "dieta",            label: "DIETA.csv",                      desc: "Plano alimentar por lote (kg/cabeça/dia)" },
-  { id: "sanidade",         label: "SANIDADE.csv",                   desc: "Medicamentos aplicados nos animais" },
   { id: "curva_abc",        label: "CURVA_ABC.csv",                  desc: "Classificação A/B/C de compras (Pareto de custos)" },
   { id: "plano_conta_gerencial", label: "PLANO_DE_CONTAS_GERENCIAIS.csv", desc: "Hierarquia do plano de contas gerenciais" },
+  // SANIDADE.csv saiu da lista (Sanitário Preventivo v2): o upload apagava a
+  // tabela de sanidade inteira; aplicações entram pelos lançamentos.
   // Patrimônio saiu da lista: o cadastro agora é manual (Controle Financeiro
   // > Patrimônio > "+ Novo patrimônio"), que substitui o upload de CSV.
 ];
@@ -53,7 +54,7 @@ export default function UploadPage() {
           Upload de CSV
         </h1>
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
-          Importe os relatórios exportados do Ideagri. A ordem recomendada é: GERAL → Reprodutivo → Controle Leiteiro → Dieta → Sanidade → Financeiro (Plano de Contas → Conta Gerencial) → Estoque → Curva ABC → Patrimônio.
+          Importe os relatórios exportados do Ideagri. A ordem recomendada é: GERAL → Reprodutivo → Controle Leiteiro → Dieta → Financeiro (Plano de Contas → Conta Gerencial) → Estoque → Curva ABC → Patrimônio.
         </p>
       </div>
 
@@ -144,12 +145,11 @@ export default function UploadPage() {
             2. <strong>Reprodutivo:</strong> Utilitários › Consulta SQL (arrastar o arquivo SQL) — exportar .csv<br />
             3. <strong>Controle Leiteiro:</strong> Relatórios › Controle Leiteiro — histórico de pesagens (todas as datas), exportar .csv<br />
             4. <strong>Dieta:</strong> Nutrição/Alimentação › Dieta por lote — exportar o plano vigente (kg/cabeça/dia) em .csv<br />
-            5. <strong>Sanidade:</strong> Relatórios › Sanidade — medicamentos aplicados no período desejado, exportar .csv<br />
-            6. <strong>Plano de Contas Gerenciais:</strong> Cadastros › Plano de Contas Gerenciais — exportar a hierarquia em .csv (suba antes da Conta Gerencial)<br />
-            7. <strong>Financeiro (Conta Gerencial):</strong> Relatórios › Gestão › Movimentação financeira por conta gerencial — desde 12/2025<br />
-            8. <strong>Estoque:</strong> Inventário — data atual<br />
-            9. <strong>Curva ABC:</strong> Relatórios › Compras › Curva ABC — classificação A/B/C de custos, exportar .csv<br />
-            10. <strong>Patrimônio:</strong> Cadastros › Patrimônio (bens, máquinas, veículos e terras) — exportar a lista em .csv<br />
+            5. <strong>Plano de Contas Gerenciais:</strong> Cadastros › Plano de Contas Gerenciais — exportar a hierarquia em .csv (suba antes da Conta Gerencial)<br />
+            6. <strong>Financeiro (Conta Gerencial):</strong> Relatórios › Gestão › Movimentação financeira por conta gerencial — desde 12/2025<br />
+            7. <strong>Estoque:</strong> Inventário — data atual<br />
+            8. <strong>Curva ABC:</strong> Relatórios › Compras › Curva ABC — classificação A/B/C de custos, exportar .csv<br />
+            9. <strong>Patrimônio:</strong> Cadastros › Patrimônio (bens, máquinas, veículos e terras) — exportar a lista em .csv<br />
             <br />
             <strong style={{ color: "var(--dourado-light)" }}>Encoding dos arquivos:</strong> Windows-1252 (Latin-1), separador ponto-e-vírgula (;), decimal com vírgula.
           </p>

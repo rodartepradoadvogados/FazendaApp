@@ -1,10 +1,7 @@
 "use client";
-// Sub-tela: Histórico sanitário. Abas Preventivo/Curativo — antes era uma
-// lista só (curativo+preventivo misturados), visível só para admin, e exame
-// nunca aparecia. Preventivo (vacina + exame, agrupado) é leitura para
-// qualquer usuário, reaproveitando PreventivoHistoricoLista (mesma lista do
-// Calendário > "Já aplicado"); Curativo mantém o comportamento de sempre
-// (editar/excluir cada aplicação), restrito à conta principal (admin).
+// Sub-tela: Histórico sanitário curativo (editar/excluir cada aplicação,
+// restrito à conta principal — admin). O histórico de vacinas e exames sai
+// daqui: o preventivo antigo foi removido e o novo entra pelo menu Vacinação.
 import { useEffect, useMemo, useState } from "react";
 import { Pencil, Trash2, Check, X, Search } from "lucide-react";
 import { MobVoltar, MobCard } from "@/components/mobile/ui";
@@ -13,8 +10,6 @@ import {
 } from "@/lib/api";
 import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
 import { useCarregar, AvisoCopia, Carregando, Vazio, usePaginacao, PaginacaoMob } from "@/components/mobile/menu/comum";
-import { PreventivoHistoricoLista } from "@/components/mobile/menu/HistoricoPreventivo";
-import { MobPill, LinhaPills } from "@/components/mobile/lancar/comum";
 import { VIAS_APLICACAO } from "@/lib/constants";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { useOrdenacao } from "@/components/Ordenavel";
@@ -45,7 +40,6 @@ const rotulo: React.CSSProperties = { display: "block", fontSize: "0.74rem", fon
 
 export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void }) {
   const admin = ehAdmin();
-  const [aba, setAba] = useState<"preventivo" | "curativo">("preventivo");
   const { dados, doCache, carregando, recarregar } = useCarregar<{ aplicacoes: Aplic[] }>(
     "menu_aplicacoes_sanidade", () => fetchSanidade()
   );
@@ -62,7 +56,7 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
     fetchMedicamentos({ incluir_sem_estoque: true }).then((m: EstoqueItemPicker[]) => setProdutosCatalogo(m)).catch(() => setProdutosCatalogo([]));
   }, []);
 
-  // Curativo = tudo que NÃO é preventivo — lançamento legado (natureza=null,
+  // Curativo = tudo que NÃO é preventivo (BST/Indução) — lançamento legado (natureza=null,
   // dado importado antes da distinção) conta como curativo, mesma leitura do
   // site (ver Sanidade.natureza).
   const listaCurativo = useMemo(() => {
@@ -116,113 +110,102 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
     <div>
       <MobVoltar titulo="Histórico" onVoltar={onVoltar} />
 
-      <LinhaPills>
-        <MobPill ativa={aba === "preventivo"} onClick={() => setAba("preventivo")}>Preventivo</MobPill>
-        <MobPill ativa={aba === "curativo"} onClick={() => setAba("curativo")}>Curativo</MobPill>
-      </LinhaPills>
+      <AvisoCopia chave="menu_aplicacoes_sanidade" mostrar={doCache} />
 
-      {aba === "preventivo" ? (
-        <PreventivoHistoricoLista />
+      <div style={{ position: "relative", marginBottom: "0.9rem" }}>
+        <Search size={16} style={{ position: "absolute", left: 12, top: 13, color: "var(--mob-muted)" }} />
+        <input style={{ ...inp, paddingLeft: "2.2rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por animal ou produto" />
+      </div>
+
+      <SeletorOrdenacao campos={CAMPOS_ORDENACAO} coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+
+      {erro && <p style={{ color: "var(--mob-vermelho)", fontSize: "0.85rem", marginBottom: "0.6rem", fontWeight: 600 }}>{erro}</p>}
+
+      {carregando && !dados ? (
+        <Carregando />
+      ) : !dados ? (
+        <Vazio>Sem dados salvos ainda. Conecte-se uma vez para baixar.</Vazio>
+      ) : listaCurativo.length === 0 ? (
+        <Vazio>Nenhuma aplicação encontrada.</Vazio>
       ) : (
         <>
-          <AvisoCopia chave="menu_aplicacoes_sanidade" mostrar={doCache} />
-
-          <div style={{ position: "relative", marginBottom: "0.9rem" }}>
-            <Search size={16} style={{ position: "absolute", left: 12, top: 13, color: "var(--mob-muted)" }} />
-            <input style={{ ...inp, paddingLeft: "2.2rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por animal ou produto" />
-          </div>
-
-          <SeletorOrdenacao campos={CAMPOS_ORDENACAO} coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-
-          {erro && <p style={{ color: "var(--mob-vermelho)", fontSize: "0.85rem", marginBottom: "0.6rem", fontWeight: 600 }}>{erro}</p>}
-
-          {carregando && !dados ? (
-            <Carregando />
-          ) : !dados ? (
-            <Vazio>Sem dados salvos ainda. Conecte-se uma vez para baixar.</Vazio>
-          ) : listaCurativo.length === 0 ? (
-            <Vazio>Nenhuma aplicação encontrada.</Vazio>
-          ) : (
-            <>
-            {pagLista.linhasPagina.map((a) => {
-              const editando = admin && editId === a.id;
-              return (
-                <MobCard key={a.id} style={{ marginBottom: "0.6rem" }}>
-                  {!editando ? (
-                    <>
-                      <div style={{ display: "flex", alignItems: "baseline", gap: "0.6rem" }}>
-                        <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>{a.numero}</span>
-                        <span style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginLeft: "auto" }}>{a.data ? formatDate(a.data) : "sem data"}</span>
-                      </div>
-                      <div style={{ fontSize: "0.9rem", fontWeight: 600, marginTop: "0.2rem" }}>{a.produto}</div>
-                      <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.1rem" }}>
-                        {a.categoria || "Outros"}
-                        {a.dose != null ? ` · ${a.dose}${a.unidade ? " " + a.unidade : ""}` : ""}
-                        {a.via ? ` · ${a.via}` : ""}
-                      </div>
-                      {admin && (
-                        <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.7rem" }}>
-                          <button type="button" onClick={() => iniciar(a)}
-                            style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.85rem", fontWeight: 700, color: "var(--mob-text)", background: "var(--mob-surface-2)", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", padding: "0.55rem", cursor: "pointer" }}>
-                            <Pencil size={15} /> Editar
-                          </button>
-                          <button type="button" disabled={ocupado === a.id} onClick={() => excluir(a)}
-                            style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.85rem", fontWeight: 700, color: "var(--mob-vermelho)", background: "transparent", border: "1px solid var(--mob-vermelho)", borderRadius: "var(--r-app)", padding: "0.55rem", cursor: "pointer" }}>
-                            <Trash2 size={15} /> Excluir
-                          </button>
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <div style={{ fontWeight: 800, fontSize: "1rem", marginBottom: "0.6rem" }}>Animal {a.numero}</div>
-                      <div style={{ marginBottom: "0.6rem" }}><label style={rotulo}>Data</label>
-                        <input type="date" style={inp} value={vals.data} onChange={(e) => setVals((s) => ({ ...s, data: e.target.value }))} /></div>
-                      <div style={{ marginBottom: "0.6rem" }}><label style={rotulo}>Produto</label>
-                        <EstoquePicker itens={produtosCatalogo} value={vals.produto} onChange={(v) => setVals((s) => ({ ...s, produto: v }))}
-                          placeholder="Selecione…" incluirNaoEstocaveis /></div>
-                      <div style={{ display: "flex", gap: "0.6rem", marginBottom: "0.6rem" }}>
-                        <div style={{ flex: 1 }}><label style={rotulo}>Dose</label>
-                          <input type="number" inputMode="decimal" style={inp} value={vals.dose} onChange={(e) => setVals((s) => ({ ...s, dose: e.target.value }))} /></div>
-                        <div style={{ flex: 1 }}><label style={rotulo}>Unidade</label>
-                          <select style={inp} value={vals.unidade} onChange={(e) => setVals((s) => ({ ...s, unidade: e.target.value }))}>
-                            <option value="">—</option>
-                            {!UNIDADES.includes(vals.unidade) && vals.unidade && <option value={vals.unidade}>{vals.unidade}</option>}
-                            {UNIDADES.map((u) => <option key={u} value={u}>{u}</option>)}
-                          </select></div>
-                      </div>
-                      <div style={{ marginBottom: "0.6rem" }}><label style={rotulo}>Via</label>
-                        <select style={inp} value={vals.via} onChange={(e) => setVals((s) => ({ ...s, via: e.target.value }))}>
-                          <option value="">—</option>
-                          {!VIAS_APLICACAO.includes(vals.via) && vals.via && <option value={vals.via}>{vals.via}</option>}
-                          {VIAS_APLICACAO.map((v) => <option key={v} value={v}>{v}</option>)}
-                        </select></div>
-                      <div style={{ marginBottom: "0.6rem" }}><label style={rotulo}>Responsável</label>
-                        <select style={inp} value={vals.responsavel} onChange={(e) => setVals((s) => ({ ...s, responsavel: e.target.value }))}>
-                          <option value="">—</option>
-                          {!nomesResponsaveis.includes(vals.responsavel) && vals.responsavel && <option value={vals.responsavel}>{vals.responsavel}</option>}
-                          {nomesResponsaveis.map((r) => <option key={r} value={r}>{r}</option>)}
-                        </select></div>
-                      <div style={{ marginBottom: "0.2rem" }}><label style={rotulo}>Observação</label>
-                        <input style={inp} value={vals.obs} onChange={(e) => setVals((s) => ({ ...s, obs: e.target.value }))} /></div>
-                      <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.7rem" }}>
-                        <button type="button" disabled={ocupado === a.id} onClick={() => salvar(a)}
-                          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.9rem", fontWeight: 700, color: "var(--mob-verde-fg)", background: "var(--mob-verde)", border: "none", borderRadius: "var(--r-app)", padding: "0.6rem", cursor: "pointer" }}>
-                          <Check size={16} /> {ocupado === a.id ? "…" : "Salvar"}
-                        </button>
-                        <button type="button" disabled={ocupado === a.id} onClick={() => setEditId(null)}
-                          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.9rem", fontWeight: 700, color: "var(--mob-text)", background: "var(--mob-surface-2)", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", padding: "0.6rem", cursor: "pointer" }}>
-                          <X size={16} /> Cancelar
-                        </button>
-                      </div>
-                    </>
+        {pagLista.linhasPagina.map((a) => {
+          const editando = admin && editId === a.id;
+          return (
+            <MobCard key={a.id} style={{ marginBottom: "0.6rem" }}>
+              {!editando ? (
+                <>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: "0.6rem" }}>
+                    <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>{a.numero}</span>
+                    <span style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginLeft: "auto" }}>{a.data ? formatDate(a.data) : "sem data"}</span>
+                  </div>
+                  <div style={{ fontSize: "0.9rem", fontWeight: 600, marginTop: "0.2rem" }}>{a.produto}</div>
+                  <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.1rem" }}>
+                    {a.categoria || "Outros"}
+                    {a.dose != null ? ` · ${a.dose}${a.unidade ? " " + a.unidade : ""}` : ""}
+                    {a.via ? ` · ${a.via}` : ""}
+                  </div>
+                  {admin && (
+                    <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.7rem" }}>
+                      <button type="button" onClick={() => iniciar(a)}
+                        style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.85rem", fontWeight: 700, color: "var(--mob-text)", background: "var(--mob-surface-2)", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", padding: "0.55rem", cursor: "pointer" }}>
+                        <Pencil size={15} /> Editar
+                      </button>
+                      <button type="button" disabled={ocupado === a.id} onClick={() => excluir(a)}
+                        style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.85rem", fontWeight: 700, color: "var(--mob-vermelho)", background: "transparent", border: "1px solid var(--mob-vermelho)", borderRadius: "var(--r-app)", padding: "0.55rem", cursor: "pointer" }}>
+                        <Trash2 size={15} /> Excluir
+                      </button>
+                    </div>
                   )}
-                </MobCard>
-              );
-            })}
-            <PaginacaoMob pagina={pagLista.pagina} totalPaginas={pagLista.totalPaginas} totalLinhas={pagLista.totalLinhas} onMudarPagina={pagLista.setPagina} />
-            </>
-          )}
+                </>
+              ) : (
+                <>
+                  <div style={{ fontWeight: 800, fontSize: "1rem", marginBottom: "0.6rem" }}>Animal {a.numero}</div>
+                  <div style={{ marginBottom: "0.6rem" }}><label style={rotulo}>Data</label>
+                    <input type="date" style={inp} value={vals.data} onChange={(e) => setVals((s) => ({ ...s, data: e.target.value }))} /></div>
+                  <div style={{ marginBottom: "0.6rem" }}><label style={rotulo}>Produto</label>
+                    <EstoquePicker itens={produtosCatalogo} value={vals.produto} onChange={(v) => setVals((s) => ({ ...s, produto: v }))}
+                      placeholder="Selecione…" incluirNaoEstocaveis /></div>
+                  <div style={{ display: "flex", gap: "0.6rem", marginBottom: "0.6rem" }}>
+                    <div style={{ flex: 1 }}><label style={rotulo}>Dose</label>
+                      <input type="number" inputMode="decimal" style={inp} value={vals.dose} onChange={(e) => setVals((s) => ({ ...s, dose: e.target.value }))} /></div>
+                    <div style={{ flex: 1 }}><label style={rotulo}>Unidade</label>
+                      <select style={inp} value={vals.unidade} onChange={(e) => setVals((s) => ({ ...s, unidade: e.target.value }))}>
+                        <option value="">—</option>
+                        {!UNIDADES.includes(vals.unidade) && vals.unidade && <option value={vals.unidade}>{vals.unidade}</option>}
+                        {UNIDADES.map((u) => <option key={u} value={u}>{u}</option>)}
+                      </select></div>
+                  </div>
+                  <div style={{ marginBottom: "0.6rem" }}><label style={rotulo}>Via</label>
+                    <select style={inp} value={vals.via} onChange={(e) => setVals((s) => ({ ...s, via: e.target.value }))}>
+                      <option value="">—</option>
+                      {!VIAS_APLICACAO.includes(vals.via) && vals.via && <option value={vals.via}>{vals.via}</option>}
+                      {VIAS_APLICACAO.map((v) => <option key={v} value={v}>{v}</option>)}
+                    </select></div>
+                  <div style={{ marginBottom: "0.6rem" }}><label style={rotulo}>Responsável</label>
+                    <select style={inp} value={vals.responsavel} onChange={(e) => setVals((s) => ({ ...s, responsavel: e.target.value }))}>
+                      <option value="">—</option>
+                      {!nomesResponsaveis.includes(vals.responsavel) && vals.responsavel && <option value={vals.responsavel}>{vals.responsavel}</option>}
+                      {nomesResponsaveis.map((r) => <option key={r} value={r}>{r}</option>)}
+                    </select></div>
+                  <div style={{ marginBottom: "0.2rem" }}><label style={rotulo}>Observação</label>
+                    <input style={inp} value={vals.obs} onChange={(e) => setVals((s) => ({ ...s, obs: e.target.value }))} /></div>
+                  <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.7rem" }}>
+                    <button type="button" disabled={ocupado === a.id} onClick={() => salvar(a)}
+                      style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.9rem", fontWeight: 700, color: "var(--mob-verde-fg)", background: "var(--mob-verde)", border: "none", borderRadius: "var(--r-app)", padding: "0.6rem", cursor: "pointer" }}>
+                      <Check size={16} /> {ocupado === a.id ? "…" : "Salvar"}
+                    </button>
+                    <button type="button" disabled={ocupado === a.id} onClick={() => setEditId(null)}
+                      style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem", fontSize: "0.9rem", fontWeight: 700, color: "var(--mob-text)", background: "var(--mob-surface-2)", border: "1px solid var(--mob-border)", borderRadius: "var(--r-app)", padding: "0.6rem", cursor: "pointer" }}>
+                      <X size={16} /> Cancelar
+                    </button>
+                  </div>
+                </>
+              )}
+            </MobCard>
+          );
+        })}
+        <PaginacaoMob pagina={pagLista.pagina} totalPaginas={pagLista.totalPaginas} totalLinhas={pagLista.totalLinhas} onMudarPagina={pagLista.setPagina} />
         </>
       )}
     </div>

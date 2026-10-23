@@ -80,7 +80,15 @@ export async function registrarBotaoVoltar(estaNaRaiz: () => boolean): Promise<(
 // /financeiro, /estoque, /portal, /aprovacoes) — o app nativo abre a casca
 // /app; só a Agenda tem equivalente dentro dela. Demais rotas abrem mesmo
 // assim (o site inteiro carrega dentro da WebView, só sem a casca do /app).
-function rotaDoApp(url: string): string {
+//
+// Sanitário: o push da véspera já vem com a URL do app
+// "/app/menu#vacinacao-<id do dia>" (url_da_nota em
+// backend/fazenda/rules/sanitario/push.py) e passa como veio. As regras por
+// título abaixo só cobrem push antigo ainda na bandeja (véspera com /agenda).
+export function rotaDoApp(url: string, titulo?: string | null): string {
+  if (url.startsWith("/app")) return url;
+  if (/^amanhã:\s*(vacina|exame)\b/i.test((titulo || "").trim())) return "/app/menu#vacinacao";
+  if (url.startsWith("/sanidade") && /vacina|exame/i.test(titulo || "")) return "/app/menu#vacinacao";
   return url === "/agenda" ? "/app" : url;
 }
 
@@ -140,7 +148,8 @@ export async function registrarPushNativo(aoTocarNotificacao?: (rota: string) =>
     });
     const hToque = await PushNotifications.addListener("pushNotificationActionPerformed", (acao) => {
           const url = (acao.notification?.data?.url as string) || "/app";
-          aoTocarNotificacao?.(rotaDoApp(url));
+          const titulo = (acao.notification?.title as string | undefined) || (acao.notification?.data?.title as string | undefined);
+          aoTocarNotificacao?.(rotaDoApp(url, titulo));
         });
     
         // Auditoria: registra recebimento de push (app em foreground/background)

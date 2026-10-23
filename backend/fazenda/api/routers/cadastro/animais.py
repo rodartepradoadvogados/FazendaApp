@@ -14,11 +14,12 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
+from fazenda.rules.sanitario import ganchos as ganchos_sanitario
 from fazenda.auth import exigir_admin, get_fazenda_atual_id, get_fazenda_id_escrita
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, Animal, AplicacaoAgendada, BaixaAnimal, ColostragemBezerra, CompraAnimal, ControleLeiteiro,
-    CronogramaSanitarioAnimal, CronogramaSanitarioAplicacaoAnimal, ExameResultado, FotoCampo, GrauSangue, Lactacao, LidaAplicacao, MotivoBaixa,
+    FotoCampo, GrauSangue, Lactacao, LidaAplicacao, MotivoBaixa,
     MotivoVenda, MovimentoLote, OcorrenciaClinica, Parto, PesagemCorporal, ProtocoloCustomizadoAplicacao,
     ProtocoloIatfAplicacao, ProtocoloInducaoAplicacao, ProtocoloSanitarioAplicacao, ProtocoloSanitarioLancamento,
     QualidadeLeite, Raca, Sanidade, Secagem, SeedFlag, Servico, Usuario, VendaAnimal,
@@ -257,6 +258,8 @@ def criar_animal(
     mae_numero = (animal.mae_numero or "").strip() or None
     validar_e_vincular_mae(session, fazenda_id, mae_numero, numero)
     session.add(animal)
+    session.flush()
+    ganchos_sanitario.animal_mudou(session, fazenda_id, animal_ids=[animal.id], evento="cadastro")
     session.commit()
     session.refresh(animal)
     return animal.model_dump()
@@ -283,6 +286,8 @@ def atualizar_ficha_animal(
     validar_e_vincular_mae(session, fazenda_id, mae_numero, numero)
     animal.atualizado_em = datetime.utcnow()
     session.add(animal)
+    session.flush()
+    ganchos_sanitario.animal_mudou(session, fazenda_id, animal_ids=[animal.id], evento="edicao")
     session.commit()
     session.refresh(animal)
     return animal.model_dump()
@@ -330,8 +335,6 @@ _TABELAS_NUMERO_ANIMAL: list[tuple[type, str]] = [
     (QualidadeLeite, "numero_matriz"), (Secagem, "numero_matriz"), (Lactacao, "numero_matriz"),
     (Servico, "numero_matriz"), (ProtocoloIatfAplicacao, "numero_matriz"), (Parto, "numero_matriz"),
     (ColostragemBezerra, "numero_animal"), (Sanidade, "numero_matriz"), (AplicacaoAgendada, "numero_matriz"),
-    (ExameResultado, "numero_matriz"), (CronogramaSanitarioAnimal, "numero_matriz"),
-    (CronogramaSanitarioAplicacaoAnimal, "numero_matriz"),
     (ProtocoloSanitarioLancamento, "numero_matriz"), (ProtocoloSanitarioAplicacao, "numero_matriz"),
     (ProtocoloInducaoAplicacao, "numero_matriz"), (OcorrenciaClinica, "numero_matriz"),
     (ProtocoloCustomizadoAplicacao, "numero_matriz"), (LidaAplicacao, "numero_matriz"),
@@ -423,6 +426,8 @@ def renumerar_animal(
     animal.atualizado_em = datetime.utcnow()
     session.add(animal)
     try:
+        session.flush()
+        ganchos_sanitario.animal_mudou(session, fazenda_id, animal_ids=[animal.id], evento="renumeracao")
         session.commit()
     except IntegrityError:
         session.rollback()

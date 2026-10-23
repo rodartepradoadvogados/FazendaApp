@@ -502,16 +502,14 @@ class TestConfirmacaoCura:
         eventos = c.get("/agenda/", params={"data": "2026-03-05", "dias": 60}).json()["eventos"]
         assert not any(e.get("tipo") == "confirmar_cura" for e in eventos)
 
-    def test_aplicacao_preventiva_nunca_pergunta_cura(self, client):
+    def test_lancamento_avulso_nao_aceita_mais_natureza_preventivo(self, client):
         c, engine = client
         r = c.post("/sanidade/aplicacoes", json={
             "data_aplicacao": "2026-03-01", "animais": ["700"],
             "itens": [{"produto": "Vacina X", "quantidade": 2.0, "unidade": "ml"}],
             "natureza": "preventivo",
         })
-        assert r.status_code == 200, r.text
-        eventos = c.get("/agenda/", params={"data": "2026-03-05", "dias": 60}).json()["eventos"]
-        assert not any(e.get("tipo") == "confirmar_cura" for e in eventos)
+        assert r.status_code == 422, r.text
 
 
 class TestCadastroPorCriterio:

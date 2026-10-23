@@ -8,11 +8,11 @@
 //    pré-visualização editável (nada salvo até confirmar), erros de leitura (contagem + 5 primeiras + "e mais N").
 //  • "Último controle" e "Variação" vêm de `producao_kg`/`producao_data` da API de animais (controle mais recente da vaca);
 //    dado congelado do Ideagri não entra na variação. Enter avança de campo (só front); Tab continua.
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowDown, ArrowUp, Download, Trash2 } from "lucide-react";
 import {
   baixarModeloControleLeiteiro, confirmarControleLeiteiroPlanilha, criarControlesLeiteiros,
-  preVisualizarControleLeiteiroPlanilha, type LinhaControleLeiteiroPreview,
+  preVisualizarControleLeiteiroPlanilha, ErroApi, type LinhaControleLeiteiroPreview,
 } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { Ajuda, Aviso, BarraAcao, BotaoOuro, Campo, Faixa, Passo, Pilulas, Selo } from "@/components/gerencial/kit";
@@ -26,7 +26,11 @@ import {
 
 type Modo = "vaca" | "lote" | "planilha";
 type Coluna = "numero" | "del" | "ult" | "total";
-type Retorno = { tipo: "ok" | "erro"; texto: string } | null;
+// `semVaca`: a vaca que travou o lançamento por carência de leite com bloqueio
+// total (409 `carencia_bloqueio` do sanitário) — a tela oferece lançar as outras.
+type Retorno = { tipo: "ok" | "erro"; texto: string; semVaca?: string } | null;
+type DetalheCarencia = { erro?: string; msg?: string; numero_matriz?: string; liberacao_leite?: string };
+type RespostaControles = { criados: number; carencia?: { numero_matriz: string; modo: string; liberacao_leite: string }[] };
 
 const ALTURA_TABELA = { ["--gv-altura-tabela" as string]: "40rem" } as React.CSSProperties;
 const DIR = { textAlign: "right" as const };
@@ -73,6 +77,7 @@ export function FormControle({ animais, lotesLact, onSalvo }: { animais: AnimalR
   const [sort, setSort] = useState<{ col: Coluna; asc: boolean }>({ col: "numero", asc: true });
   const [salvando, setSalvando] = useState(false);
   const [retorno, setRetorno] = useState<Retorno>(null);
+  const [relancar, setRelancar] = useState(0);
 
   // Planilha: ler → revisar/corrigir → confirmar (nada é salvo antes do "Confirmar").
   const [arquivo, setArquivo] = useState<File | null>(null);
@@ -140,17 +145,38 @@ export function FormControle({ animais, lotesLact, onSalvo }: { animais: AnimalR
     }
     setSalvando(true);
     try {
-      const r = await criarControlesLeiteiros({ data_controle: data, entradas });
+      const r: RespostaControles = await criarControlesLeiteiros({ data_controle: data, entradas });
       const kg = entradas.reduce((s, e) => s + e.ordenhas.reduce<number>((a, x) => a + (x ?? 0), 0), 0);
-      setRetorno({ tipo: "ok", texto: `${r.criados} ${r.criados === 1 ? "pesagem lançada" : "pesagens lançadas"} em ${dataBR(data)} · ${nb(kg)} kg` });
+      // Vacas em carência de leite (sanitário): "descarte" grava fora do tanque; "tanque" segue normal, no log.
+      const car = (r.carencia || []).map((c) => `${c.numero_matriz} (${c.modo === "descarte" ? "leite descartado" : "vai para o tanque"}, libera ${dataBR(c.liberacao_leite)})`);
+      setRetorno({ tipo: "ok", texto: `${r.criados} ${r.criados === 1 ? "pesagem lançada" : "pesagens lançadas"} em ${dataBR(data)} · ${nb(kg)} kg`
+        + (car.length ? ` · em carência: ${car.join("; ")}` : "") });
       setValores((p) => { const n = { ...p }; entradas.forEach((e) => { delete n[e.numero_matriz]; }); return n; });
       onSalvo?.();
     } catch (e) {
-      setRetorno({ tipo: "erro", texto: mensagemDoErro(e, "Erro ao lançar controle leiteiro") });
+      const det = e instanceof ErroApi && e.detalhe && typeof e.detalhe === "object" ? (e.detalhe as DetalheCarencia) : null;
+      if (det?.erro === "carencia_bloqueio" && det.numero_matriz) {
+        setRetorno({ tipo: "erro", semVaca: det.numero_matriz,
+          texto: `${det.msg || `${det.numero_matriz} está em carência de leite com bloqueio total.`} Nada foi gravado.` });
+      } else {
+        setRetorno({ tipo: "erro", texto: mensagemDoErro(e, "Erro ao lançar controle leiteiro") });
+      }
     } finally {
       setSalvando(false);
     }
   }
+
+  // Carência com bloqueio total: tira a vaca da pesagem e lança as outras.
+  function lancarSemVaca(numero: string) {
+    setValores((p) => { const n = { ...p }; delete n[numero]; return n; });
+    setRetorno(null);
+    setRelancar((x) => x + 1);
+  }
+  useEffect(() => {
+    if (!relancar) return;
+    const t = setTimeout(() => { salvar(); }, 0);
+    return () => clearTimeout(t);
+  }, [relancar]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function lerPlanilha() {
     if (!arquivo) return;
@@ -190,6 +216,9 @@ export function FormControle({ animais, lotesLact, onSalvo }: { animais: AnimalR
   const aviso = retorno && (
     <span role={retorno.tipo === "erro" ? "alert" : "status"} style={{ color: retorno.tipo === "erro" ? "var(--ft-verm)" : "var(--ft-verde)" }}>
       {retorno.tipo === "ok" ? "✓ " : ""}{retorno.texto}
+      {retorno.semVaca && (
+        <>{" "}<button type="button" className="san-link" onClick={() => lancarSemVaca(retorno.semVaca!)}>Lançar as outras sem a {retorno.semVaca}</button></>
+      )}
     </span>
   );
 

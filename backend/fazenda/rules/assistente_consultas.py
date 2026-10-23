@@ -473,10 +473,9 @@ def _consultar_bst(session: Session, usuario, entrada: dict, fazenda_id: int | N
 
 
 # ===========================================================================
-# (c) Sanidade: protocolos cadastrados, regras do preventivo, lista de espera,
-#     agendamentos, histórico de aplicações
+# (c) Sanidade: protocolos cadastrados e histórico de aplicações
 # ===========================================================================
-_TIPOS_CADASTRO = ("sanitario_curativo", "sanitario_preventivo", "iatf", "inducao", "proprio", "todos")
+_TIPOS_CADASTRO = ("sanitario_curativo", "iatf", "inducao", "proprio", "todos")
 
 
 def _protocolos_cadastrados(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> dict:
@@ -493,13 +492,10 @@ def _protocolos_cadastrados(session: Session, usuario, entrada: dict, fazenda_id
     def _etapas(p: dict, campos: tuple[str, ...]) -> list[dict]:
         return [_pegar(e, campos) for e in p.get("etapas", [])]
 
-    if tipo in ("todos", "sanitario_curativo", "sanitario_preventivo"):
+    if tipo in ("todos", "sanitario_curativo"):
         for p in _chamar(listar_protocolos_sanitarios, session, fazenda_id):
-            fin = p.get("finalidade") or "curativo"
-            if tipo != "todos" and tipo != f"sanitario_{fin}":
-                continue
             saida.append({
-                "tipo": f"sanitario_{fin}", "nome": p["nome"], "ativo": p.get("ativo"), "doenca": p.get("doenca_nome"),
+                "tipo": "sanitario_curativo", "nome": p["nome"], "ativo": p.get("ativo"), "doenca": p.get("doenca_nome"),
                 "eh_mastite": p.get("eh_mastite"), "dia_inicial": p.get("dia_inicial"),
                 "etapas": _etapas(p, ("dia", "criterio_tipo", "produto", "dosagem", "unidade", "via", "observacao")),
             })
@@ -531,81 +527,6 @@ def _protocolos_cadastrados(session: Session, usuario, entrada: dict, fazenda_id
         por_tipo[p["tipo"]] += 1
     cortadas, cortou = _cortar(saida)
     return {"total": len(saida), "por_tipo": dict(por_tipo), "protocolos": cortadas, "limitado_pela_ferramenta": cortou}
-
-
-def _regras_preventivo(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> dict:
-    from fazenda.api.routers.sanidade import listar_calendario
-    from fazenda.rules.calendario_visao import montar_calendario_visual
-
-    ini, fim = _periodo(entrada, obrigatorio=False)
-    nome, categoria = _txt(entrada, "nome"), _txt(entrada, "categoria")
-    regras = _chamar(listar_calendario, session, fazenda_id)
-    if nome:
-        regras = [r for r in regras if _contem(r.get("evento_sanitario_nome"), nome) or _contem(r.get("produto"), nome)]
-    if categoria:
-        regras = [r for r in regras if _contem(r.get("categoria_preventiva"), categoria) or _contem(r.get("categoria_alvo"), categoria)]
-    campos = ("id", "evento_sanitario_nome", "categoria_preventiva", "categoria_alvo", "produto", "doenca_nome",
-              "principio_ativo_nome", "frequencia_valor", "frequencia_unidade", "data_evento", "proxima_ocorrencia",
-              "proxima_ocorrencia_por_animal", "ultimo_evento_data", "usa_cronograma", "ativo", "observacao")
-    cortadas, cortou = _cortar(regras)
-    saida: dict[str, Any] = {
-        "total_regras": len(regras),
-        "regras": [_pegar(r, campos) for r in cortadas],
-        "limitado_pela_ferramenta": cortou,
-    }
-    if ini and fim:
-        # Projeção das ocorrências no período — o mesmo card "Calendário Sanitário" do site.
-        saida["ocorrencias_no_periodo"] = montar_calendario_visual(session, fazenda_id, ini, fim)
-    return saida
-
-
-def _lista_espera(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> dict:
-    from fazenda.rules import cronograma_sanitario as cron
-
-    nome = _txt(entrada, "protocolo")
-    calendario_id = _inteiro(entrada, "calendario_id", 1)
-    # reconciliar=False: o endpoint do site (GET .../lista-espera) GRAVA a
-    # reconciliação ao abrir; aqui a mesma lista é calculada sem escrever nada.
-    r = cron.lista_espera(session, date.today(), fazenda_id, calendario_id, reconciliar=False)
-    grupos = r["grupos"]
-    if nome:
-        grupos = [g for g in grupos if _contem(g.get("protocolo_nome"), nome) or _contem(g.get("produto"), nome)]
-    detalhar = _bool(entrada, "detalhar_animais", True)
-    saida_grupos = []
-    for g in grupos:
-        g = dict(g)
-        if not detalhar:
-            g.pop("animais", None)
-        saida_grupos.append(g)
-    return {
-        "data_referencia": date.today().isoformat(),
-        "total": sum(g["quantidade"] for g in grupos), "atrasadas": sum(g["atrasadas"] for g in grupos),
-        "agendamentos_ativos": r["agendamentos_ativos"], "grupos": saida_grupos,
-        "observacao": "Lista de espera = animais na janela do preventivo ainda sem agendamento (não aparecem na Agenda).",
-    }
-
-
-def _agendamentos_preventivo(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> dict:
-    from fazenda.rules import aplicacao_preventiva as ap
-
-    ini, fim = _periodo(entrada, obrigatorio=False)
-    situacao = _escolha(entrada, "situacao", ("agendados", "concluidos", "todos"), "agendados")
-    protocolo = _txt(entrada, "protocolo")
-    calendario_id = _inteiro(entrada, "calendario_id", 1)
-    saida: dict[str, Any] = {}
-    if situacao in ("agendados", "todos"):
-        a = ap.acompanhamento(session, fazenda_id)
-        itens = [
-            i for i in a["agendamentos"]
-            if (not calendario_id or i["calendario_sanitario_id"] == calendario_id)
-            and (not protocolo or _contem(i.get("protocolo_nome"), protocolo) or _contem(i.get("produto"), protocolo))
-            and _no_periodo(i.get("data_evento"), ini, fim)
-        ]
-        saida["agendados"] = {"total": len(itens), "agendamentos": itens, "totais_gerais": a["totais"]}
-    if situacao in ("concluidos", "todos"):
-        c = ap.concluidos(session, fazenda_id, calendario_id=calendario_id, de=ini, ate=fim, q=protocolo)
-        saida["concluidos"] = c
-    return saida
 
 
 def _aplicacoes_sanitarias(session: Session, usuario, entrada: dict, fazenda_id: int | None) -> dict:
@@ -1307,7 +1228,7 @@ FERRAMENTAS: list[dict] = [
         "spec": {
             "name": "consultar_protocolos_lancados",
             "description": (
-                "Protocolos JÁ LANÇADOS (IATF, indução de lactação, sanitário curativo/preventivo por lote, protocolos próprios) "
+                "Protocolos JÁ LANÇADOS (IATF, indução de lactação, sanitário curativo por lote, protocolos próprios) "
                 "como na Central de Protocolos (Acompanhamento e Histórico): nome, tipo, datas, etapas realizadas/total, nº de "
                 "animais e STATUS (andamento, concluido, encerrado, cancelado). Use para 'quais protocolos IATF estão em "
                 "andamento?', 'quais foram cancelados em 2026?', 'quais hormônios do protocolo X?'. Filtros: status, tipo "
@@ -1347,13 +1268,13 @@ FERRAMENTAS: list[dict] = [
         "spec": {
             "name": "consultar_protocolos_cadastrados",
             "description": (
-                "Protocolos CADASTRADOS (os moldes, não os lançamentos): sanitário curativo, sanitário preventivo, IATF, indução de "
+                "Protocolos CADASTRADOS (os moldes, não os lançamentos): sanitário curativo, IATF, indução de "
                 "lactação e protocolos próprios, com as etapas (dia, produto, dose, via). Use para 'quais protocolos de mastite "
-                "tenho?', 'o que tem no protocolo IATF X?', 'quais protocolos preventivos existem?'. tipo: sanitario_curativo, "
-                "sanitario_preventivo, iatf, inducao, proprio ou todos (padrão); nome filtra; apenas_ativos=true esconde os desativados."
+                "tenho?', 'o que tem no protocolo IATF X?'. tipo: sanitario_curativo, "
+                "iatf, inducao, proprio ou todos (padrão); nome filtra; apenas_ativos=true esconde os desativados."
             ),
             "input_schema": _schema({
-                "tipo": ("string", "Opcional. sanitario_curativo, sanitario_preventivo, iatf, inducao, proprio ou todos (padrão)."),
+                "tipo": ("string", "Opcional. sanitario_curativo, iatf, inducao, proprio ou todos (padrão)."),
                 "nome": ("string", "Opcional. Parte do nome."), "apenas_ativos": ("boolean", "Opcional. true = só os ativos."),
             }),
         },
@@ -1362,66 +1283,12 @@ FERRAMENTAS: list[dict] = [
     {
         "modulo": "sanidade",
         "spec": {
-            "name": "consultar_regras_preventivo",
-            "description": (
-                "REGRAS do calendário sanitário preventivo (vacinas/exames): evento, produto, categoria-alvo, frequência, próxima "
-                "ocorrência e última aplicação. Com data_inicio e data_fim, também projeta as ocorrências do período (card Calendário "
-                "Sanitário). Use para 'quais vacinas estão no calendário?', 'de quanto em quanto tempo é a aftosa?', 'o que vence entre "
-                "01/10 e 31/12?'. Filtros: nome (evento/produto), categoria. Diferente de consultar_calendario_sanitario, que só olha 30 dias."
-            ),
-            "input_schema": _schema({
-                "nome": ("string", "Opcional. Parte do nome do evento/produto (ex.: 'aftosa')."),
-                "categoria": ("string", "Opcional. 'vacina', 'exame' ou categoria-alvo."),
-                "data_inicio": _DI, "data_fim": _DF,
-            }),
-        },
-        "executor": _com_erro(_regras_preventivo),
-    },
-    {
-        "modulo": "sanidade",
-        "spec": {
-            "name": "consultar_lista_espera_preventivo",
-            "description": (
-                "LISTA DE ESPERA do preventivo (Protocolos › Aplicar): animais que entraram na janela de uma vacina/exame e ainda "
-                "NÃO foram agendados, por protocolo, com situação 'atrasada' (dias de atraso) ou 'na janela'. Use para 'quantas "
-                "vacas estão na lista de espera da vacina X?', 'o que está atrasado no preventivo?'. Filtro: protocolo (parte do nome). "
-                "detalhar_animais=false devolve só os totais por protocolo. Somente leitura (não reconcilia nada)."
-            ),
-            "input_schema": _schema({
-                "protocolo": ("string", "Opcional. Parte do nome do protocolo/produto."),
-                "calendario_id": ("integer", "Opcional. ID da regra do calendário."),
-                "detalhar_animais": ("boolean", "Opcional. false = só totais (padrão true)."),
-            }),
-        },
-        "executor": _com_erro(_lista_espera),
-    },
-    {
-        "modulo": "sanidade",
-        "spec": {
-            "name": "consultar_agendamentos_preventivo",
-            "description": (
-                "AGENDAMENTOS do preventivo: situacao='agendados' (Protocolos › Acompanhamento: data, hora, animais, checklist, "
-                "responsável, atrasado/hoje), 'concluidos' (Protocolos › Concluídos: aplicações feitas, estornadas e agendamentos "
-                "cancelados) ou 'todos'. Use para 'o que está agendado para esta semana?', 'quais vacinas foram aplicadas em setembro?'. "
-                "Filtros: protocolo (nome), período (data_inicio/data_fim: data do agendamento ou da aplicação)."
-            ),
-            "input_schema": _schema({
-                "situacao": ("string", "Opcional. agendados (padrão), concluidos ou todos."),
-                "protocolo": ("string", "Opcional. Parte do nome do protocolo/produto."),
-                "calendario_id": ("integer", "Opcional. ID da regra do calendário."), "data_inicio": _DI, "data_fim": _DF,
-            }),
-        },
-        "executor": _com_erro(_agendamentos_preventivo),
-    },
-    {
-        "modulo": "sanidade",
-        "spec": {
             "name": "consultar_aplicacoes_sanitarias",
             "description": (
                 "HISTÓRICO de aplicações de medicamentos/vacinas (Sanidade): animal, data, produto, dose, via, responsável, natureza "
-                "(curativo/preventivo), atividade. Use para 'o que a vaca 123 já tomou?', 'quem recebeu ivermectina em agosto?', "
+                "(curativo; 'preventivo' só para BST e indução de cio), atividade. Use para 'o que a vaca 123 já tomou?', 'quem recebeu ivermectina em agosto?', "
                 "'quantas doses de aftosa apliquei no ano?'. Exige pelo menos um filtro: período, numero, produto ou atividade. "
-                "Também: natureza (curativo/preventivo), categoria. Para BST use consultar_bst."
+                "Também: natureza (curativo/preventivo — este só BST/indução), categoria. Para BST use consultar_bst."
             ),
             "input_schema": _schema({
                 "data_inicio": _DI, "data_fim": _DF, "numero": ("string", "Opcional. Número do animal."),

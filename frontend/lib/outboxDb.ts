@@ -26,7 +26,12 @@ export const DB_NOME = "cowdata_offline";
 export const DB_VERSAO = 1;
 export const STORE = "outbox";
 
-export type TipoItem = "json" | "form";
+// "sanitario": registro do app de campo do Sanitário Preventivo — NÃO é
+// enviado item a item por sincronizar() (lib/offline.ts): vai em LOTE pela
+// sincronização própria (lib/filaSanitario.ts, POST /sanitario/campo/sincronizar),
+// que lê a resposta por registro. Fica nesta mesma fila para aparecer no
+// contador de pendentes e na tela de Sincronização como qualquer outro.
+export type TipoItem = "json" | "form" | "sanitario";
 export type StatusItem = "pendente" | "erro";
 
 /** Parte binária de um item multipart (ex.: a foto em si). `campo` é o nome

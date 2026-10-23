@@ -114,7 +114,7 @@ _LISTAS_FICHA = {
     "partos": ("partos", "data_parto"),
     "servicos": ("servicos", "data_servico"),
     "sanidade": ("aplicacoes_sanitarias", "data_aplicacao"),
-    "exames": ("exames_resultados", "data_exame"),
+    "exames": ("exames_resultados", "data"),  # sanitário v2: mesmo formato de registros_preventivos
     "ocorrencias": ("ocorrencias_clinicas", "data_ocorrencia"),
     "producao": ("controles_leiteiros", "data_controle"),
     "qualidade_leite": ("qualidade_leite", "data_coleta"),

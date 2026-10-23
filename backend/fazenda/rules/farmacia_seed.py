@@ -278,11 +278,9 @@ PRINCIPIOS: list[dict] = [
      "unidade_base": "dose", "unidade_apresentacao": "dose", "eh_biologico": True, "doenca": "Tuberculose",
      "marcas": [("PPD Bovino", "Instituto Biológico / Ourofino")]},
     # Adição 2026-08-07 — necessidade real não coberta pelo catálogo anterior.
-    # MESMOS NOMES usados em rules do calendário sanitário padrão
-    # (api/routers/cadastro/sanitario.py::SEED_PRINCIPIOS_CALENDARIO) — de
-    # propósito, para casar com o princípio que já existe lá (criado antes
-    # deste seed rodar, ver ordem em main.py::lifespan) em vez de duplicar o
-    # catálogo com um segundo princípio para a mesma vacina.
+    # Nomes mantidos do antigo calendário sanitário padrão (arquivado em 2026)
+    # para casar com o princípio ativo que fazendas antigas já têm, em vez de
+    # duplicar o catálogo com um segundo princípio para a mesma vacina.
     {"nome": "Raiva (Vacina)", "categoria": "Biológicos (Vacinas e Diagnósticos)", "categoria_software": "Biológico (Vacina)",
      "uso_principal": "Raiva dos Herbívoros — zoonose fatal transmitida principalmente pelo morcego hematófago (Desmodus rotundus). "
                       "Vacinação obrigatória/recomendada em área de foco (PNCRH), sem tratamento possível após início dos sintomas.",

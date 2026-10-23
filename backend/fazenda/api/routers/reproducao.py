@@ -23,6 +23,7 @@ from fazenda.models import (
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_reprodutiva_configuravel import SITUACOES, avaliar_card
+from fazenda.rules.sanitario import ganchos as ganchos_sanitario
 from fazenda.rules.agenda_veterinario import classificar_rebanho
 from fazenda.rules.aptidao import AptidaoResultado, avaliar_aptidao_em_massa, avaliar_aptidao_no_banco, parametros_aptidao
 from fazenda.rules.iatf_vigente import MOTIVO_EM_PROTOCOLO, mensagem_em_protocolo, protocolos_vigentes_por_animal
@@ -1509,6 +1510,7 @@ def registrar_diagnostico(
             servico.data_perda_prenhez = dados.data_diagnostico
             servico.motivo_perda_prenhez = "aborto"
             session.add(servico)
+            ganchos_sanitario.animal_mudou(session, fazenda_id, numeros=[dados.numero_matriz], evento="diagnostico")
             session.commit()
             session.refresh(servico)
         resultado = servico.model_dump()
@@ -1563,6 +1565,7 @@ def registrar_diagnostico(
             servico.retoque = False
 
     session.add(servico)
+    ganchos_sanitario.animal_mudou(session, fazenda_id, numeros=[dados.numero_matriz], evento="diagnostico")
     session.commit()
     session.refresh(servico)
     return servico.model_dump()
@@ -1589,6 +1592,7 @@ def _registrar_aborto_pelo_diagnostico(session: Session, dados: "DiagnosticoIn",
             detail=f"A matriz {dados.numero_matriz} não tem prenhez confirmada para registrar aborto",
         )
     regras_lactacao.sincronizar_categoria_do_animal(session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id)
+    ganchos_sanitario.animal_mudou(session, fazenda_id, numeros=[dados.numero_matriz], evento="perda_prenhez")
     session.commit()
     session.refresh(servico)
     return {**servico.model_dump(), "perda_registrada": True}
@@ -1675,6 +1679,7 @@ def registrar_perda_prenhez(
     servico.data_perda_prenhez = dados.data_perda_prenhez
     servico.motivo_perda_prenhez = dados.motivo
     session.add(servico)
+    ganchos_sanitario.animal_mudou(session, fazenda_id, numeros=[dados.numero_matriz], evento="perda_prenhez")
     session.commit()
     session.refresh(servico)
     return servico.model_dump()
@@ -2060,6 +2065,9 @@ def registrar_parto(
         session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id, abriu_lactacao=True,
     )
 
+    ganchos_sanitario.animal_mudou(
+        session, fazenda_id, numeros=[dados.numero_matriz, *crias_criadas], evento="parto",
+    )
     session.commit()
     return {"criado": True, "ordem_parto": ordem_parto, "crias_criadas": crias_criadas, "crias_baixadas": crias_baixadas}
 
@@ -2207,6 +2215,7 @@ def encerrar_gestacao(
         session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id, abriu_lactacao=lactacao is not None,
     )
 
+    ganchos_sanitario.animal_mudou(session, fazenda_id, numeros=[dados.numero_matriz], evento="parto")
     session.commit()
     if lactacao is not None:
         session.refresh(lactacao)
@@ -3176,6 +3185,7 @@ def registrar_servico(
             aplicacao_insem.data_realizacao = dados.data_servico
             session.add(aplicacao_insem)
 
+    ganchos_sanitario.animal_mudou(session, fazenda_id, numeros=[dados.numero_matriz], evento="servico")
     session.commit()
     session.refresh(servico)
     return servico.model_dump()
@@ -3568,6 +3578,9 @@ def registrar_servico_lote(
                 usuario_id=usuario_id_seguro(user), data=dados.data_servico, origem_id=s.id,
             )
 
+    ganchos_sanitario.animal_mudou(
+        session, fazenda_id, numeros=[s.numero_matriz for s in servicos_criados], evento="servico_lote",
+    )
     session.commit()
     return {"criados": criados, "incompativeis": incompativeis, "tipo": dados.tipo}
 

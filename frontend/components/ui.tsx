@@ -191,8 +191,8 @@ export function MultiFiltro({
   onChange: (v: string[]) => void;
   formatar?: (v: string) => string;
   // Quando true, mostra um campo "+ novo" dentro do próprio painel — corrige o
-  // caso de opções que não vêm de um cadastro fixo (ex.: categoria-alvo livre
-  // do calendário sanitário): sem isso, depois de adicionar a 1ª opção por um
+  // caso de opções que não vêm de um cadastro fixo (ex.: categoria-alvo
+  // livre): sem isso, depois de adicionar a 1ª opção por um
   // campo externo, reabrir o painel para escolher a 2ª só mostrava o que já
   // tinha sido marcado, sem nada novo para selecionar.
   permitirNovo?: boolean;

@@ -128,7 +128,7 @@ def _validar_faixas(dados: LoteIn) -> None:
 
 def _validar_flags_unicos(session: Session, dados: LoteIn, lote_id: int | None, fazenda_id: int | None) -> None:
     """Só pode haver UM lote com pre_parto=True e UM com status_lactacao="seca"
-    — várias regras (secagem, calendário sanitário) buscam "o" lote por essa
+    — várias regras (secagem, pré-parto) buscam "o" lote por essa
     flag com `.first()`; um segundo lote com a mesma flag faria a sugestão
     virar silenciosamente para o lote errado, sem erro nenhum. Escopo por
     fazenda: cada fazenda tem seu próprio "o lote pré-parto"/"o lote seco"."""
@@ -379,7 +379,7 @@ def coletar_dados_criterios(session: Session, fazenda_id: int | None = None) -> 
     # recria._contexto_categoria) — lidos uma vez aqui, não a cada animal:
     # `animal_atende_criterios`/`sugerir_movimentacoes` rodam em loop (às
     # vezes um por animal por lote), e cada leitura de parâmetro abre uma
-    # sessão de banco própria (mesmo cuidado do calendário sanitário).
+    # sessão de banco própria (mesmo cuidado do motor do sanitário preventivo).
     pev_dias, del_max_1o_servico, idade_apta_dias, peso_apta_kg, idade_atraso_dias, dias_atraso_apos_aptidao = (
         _parametros_estado_vivo()
     )

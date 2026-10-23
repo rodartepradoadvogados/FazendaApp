@@ -15,7 +15,6 @@ import fazenda.database as database
 from fazenda.models import (
     AgendaManual,
     Animal,
-    CalendarioSanitario,
     ColostragemBezerra,
     CompraSemen,
     ContaGerencial,
@@ -23,7 +22,6 @@ from fazenda.models import (
     Doenca,
     Estoque,
     EstoqueSemen,
-    EventoSanitario,
     FolhaPagamento,
     Fornecedor,
     FotoCampo,
@@ -538,43 +536,22 @@ class TestNovosTiposDeCadastro:
         r = c.post("/exclusoes/confirmar", json={"tipo": "pessoa", "id": str(pid), "motivo": "teste"})
         assert r.status_code == 200
 
-    def test_exclui_principio_ativo_e_desvincula_calendario(self, client):
+    def test_exclui_principio_ativo_e_desvincula_estoque(self, client):
         c, engine = client
         with _sessao(engine) as s:
             pa = PrincipioAtivo(nome="Ivermectina")
             s.add(pa)
             s.commit()
             s.refresh(pa)
-            s.add(EventoSanitario(nome="Vermífugo teste"))
-            s.commit()
-            evento = s.exec(select(EventoSanitario).where(EventoSanitario.nome == "Vermífugo teste")).first()
-            s.add(CalendarioSanitario(
-                evento_sanitario_id=evento.id, principio_ativo_id=pa.id,
-                frequencia_valor=4, frequencia_unidade="meses", data_evento=date(2026, 1, 1),
-            ))
+            s.add(Estoque(nome="Ivomec teste", quantidade=10, unidade="ml", principio_ativo_id=pa.id))
             s.commit()
             pa_id = pa.id
 
         r = c.post("/exclusoes/confirmar", json={"tipo": "principio_ativo", "id": str(pa_id), "motivo": "teste"})
         assert r.status_code == 200
         with _sessao(engine) as s:
-            regra = s.exec(select(CalendarioSanitario)).first()
-            assert regra.principio_ativo_id is None
-
-    def test_bloqueia_exclusao_de_evento_sanitario_com_calendario(self, client):
-        c, engine = client
-        with _sessao(engine) as s:
-            s.add(EventoSanitario(nome="Brucelose teste"))
-            s.commit()
-            evento = s.exec(select(EventoSanitario).where(EventoSanitario.nome == "Brucelose teste")).first()
-            s.add(CalendarioSanitario(
-                evento_sanitario_id=evento.id, frequencia_valor=12, frequencia_unidade="meses", data_evento=date(2026, 1, 1),
-            ))
-            s.commit()
-            eid = evento.id
-
-        r = c.post("/exclusoes/confirmar", json={"tipo": "evento_sanitario", "id": str(eid)})
-        assert r.status_code == 409
+            item = s.exec(select(Estoque).where(Estoque.nome == "Ivomec teste")).first()
+            assert item.principio_ativo_id is None
 
     def test_bloqueia_exclusao_de_protocolo_com_lancamento(self, client):
         c, engine = client
@@ -612,7 +589,7 @@ class TestNovosTiposDeCadastro:
         c, engine = client
         r = c.get("/exclusoes/tipos")
         ids = {t["id"] for t in r.json()}
-        assert {"lote", "fornecedor", "motivo_movimentacao", "pessoa", "principio_ativo", "doenca", "evento_sanitario", "protocolo_sanitario"} <= ids
+        assert {"lote", "fornecedor", "motivo_movimentacao", "pessoa", "principio_ativo", "doenca", "protocolo_sanitario"} <= ids
 
 
 class TestFluxoAprovacaoOperador:

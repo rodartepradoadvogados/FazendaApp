@@ -17,15 +17,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
-from fazenda.models import Animal, ContaGerencial, ContratoFazenda, Estoque, ExameResultado, Fazenda, Lote
-from fazenda.models.sanidade import CalendarioSanitario, EventoSanitario
+from fazenda.models import Animal, ContaGerencial, ContratoFazenda, Estoque, Fazenda, Lote
 from fazenda.rules.assistente import (
     _executar_tool,
     _ferramentas_do_usuario,
     _tool_buscar_animal,
-    _tool_consultar_calendario_sanitario,
     _tool_consultar_estoque,
-    _tool_consultar_exames,
     _tool_consultar_financeiro,
     _tool_consultar_indicadores,
     _tool_consultar_lote,
@@ -113,8 +110,10 @@ class TestPermissoesPorFerramenta:
     def test_admin_ve_todas_as_ferramentas(self):
         nomes = {t["name"] for t in _ferramentas_do_usuario(_Usuario(papel="admin"))}
         assert {"consultar_indicadores", "buscar_animal", "consultar_agenda_hoje",
-                "consultar_financeiro", "consultar_estoque", "consultar_calendario_sanitario",
-                "consultar_analise_reprodutiva", "listar_lotes", "consultar_lote", "consultar_exames"} <= nomes
+                "consultar_financeiro", "consultar_estoque",
+                "consultar_analise_reprodutiva", "listar_lotes", "consultar_lote"} <= nomes
+        # Ferramentas do preventivo antigo saíram (2026); a do módulo novo entra na F8.
+        assert not nomes & {"consultar_calendario_sanitario", "consultar_exames"}
 
     def test_usuario_sem_permissoes_nao_ve_nenhuma(self):
         assert _ferramentas_do_usuario(_Usuario(papel="operador", permissoes="")) == []
@@ -166,27 +165,6 @@ class TestFerramentas:
         assert resultado["qtd_contas_vencidas_a_pagar"] == 1
         assert resultado["qtd_contas_vencidas_a_receber"] == 0
 
-    def test_consultar_calendario_sanitario_chamado_direto_sem_fazenda_resolvida(self, client):
-        """listar_calendario é chamado diretamente (sem passar por FastAPI/Depends)
-        por este tool — fazenda_id chega como o sentinel Depends(...) não resolvido,
-        não como int/None. Sem normalizar via fazenda_id_seguro(), o filtro
-        `CalendarioSanitario.fazenda_id == fazenda_id` compara contra esse objeto
-        e nunca bate com a regra legada (fazenda_id=None), quebrando a ferramenta."""
-        c, engine = client
-        with Session(engine) as s:
-            evento = EventoSanitario(nome="Vermífugo")
-            s.add(evento)
-            s.commit()
-            s.refresh(evento)
-            s.add(CalendarioSanitario(
-                evento_sanitario_id=evento.id, frequencia_valor=5, frequencia_unidade="dias",
-                data_evento=date.today(),
-            ))
-            s.commit()
-            resultado = _tool_consultar_calendario_sanitario(s)
-        assert resultado["total"] == 1
-        assert resultado["proximos"][0]["evento"] == "Vermífugo"
-
     def test_listar_lotes(self, client):
         c, engine = client
         with Session(engine) as s:
@@ -215,34 +193,6 @@ class TestFerramentas:
         c, engine = client
         with Session(engine) as s:
             resultado = _tool_consultar_lote(s, "99")
-        assert "erro" in resultado
-
-    def test_consultar_exames_sem_filtro_pede_para_refinar(self, client):
-        c, engine = client
-        with Session(engine) as s:
-            resultado = _tool_consultar_exames(s, None, None)
-        assert "erro" in resultado
-
-    def test_consultar_exames_por_data_e_doenca(self, client):
-        c, engine = client
-        with Session(engine) as s:
-            evento = EventoSanitario(nome="Brucelose B19")
-            s.add(evento)
-            s.commit()
-            s.refresh(evento)
-            s.add(ExameResultado(numero_matriz="500", evento_sanitario_id=evento.id, data_exame=date(2026, 7, 16), resultado="positivo"))
-            s.add(ExameResultado(numero_matriz="501", evento_sanitario_id=evento.id, data_exame=date(2026, 7, 10), resultado="negativo"))
-            s.commit()
-            por_data = _tool_consultar_exames(s, "2026-07-16", None)
-            por_doenca = _tool_consultar_exames(s, None, "brucelose")
-        assert por_data["total"] == 1
-        assert por_data["exames"][0] == {"numero_animal": "500", "evento": "Brucelose B19", "data_exame": "2026-07-16", "resultado": "positivo", "veterinario": None}
-        assert por_doenca["total"] == 2
-
-    def test_consultar_exames_data_invalida(self, client):
-        c, engine = client
-        with Session(engine) as s:
-            resultado = _tool_consultar_exames(s, "16/07/2026", None)
         assert "erro" in resultado
 
     def test_consultar_estoque(self, client):

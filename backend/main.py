@@ -72,7 +72,6 @@ from fazenda.api.routers import (
     painel_cowdata_farmacia,
     painel_cowdata_parametros,
     painel_cowdata_reguas,
-    rotina_lista_espera,
     painel_cowdata_sincronizacao,
     painel_cowdata_touros,
     painel_cowdata_usuarios,
@@ -107,6 +106,7 @@ from fazenda.api.routers import (
     venda_animal,
     zapsign,
 )
+from fazenda.api.routers import sanitario as sanitario_api
 from fazenda.api.routers.telegram import registrar_webhook_telegram
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 from fazenda.api.routers.financeiro import (
@@ -119,7 +119,7 @@ from fazenda.api.routers.reproducao import (
 from fazenda.api.routers.cadastro import (
     seed_cadastro_sanitario, seed_motivos_baixa, seed_motivos_venda, seed_pessoas, seed_pessoa_robo_milknews,
     seed_servicos, seed_semen_categorias,
-    seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
+    seed_estoque_semen_inicial, atualizar_estoque_semen_202607,
     seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico, seed_protocolos_sanitarios_curativos, seed_racas_grau_sangue,
     sindicar_conta_gerencial_estoque, seed_tipos_pessoa, seed_tipo_geral, seed_tipos_papel_administrativo,
     seed_inducao_lactacao_ativos1_d0,
@@ -140,9 +140,9 @@ from fazenda.rules.farmacia import bootstrap_farmacia
 from fazenda.rules.recria_doenca import backfill_doenca_catalogo
 from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
-from fazenda.rules import rotina_lista_espera as _rotina_lista_espera
 from fazenda.rules.backup import executar_backup_se_necessario
 from fazenda.rules.manual_fazenda import enviar_manual_semanal_todas_fazendas
+from fazenda.rules.sanitario.job import tick as tick_sanitario
 from fazenda.rules.supabase_storage import garantir_buckets
 from fazenda.api.routers.push import despachar_push_pendentes, despachar_resumo_da_noite
 
@@ -209,6 +209,25 @@ async def _loop_despacho_push() -> None:
         await asyncio.sleep(_INTERVALO_DESPACHO_PUSH_SEGUNDOS)
 
 
+# Sanitário preventivo v2 (fazenda/rules/sanitario/job.py): a cada 30 min
+# fecha os dias vencidos (23:59 do dia seguinte, fuso de Brasília) e roda a
+# diária de cada fazenda UMA vez por dia local (lock em sanitario_job_estado
+# — vários processos/réplicas não duplicam nada).
+_INTERVALO_SANITARIO_SEGUNDOS = 30 * 60
+
+
+async def _loop_sanitario() -> None:
+    while True:
+        try:
+            # `engine_manutencao`: a volta enumera TODAS as fazendas com caixa
+            # antes de recortar; cada passo filtra por fazenda_id em Python.
+            with Session(engine_manutencao) as session:
+                tick_sanitario(session)
+        except Exception:
+            pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
+        await asyncio.sleep(_INTERVALO_SANITARIO_SEGUNDOS)
+
+
 async def _loop_manual_fazenda_semanal() -> None:
     while True:
         try:
@@ -229,32 +248,6 @@ async def _loop_manual_fazenda_semanal() -> None:
         except Exception:
             pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
         await asyncio.sleep(_INTERVALO_VERIFICACAO_MANUAL_SEMANAL_SEGUNDOS)
-
-
-# A rotina da lista de espera roda no máximo 1x/dia por fazenda (o carimbo
-# `ultima_diaria_em` no banco decide, não este intervalo): checar a cada 30 min
-# só garante que uma fazenda que ligou a rotina, ou um deploy no meio do dia,
-# seja atendida sem depender de agendador externo.
-_INTERVALO_ROTINA_LISTA_ESPERA_SEGUNDOS = 30 * 60
-
-
-async def _loop_rotina_lista_espera() -> None:
-    while True:
-        try:
-            # `engine_manutencao`: enumera as fazendas com a rotina ligada
-            # antes de saber qual está processando; o recorte por fazenda é
-            # explícito em Python (fazenda_id em cada consulta) e o lock por
-            # fazenda (UPDATE atômico em rotina_lista_espera_estado) protege
-            # contra várias instâncias da API rodando este mesmo loop. O
-            # trabalho pesado vai para uma thread para não travar o event loop.
-            def _passada() -> None:
-                with Session(engine_manutencao) as session:
-                    _rotina_lista_espera.executar_todas_as_fazendas(session)
-
-            await asyncio.to_thread(_passada)
-        except Exception:
-            pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
-        await asyncio.sleep(_INTERVALO_ROTINA_LISTA_ESPERA_SEGUNDOS)
 
 
 @asynccontextmanager
@@ -313,9 +306,6 @@ async def lifespan(app: FastAPI):
         # permite vincular um usuário de sistema a essa pessoa, como qualquer outra.
         seed_pessoa_robo_milknews(session, fazenda_id=1)
         seed_cadastro_sanitario(session)
-        # Calendário sanitário padrão (vacinas/exames sazonais e por fase
-        # fisiológica) — idempotente, só cria/compatibiliza o que falta.
-        configurar_calendario_sanitario_padrao(session)
         seed_motivos_baixa(session, fazenda_id=1)
         seed_motivos_venda(session, fazenda_id=1)
         seed_servicos(session)
@@ -417,12 +407,12 @@ async def lifespan(app: FastAPI):
     tarefa_backup = asyncio.create_task(_loop_backup_automatico())
     tarefa_push = asyncio.create_task(_loop_despacho_push())
     tarefa_manual_fazenda = asyncio.create_task(_loop_manual_fazenda_semanal())
-    tarefa_rotina_lista_espera = asyncio.create_task(_loop_rotina_lista_espera())
+    tarefa_sanitario = asyncio.create_task(_loop_sanitario())
     yield
     tarefa_backup.cancel()
     tarefa_push.cancel()
     tarefa_manual_fazenda.cancel()
-    tarefa_rotina_lista_espera.cancel()
+    tarefa_sanitario.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await tarefa_backup
     with contextlib.suppress(asyncio.CancelledError):
@@ -430,7 +420,7 @@ async def lifespan(app: FastAPI):
     with contextlib.suppress(asyncio.CancelledError):
         await tarefa_manual_fazenda
     with contextlib.suppress(asyncio.CancelledError):
-        await tarefa_rotina_lista_espera
+        await tarefa_sanitario
 
 
 app = FastAPI(
@@ -899,6 +889,9 @@ app.include_router(painel_cowdata_sincronizacao.router)
 # Réguas de referência do lado do operador (diagnóstico de publicação, fila de
 # "Reportar erro", comprovante de aceite) — área "produto"; escrita só do dono.
 app.include_router(painel_cowdata_reguas.router)
+# Catálogo central do Sanitário Preventivo v2 (cockpit CowData) — mesma
+# guarda da Farmácia padrão (área "farmacia"; escrita com permissão de edição).
+app.include_router(sanitario_api.router_cowdata)
 
 # TRAVA DE TENANT (auditoria F-A-01/F-B-01/F-B-02/F-A-03): a requisição só
 # entra numa rota de fazenda se o token disser EM QUAL fazenda ela acontece.
@@ -934,8 +927,6 @@ app.include_router(agenda.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(agenda_v2.router, dependencies=_protegido + _contrato_ativo)
 # Rotina automática da lista de espera (status por fazenda e "executar agora") e
 # o resumo somente-leitura do Painel CowData (área "cockpit").
-app.include_router(rotina_lista_espera.router, dependencies=_protegido + _contrato_ativo)
-app.include_router(rotina_lista_espera.router_cowdata)
 # Protocolos customizados: lançar/listar ativos/cancelar exige só acesso
 # normal ao sistema (mesma regra da Agenda) — editar o MOLDE do protocolo
 # exige o módulo "parametros", via cadastro.router.
@@ -1039,6 +1030,9 @@ app.include_router(estoque.router, dependencies=_protegido + [Depends(exigir_mod
 app.include_router(farmacia.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("sanitario"))])
 app.include_router(sanidade.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("sanitario"))])
 app.include_router(relatorio_rastreabilidade_sanitaria.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("sanitario"))])
+# Sanitário Preventivo v2 (/sanitario): caixas, dias "Vacina"/"Exame",
+# registros, consulta, app de campo — ver fazenda/api/routers/sanitario/.
+app.include_router(sanitario_api.router, dependencies=_protegido + _contrato_ativo + [Depends(exigir_modulo_contratado("sanitario"))])
 app.include_router(recria.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("produtivo"))])
 # Cadastro de lotes vive em Configurações (permissão "parametros"), mas é
 # dado de Rebanho no contrato. Cadastro de Safra é módulo "agricultura".

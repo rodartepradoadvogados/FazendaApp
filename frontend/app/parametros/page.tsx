@@ -2,7 +2,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { SlidersHorizontal, AlertTriangle, Info, Pencil, Check, Milk, Plus, X, Wallet } from "lucide-react";
 import { API, authFetch, ehAdmin, mensagemErroApi, podeModulo } from "@/lib/api";
-import RotinaListaEsperaStatus from "@/components/RotinaListaEsperaStatus";
+import ParametrosSanitario from "@/components/sanitario/ParametrosSanitario";
 import CadastroMotivosVenda from "@/components/CadastroMotivosVenda";
 import ManualFazendaParametros from "@/components/ManualFazendaParametros";
 import AlertasIndicador from "@/components/AlertasIndicador";
@@ -58,9 +58,12 @@ function ParametrosGerais() {
           financeiros (mesma tabela/endpoint, só apresentação separada). */}
       <GruposParametrosCards filtro={(id) => id !== "financeiro" && id !== "folha_rh"} />
 
-      <div className="mt-4">
-        <RotinaListaEsperaStatus />
-      </div>
+      {/* Parâmetros › Sanitário (Sanitário Preventivo v2: vacinas e exames). */}
+      {podeModulo("sanidade") && (
+        <div className="mt-4">
+          <ParametrosSanitario />
+        </div>
+      )}
 
       <div className="mt-4">
         <ManualFazendaParametros podeEditar={podeEditar} />

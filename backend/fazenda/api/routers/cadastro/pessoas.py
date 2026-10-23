@@ -21,7 +21,6 @@ from fazenda.database import get_session
 from fazenda.models import (
     CATEGORIAS_PESSOA_ANEXO,
     Contrato,
-    CronogramaSanitario,
     DecimoTerceiro,
     Diaria,
     Empreitada,
@@ -573,9 +572,8 @@ def atualizar_pessoa(
 # Toda tabela com FK real para pessoa.id (ver grep de "pessoa_id" em
 # fazenda/models/) — bloqueia a exclusão de fato se qualquer uma tiver
 # registro vinculado, mesma lógica de excluir_item_estoque (estoque.py).
-# Usuario.pessoa_id e CronogramaSanitario.veterinario_pessoa_id também são
-# FK para pessoa.id, então entram na mesma varredura (o 2º é checado à
-# parte abaixo por ter nome de coluna diferente de "pessoa_id").
+# Usuario.pessoa_id também é FK para pessoa.id, então entra na mesma
+# varredura.
 #
 # Cada linha é (modelo, singular, plural, status_que_NÃO_bloqueiam).
 #
@@ -621,7 +619,7 @@ def excluir_pessoa(
 ) -> dict:
     """Exclui uma pessoa de fato — só permitido quando não há nenhum registro
     vinculado (login de usuário, folha/férias/13º/rescisão/vale, empreitada,
-    contrato, diária ou cronograma sanitário como veterinário agendado), 409
+    contrato ou diária), 409
     caso contrário, orientando a desativar em vez de excluir (mesmo padrão de
     excluir_item_estoque em estoque.py).
 
@@ -641,14 +639,6 @@ def excluir_pessoa(
         total = len(registros)
         if total:
             vinculos.append(f"{total} {singular if total == 1 else plural}")
-    cronogramas_vet = session.exec(
-        select(CronogramaSanitario).where(CronogramaSanitario.veterinario_pessoa_id == pessoa_id)
-    ).all()
-    if cronogramas_vet:
-        total = len(cronogramas_vet)
-        vinculos.append(
-            f"{total} {'cronograma sanitário' if total == 1 else 'cronogramas sanitários'} como veterinário agendado"
-        )
     if vinculos:
         raise HTTPException(
             status_code=409,

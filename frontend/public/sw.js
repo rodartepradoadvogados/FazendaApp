@@ -50,7 +50,10 @@ self.addEventListener("push", (event) => {
 // Clique na notificação: foca uma aba já aberta no destino (ou abre uma nova).
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const url = (event.notification.data && event.notification.data.url) || "/agenda";
+  let url = (event.notification.data && event.notification.data.url) || "/agenda";
+  // Push da véspera do sanitário ("Amanhã: Vacina · …"): abre o app de campo
+  // em Menu › Vacinação (mesma regra de lib/nativo.ts::rotaDoApp).
+  if (/^amanhã:\s*(vacina|exame)\b/i.test((event.notification.title || "").trim())) url = "/app/menu#vacinacao";
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {

@@ -2,10 +2,9 @@
 Motor de projeção de categoria de manejo para data futura — Fase 0, passo 2
 do redesenho do evento sanitário (risco R-2, ver docs/redesenho-evento-sanitario.md).
 
-Responde "quem vai estar na categoria-alvo na data X?" para regras do
-calendário sanitário por ÉPOCA (frequência), que hoje não sugerem ninguém
-automaticamente — só regra por evento de vida tem sugestão automática
-(`fazenda.rules.eventos_sanitarios._datas_gatilho`).
+Responde "quem vai estar na categoria-alvo na data X?". Era usado pelo
+calendário sanitário preventivo antigo (arquivado em 2026) e fica para o motor
+do módulo novo (fazenda/rules/sanitario/, categoria projetada).
 
 Não é motor novo de classificação: reaproveita a MESMA classificação por
 categoria já usada em Recria/Lote (`fazenda.rules.lote_criterios._contexto_animal`
@@ -37,11 +36,8 @@ from datetime import date
 from fazenda.api.routers.recria import classificar_categoria
 from fazenda.rules.lote_criterios import _contexto_animal
 
-# Mesmo separador usado no cadastro da Regra (categoria_alvo é texto livre com
-# várias categorias) — ver SEP_CATEGORIAS em
-# frontend/components/lancamentos/FormCalendarioSanitario.tsx e
-# frontend/components/mobile/lancar/FormSanidade.tsx. Mantido em um só lugar
-# aqui para o backend nunca divergir do que o frontend grava.
+# Separador de categorias quando `categoria_alvo` é texto livre com várias
+# categorias. Mantido em um só lugar aqui para o backend nunca divergir.
 SEP_CATEGORIAS = ", "
 
 

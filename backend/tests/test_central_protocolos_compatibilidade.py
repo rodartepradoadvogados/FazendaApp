@@ -119,19 +119,18 @@ class TestProtocoloSanitarioJaCadastrado:
         })
         assert r.status_code == 201, r.text
 
-    def test_cadastrar_preventivo_nao_afeta_os_curativos(self, client):
+    def test_finalidade_preventivo_saiu_e_nao_afeta_os_curativos(self, client):
+        """D3 (2026): o protocolo de etapas é só curativo — vacinas e exames
+        moram no módulo novo. Pedir "preventivo" é recusado; o legado segue."""
         c, engine = client
         pid_legado = _protocolo_sanitario_legado(engine)
         r = c.post("/cadastro/protocolos-sanitarios", json={
             "nome": "Vacinação em 2 doses", "finalidade": "preventivo", "dia_inicial": 0,
             "etapas": [
                 {"dia": 0, "produto": "Vacina X", "dosagem": 5.0, "unidade": "ml", "via": "Subcutânea"},
-                {"dia": 21, "produto": "Vacina X", "dosagem": 5.0, "unidade": "ml", "via": "Subcutânea"},
             ],
         })
-        assert r.status_code == 200, r.text
-        assert r.json()["finalidade"] == "preventivo"
-        # O legado continua curativo — não foi arrastado junto.
+        assert r.status_code == 400, r.text
         legado = next(x for x in c.get("/cadastro/protocolos-sanitarios").json() if x["id"] == pid_legado)
         assert legado["finalidade"] == "curativo"
 

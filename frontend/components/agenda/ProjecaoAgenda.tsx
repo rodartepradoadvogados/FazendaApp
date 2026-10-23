@@ -12,7 +12,7 @@ export type ProjecaoDados = {
 export const HORIZONTES_PROJECAO = [7, 30, 60, 90] as const;
 
 const ROTULO_GRUPO: Record<string, string> = {
-  repasse: "Cio de repasse", iatf: "IATF", bst: "BST", vacinas: "Vacinas", exames: "Exames",
+  repasse: "Cio de repasse", iatf: "IATF", bst: "BST",
   pendencias: "Contas e gestão", estoque: "Estoque", reproducao: "Reprodução", outros: "Outros",
 };
 
@@ -33,9 +33,9 @@ export function SeletorHorizonte({ valor, onChange }: { valor: number; onChange:
 }
 
 /**
- * Carga futura por semana (Repasse, BST, IATF, Vacinas, Exames, Contas) e
- * "Programação projetada" (tabela). Só números: a projeção nunca lista brinco
- * nem animal de lista de espera.
+ * Carga futura por semana (Repasse, BST, IATF, Contas) e
+ * "Programação projetada" (tabela). Só números: a projeção nunca lista brinco.
+ * Vacinas e exames ficam no cartão próprio do sanitário (CartaoVacinasPrevistas).
  */
 export function ProjecaoAgenda({
   dados, carregando, erro, horizonte, onTentar,
@@ -48,8 +48,6 @@ export function ProjecaoAgenda({
     if (c.repasse?.usar) l.push({ chave: "repasse", rotulo: "Cio de repasse", pesos: c.repasse.por_semana, unidade: "checagens" });
     if (c.bst) l.push({ chave: "bst", rotulo: "BST", pesos: c.bst.por_semana, unidade: "vacas" });
     if (c.iatf) l.push({ chave: "iatf", rotulo: "IATF", pesos: c.iatf.por_semana, unidade: "etapas" });
-    if (c.vacinas) l.push({ chave: "vacinas", rotulo: "Vacinas", pesos: c.vacinas.por_semana, unidade: "aplicações" });
-    if (c.exames) l.push({ chave: "exames", rotulo: "Exames", pesos: c.exames.por_semana, unidade: "exames" });
     if (c.pendencias) l.push({ chave: "contas", rotulo: "Contas a pagar", pesos: c.pendencias.por_semana, unidade: "contas" });
     return l;
   }, [dados]);

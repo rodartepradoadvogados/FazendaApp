@@ -7,7 +7,6 @@ projecao devolve so numeros por semana (nenhum brinco).
 """
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 from datetime import date, timedelta
@@ -21,8 +20,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import (
-    AgendaManual, Animal, CalendarioSanitario, ContratoFazenda, ContratoFazendaModulo, CronogramaSanitario,
-    CronogramaSanitarioAnimal, Estoque, EventoSanitario, Fazenda, ParametroFazenda, Pedido, RepasseConfig, Servico,
+    AgendaManual, Animal, ContratoFazenda, ContratoFazendaModulo, Estoque, Fazenda, ParametroFazenda, Pedido, RepasseConfig, Servico,
 )
 from fazenda.models.planos import MODULOS_COMERCIAIS
 from fazenda.rules.parametros import fazenda_atual
@@ -94,27 +92,6 @@ def _atrasada(s: Session, numero_pedido: str, dias_atras: int, fazenda_id: int =
                  data_prevista=HOJE - timedelta(days=dias_atras), status="aberto", fazenda_id=fazenda_id))
 
 
-def _lista_espera(s: Session, brincos: list[str]) -> None:
-    ev = EventoSanitario(nome="Vacina Aftosa", tipo_agendamento="epoca", fazenda_id=1)
-    s.add(ev)
-    s.commit()
-    s.refresh(ev)
-    cal = CalendarioSanitario(
-        evento_sanitario_id=ev.id, categoria_alvo="Novilha", produto="Aftosa", frequencia_valor=6,
-        frequencia_unidade="meses", data_evento=HOJE + timedelta(days=5), usa_cronograma=True, fazenda_id=1,
-    )
-    s.add(cal)
-    s.commit()
-    s.refresh(cal)
-    cron = CronogramaSanitario(calendario_sanitario_id=cal.id, data_evento=HOJE + timedelta(days=5), status="aberto", fazenda_id=1)
-    s.add(cron)
-    s.commit()
-    s.refresh(cron)
-    for b in brincos:
-        s.add(CronogramaSanitarioAnimal(cronograma_id=cron.id, numero_matriz=b, status="sugerido", data_sugestao=HOJE, fazenda_id=1))
-    s.commit()
-
-
 def _sem_escrita(engine):
     """Devolve a lista onde cada INSERT/UPDATE/DELETE executado fica registrado."""
     escritas: list[str] = []
@@ -151,7 +128,7 @@ class TestDia:
         assert corpo["resumo"]["hoje_total"] >= 1
         assert corpo["resumo"]["proximos_7d"] >= 1
         # sem os blocos pesados/de painel
-        for chave in ("candidatas_iatf", "bst_elegiveis", "lista_espera_sanitaria", "estoque_negativo"):
+        for chave in ("candidatas_iatf", "bst_elegiveis", "estoque_negativo"):
             assert chave not in corpo
 
     def test_ate_amplia_a_janela_e_valida(self, ctx):
@@ -163,15 +140,6 @@ class TestDia:
         assert "Tarefa longe" in {e["descricao"] for e in r.json()["eventos"]}
         ruim = c.get("/agenda/dia", params={"data": HOJE.isoformat(), "ate": (HOJE - timedelta(days=1)).isoformat()})
         assert ruim.status_code == 422
-
-    def test_lista_de_espera_nunca_vira_tarefa(self, ctx):
-        c, engine = ctx
-        with Session(engine) as s:
-            _lista_espera(s, ["7771", "7772"])
-        r = c.get("/agenda/dia", params={"data": HOJE.isoformat(), "ate": (HOJE + timedelta(days=30)).isoformat()})
-        assert r.status_code == 200
-        bruto = json.dumps(r.json())
-        assert "7771" not in bruto and "7772" not in bruto
 
     def test_isolamento_por_fazenda(self, ctx):
         c, engine = ctx
@@ -209,22 +177,21 @@ class TestDia:
 
 # ───────────────────────────── /agenda/painel ───────────────────────────────
 class TestPainel:
-    def test_estrutura_e_atalho_da_lista_de_espera(self, ctx):
+    def test_estrutura(self, ctx):
         c, engine = ctx
         with Session(engine) as s:
-            _lista_espera(s, ["8801", "8802", "8803"])
             _atrasada(s, "PED-2", 4)
             s.commit()
         r = c.get("/agenda/painel", params={"data": HOJE.isoformat()})
         assert r.status_code == 200, r.text
         p = r.json()
         for chave in ("candidatas_iatf", "bst_elegiveis", "bst_excluidos", "bst_nunca_aplicados", "estoque_negativo",
-                      "estoque_abaixo_minimo", "comunicados", "pendencias", "lista_espera_total", "repasse"):
+                      "estoque_abaixo_minimo", "comunicados", "pendencias", "repasse"):
             assert chave in p, chave
-        assert p["lista_espera_total"] == 3
+        # A lista de espera do preventivo antigo saiu (2026).
+        assert "lista_espera_total" not in p and "rotina_lista_espera" not in p
         assert "eventos" not in p                      # tarefas sao do Dia a dia
         assert p["pendencias"]["n"] == 1 and p["pendencias"]["mais_antiga_dias"] == 4
-        assert "8801" not in json.dumps(p)             # so a contagem, nunca o brinco (R1)
 
     def test_estoque_abaixo_do_minimo(self, ctx):
         c, engine = ctx
@@ -238,12 +205,13 @@ class TestPainel:
     def test_nao_escreve_e_isola(self, ctx):
         c, engine = ctx
         with Session(engine) as s:
-            _lista_espera(s, ["8801"])
+            s.add(Estoque(nome="Sincroforte", quantidade=1, estoque_minimo=3, unidade="frasco", fazenda_id=1))
+            s.commit()
         escritas = _sem_escrita(engine)
         assert c.get("/agenda/painel", params={"data": HOJE.isoformat()}).status_code == 200
         assert escritas == [], escritas
         c.estado["fazenda"] = 2
-        assert c.get("/agenda/painel", params={"data": HOJE.isoformat()}).json()["lista_espera_total"] == 0
+        assert c.get("/agenda/painel", params={"data": HOJE.isoformat()}).json()["estoque_abaixo_minimo"] == []
 
 
 # ───────────────────────────── /agenda/projecao ─────────────────────────────
@@ -335,37 +303,6 @@ class TestProjecao:
         cards = c.get("/agenda/projecao", params={"dias": 30, "data": HOJE.isoformat()}).json()["cards"]
         assert cards["repasse"]["produto"]["falta"] == 2
         assert cards["estoque"]["rupturas"][0]["item"] == "Adesivo detector"
-
-    def test_vacinas_agendadas_contam_e_lista_de_espera_so_numero(self, ctx):
-        c, engine = ctx
-        with Session(engine) as s:
-            _lista_espera(s, ["9901", "9902"])
-            ev = EventoSanitario(nome="Vermifugacao", tipo_agendamento="epoca", fazenda_id=1, categoria_preventiva="vacina")
-            s.add(ev)
-            s.commit()
-            s.refresh(ev)
-            cal = CalendarioSanitario(evento_sanitario_id=ev.id, categoria_alvo="Novilha", produto="Ivermectina",
-                                      frequencia_valor=6, frequencia_unidade="meses", data_evento=HOJE + timedelta(days=3),
-                                      usa_cronograma=True, fazenda_id=1)
-            s.add(cal)
-            s.commit()
-            s.refresh(cal)
-            cron = CronogramaSanitario(calendario_sanitario_id=cal.id, data_evento=HOJE + timedelta(days=3), status="agendado",
-                                       modo_execucao="propria", fazenda_id=1, hora="15:30")
-            s.add(cron)
-            s.commit()
-            s.refresh(cron)
-            for b in ("5001", "5002", "5003"):
-                s.add(CronogramaSanitarioAnimal(cronograma_id=cron.id, numero_matriz=b, status="incluido", data_sugestao=HOJE, fazenda_id=1))
-            s.commit()
-        p = c.get("/agenda/projecao", params={"dias": 30, "data": HOJE.isoformat()}).json()
-        v = p["cards"]["vacinas"]
-        assert v["agendadas"] == 1 and v["n_animais"] == 3 and sum(v["por_semana"]) == 1
-        assert v["proximas"][0]["nome"] == "Vermifugacao"
-        assert p["cards"]["lista_espera"]["n"] == 2
-        bruto = json.dumps(p)
-        for brinco in ("9901", "9902", "5001", "5002", "5003"):
-            assert brinco not in bruto
 
     def test_nao_escreve_e_isola_por_fazenda(self, ctx):
         c, engine = ctx

@@ -83,7 +83,7 @@ export const SECOES: { chave: string; titulo: string; campos: Campo[] }[] = [
   { chave: "protocolos_customizados", titulo: "Protocolo personalizado", campos: [["data_prevista", "Prevista", true], ["nome_protocolo", "Protocolo"], ["descricao", "Etapa"], ["realizada", "Feito"]] },
   { chave: "secagens", titulo: "Secagens", campos: [["data_secagem", "Data", true], ["motivo", "Motivo"]] },
   { chave: "eventos_agenda", titulo: "Agenda — eventos", campos: [["data_evento", "Data", true], ["descricao", "Descrição"], ["categoria", "Categoria"]] },
-  { chave: "exames_resultados", titulo: "Rastreabilidade — Exames", campos: [["data_exame", "Data", true], ["evento_sanitario_nome", "Exame"], ["resultado", "Resultado"]] },
+  { chave: "exames_resultados", titulo: "Rastreabilidade — Exames", campos: [["data", "Data", true], ["caixa", "Exame"], ["resultado", "Resultado"]] },
   { chave: "ocorrencias_clinicas", titulo: "Rastreabilidade — Doenças", campos: [["data_ocorrencia", "Data", true], ["doenca", "Doença"], ["observacao", "Observação"]] },
 ];
 

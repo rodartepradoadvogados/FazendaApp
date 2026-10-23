@@ -19,12 +19,11 @@ const ICONES: Record<string, Icone> = {
   diagnostico: Stethoscope, servico: Heart, parto: Baby, controle: Milk, animal: PawPrint, movimento_lote: ArrowLeftRight,
   secagem: Droplets, pesagem_corporal: Scale, evento_manual: CalendarClock,
   sanidade: Syringe, protocolo_sanitario_lancamento: ClipboardCheck, protocolo_iatf_lancamento: FlaskConical,
-  calendario_sanitario: CalendarCheck, exame_resultado: Pill,
   financeiro: Receipt, compra_animal: ShoppingCart, compra_semen: Dna, venda_animal: HandCoins, entrega_leite: Truck,
   estoque: Package, movimento_estoque: Boxes,
   diaria: CalendarCheck, diaria_pagamento: Banknote, empreitada: HardHat, contrato: FileText,
   lote: Layers, fornecedor: Truck, pessoa: Users, doenca: AlertTriangle, principio_ativo: Pill, motivo_movimentacao: Tags,
-  evento_sanitario: ClipboardList, protocolo_sanitario: ClipboardList, safra: Wheat, todos_lancamentos: Layers,
+  protocolo_sanitario: ClipboardList, safra: Wheat, todos_lancamentos: Layers,
 };
 /** Ícone do tipo como elemento (sem criar componente durante o render). */
 export function IconeTipo({ id, size = 17 }: { id: string; size?: number }) {

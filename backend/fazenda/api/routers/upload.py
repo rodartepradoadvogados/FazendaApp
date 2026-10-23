@@ -5,7 +5,7 @@ Endpoint: POST /upload/{tipo}
 ISOLAMENTO POR FAZENDA (Fase 0): quase todo tipo de upload aqui é
 "apaga tudo e reimporta" — o Ideagri sempre reenvia o histórico completo.
 Sem filtro de fazenda, subir o CSV de UMA fazenda apagava os dados de TODAS
-as outras (Servico, Sanidade, Estoque, Dieta, ControleLeiteiro,
+as outras (Servico, Estoque, Dieta, ControleLeiteiro,
 ContaGerencial, CurvaABC, PlanoContaGerencial). Agora todo delete é
 escopado pela fazenda atual e toda linha inserida é carimbada com ela — ver
 `_escopo` e `_carimbar` abaixo.
@@ -15,6 +15,10 @@ Patrimônio é a ÚNICA exceção ao "apaga tudo e reimporta": vira upsert real
 (depreciavel corrigido à mão, valor de mercado, plano de manutenção) e pode
 estar referenciado por `ContaGerencial.patrimonio_id` — apagar e reinserir
 destruía os dois.
+
+SANIDADE.csv (Ideagri) NÃO é mais aceito aqui (2026): o "apaga tudo e
+reimporta" apagava a tabela `sanidade` inteira da fazenda — inclusive o que
+foi lançado no CowData. Sanidade agora só nasce no próprio sistema.
 """
 from __future__ import annotations
 
@@ -32,7 +36,6 @@ from fazenda.models import (
     Estoque,
     Patrimonio,
     PlanoContaGerencial,
-    Sanidade,
     Servico,
     Parto,
 )
@@ -45,7 +48,6 @@ from fazenda.parsers.geral import parse_geral
 from fazenda.parsers.patrimonio import parse_patrimonio
 from fazenda.parsers.plano_conta_gerencial import parse_plano_conta_gerencial
 from fazenda.parsers.reprodutivo import parse_reprodutivo
-from fazenda.parsers.sanidade import parse_sanidade
 from fazenda.rules import lactacao as regras_lactacao
 from fazenda.rules.plano_padrao import garantir_contas_do_sistema
 
@@ -53,7 +55,7 @@ router = APIRouter(prefix="/upload", tags=["upload"])
 
 TIPOS_VALIDOS = (
     "geral", "reprodutivo", "conta_gerencial", "estoque", "dieta", "controle_leiteiro",
-    "sanidade", "curva_abc", "plano_conta_gerencial", "patrimonio",
+    "curva_abc", "plano_conta_gerencial", "patrimonio",
 )
 
 
@@ -92,7 +94,7 @@ async def upload_csv(
     # (ou sessão "manter conectado" sem "fid") caía direto no ramo
     # `fazenda_id is None` de `_carimbar`, e o upload inteiro do Ideagri
     # (que reimporta o histórico completo de Animal/Servico/Parto/
-    # ContaGerencial/Estoque/Dieta/Sanidade/ControleLeiteiro/CurvaABC/
+    # ContaGerencial/Estoque/Dieta/ControleLeiteiro/CurvaABC/
     # PlanoContaGerencial/Patrimonio) nascia sem fazenda_id — exatamente o
     # padrão de "chamador fora do ciclo HTTP normal" citado no PR
     # claude/fazenda-id-raiz (aqui o ciclo HTTP existe, mas o token é que
@@ -129,8 +131,6 @@ async def upload_csv(
             return await _upsert_dieta(content, session, fazenda_id)
         elif tipo == "controle_leiteiro":
             return await _upsert_controle_leiteiro(content, session, fazenda_id)
-        elif tipo == "sanidade":
-            return await _upsert_sanidade(content, session, fazenda_id)
         elif tipo == "curva_abc":
             return await _upsert_curva_abc(content, session, fazenda_id)
         elif tipo == "plano_conta_gerencial":
@@ -401,22 +401,6 @@ async def _upsert_dieta(content: bytes, session: Session, fazenda_id: int | None
     session.commit()
     lotes = len({i.lote for i in itens if i.lote is not None})
     return {"tipo": "dieta", "registros": len(itens), "lotes": lotes}
-
-
-async def _upsert_sanidade(content: bytes, session: Session, fazenda_id: int | None) -> dict:
-    registros = parse_sanidade(content)
-
-    # Re-importação completa (histórico é sempre reenviado atualizado do Ideagri).
-    for s in session.exec(_escopo(select(Sanidade), Sanidade, fazenda_id)).all():
-        session.delete(s)
-    session.commit()
-
-    for reg in _carimbar(registros, fazenda_id):
-        session.add(reg)
-
-    session.commit()
-    animais = len({r.numero_matriz for r in registros})
-    return {"tipo": "sanidade", "registros": len(registros), "animais": animais}
 
 
 async def _upsert_controle_leiteiro(content: bytes, session: Session, fazenda_id: int | None) -> dict:

@@ -37,6 +37,11 @@ class ControleLeiteiro(SQLModel, table=True):
     ordenha2_kg: Optional[float] = None
     ordenha3_kg: Optional[float] = None
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # Carência sanitária (Sanitário Preventivo v2, D4): "descarte" = o leite
+    # desta pesagem foi separado (fora do tanque) porque a vaca estava em
+    # carência com o modo "descarte"; None = tanque (todo o histórico antigo).
+    destino_leite: Optional[str] = None
+    sanitario_registro_id: Optional[int] = None  # registro sanitário que causou o descarte (referência fraca)
 
 
 # ---------------------------------------------------------------------------

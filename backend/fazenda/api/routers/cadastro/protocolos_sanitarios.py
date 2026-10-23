@@ -46,7 +46,10 @@ CRITERIOS_MEDICAMENTO = ["medicamento", "principio_ativo", "classificacao", "doe
 CLASSIFICACOES_MEDICAMENTO = ["Antimicrobiano", "Anti-inflamatório", "Antibiótico", "Antiparasitário", "Vacina", "Hormônio", "Outro"]
 # Finalidade do protocolo sanitário de etapas. None (protocolo cadastrado
 # antes desta distinção) é lido como "curativo" — ver FINALIDADE_PADRAO.
-FINALIDADES_PROTOCOLO_SANITARIO = ["curativo", "preventivo"]
+# "preventivo" saiu em 2026: vacinas e exames moram no módulo sanitario_*; os
+# protocolos que tinham essa finalidade viraram "curativo" na migração
+# s0a1r2q3v4o5 (nada foi apagado).
+FINALIDADES_PROTOCOLO_SANITARIO = ["curativo"]
 FINALIDADE_PADRAO = "curativo"
 
 
@@ -72,7 +75,7 @@ class ProtocoloSanitarioIn(BaseModel):
     doenca_id: int | None = None
     eh_mastite: bool = False
     dia_inicial: int = 0
-    finalidade: str | None = None  # curativo | preventivo — None vira "curativo"
+    finalidade: str | None = None  # só "curativo" — None vira "curativo"
     ativo: bool = True
     etapas: list[ProtocoloEtapaIn]
 

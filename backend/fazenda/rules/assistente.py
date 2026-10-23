@@ -23,7 +23,7 @@ from sqlmodel import Session, select
 
 from fazenda.auth import tem_modulo
 from fazenda.models import (
-    Animal, AssistenteEnsinamento, ContaGerencial, ControleLeiteiro, Estoque, EventoSanitario, ExameResultado,
+    Animal, AssistenteEnsinamento, ContaGerencial, ControleLeiteiro, Estoque,
     Fornecedor, Lote, Parto, PesagemCorporal, Secagem, Servico, Usuario,
 )
 from fazenda.rules import assistente_consultas as _consultas
@@ -108,17 +108,6 @@ _TOOLS_DISPONIVEIS = [
         },
     },
     {
-        "modulo": "sanidade",
-        "spec": {
-            "name": "consultar_calendario_sanitario",
-            "description": (
-                "Retorna as próximas regras do calendário sanitário preventivo (vacinas/exames) que vencem "
-                "até 30 dias a partir de hoje — nome do evento, categoria de animais alvo e data prevista."
-            ),
-            "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
-        },
-    },
-    {
         "modulo": "reproducao",
         "spec": {
             "name": "consultar_analise_reprodutiva",
@@ -128,27 +117,6 @@ _TOOLS_DISPONIVEIS = [
                 "reprodutivo ao longo do tempo."
             ),
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
-        },
-    },
-    {
-        "modulo": "sanidade",
-        "spec": {
-            "name": "consultar_exames",
-            "description": (
-                "Retorna resultados de exames sanitários já realizados (ex.: brucelose, tuberculose, "
-                "qualquer exame preventivo cadastrado) — número do animal, data, resultado (positivo/negativo) "
-                "e veterinário. Informe pelo menos a data (AAAA-MM-DD) ou o nome do exame/doença; sem nenhum "
-                "filtro, não busca (o volume seria grande demais). Diferente de consultar_calendario_sanitario, "
-                "que só mostra o que ainda vai vencer — esta ferramenta é para exames já feitos, no passado."
-            ),
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "data": {"type": "string", "description": "Data do exame no formato AAAA-MM-DD. Opcional."},
-                    "evento": {"type": "string", "description": "Nome (ou parte do nome) do exame/doença, ex.: 'Brucelose'. Opcional."},
-                },
-                "additionalProperties": False,
-            },
         },
     },
     {
@@ -267,29 +235,6 @@ def _tool_buscar_animal(session: Session, numero: str, fazenda_id: int | None = 
     return animal.model_dump()
 
 
-def _tool_consultar_exames(session: Session, data: str | None, evento: str | None, fazenda_id: int | None = None) -> dict:
-    if not data and not evento:
-        return {"erro": "Informe uma data (AAAA-MM-DD) e/ou o nome do exame/doença — sem nenhum filtro o resultado seria grande demais."}
-    query = select(ExameResultado, EventoSanitario).join(EventoSanitario, ExameResultado.evento_sanitario_id == EventoSanitario.id)
-    if fazenda_id is not None:
-        query = query.where(ExameResultado.fazenda_id == fazenda_id)
-    if data:
-        try:
-            data_alvo = date.fromisoformat(data)
-        except ValueError:
-            return {"erro": f"Data inválida: '{data}'. Use o formato AAAA-MM-DD."}
-        query = query.where(ExameResultado.data_exame == data_alvo)
-    if evento:
-        query = query.where(EventoSanitario.nome.ilike(f"%{evento}%"))
-    linhas = session.exec(query).all()
-    exames = [
-        {"numero_animal": ex.numero_matriz, "evento": ev.nome, "data_exame": ex.data_exame.isoformat(),
-         "resultado": ex.resultado, "veterinario": ex.veterinario}
-        for ex, ev in linhas[:200]
-    ]
-    return {"total": len(exames), "exames": exames}
-
-
 def _codigo_grupo(grupo: str | None) -> str | None:
     """Extrai o código de 2 dígitos de Animal.grupo_primario (ex.: "04 - SECAS" -> "04") —
     mesma lógica de frontend/components/lancamentos/comumForms.tsx:codigoGrupo()."""
@@ -388,20 +333,6 @@ def _tool_consultar_estoque(session: Session, fazenda_id: int | None = None) -> 
     return {"total_itens": len(itens), "abaixo_do_minimo": abaixo_minimo, "qtd_abaixo_do_minimo": len(abaixo_minimo)}
 
 
-def _tool_consultar_calendario_sanitario(session: Session, fazenda_id: int | None = None) -> dict:
-    from datetime import timedelta
-    from fazenda.api.routers.sanidade import listar_calendario
-    hoje = date.today()
-    limite = hoje + timedelta(days=30)
-    itens = listar_calendario(session=session, fazenda_id=fazenda_id)
-    proximos = [
-        {"evento": i.get("evento_sanitario_nome"), "categoria": i.get("categoria_preventiva"), "data_prevista": i.get("proxima_ocorrencia")}
-        for i in itens
-        if i.get("proxima_ocorrencia") and i["proxima_ocorrencia"] <= limite.isoformat()
-    ]
-    return {"ate": limite.isoformat(), "proximos": proximos, "total": len(proximos)}
-
-
 def _tool_consultar_analise_reprodutiva(session: Session, fazenda_id: int | None = None) -> dict:
     from fazenda.models import ControleLeiteiro, Secagem
     from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
@@ -438,11 +369,9 @@ _EXECUTORES = {
     "consultar_agenda_hoje": lambda session, usuario, entrada, fazenda_id: _tool_consultar_agenda_hoje(session, usuario, fazenda_id),
     "consultar_financeiro": lambda session, usuario, entrada, fazenda_id: _tool_consultar_financeiro(session, fazenda_id),
     "consultar_estoque": lambda session, usuario, entrada, fazenda_id: _tool_consultar_estoque(session, fazenda_id),
-    "consultar_calendario_sanitario": lambda session, usuario, entrada, fazenda_id: _tool_consultar_calendario_sanitario(session, fazenda_id),
     "consultar_analise_reprodutiva": lambda session, usuario, entrada, fazenda_id: _tool_consultar_analise_reprodutiva(session, fazenda_id),
     "listar_lotes": lambda session, usuario, entrada, fazenda_id: _tool_listar_lotes(session, fazenda_id),
     "consultar_lote": lambda session, usuario, entrada, fazenda_id: _tool_consultar_lote(session, entrada.get("codigo", ""), fazenda_id),
-    "consultar_exames": lambda session, usuario, entrada, fazenda_id: _tool_consultar_exames(session, entrada.get("data"), entrada.get("evento"), fazenda_id),
 }
 
 # Ferramentas com PARÂMETROS (período, filtros) — ver rules/assistente_consultas.py.

@@ -3,8 +3,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { Plus } from "lucide-react";
 import {
-  fetchAgenda, fetchChecklistTemplate, fetchLotes, fetchMastiteContexto, fetchMastiteOpcoes, fetchMedicamentos, fetchProtocolosSanitarios,
-  lancarProtocoloSanitario, previewCriteriosLote, type ChecklistTemplateItemDTO,
+  fetchAgenda, fetchLotes, fetchMastiteContexto, fetchMastiteOpcoes, fetchMedicamentos, fetchProtocolosSanitarios,
+  lancarProtocoloSanitario, previewCriteriosLote,
 } from "@/lib/api";
 import { usePessoasAtivas } from "@/lib/usePessoasAtivas";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -17,6 +17,15 @@ import { Campo, inputStyle, nota, type EstoqueItem, codigoGrupo } from "@/compon
 import { CATEGORIAS_ANIMAIS, SelectAnimal, addDias } from "@/components/lancamentos/_shared";
 const PainelLancarBst = dynamic(() => import("@/components/PainelLancarBst").then((m) => m.PainelLancarBst), { ssr: false });
 const CadastroProtocolosSanitarios = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosSanitarios), { ssr: false });
+
+// Checklist do lançamento curativo — os 3 itens do antigo template "curativo"
+// do backend (GET /cadastro/checklist-template, removido com o preventivo
+// antigo). Só aviso na tela: nada dele é gravado.
+const CHECKLIST_CURATIVO: { chave: string; nome: string }[] = [
+  { chave: "estoque", nome: "Estoque suficiente?" },
+  { chave: "carencia", nome: "Carência de leite e carne conferida" },
+  { chave: "lotes", nome: "Lotes de manejo atuais" },
+];
 
 type ProtocoloEtapaLocal = { id?: number; dia: number; criterio_tipo?: string; produto: string; dosagem: number; unidade: string; via?: string | null };
 type ProtocoloLocal = { id: number; nome: string; eh_mastite: boolean; ativo: boolean; etapas: ProtocoloEtapaLocal[] };
@@ -178,15 +187,13 @@ export function FormProtocoloSanitario({ animais, estoque, onSalvo }: { animais:
     }));
   }, [protocolo, dataInicio]);
 
-  // Checklist do Curativo — itens do template "curativo" (backend:
-  // rules.checklist_sanitario.TEMPLATE_PADRAO_CURATIVO). O item "carencia"
-  // mostra o prazo de leite/carne vindo do CATÁLOGO do medicamento
+  // Checklist do Curativo (CHECKLIST_CURATIVO, no topo do arquivo). O item
+  // "carencia" mostra o prazo de leite/carne vindo do CATÁLOGO do medicamento
   // (/estoque/medicamentos → `carencia`), nunca digitado. É só aviso: não
   // bloqueia o lançamento e nada dele é gravado.
-  const [checklistTpl, setChecklistTpl] = useState<ChecklistTemplateItemDTO[]>([]);
+  const checklistTpl = CHECKLIST_CURATIVO;
   const [carenciaPorProduto, setCarenciaPorProduto] = useState<Record<string, CarenciaCatalogo>>({});
   useEffect(() => {
-    fetchChecklistTemplate("curativo").then(setChecklistTpl).catch(() => setChecklistTpl([]));
     fetchMedicamentos({ incluir_sem_estoque: true })
       .then((m: any[]) => setCarenciaPorProduto(Object.fromEntries(m.filter((x) => x.carencia).map((x) => [x.nome, x.carencia as CarenciaCatalogo]))))
       .catch(() => setCarenciaPorProduto({}));

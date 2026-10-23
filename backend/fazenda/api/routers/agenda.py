@@ -17,9 +17,9 @@ from fazenda.auth import (
 )
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, CalendarioSanitario, ChecklistItem, ColostragemBezerra, ConsumoAlimento, EventoSanitario,
+    AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, ColostragemBezerra, ConsumoAlimento,
     ConsumoSobra, ContaGerencial,
-    CronogramaSanitario, CronogramaSanitarioAnimal, DietaLancamento, Diaria,
+    DietaLancamento, Diaria,
     DiariaAuditoria, DiariaDia, Empreitada, EmpreitadaEtapa, Estoque, EstoqueSemen, EventoRealizado, Lactacao, Lote, MedicamentoComercial, Parto,
     PesagemCorporal, Patrimonio, Pedido, PedidoAnexo, Pessoa, PessoaAnexo, PortalMensagem, PrincipioAtivo, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
@@ -41,11 +41,6 @@ from fazenda.rules import caixa_funcionario as caixa_funcionario_rules
 from fazenda.rules import tratos as regras_tratos
 from fazenda.rules import caixa_time as caixa_time_rules
 from fazenda.rules.agenda_engine import DIAS_CONTAS_VENCIDAS_NA_AGENDA, AgendaEngine, AgendaItem
-from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitarios_agenda
-from fazenda.rules import cronograma_sanitario as _cronograma_sanitario_rules
-from fazenda.rules.cronograma_sanitario import PREFIXO_CRONOGRAMA as _PREFIXO_CRONOGRAMA, CronogramaError
-from fazenda.rules import checklist_sanitario as _checklist_sanitario_rules
-from fazenda.rules.checklist_sanitario import ChecklistError
 from fazenda.rules.cura_protocolo import protocolo_terminado
 from fazenda.rules import lactacao as regras_lactacao
 from fazenda.rules.lactacao import inducao_concluida
@@ -145,11 +140,8 @@ ROTULOS_EVENTO_REALIZADO: dict[str, str] = {
     "protocolo_sanitario_": "Protocolo sanitário — aplicação",
     "semen_minimo_": "Estoque de sêmen abaixo do mínimo",
     "sugestao_movimentacao_": "Sugestão de movimentação de lote",
-    "vacina_pre_parto_": "Vacina pré-parto",
-    "calendario_sanitario_": "Evento sanitário — calendário",
     "aplic_agendada_": "Aplicação agendada",
     "dieta_analise_": "Análise de dieta",
-    "evento_sanitario_": "Evento sanitário",
     "bst_aplicacao_": "Aplicação de BST",
 }
 
@@ -469,12 +461,10 @@ def materializar_agenda(
     fazenda_id: int | None = Depends(get_fazenda_id_escrita),
 ) -> dict:
     """Parte que ESCREVE da Agenda (idempotente): gera recorrências e
-    auditorias de diária e materializa cronogramas/checklist/lista de espera do
-    preventivo. Existe para que `GET /agenda` seja somente leitura."""
+    auditorias de diária. Existe para que `GET /agenda` seja somente leitura."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     _gerar_agenda_recorrente(session)
     _gerar_auditorias_diarias(session)
-    _cronograma_sanitario_rules.materializar(session, data, fazenda_id)
     return {"ok": True}
 
 
@@ -494,8 +484,8 @@ def calcular_agenda(
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     # SOMENTE LEITURA: nenhuma escrita neste endpoint. O que antes era
-    # gerado aqui (recorrências, auditorias de diária, cronogramas/checklist/
-    # lista de espera do preventivo) agora é feito por POST /agenda/materializar,
+    # gerado aqui (recorrências, auditorias de diária) agora é feito por
+    # POST /agenda/materializar,
     # que a tela chama antes de ler.
     # Toda a base da agenda é escopada pela fazenda atual — sem isso a tela
     # mais usada do sistema misturava animal, serviço, parto, estoque e
@@ -1076,19 +1066,6 @@ def calcular_agenda(
             "medicamentos": aps[0].descricao, "protocolo": lancamento.nome_protocolo,
         })
 
-    # Eventos sanitários agendados (por época ou por evento de vida) — cada um
-    # já traz o medicamento padrão para pré-preencher a Aplicação ao dar baixa.
-    # BUG DE SEGURANÇA CORRIGIDO (achado durante a investigação do
-    # "app não abre a agenda" em 12/09/2026): faltava `fazenda_id` aqui —
-    # `eventos_agenda` (fazenda/rules/eventos_sanitarios.py) tem o parâmetro,
-    # mas com ele omitido caía no default `None`, que remove TODOS os filtros
-    # `.where(fazenda_id == ...)` internos. Toda pendência sanitária por
-    # evento de vida (ex.: Brucelose B19 de todo cliente do SaaS) aparecia
-    # misturada na Agenda de qualquer fazenda — mesma classe de furo que a
-    # auditoria de RLS (PR #767) mirou, só que numa chamada que ela não
-    # cobria por não ser uma consulta direta a `session.exec`.
-    eventos_sanitarios = _eventos_sanitarios_agenda(session, data, realizados, fazenda_id)
-
     # Protocolos personalizados (Configurações > Cadastro > Protocolos
     # personalizados) — fonte ADITIVA de tarefas: o cronograma que o próprio
     # produtor cadastrou, lançado contra animais/lote/fazenda, agrupado por
@@ -1100,12 +1077,6 @@ def calcular_agenda(
     # fazenda/models/lida.py) — mesmo espírito do protocolo personalizado
     # acima: fonte ADITIVA, fora do AgendaEngine de propósito.
     eventos_lida = _eventos_lida_agenda(session, data, realizados, fazenda_id)
-
-    # Cronograma sanitário (regras do calendário sanitário marcadas
-    # usa_cronograma=True) — trilha do animal (incluir/excluir) + trilha do
-    # agendamento (decidir modo/adiar/aplicar). Fora do AgendaEngine de
-    # propósito, mesmo espírito do protocolo personalizado acima.
-    eventos_cronograma_sanitario = _cronograma_sanitario_rules.eventos_agenda(session, data, realizados, fazenda_id)
 
     # NOTA: o alerta "bezerras entrando na janela de risco de doença" (Ponto
     # Crítico da Recria) foi retirado da Agenda a pedido do dono do produto —
@@ -1126,13 +1097,6 @@ def calcular_agenda(
         a for a in session.exec(_da_fazenda(select(AplicacaoAgendada).where(AplicacaoAgendada.aplicado == False), AplicacaoAgendada))  # noqa: E712
         if a.numero_matriz not in animais_baixados
     ]
-    # Vacina(s) pré-parto (vindas da Secagem) formam um cartão só por animal —
-    # o número do animal com o indicador "Vacina(s) pré-parto" e a lista das
-    # vacinas logo abaixo — em vez de uma linha solta por vacina.
-    VACINA_PRE_PARTO = "Vacina pré-parto"
-    vacinas_pre_parto_rows = [a for a in aplic_agendadas if a.observacao == VACINA_PRE_PARTO]
-    demais_agendadas = [a for a in aplic_agendadas if a.observacao != VACINA_PRE_PARTO]
-
     eventos_aplic_agendada = [{
         "id": f"aplic_agendada_{a.id}", "data": a.data.isoformat(), "categoria": "sanidade",
         "descricao": f"Aplicar {a.produto}"
@@ -1141,24 +1105,7 @@ def calcular_agenda(
         "numero_animal": a.numero_matriz, "observacao": "Programada — dê baixa para aplicar e baixar o estoque.",
         "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "aplicacao_agendada",
         "produto": a.produto, "dose": a.dose, "unidade": a.unidade, "via": a.via,
-    } for a in demais_agendadas if f"aplic_agendada_{a.id}" not in realizados]
-
-    grupos_vacina_pre_parto: dict[tuple[str, date], list] = {}
-    for a in vacinas_pre_parto_rows:
-        grupos_vacina_pre_parto.setdefault((a.numero_matriz, a.data), []).append(a)
-    eventos_vacina_pre_parto = []
-    for (numero, data_evt), rows in grupos_vacina_pre_parto.items():
-        chave = f"vacina_pre_parto_{numero}_{data_evt.isoformat()}"
-        if chave in realizados:
-            continue
-        eventos_vacina_pre_parto.append({
-            "id": chave, "data": data_evt.isoformat(), "categoria": "sanidade",
-            "descricao": f"Vacina(s) pré-parto — matriz {numero}",
-            "numero_animal": numero,
-            "observacao": "\n".join(f"• {r.produto}" for r in rows),
-            "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "vacina_pre_parto",
-            "vacinas": [r.produto for r in rows],
-        })
+    } for a in aplic_agendadas if f"aplic_agendada_{a.id}" not in realizados]
 
     # Colostragem + exame de sangue (IgG) das bezerras recém-nascidas —
     # 24h após o parto (sempre no dia seguinte). Se ao lançar o parto não se
@@ -1784,7 +1731,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_confirmar_lactacao_inducao + eventos_nova_dieta + eventos_alerta_sobra + eventos_visita_repro + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_diaria_trabalho + eventos_empreitada_penultima_etapa + eventos_protocolo_custom + eventos_lida + eventos_cronograma_sanitario + eventos_perda_prenhez_pendente
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_aplic_agendada + eventos_semen + eventos_colostro + eventos_cura + eventos_confirmar_lactacao_inducao + eventos_nova_dieta + eventos_alerta_sobra + eventos_visita_repro + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_diaria_trabalho + eventos_empreitada_penultima_etapa + eventos_protocolo_custom + eventos_lida + eventos_perda_prenhez_pendente
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis
@@ -1896,8 +1843,6 @@ def calcular_agenda(
         "estoque_negativo": estoque_negativo,
         "estoque_abaixo_minimo": estoque_abaixo_minimo,
         "eventos": eventos_visiveis,
-        # Atalho para Protocolos (R1) — NÃO é tarefa, por isso fica fora de `eventos`.
-        "lista_espera_sanitaria": _cronograma_sanitario_rules.resumo_lista_espera(session, fazenda_id) if "sanidade" in modulos else [],
         "diaria_auditorias_pendentes": diaria_auditorias_pendentes,
         "totais": {
             "candidatas_iatf": len(result.candidatas_iatf) if tem_reproducao else 0,
@@ -1941,33 +1886,6 @@ class RealizadoIn(BaseModel):
     dose: float | None = None
     unidade: str | None = None
     via: str | None = None
-    # Cronograma sanitário — cada campo só é lido pelo prefixo correspondente
-    # (ver marcar_realizado abaixo); nos demais tipos de evento, ignorados.
-    incluir: bool | None = None                    # cronograma_sanitario_animal_ — incluir/excluir o animal
-    modo: str | None = None                        # cronograma_sanitario_modo_ — "veterinario" | "propria"
-    veterinario_pessoa_id: int | None = None        # cronograma_sanitario_modo_ (modo="veterinario")
-    nova_data: date | None = None                   # cronograma_sanitario_modo_ — presente = adiar em vez de decidir
-    motivo: str | None = None                       # cronograma_sanitario_modo_ — motivo do adiamento (opcional)
-    responsavel: str | None = None                  # cronograma_sanitario_aplicar_
-    observacao: str | None = None                   # cronograma_sanitario_aplicar_
-    numero_matriz: str | None = None                # cronograma_sanitario_incluir_manual_ — animal a incluir fora da janela
-    # Checklist da Ocorrência (redesenho do evento sanitário, Fase 1) — cada
-    # campo só é lido pelo prefixo correspondente (ver
-    # _decidir_checklist_item/_desconsiderar_cronograma abaixo).
-    acao: str | None = None       # cronograma_sanitario_checklist_ — "pular" ou None (confirma o item)
-    resposta: str | None = None   # cronograma_sanitario_checklist_ — "sim"/"nao" (item vet) ou horário (item horario)
-
-
-def _exigir_da_fazenda(registro, fazenda_id: int | None, rotulo: str):
-    """`evento_id` chega como string livre no corpo do POST /agenda/realizados
-    e vira id inteiro sequencial — sem esta checagem, um usuário de qualquer
-    fazenda decidia/aplicava o cronograma sanitário de outra só chutando o id
-    (e o número do animal alheio acabava copiado para dentro da fazenda dele
-    via Sanidade). 404 para não confirmar a existência do id.
-    Ver tests/test_isolamento_relatorios_fornecedor.py (G6)."""
-    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
-        raise HTTPException(status_code=404, detail=f"{rotulo} não encontrado")
-    return registro
 
 
 def _buscar_da_fazenda(session: Session, modelo, registro_id: int, fazenda_id: int | None):
@@ -1995,163 +1913,6 @@ def _buscar_da_fazenda(session: Session, modelo, registro_id: int, fazenda_id: i
     if fazenda_id is not None:
         query = query.where(modelo.fazenda_id == fazenda_id)
     return session.exec(query).first()
-
-
-def _decidir_cronograma_animal(
-    session: Session, evento_id: str, incluir: bool | None, fazenda_id: int | None = None
-) -> None:
-    if incluir is None:
-        raise HTTPException(status_code=400, detail="Informe se o animal deve ser incluído ou excluído do cronograma")
-    linha_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}animal_"))
-    _exigir_da_fazenda(session.get(CronogramaSanitarioAnimal, linha_id), fazenda_id, "Animal do cronograma")
-    try:
-        _cronograma_sanitario_rules.decidir_animal(session, linha_id, incluir, date.today())
-    except CronogramaError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-def _remover_animal_cronograma(
-    session: Session, evento_id: str, fazenda_id: int | None = None
-) -> None:
-    linha_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}remover_animal_"))
-    _exigir_da_fazenda(session.get(CronogramaSanitarioAnimal, linha_id), fazenda_id, "Animal do cronograma")
-    try:
-        _cronograma_sanitario_rules.remover_animal(session, linha_id, date.today())
-    except CronogramaError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-def _incluir_animal_manual(
-    session: Session, evento_id: str, numero_matriz: str | None, fazenda_id: int | None = None
-) -> None:
-    """Inclusão manual, fora da janela de aplicação (bug relatado pelo
-    usuário em 12/09/2026) — animal que não bateu o critério automático da
-    regra (idade/gatilho/categoria projetada) e por isso nunca ganhou linha
-    "sugerido" nenhuma para decidir."""
-    if not (numero_matriz or "").strip():
-        raise HTTPException(status_code=400, detail="Selecione o animal a incluir")
-    cronograma_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}incluir_manual_"))
-    cronograma = _exigir_da_fazenda(session.get(CronogramaSanitario, cronograma_id), fazenda_id, "Cronograma")
-    query_animal = select(Animal).where(Animal.numero == numero_matriz)
-    if fazenda_id is not None:
-        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
-    if not session.exec(query_animal).first():
-        raise HTTPException(status_code=404, detail="Animal não encontrado")
-    try:
-        _cronograma_sanitario_rules.incluir_animal_manual(session, cronograma, numero_matriz, date.today())
-    except CronogramaError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-def _decidir_cronograma_modo(
-    session: Session, evento_id: str, modo: str | None, veterinario_pessoa_id: int | None,
-    nova_data: date | None, motivo: str | None, fazenda_id: int | None = None,
-) -> None:
-    cronograma_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}modo_"))
-    cronograma = _exigir_da_fazenda(session.get(CronogramaSanitario, cronograma_id), fazenda_id, "Cronograma")
-    try:
-        if nova_data is not None:
-            _cronograma_sanitario_rules.adiar(session, cronograma, nova_data, motivo)
-        else:
-            _cronograma_sanitario_rules.decidir_modo(session, cronograma, modo, veterinario_pessoa_id)
-    except CronogramaError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-def _aplicar_cronograma(
-    session: Session, evento_id: str, animais: list[str] | None, responsavel: str | None, observacao: str | None,
-    produto: str | None, dose: float | None, unidade: str | None, via: str | None,
-    fazenda_id: int | None, user: Usuario,
-) -> list[str]:
-    """Aplica o produto padrão do evento sanitário nos animais incluídos no
-    cronograma — em lote (animais=None, aplica todo mundo incluído) ou
-    individualizado (animais=[um número]), site e app chamam o mesmo
-    endpoint. Reaproveita 100% a lógica de baixa de estoque/Sanidade já
-    usada por /sanidade/calendario/cadastrar-preventivo."""
-    cronograma_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}aplicar_"))
-    cronograma = _exigir_da_fazenda(session.get(CronogramaSanitario, cronograma_id), fazenda_id, "Cronograma")
-    # Caminho ANTIGO (mantido para dados e filas offline já existentes). O app do curral/mobile e a Agenda usam agora o
-    # endpoint único POST /sanidade/cronogramas/{id}/aplicar (grava em Concluídos e no log). Depois que o endpoint único
-    # aplicou, uma requisição antiga que ficou na fila não pode gravar de novo: 409, sem duplicar nada.
-    if cronograma.status == "concluido":
-        raise HTTPException(status_code=409, detail="Este agendamento já foi aplicado (veja em Protocolos › Concluídos)")
-    if cronograma.status != "agendado":
-        raise HTTPException(status_code=400, detail="Este cronograma ainda não tem veterinário/aplicação própria confirmado")
-    calendario = _exigir_da_fazenda(
-        session.get(CalendarioSanitario, cronograma.calendario_sanitario_id), fazenda_id,
-        "Regra do calendário sanitário",
-    )
-    _evento_do_caminho_antigo = session.get(EventoSanitario, calendario.evento_sanitario_id)
-    if _evento_do_caminho_antigo is not None and _evento_do_caminho_antigo.categoria_preventiva == "exame":
-        raise HTTPException(
-            status_code=400,
-            detail="Exame não se aplica por este caminho: use o aplicar único (Protocolos ou app) — inoculação, leitura e resultado por animal",
-        )
-
-    incluidos = _cronograma_sanitario_rules.animais_por_status(session, cronograma.id, "incluido")
-    alvo = set(animais) if animais else {l.numero_matriz for l in incluidos}
-    animais_aplicar = [l.numero_matriz for l in incluidos if l.numero_matriz in alvo]
-    if not animais_aplicar:
-        raise HTTPException(status_code=400, detail="Nenhum animal incluído para aplicar")
-
-    from fazenda.api.routers.sanidade import CadastrarPreventivoIn, cadastrar_preventivo
-    cadastrar_preventivo(
-        CadastrarPreventivoIn(
-            evento_sanitario_id=calendario.evento_sanitario_id, categoria_alvo=calendario.categoria_alvo,
-            data_evento=date.today(), calendario_id=calendario.id, animais=animais_aplicar,
-            aplicar=True, aplicado=True, responsavel=responsavel, observacao=observacao,
-            produto=produto, dose=dose, unidade=unidade, via=via,
-        ),
-        session=session, user=user, fazenda_id=fazenda_id,
-    )
-    _cronograma_sanitario_rules.concluir(session, cronograma, animais_aplicar, date.today())
-    restantes = len(incluidos) - len(animais_aplicar)
-    return [f"Aplicado em {len(animais_aplicar)} animal(is)."] + (
-        [f"{restantes} animal(is) do cronograma seguem pendentes de aplicação."] if restantes else []
-    )
-
-
-def _decidir_checklist_item(
-    session: Session, evento_id: str, acao: str | None, resposta: str | None, motivo: str | None,
-    fazenda_id: int | None, usuario_id: int | None,
-) -> None:
-    """Checklist da Ocorrência (redesenho do evento sanitário, Fase 1) — um
-    item por vez. `acao == "pular"` sempre disponível, em qualquer item, sem
-    exceção (arquitetura travada, seção 1 do redesenho); qualquer outro valor
-    confirma o item, com o comportamento específico da `chave` já gravada
-    nele (o cliente não escolhe a chave — evita um item "vet" ser confirmado
-    como se fosse genérico só porque o front mandou errado)."""
-    item_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}checklist_"))
-    item = _exigir_da_fazenda(session.get(ChecklistItem, item_id), fazenda_id, "Item do checklist")
-    hoje = datetime.utcnow()
-    try:
-        if acao == "pular":
-            _checklist_sanitario_rules.marcar_pulado(session, item.id, motivo, usuario_id, hoje, fazenda_id)
-        elif item.chave == "vet":
-            _checklist_sanitario_rules.responder_veterinario(session, item.id, resposta or "", motivo, usuario_id, hoje, fazenda_id)
-        elif item.chave == "horario":
-            _checklist_sanitario_rules.confirmar_horario(session, item.id, resposta or "", usuario_id, hoje, fazenda_id)
-        elif item.chave == "lotes":
-            _checklist_sanitario_rules.marcar_lotes_revisado(session, item.id, usuario_id, hoje, fazenda_id)
-        else:
-            _checklist_sanitario_rules.marcar_cumprido(session, item.id, usuario_id, hoje, fazenda_id)
-    except ChecklistError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-def _desconsiderar_cronograma(
-    session: Session, evento_id: str, motivo: str | None, fazenda_id: int | None,
-) -> None:
-    """"Desconsiderar cronograma" (seção 3.2.5 do redesenho) — confirma a
-    Ocorrência inteira sem passar pelo checklist. Ação sobre o cronograma
-    (não um item), por isso prefixo próprio em vez de reaproveitar
-    `checklist_`."""
-    cronograma_id = int(evento_id.removeprefix(f"{_PREFIXO_CRONOGRAMA}desconsiderar_"))
-    cronograma = _exigir_da_fazenda(session.get(CronogramaSanitario, cronograma_id), fazenda_id, "Cronograma")
-    try:
-        _checklist_sanitario_rules.desconsiderar_cronograma(session, cronograma, motivo, datetime.utcnow())
-    except ChecklistError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 
 def _baixar_protocolo_sanitario(
@@ -2281,53 +2042,6 @@ def _baixar_aplicacao_agendada(
             fazenda_id=fazenda_id, observacao=f"Aplicação programada — matriz {ag.numero_matriz}",
             usuario_id=usuario_id, origem_tipo="aplicacao_agendada", origem_id=ag.id, produto=produto_final,
         )
-    session.commit()
-    return avisos
-
-
-def _baixar_vacina_pre_parto(
-    session: Session, evento_id: str, fazenda_id: int | None = None, usuario_id: int | None = None,
-) -> list[str]:
-    """Confirma TODAS as vacinas pré-parto pendentes daquele cartão (mesmo
-    animal + mesma data) de uma vez — cada uma vira um registro de Sanidade e
-    dá baixa de estoque (dose=1, unidade="dose"), igualando o comportamento ao
-    caminho da Secagem (ver registrar_secagem em producao.py) — antes esta
-    função só marcava a AplicacaoAgendada e criava a Sanidade, sem tocar o
-    Estoque: o mesmo evento tinha dois comportamentos diferentes conforme
-    fosse confirmado por aqui ou pela Secagem."""
-    resto = evento_id.removeprefix("vacina_pre_parto_")
-    numero_matriz, data_str = resto.rsplit("_", 1)
-    data_evt = date.fromisoformat(data_str)
-    query = select(AplicacaoAgendada).where(
-        AplicacaoAgendada.numero_matriz == numero_matriz,
-        AplicacaoAgendada.data == data_evt,
-        AplicacaoAgendada.observacao == "Vacina pré-parto",
-        AplicacaoAgendada.aplicado == False,  # noqa: E712
-    )
-    # BUG DE SEGURANÇA CORRIGIDO: sem este filtro, uma colisão de
-    # numero_matriz entre fazendas confirmava a vacina pré-parto de outro
-    # tenant.
-    if fazenda_id is not None:
-        query = query.where(AplicacaoAgendada.fazenda_id == fazenda_id)
-    rows = session.exec(query).all()
-    hoje = date.today()
-    avisos: list[str] = []
-    for ag in rows:
-        ag.aplicado = True
-        ag.data_aplicacao = hoje
-        session.add(ag)
-        sanidade = Sanidade(
-            numero_matriz=ag.numero_matriz, data_aplicacao=hoje, produto=ag.produto,
-            via=ag.via, responsavel=ag.responsavel, obs=ag.observacao, fazenda_id=fazenda_id,
-        )
-        session.add(sanidade)
-        session.flush()
-        estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=ag.produto)
-        avisos.extend(estoque_baixa.baixar(
-            session, item=estoque_item, quantidade=1, unidade="dose", data=hoje, fazenda_id=fazenda_id,
-            observacao=f"Vacina pré-parto — matriz {ag.numero_matriz}", usuario_id=usuario_id,
-            origem_tipo="vacina_pre_parto", origem_id=sanidade.id, produto=ag.produto,
-        ))
     session.commit()
     return avisos
 
@@ -2636,30 +2350,6 @@ def marcar_realizado(
             session, dados.evento_id, dados.animais, fazenda_id=fazenda_id, usuario_id=usuario_id,
         )
         return {"marcado": True, "avisos": avisos}
-    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}remover_animal_"):
-        _remover_animal_cronograma(session, dados.evento_id, fazenda_id)
-        return {"marcado": True}
-    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}animal_"):
-        _decidir_cronograma_animal(session, dados.evento_id, dados.incluir, fazenda_id)
-        return {"marcado": True}
-    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}incluir_manual_"):
-        _incluir_animal_manual(session, dados.evento_id, dados.numero_matriz, fazenda_id)
-        return {"marcado": True}
-    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}modo_"):
-        _decidir_cronograma_modo(session, dados.evento_id, dados.modo, dados.veterinario_pessoa_id, dados.nova_data, dados.motivo, fazenda_id)
-        return {"marcado": True}
-    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}aplicar_"):
-        avisos = _aplicar_cronograma(
-            session, dados.evento_id, dados.animais, dados.responsavel, dados.observacao,
-            dados.produto, dados.dose, dados.unidade, dados.via, fazenda_id, user,
-        )
-        return {"marcado": True, "avisos": avisos}
-    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}checklist_"):
-        _decidir_checklist_item(session, dados.evento_id, dados.acao, dados.resposta, dados.motivo, fazenda_id, usuario_id)
-        return {"marcado": True}
-    if dados.evento_id.startswith(f"{_PREFIXO_CRONOGRAMA}desconsiderar_"):
-        _desconsiderar_cronograma(session, dados.evento_id, dados.motivo, fazenda_id)
-        return {"marcado": True}
 
     query_existe = select(EventoRealizado).where(EventoRealizado.evento_id == dados.evento_id)
     if fazenda_id is not None:
@@ -2676,8 +2366,6 @@ def marcar_realizado(
                 session, dados.evento_id, dados.produto, dados.dose, dados.unidade, dados.via,
                 fazenda_id=fazenda_id, usuario_id=usuario_id,
             )
-        elif dados.evento_id.startswith("vacina_pre_parto_"):
-            avisos = _baixar_vacina_pre_parto(session, dados.evento_id, fazenda_id=fazenda_id, usuario_id=usuario_id)
     return {"marcado": True, "avisos": avisos}
 
 
@@ -2981,11 +2669,6 @@ def desmarcar_realizado(
     if evento_id.startswith(PREFIXO_LIDA):
         _desmarcar_lida_realizado(session, evento_id, fazenda_id=fazenda_id)
         return {"desmarcado": True}
-    if evento_id.startswith(_PREFIXO_CRONOGRAMA):
-        raise HTTPException(
-            status_code=400,
-            detail="Decisões do cronograma sanitário não se desfazem por aqui — ajuste em Sanidade > Preventivo > Cronogramas.",
-        )
 
     query_existe = select(EventoRealizado).where(EventoRealizado.evento_id == evento_id)
     if fazenda_id is not None:

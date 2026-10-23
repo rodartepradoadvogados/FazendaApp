@@ -3,21 +3,17 @@
 import React, { Suspense, useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Calendar, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Heart, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User, FileSpreadsheet, FileText, PackageSearch, Layers, Search, HeartPulse, Repeat, ClipboardList, ClipboardCheck } from "lucide-react";
+import { Calendar, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Heart, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User, FileSpreadsheet, FileText, PackageSearch, Layers, Search, HeartPulse, Repeat, ClipboardList } from "lucide-react";
 import {
-  fetchAgendaDia, fetchAgendaPainel, fetchAgendaProjecao, materializarAgendaComIntervalo, adiarAgendamentoPreventivo,
+  fetchAgendaDia, fetchAgendaPainel, fetchAgendaProjecao, materializarAgendaComIntervalo,
   addEventoManual, marcarEventoRealizado as marcarEventoRealizadoApi, desmarcarEventoRealizado,
-  fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, fetchEstoqueAtivos, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
-  cadastrarPreventivo, marcarCuraAplicacao, marcarCuraProtocolo, confirmarLactacaoInducao, fetchProtocolosIatfAtivos,
-  criarMovimentacao, fetchMotivosMovimentacao, fetchPessoas, criarPessoa, salvarDiasDiaria, atualizarServico,
+  fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today,
+  marcarCuraAplicacao, marcarCuraProtocolo, confirmarLactacaoInducao, fetchProtocolosIatfAtivos,
+  criarMovimentacao, fetchMotivosMovimentacao, salvarDiasDiaria, atualizarServico,
   authFetch, API, mensagemErroApi, fetchLancamentos,
 } from "@/lib/api";
 import { PagarContaModal, type ContaParaPagar } from "@/components/PagarContaModal";
 import { exportarExcel, exportarPDF } from "@/lib/export";
-import { VIAS_APLICACAO } from "@/lib/constants";
-
-// Unidades aceitas na aplicação (mesma lista usada em Sanidade/Cadastro).
-const UNIDADES_APLICACAO = ["ml", "kg", "L", "unidade", "dose", "saca 30kg", "saca 60kg"];
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
@@ -27,23 +23,19 @@ import { SubAbasAgenda, type VisaoAgenda } from "@/components/agenda/SubAbasAgen
 import { CartaoPainel, GrupoPainel } from "@/components/agenda/CartaoPainel";
 import { OQueVem } from "@/components/agenda/OQueVem";
 import { SemanaAgenda, inicioDaSemana } from "@/components/agenda/SemanaAgenda";
-import { AdiarComChips } from "@/components/agenda/AdiarComChips";
 import { ProjecaoAgenda, SeletorHorizonte, type ProjecaoDados } from "@/components/agenda/ProjecaoAgenda";
 import { lerCacheAgenda, gravarCacheAgenda } from "@/components/agenda/cacheAgenda";
 import { PainelLancarBst } from "@/components/PainelLancarBst";
 import { casaBusca } from "@/lib/busca";
 import { moduloContratado } from "@/lib/modulos";
+import { CartaoVacinasPrevistas, NotasSanitario } from "@/components/sanitario/AgendaSanitario";
 import { categoriasAgendaVisiveis, gruposPainelVisiveis, podeVincularAnimalLote, resumoContasAgenda } from "@/lib/agendaModulos";
 import { GavetaLancamento } from "@/components/lancamentos/GavetaLancamento";
 import { DefinirDataVisitaModal } from "@/components/reproducao/DefinirDataVisitaModal";
-import { GavetaAplicar } from "@/components/protocolos/GavetaAplicar";
-import { BannerReagentes } from "@/components/protocolos/exameComum";
-import { type EstoqueItem } from "@/components/lancamentos/comumForms";
-// Mesmos dois formulários de components/lancamentos/* que a tela de Lançamentos
-// abre na gaveta (ver GAVETA_LEAFS em app/lancamentos/page.tsx) — aqui abrem
-// direto da Agenda, sem navegar pra outra página (ver abrirGavetaPreventivo/
-// abrirGavetaInseminacao mais abaixo).
-const FormPreventivoAplicacao = dynamic(() => import("@/components/lancamentos/FormPreventivoAplicacao").then((m) => m.FormPreventivoAplicacao), { ssr: false });
+// Mesmo formulário de components/lancamentos/* que a tela de Lançamentos
+// abre na gaveta (ver GAVETA_LEAFS em app/lancamentos/page.tsx) — aqui abre
+// direto da Agenda, sem navegar pra outra página (ver abrirGavetaInseminacao
+// mais abaixo).
 const FormInseminacao = dynamic(() => import("@/components/lancamentos/FormInseminacao").then((m) => m.FormInseminacao), { ssr: false });
 
 const COLUNAS_AGENDA = [
@@ -282,129 +274,15 @@ function AgendaConteudo() {
     atual.has(numero) ? atual.delete(numero) : atual.add(numero);
     return { ...p, [id]: atual };
   });
-  // Cronograma sanitário (ver fazenda/rules/cronograma_sanitario.py) — 3 cards
-  // novos na Agenda: (1) animal que entrou na janela — incluir/excluir direto,
-  // sem expandir; (2) decisão de modo (veterinário/própria/adiar) — mesmo id
-  // de evento seja "modo" (normal) ou "urgente" (perto da data, sem decisão);
-  // (3) aplicar — mesmo padrão checklist do protocolo customizado acima.
-  const [pessoasCronograma, setPessoasCronograma] = useState<any[]>([]);
-  useEffect(() => { fetchPessoas().then(setPessoasCronograma).catch(() => setPessoasCronograma([])); }, []);
-  const veterinariosCronograma = useMemo(
-    () => pessoasCronograma.filter((p) => p.ativo !== false && (p.tipos || []).includes("Veterinário")).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
-    [pessoasCronograma]
-  );
-  const [cronogramaModoAbertos, setCronogramaModoAbertos] = useState<Set<string>>(new Set());
-  const toggleCronogramaModo = (id: string) => setCronogramaModoAbertos(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  // "" = ainda escolhendo entre veterinário/própria/adiar; "veterinario"/"adiar" = sub-formulário aberto.
-  const [cronogramaAcao, setCronogramaAcao] = useState<Record<string, "" | "veterinario" | "adiar">>({});
-  const [cronogramaVetSel, setCronogramaVetSel] = useState<Record<string, string>>({});
-  const [cronogramaNovoVet, setCronogramaNovoVet] = useState<Record<string, boolean>>({});
-  const [cronogramaNovoVetNome, setCronogramaNovoVetNome] = useState<Record<string, string>>({});
-  const [cronogramaCriandoVet, setCronogramaCriandoVet] = useState<Set<string>>(new Set());
-  const [cronogramaAdiarData, setCronogramaAdiarData] = useState<Record<string, string>>({});
-  const [cronogramaAdiarMotivo, setCronogramaAdiarMotivo] = useState<Record<string, string>>({});
-
   // Data de início da lactação no card "Confirmar início de lactação"
   // (indução) — pré-preenchida com e.data_sugerida (última etapa do
-  // protocolo), editável antes de confirmar "Sim". Mesmo padrão de estado
-  // por eventoId de cronogramaAdiarData acima.
+  // protocolo), editável antes de confirmar "Sim". Estado por eventoId.
   const [lactacaoInducaoData, setLactacaoInducaoData] = useState<Record<string, string>>({});
   // "Incluir nos aptos ao BST?" — o protocolo de indução já aplica BST no
   // animal, então confirmar isto aqui marca `Animal.
   // bst_pendente_inducao_lactacao`, que entra direto em "Incluir no próximo
   // BST" com a notinha "(ind.lact.)" (ver PainelLancarBst.tsx).
   const [inducaoIncluirBst, setInducaoIncluirBst] = useState<Record<string, boolean>>({});
-
-  // Aplicar um agendamento preventivo: gaveta única (a mesma de Protocolos ›
-  // Acompanhamento), aberta pelo id do cronograma do evento da Agenda.
-  const [gavetaAplicarId, setGavetaAplicarId] = useState<number | null>(null);
-  // Adiar o agendamento do dia com chips (data + motivo em poucos toques).
-  const [adiandoId, setAdiandoId] = useState<number | null>(null);
-  const [adiandoOcupado, setAdiandoOcupado] = useState(false);
-  const adiandoRef = useRef(false);
-  const adiarAgendamento = async (e: any, novaData: string, motivo: string) => {
-    if (adiandoRef.current) return; // toque duplo: o 2º é ignorado
-    adiandoRef.current = true; setAdiandoOcupado(true);
-    try {
-      await adiarAgendamentoPreventivo(e.cronograma_id, { nova_data: novaData, hora: e.hora ?? null, motivo });
-      setAdiandoId(null);
-      mostrarFeedback(`Adiado para ${new Date(novaData + "T00:00:00").toLocaleDateString("pt-BR")} (${motivo}).`);
-      await carregar();
-    } catch (err: any) { mostrarFeedback(err.message || "Não foi possível adiar.", true); }
-    finally { adiandoRef.current = false; setAdiandoOcupado(false); }
-  };
-
-  // "Incluir animal fora da janela de aplicação" (bug relatado pelo usuário
-  // em 12/09/2026: só entra na lista quem bate o critério automático da
-  // regra — idade/gatilho/categoria projetada — sem nenhum jeito de incluir
-  // manualmente quem está fora dele). A flag abre o seletor com TODOS os
-  // animais da fazenda, não só os sugeridos automaticamente.
-  const [cronogramaForaJanela, setCronogramaForaJanela] = useState<Record<string, boolean>>({});
-  const [cronogramaForaJanelaSel, setCronogramaForaJanelaSel] = useState<Record<string, Set<string>>>({});
-  const toggleCronogramaForaJanela = (id: string) => setCronogramaForaJanela((p) => ({ ...p, [id]: !p[id] }));
-  const algumForaJanelaAberto = Object.values(cronogramaForaJanela).some(Boolean);
-  useEffect(() => { if (algumForaJanelaAberto && !animaisTodos.length && moduloContratado("rebanho")) fetchAnimais().then(setAnimaisTodos).catch(() => {}); }, [algumForaJanelaAberto, animaisTodos.length]);
-  const toggleAnimalForaJanela = (id: string, numero: string) => setCronogramaForaJanelaSel((p) => {
-    const atual = new Set(p[id] || []);
-    atual.has(numero) ? atual.delete(numero) : atual.add(numero);
-    return { ...p, [id]: atual };
-  });
-  const incluirAnimaisForaJanela = async (e: any) => {
-    const numeros = Array.from(cronogramaForaJanelaSel[e.id] || []);
-    if (!numeros.length) return;
-    setMarcando((p) => new Set(p).add(e.id));
-    try {
-      for (const numero of numeros) {
-        await marcarEventoRealizado(`cronograma_sanitario_incluir_manual_${e.cronograma_id}`, undefined, undefined, { numero_matriz: numero });
-      }
-      await carregar();
-      mostrarFeedback(`${numeros.length} animal(is) incluído(s) manualmente no cronograma.`);
-      setCronogramaForaJanelaSel((p) => ({ ...p, [e.id]: new Set() }));
-      setCronogramaForaJanela((p) => ({ ...p, [e.id]: false }));
-    } catch (err: any) { mostrarFeedback(err.message, true); }
-    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
-  };
-
-  const decidirCronogramaModo = async (e: any, modo: "veterinario" | "propria") => {
-    if (modo === "veterinario" && !cronogramaVetSel[e.id]) { mostrarFeedback("Selecione o veterinário.", true); return; }
-    setMarcando((p) => new Set(p).add(e.id));
-    try {
-      await marcarEventoRealizado(e.id, undefined, undefined, {
-        modo, veterinario_pessoa_id: modo === "veterinario" ? Number(cronogramaVetSel[e.id]) : undefined,
-      });
-      setCronogramaAcao((p) => ({ ...p, [e.id]: "" }));
-      await carregar();
-      mostrarFeedback("Cronograma agendado.");
-    } catch (err: any) { mostrarFeedback(err.message, true); }
-    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
-  };
-
-  const adiarCronograma = async (e: any) => {
-    const novaData = cronogramaAdiarData[e.id];
-    if (!novaData) { mostrarFeedback("Informe a nova data.", true); return; }
-    setMarcando((p) => new Set(p).add(e.id));
-    try {
-      await marcarEventoRealizado(e.id, undefined, undefined, { nova_data: novaData, motivo: cronogramaAdiarMotivo[e.id] || undefined });
-      setCronogramaAcao((p) => ({ ...p, [e.id]: "" }));
-      await carregar();
-      mostrarFeedback("Data adiada.");
-    } catch (err: any) { mostrarFeedback(err.message, true); }
-    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
-  };
-
-  const criarVetInlineCronograma = async (e: any) => {
-    const nome = (cronogramaNovoVetNome[e.id] || "").trim();
-    if (!nome) return;
-    setCronogramaCriandoVet((p) => new Set(p).add(e.id));
-    try {
-      const novo = await criarPessoa({ nome, tipos: ["Veterinário"] });
-      setPessoasCronograma((p) => [...p, novo]);
-      setCronogramaVetSel((p) => ({ ...p, [e.id]: String(novo.id) }));
-      setCronogramaNovoVet((p) => ({ ...p, [e.id]: false }));
-      setCronogramaNovoVetNome((p) => ({ ...p, [e.id]: "" }));
-    } catch (err: any) { mostrarFeedback(err.message || "Erro ao cadastrar veterinário", true); }
-    finally { setCronogramaCriandoVet((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
-  };
 
   // Indução de lactação: mesmo padrão do protocolo IATF (grupo lançamento+dia
   // expandido mostra os animais + medicamentos/observação de manejo do dia).
@@ -512,34 +390,23 @@ function AgendaConteudo() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visao]);
 
-  // Gaveta lateral (T2, mockup 1e) — Preventivo/Inseminação abertos direto
-  // daqui, sem navegar pra /lancamentos (ver abrirGavetaPreventivo/
-  // abrirGavetaInseminacao mais abaixo, usados no lugar dos antigos
-  // <a href="/lancamentos?ir=..."> ). animais/estoque próprios (não reusa
+  // Gaveta lateral (T2, mockup 1e) — Inseminação aberta direto
+  // daqui, sem navegar pra /lancamentos (ver
+  // abrirGavetaInseminacao mais abaixo, usado no lugar dos antigos
+  // <a href="/lancamentos?ir=..."> ). animais próprios (não reusa
   // `animaisTodos`, que só carrega sob demanda pro vínculo do evento manual)
   // porque aqui precisam estar prontos assim que a Agenda abre.
   const [animaisGaveta, setAnimaisGaveta] = useState<AnimalRow[]>([]);
-  const [estoqueGaveta, setEstoqueGaveta] = useState<EstoqueItem[]>([]);
   useEffect(() => {
-    // Só com os módulos contratados: sem rebanho/estoque seriam dois 403 garantidos a cada abertura.
+    // Só com o módulo contratado: sem rebanho seria um 403 garantido a cada abertura.
     if (moduloContratado("rebanho")) fetchAnimais().then(setAnimaisGaveta).catch(() => {});
-    if (moduloContratado("estoque")) fetchEstoqueAtivos().then((d) => setEstoqueGaveta(d.itens || [])).catch(() => {});
   }, []);
-  const lotesGaveta = useMemo(
-    () => Array.from(new Set(animaisGaveta.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort(),
-    [animaisGaveta],
-  );
   type GavetaAgendaEstado =
-    | { tipo: "preventivo_aplicacao"; prefill: { eventoAgenda?: string | null; eventoSanitarioId?: string | null; numeroMatriz?: string | null; data?: string | null; calendarioId?: string | null } }
     | { tipo: "inseminacao"; prefill: { numeroMatriz?: string | null; protocolo?: string | null } }
     | null;
   const [gavetaAgenda, setGavetaAgenda] = useState<GavetaAgendaEstado>(null);
   const [formKeyGavetaAgenda, setFormKeyGavetaAgenda] = useState(0);
   const [mensagemSalvaGavetaAgenda, setMensagemSalvaGavetaAgenda] = useState<string | null>(null);
-  const abrirGavetaPreventivo = useCallback((prefill: Extract<GavetaAgendaEstado, { tipo: "preventivo_aplicacao" }>["prefill"]) => {
-    setGavetaAgenda({ tipo: "preventivo_aplicacao", prefill });
-    setMensagemSalvaGavetaAgenda(null);
-  }, []);
   const abrirGavetaInseminacao = useCallback((prefill: Extract<GavetaAgendaEstado, { tipo: "inseminacao" }>["prefill"]) => {
     setGavetaAgenda({ tipo: "inseminacao", prefill });
     setMensagemSalvaGavetaAgenda(null);
@@ -554,7 +421,7 @@ function AgendaConteudo() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  // Recorrências/cronogramas (a parte que ESCREVE) rodam no máx. a cada 15 min por
+  // Recorrências (a parte que ESCREVE) rodam no máx. a cada 15 min por
   // navegador, depois do primeiro desenho; se rodaram agora, relê em silêncio.
   useEffect(() => {
     let vivo = true;
@@ -741,158 +608,6 @@ function AgendaConteudo() {
     atrasadosAbertosRef.current = true;
     setDatasAbertas((p) => { const n = new Set(p); eventosPendentes.forEach((e: any) => n.add(e.data)); return n; });
   }, [eventosPendentes]);
-  // Localiza um evento pelo id independente da seção (pendentes/futuros) em
-  // que ele está renderizado — usado pela confirmação em lote por dia.
-  const eventoPorId = useMemo(
-    () => new Map<string, any>((agenda?.eventos || []).map((e: any) => [e.id, e])),
-    [agenda],
-  );
-
-  // ── Dar baixa em sanidade (evento_sanitario / calendario_sanitario) sem sair
-  // da Agenda — individual (1º clique confirma os dados, 2º confirma a baixa)
-  // ou em lote (várias pendências da MESMA categoria de uma vez, cada uma com
-  // seus próprios dados, pré-preenchidos do cadastro/lançamento e editáveis).
-  type CampoBaixaSanidade = {
-    produto: string; dose: string; unidade: string; via: string;
-    principioAtivoId: string; veterinario: string; freqValor: string; freqUnidade: string;
-  };
-  const CAMPOS_VAZIOS: CampoBaixaSanidade = { produto: "", dose: "", unidade: "", via: "", principioAtivoId: "", veterinario: "", freqValor: "1", freqUnidade: "meses" };
-  const [principiosAtivos, setPrincipiosAtivos] = useState<{ id: number; nome: string }[]>([]);
-  const [eventosSanitarios, setEventosSanitarios] = useState<any[]>([]);
-  useEffect(() => {
-    if (!moduloContratado("sanitario")) return;
-    fetchPrincipiosAtivos().then((d: any[]) => setPrincipiosAtivos(d.filter((p) => p.ativo !== false))).catch(() => {});
-    fetchEventosSanitarios().then(setEventosSanitarios).catch(() => {});
-  }, []);
-  function ehExameSanitario(e: any): boolean {
-    if (e.categoria_preventiva != null) return e.categoria_preventiva === "exame";
-    return eventosSanitarios.find((x: any) => x.id === e.evento_sanitario_id)?.categoria_preventiva === "exame";
-  }
-  function nomeEventoSanitario(e: any): string {
-    return eventosSanitarios.find((x: any) => x.id === e.evento_sanitario_id)?.nome || (e.descricao || "").split(" — ")[0];
-  }
-  function elegivelBaixaInline(e: any): boolean {
-    // Só quando a pendência já mira uma matriz específica — sem isso não há
-    // como resolver sem escolher os animais (aí vale mais abrir o lançamento).
-    return (e.tipo === "evento_sanitario" || e.tipo === "calendario_sanitario") && !!e.numero_animal;
-  }
-  // Agrupamento do "dar baixa em lote": categoria/lote-alvo (categoria_alvo) +
-  // evento sanitário, para que só entrem no mesmo grupo pendências que fazem
-  // sentido receber os MESMOS dados (mesmo medicamento/dose/via) de uma vez.
-  function grupoLoteChave(e: any): string {
-    return `${e.categoria_alvo || "—"}::${e.evento_sanitario_id ?? ""}`;
-  }
-  function grupoLoteRotulo(e: any): string {
-    return e.categoria_alvo || "Sem lote/categoria definido";
-  }
-  const camposIniciais = (e: any): CampoBaixaSanidade => ({
-    produto: e.produto || "", dose: e.dose != null ? String(e.dose) : "", unidade: e.unidade || "",
-    via: e.via || "", principioAtivoId: e.principio_ativo_id ? String(e.principio_ativo_id) : "",
-    veterinario: e.veterinario || "", freqValor: "1", freqUnidade: "meses",
-  });
-  const [camposBaixa, setCamposBaixa] = useState<Record<string, CampoBaixaSanidade>>({});
-  const abrirCampos = (e: any) => setCamposBaixa((p) => (p[e.id] ? p : { ...p, [e.id]: camposIniciais(e) }));
-  const atualizarCampo = (id: string, campo: keyof CampoBaixaSanidade, valor: string) =>
-    setCamposBaixa((p) => ({ ...p, [id]: { ...(p[id] || CAMPOS_VAZIOS), [campo]: valor } }));
-
-  const [expandidoBaixa, setExpandidoBaixa] = useState<Set<string>>(new Set());
-  const [abrirLancamento, setAbrirLancamento] = useState<Record<string, boolean>>({});
-  const [resolvendoBaixa, setResolvendoBaixa] = useState<Set<string>>(new Set());
-
-  const [loteDia, setLoteDia] = useState<Record<string, boolean>>({});
-  const [categoriaLoteDia, setCategoriaLoteDia] = useState<Record<string, string>>({});
-  const [selecionadosLote, setSelecionadosLote] = useState<Record<string, Set<string>>>({});
-  const [resolvendoLoteDia, setResolvendoLoteDia] = useState<Set<string>>(new Set());
-  const toggleLoteDia = (dia: string) => setLoteDia((p) => {
-    const ligado = !p[dia];
-    if (!ligado) {
-      setSelecionadosLote((s) => { const n = { ...s }; delete n[dia]; return n; });
-      setCategoriaLoteDia((c) => { const n = { ...c }; delete n[dia]; return n; });
-    }
-    return { ...p, [dia]: ligado };
-  });
-  const toggleSelecaoLote = (dia: string, e: any) => {
-    setSelecionadosLote((p) => {
-      const atual = new Set(p[dia] || []);
-      if (atual.has(e.id)) atual.delete(e.id); else { atual.add(e.id); abrirCampos(e); }
-      return { ...p, [dia]: atual };
-    });
-    setCategoriaLoteDia((p) => (p[dia] ? p : { ...p, [dia]: grupoLoteChave(e) }));
-  };
-  // "Selecionar todos" de um grupo (mesma categoria/lote-alvo + evento): troca
-  // a seleção do dia inteiro para esse grupo e abre a linha única compartilhada
-  // (ver camposBaixa[chaveCamposGrupo(dia)]).
-  const chaveCamposGrupo = (dia: string) => `__grupo__${dia}`;
-  const selecionarTodosGrupo = (dia: string, grupo: string, itens: any[]) => {
-    setSelecionadosLote((p) => ({ ...p, [dia]: new Set(itens.map((it) => it.id)) }));
-    setCategoriaLoteDia((p) => ({ ...p, [dia]: grupo }));
-    if (itens.length) abrirCampos({ ...itens[0], id: chaveCamposGrupo(dia) });
-  };
-
-  // Chama o mesmo endpoint que a tela de Lançamentos usa para "Preventivo" —
-  // cria/atualiza a regra recorrente e, se não for exame, registra a aplicação
-  // (com baixa de estoque) já com os dados confirmados/editados aqui mesmo.
-  async function resolverSanidade(e: any, camposOverride?: CampoBaixaSanidade): Promise<boolean> {
-    const c = camposOverride || camposBaixa[e.id] || camposIniciais(e);
-    const exame = ehExameSanitario(e);
-    // "Repetir a cada" = 0 é intencional: usuário não quer gerar agendamento
-    // futuro, só registrar esta aplicação (ver cadastrar_preventivo no backend).
-    const freq = c.freqValor.trim() === "" ? 1 : Number(c.freqValor);
-    try {
-      await cadastrarPreventivo({
-        evento_sanitario_id: e.evento_sanitario_id,
-        categoria_alvo: e.categoria_alvo || undefined,
-        data_evento: e.data,
-        frequencia_valor: Number.isFinite(freq) && freq >= 0 ? freq : 1,
-        frequencia_unidade: c.freqUnidade,
-        animais: e.numero_animal ? [e.numero_animal] : [],
-        aplicar: !exame,
-        veterinario: exame ? (c.veterinario || undefined) : undefined,
-        produto: exame ? undefined : (c.produto || undefined),
-        dose: exame || !c.dose ? undefined : Number(c.dose),
-        unidade: exame ? undefined : (c.unidade || undefined),
-        via: exame ? undefined : (c.via || undefined),
-        principio_ativo_id: exame || !c.principioAtivoId ? undefined : Number(c.principioAtivoId),
-      });
-      await marcarEventoRealizado(e.id);
-      return true;
-    } catch (err: any) {
-      mostrarFeedback(err.message || "Erro ao dar baixa", true);
-      return false;
-    }
-  }
-
-  const confirmarBaixaIndividual = async (e: any) => {
-    setResolvendoBaixa((p) => new Set(p).add(e.id));
-    const ok = await resolverSanidade(e);
-    setResolvendoBaixa((p) => { const n = new Set(p); n.delete(e.id); return n; });
-    if (ok) {
-      setExpandidoBaixa((p) => { const n = new Set(p); n.delete(e.id); return n; });
-      await carregar();
-      mostrarFeedback("Baixa registrada.");
-    }
-  };
-
-  const confirmarLoteDia = async (dia: string) => {
-    const ids = Array.from(selecionadosLote[dia] || []);
-    if (!ids.length) return;
-    // Linha única (grupo inteiro selecionado): os mesmos campos valem p/ todos.
-    const camposGrupo = camposBaixa[chaveCamposGrupo(dia)];
-    setResolvendoLoteDia((p) => new Set(p).add(dia));
-    let falhas = 0;
-    for (const id of ids) {
-      const e = eventoPorId.get(id);
-      if (!e) continue;
-      if (!(await resolverSanidade(e, camposGrupo))) falhas++;
-    }
-    setResolvendoLoteDia((p) => { const n = new Set(p); n.delete(dia); return n; });
-    setSelecionadosLote((p) => { const n = { ...p }; delete n[dia]; return n; });
-    setCategoriaLoteDia((p) => { const n = { ...p }; delete n[dia]; return n; });
-    setCamposBaixa((p) => { const n = { ...p }; delete n[chaveCamposGrupo(dia)]; return n; });
-    setLoteDia((p) => ({ ...p, [dia]: false }));
-    await carregar();
-    mostrarFeedback(falhas ? `Baixa em lote concluída com ${falhas} erro(s).` : "Baixa em lote registrada para todos os selecionados.", falhas > 0);
-  };
 
   // Protocolo IATF: qual medicamento/frasco foi aplicado em cada hormônio do
   // dia (ex.: D9). Chave = eventoId → índice do hormônio → estoque_id escolhido.
@@ -942,8 +657,7 @@ function AgendaConteudo() {
   // Confirmação de início de lactação (indução) — "Sim" abre a Lactacao
   // (origem "inducao") na data escolhida; "Não" não chama o backend de
   // produção (não existe resposta própria para gravar, ao contrário da
-  // cura) — só marcarEventoRealizado tira o card da Agenda, mesmo padrão de
-  // descartarPendencia logo abaixo.
+  // cura) — só marcarEventoRealizado tira o card da Agenda.
   const confirmarLactacaoInducaoAgenda = async (e: any, entrouEmLactacao: boolean) => {
     setMarcando((p) => new Set(p).add(e.id));
     try {
@@ -957,22 +671,6 @@ function AgendaConteudo() {
     }
     catch (err: any) { mostrarFeedback(err.message, true); }
     finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
-  };
-
-  // Descartar pendência sanitária sem aplicar (ex.: pendência antiga que não
-  // faz mais sentido registrar) — some da Agenda sem criar Sanidade nem baixa
-  // de estoque, ao contrário de "Dar baixa". Reaproveita o mesmo
-  // EventoRealizado usado em "Realizado", então é reversível (desfazer).
-  const [descartando, setDescartando] = useState<Set<string>>(new Set());
-  const descartarPendencia = async (e: any) => {
-    setDescartando((p) => new Set(p).add(e.id));
-    try {
-      await marcarEventoRealizado(e.id);
-      cancelarConfirmacao(`descartar:${e.id}`);
-      await carregar();
-      mostrarFeedback("Pendência descartada (nenhuma aplicação foi registrada).");
-    } catch (err: any) { mostrarFeedback(err.message, true); }
-    finally { setDescartando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
   };
 
   // "Contar diária" / "Descartar diária" / "Contar meia diária" — card de
@@ -1060,111 +758,7 @@ function AgendaConteudo() {
     );
   };
 
-  // Botão "Descartar" — mesma UX de confirmação do BotaoRealizado, mas para
-  // pendências sanitárias que o usuário decide não aplicar (ex.: pendência
-  // antiga substituída por um lançamento retroativo já feito por fora).
-  const BotaoDescartar = ({ e }: { e: any }) => {
-    const chave = `descartar:${e.id}`;
-    if (confirmando.has(chave)) {
-      return (
-        <span className="flex items-center gap-1" style={{ fontSize: "0.66rem" }} onClick={(ev) => ev.stopPropagation()}>
-          Descartar sem aplicar?
-          <button className="btn-ghost" style={{ color: "var(--red)", padding: "0.1rem 0.3rem" }} disabled={descartando.has(e.id)} onClick={() => descartarPendencia(e)}>Sim</button>
-          <button className="btn-ghost" style={{ padding: "0.1rem 0.3rem" }} onClick={() => cancelarConfirmacao(chave)}>Não</button>
-        </span>
-      );
-    }
-    return (
-      <button className="btn-ghost" style={{ fontSize: "0.66rem", color: "var(--text-muted)" }} disabled={descartando.has(e.id)}
-        title="Remove esta pendência da Agenda sem registrar aplicação nem baixar estoque"
-        onClick={(ev) => { ev.stopPropagation(); pedirConfirmacao(chave); }}>
-        <X size={11} /> Descartar
-      </button>
-    );
-  };
-
-  // Linha de confirmação de uma pendência de sanidade (evento_sanitario /
-  // calendario_sanitario) — os campos vêm do cadastro/lançamento (produto,
-  // dose, unidade, via, princípio ativo, veterinário), pré-preenchidos e
-  // editáveis. Em modo lote, some o botão individual (a confirmação é única,
-  // via "Confirmar baixa em lote" no rodapé do dia).
   const inputInline: React.CSSProperties = { width: "100%", fontSize: "0.78rem", padding: "0.3rem 0.5rem", borderRadius: 6, background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" };
-  const rotuloInline: React.CSSProperties = { fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
-  const PainelConfirmarBaixa = ({ e, loteModo }: { e: any; loteModo: boolean }) => {
-    const campos = camposBaixa[e.id] || camposIniciais(e);
-    const exame = ehExameSanitario(e);
-    const set = (campo: keyof typeof campos, valor: string) => atualizarCampo(e.id, campo, valor);
-    return (
-      <div style={{ padding: "0.6rem 0" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "0.6rem" }}>
-          <div>
-            <label style={rotuloInline}>Evento sanitário</label>
-            <div style={{ fontSize: "0.8rem", fontWeight: 700 }}>{nomeEventoSanitario(e)}</div>
-          </div>
-          {exame ? (
-            <div>
-              <label style={rotuloInline}>Veterinário</label>
-              <input style={inputInline} value={campos.veterinario} onChange={(ev) => set("veterinario", ev.target.value)} placeholder="ex.: Dr. Carlos" />
-            </div>
-          ) : (
-            <>
-              <div>
-                <label style={rotuloInline}>Medicamento</label>
-                <input style={inputInline} value={campos.produto} onChange={(ev) => set("produto", ev.target.value)} placeholder="ex.: VACINA RB 51" />
-              </div>
-              <div>
-                <label style={rotuloInline}>Princípio ativo</label>
-                <select style={inputInline} value={campos.principioAtivoId} onChange={(ev) => set("principioAtivoId", ev.target.value)}>
-                  <option value="">—</option>
-                  {principiosAtivos.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={rotuloInline}>Dosagem</label>
-                <input type="number" inputMode="decimal" style={inputInline} value={campos.dose} onChange={(ev) => set("dose", ev.target.value)} />
-              </div>
-              <div>
-                <label style={rotuloInline}>Unidade</label>
-                <select style={inputInline} value={campos.unidade} onChange={(ev) => set("unidade", ev.target.value)}>
-                  <option value="">—</option>
-                  {UNIDADES_APLICACAO.map((u) => <option key={u} value={u}>{u}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={rotuloInline}>Via</label>
-                <select style={inputInline} value={campos.via} onChange={(ev) => set("via", ev.target.value)}>
-                  <option value="">—</option>
-                  {VIAS_APLICACAO.map((v) => <option key={v} value={v}>{v}</option>)}
-                </select>
-              </div>
-            </>
-          )}
-          <div>
-            <label style={rotuloInline}>Repetir a cada</label>
-            <div style={{ display: "flex", gap: "0.3rem" }}>
-              <input type="number" min={0} inputMode="numeric" style={{ ...inputInline, width: 60 }} value={campos.freqValor} onChange={(ev) => set("freqValor", ev.target.value)} title="0 = não repetir (não gera agendamento futuro, só esta aplicação)" />
-              <select style={inputInline} value={campos.freqUnidade} onChange={(ev) => set("freqUnidade", ev.target.value)}>
-                <option value="dias">dia(s)</option>
-                <option value="meses">mês(es)</option>
-                <option value="anos">ano(s)</option>
-              </select>
-            </div>
-            {Number(campos.freqValor) === 0 && (
-              <p style={{ fontSize: "0.66rem", color: "var(--amber)", marginTop: "0.2rem" }}>0 = não repete: sem agendamento futuro, só esta aplicação.</p>
-            )}
-          </div>
-        </div>
-        {!loteModo && (
-          <div className="flex items-center gap-2 mt-2">
-            <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={resolvendoBaixa.has(e.id)} onClick={() => confirmarBaixaIndividual(e)}>
-              <Check size={12} /> {resolvendoBaixa.has(e.id) ? "Salvando…" : "Confirmar baixa"}
-            </button>
-            <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setExpandidoBaixa((p) => { const n = new Set(p); n.delete(e.id); return n; })}>Cancelar</button>
-          </div>
-        )}
-      </div>
-    );
-  };
 
   const fecharModalNovoEvento = () => {
     setShowModal(false);
@@ -1227,12 +821,6 @@ function AgendaConteudo() {
           // 1 animal no grupo — com 1 só, o fallback genérico (linha "simples",
           // numero_animal já preenchido) é suficiente e mais direto.
           linhas.push({ tipo: "protocolo_custom", e });
-        } else if (e.tipo === "cronograma_sanitario_sugeridos") {
-          linhas.push({ tipo: "cronograma_sugeridos", e });
-        } else if (e.tipo === "cronograma_sanitario_modo" || e.tipo === "cronograma_sanitario_urgente") {
-          linhas.push({ tipo: "cronograma_modo", e });
-        } else if (e.tipo === "cronograma_sanitario_aplicar") {
-          linhas.push({ tipo: "cronograma_aplicar", e });
         } else if (e.categoria === "Gestão/Financeiro" && e.ref) {
           const arr = financeiroPorRef.get(e.ref) ?? [];
           arr.push(e); financeiroPorRef.set(e.ref, arr);
@@ -1242,25 +830,6 @@ function AgendaConteudo() {
       });
       financeiroPorRef.forEach((itens, ref) => linhas.push({ tipo: "grupo", ref, itens }));
 
-      // Pendências elegíveis para o fluxo "dar baixa em lote" (mesmo dia) —
-      // só sanidade com matriz definida (ver elegivelBaixaInline). Separadas
-      // por categoria/lote-alvo + evento sanitário (grupoLoteChave), já que só
-      // faz sentido preencher os mesmos dados de uma vez para pendências
-      // realmente iguais.
-      const elegiveisDia = evs.filter((e: any) => elegivelBaixaInline(e));
-      const loteAtivoDia = !!loteDia[d];
-      const gruposElegiveisDia = new Map<string, any[]>();
-      elegiveisDia.forEach((e: any) => {
-        const g = grupoLoteChave(e);
-        (gruposElegiveisDia.get(g) ?? gruposElegiveisDia.set(g, []).get(g)!).push(e);
-      });
-      const grupoAtivoDia = categoriaLoteDia[d];
-      const itensGrupoAtivo = grupoAtivoDia ? (gruposElegiveisDia.get(grupoAtivoDia) || []) : [];
-      // Todos do grupo selecionados (via "Selecionar todos" ou marcando um a
-      // um) — nesse caso mostra 1 linha só, em vez de um painel por pendência.
-      const modoLinhaUnicaDia = loteAtivoDia && !!grupoAtivoDia && itensGrupoAtivo.length > 1 &&
-        itensGrupoAtivo.every((it) => selecionadosLote[d]?.has(it.id));
-
       return (
         <div key={d} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
           <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", background: "var(--surface-2)" }}>
@@ -1269,28 +838,6 @@ function AgendaConteudo() {
               <span style={{ fontWeight: 700, minWidth: "8rem" }}>{new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short", year: "2-digit" })}</span>
               <span style={{ flex: 1, fontSize: "0.78rem", color: "var(--text-muted)" }}>{evs.length} evento{evs.length !== 1 ? "s" : ""}</span>
             </button>
-            {elegiveisDia.length > 1 && (
-              <label className="flex items-center gap-1" style={{ fontSize: "0.7rem", color: "var(--text-muted)", cursor: "pointer", padding: "0 0.9rem", whiteSpace: "nowrap" }}
-                title="Selecione várias pendências da mesma categoria e confirme a baixa de todas juntas, sem sair da Agenda">
-                <input type="checkbox" checked={loteAtivoDia} onChange={() => toggleLoteDia(d)} /> Dar baixa em lote
-              </label>
-            )}
-            {loteAtivoDia && gruposElegiveisDia.size > 0 && (
-              <div className="flex items-center gap-1" style={{ flexWrap: "wrap", padding: "0 0.9rem 0.5rem" }}>
-                {Array.from(gruposElegiveisDia.entries()).filter(([g]) => !grupoAtivoDia || g === grupoAtivoDia).map(([g, itens]) => {
-                  const todosDoGrupoSelecionados = itens.length > 0 && itens.every((it) => selecionadosLote[d]?.has(it.id));
-                  return (
-                    <button key={g} className="btn-ghost" style={{ fontSize: "0.68rem", padding: "0.15rem 0.5rem", borderRadius: 999, border: "1px solid var(--border)" }}
-                      title={`${grupoLoteRotulo(itens[0])} — ${itens.length} pendência(s)`}
-                      onClick={() => todosDoGrupoSelecionados
-                        ? (setSelecionadosLote((p) => { const n = { ...p }; delete n[d]; return n; }), setCategoriaLoteDia((p) => { const n = { ...p }; delete n[d]; return n; }))
-                        : selecionarTodosGrupo(d, g, itens)}>
-                      {todosDoGrupoSelecionados ? "Desmarcar todos" : "Selecionar todos"}: {grupoLoteRotulo(itens[0])} ({itens.length})
-                    </button>
-                  );
-                })}
-              </div>
-            )}
           </div>
           {aberto && (
             <div className="overflow-x-auto">
@@ -1300,28 +847,6 @@ function AgendaConteudo() {
                   {linhas.map((linha, i) => {
                     if (linha.tipo === "simples") {
                       const e = linha.e;
-                      const elegivel = elegivelBaixaInline(e);
-                      const selecionadoLote = elegivel && (selecionadosLote[d]?.has(e.id) ?? false);
-                      // Em modo linha única (grupo inteiro selecionado), o painel some daqui
-                      // e some 1 vez só, compartilhado, logo antes do botão de confirmar.
-                      const painelAberto = elegivel && (loteAtivoDia ? (selecionadoLote && !modoLinhaUnicaDia) : expandidoBaixa.has(e.id));
-                      // Abre a gaveta de Preventivo/Avulso direto aqui (mesma tela de
-                      // Lançamentos > Sanitário > Preventivo, sem navegar pra lá) —
-                      // antes navegava pra "/lancamentos?ir=preventivo_aplicacao&...";
-                      // o prefill abaixo é equivalente aos mesmos parâmetros.
-                      const prefillPreventivo = (numeroObrigatorio: boolean) => {
-                        const ev = e as any;
-                        return {
-                          eventoAgenda: String(e.id),
-                          eventoSanitarioId: ev.evento_sanitario_id ? String(ev.evento_sanitario_id) : null,
-                          numeroMatriz: numeroObrigatorio && e.numero_animal ? e.numero_animal : null,
-                          data: e.data || null,
-                          // Pendência de uma regra do calendário sanitário JÁ existente
-                          // (tipo calendario_sanitario) — leva o id para não criar uma
-                          // regra nova duplicada ao dar baixa em Lançamentos.
-                          calendarioId: ev.tipo === "calendario_sanitario" && ev.calendario_id ? String(ev.calendario_id) : null,
-                        };
-                      };
                       const ehSugestaoMov = (e as any).tipo === "sugestao_movimentacao";
                       const ehBstAplicacao = (e as any).tipo === "bst_aplicacao";
                       // Diária de diarista ativa hoje — clicar no CARD (fora dos botões)
@@ -1391,47 +916,6 @@ function AgendaConteudo() {
                                 <a href={`/alimentacao?lote=${encodeURIComponent(e.lote ?? "")}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
                                   <Wheat size={12} /> Ir para Dieta
                                 </a>
-                              ) : (e as any).tipo === "evento_sanitario" || (e as any).tipo === "calendario_sanitario" ? (
-                                !elegivel ? (
-                                  // Sem matriz específica (gatilho de época/rebanho) — não dá pra
-                                  // resolver inline sem escolher os animais; segue para o formulário,
-                                  // que já sabe tratar exame (sem produto/dose) e vacina/tratamento.
-                                  <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
-                                    <button type="button" onClick={() => abrirGavetaPreventivo(prefillPreventivo(false))} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} title="Aplicar/confirmar (evento sem matriz específica — escolha o alvo no formulário)">
-                                      <Syringe size={12} /> Dar baixa (aplicar)
-                                    </button>
-                                    <BotaoDescartar e={e} />
-                                  </div>
-                                ) : loteAtivoDia ? (
-                                  <label className="flex items-center gap-1" style={{ fontSize: "0.72rem", opacity: (!categoriaLoteDia[d] || categoriaLoteDia[d] === grupoLoteChave(e)) ? 1 : 0.4, cursor: (!categoriaLoteDia[d] || categoriaLoteDia[d] === grupoLoteChave(e)) ? "pointer" : "not-allowed" }}
-                                    title={(!categoriaLoteDia[d] || categoriaLoteDia[d] === grupoLoteChave(e)) ? "Selecionar para dar baixa em lote" : "Só é possível combinar pendências da mesma categoria/lote e evento"}>
-                                    <input type="checkbox" disabled={!!categoriaLoteDia[d] && categoriaLoteDia[d] !== grupoLoteChave(e)} checked={selecionadoLote}
-                                      onChange={() => toggleSelecaoLote(d, e)} />
-                                    Selecionar
-                                  </label>
-                                ) : (abrirLancamento[e.id] ?? false) ? (
-                                  <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
-                                    <button type="button" onClick={() => abrirGavetaPreventivo(prefillPreventivo(true))} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} title="Abre o formulário completo (gaveta)">
-                                      <Syringe size={12} /> Dar baixa (aplicar)
-                                    </button>
-                                    <label className="flex items-center gap-1" style={{ fontSize: "0.66rem", color: "var(--text-muted)", cursor: "pointer" }}>
-                                      <input type="checkbox" checked={abrirLancamento[e.id] ?? false} onChange={() => setAbrirLancamento((p) => ({ ...p, [e.id]: !p[e.id] }))} /> abrir lançamento
-                                    </label>
-                                  </div>
-                                ) : (
-                                  <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
-                                    <button className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}
-                                      disabled={resolvendoBaixa.has(e.id)}
-                                      onClick={() => { abrirCampos(e); setExpandidoBaixa((p) => new Set(p).add(e.id)); }}
-                                      title="Confirma os dados e dá baixa sem sair da Agenda">
-                                      <Syringe size={12} /> Dar baixa (aplicar)
-                                    </button>
-                                    <label className="flex items-center gap-1" style={{ fontSize: "0.66rem", color: "var(--text-muted)", cursor: "pointer" }}>
-                                      <input type="checkbox" checked={abrirLancamento[e.id] ?? false} onChange={() => setAbrirLancamento((p) => ({ ...p, [e.id]: !p[e.id] }))} /> abrir lançamento
-                                    </label>
-                                    <BotaoDescartar e={e} />
-                                  </div>
-                                )
                               ) : (e as any).tipo === "confirmar_cura" ? (
                                 <span className="flex items-center gap-1" style={{ fontSize: "0.72rem" }} onClick={(ev) => ev.stopPropagation()}>
                                   Curado?
@@ -1485,14 +969,6 @@ function AgendaConteudo() {
                               )}
                             </td>
                           </tr>
-                          {painelAberto && (
-                            <tr style={{ background: "var(--surface-2)" }}>
-                              <td></td>
-                              <td colSpan={5}>
-                                <PainelConfirmarBaixa e={e} loteModo={loteAtivoDia} />
-                              </td>
-                            </tr>
-                          )}
                         </React.Fragment>
                       );
                     }
@@ -1642,188 +1118,6 @@ function AgendaConteudo() {
                         </React.Fragment>
                       );
                     }
-                    if (linha.tipo === "cronograma_sugeridos") {
-                      const e = linha.e;
-                      return (
-                        <tr key={`cron-sugeridos-${i}`} className="clickable" style={{ cursor: "pointer" }}
-                          onClick={() => router.push(`/sanidade?ir=cronogramas&cronograma_id=${e.cronograma_id}`)}
-                          title="Ver os animais e decidir incluir ou excluir cada um">
-                          {tdAccent(e.categoria)}
-                          <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>—</td>
-                          <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>{e.descricao}{mostrarAtraso && pillAtraso(e.data)}</td>
-                          <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || <span className="ag2-nada">—</span>}</td>
-                          <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
-                          <td><ChevronRight size={16} style={{ color: "var(--text-muted)" }} /></td>
-                        </tr>
-                      );
-                    }
-                    if (linha.tipo === "cronograma_modo") {
-                      const e = linha.e;
-                      const urgente = e.tipo === "cronograma_sanitario_urgente";
-                      const abertoCron = cronogramaModoAbertos.has(e.id);
-                      const acao = cronogramaAcao[e.id] || "";
-                      return (
-                        <React.Fragment key={`cron-modo-${i}`}>
-                          <tr style={{ cursor: "pointer" }} onClick={() => toggleCronogramaModo(e.id)}>
-                            {tdAccent(e.categoria)}
-                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>—</td>
-                            <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>
-                              {abertoCron ? <ChevronDown size={12} style={{ display: "inline", marginRight: "0.3rem" }} /> : <ChevronRight size={12} style={{ display: "inline", marginRight: "0.3rem" }} />}
-                              {e.descricao}
-                              {urgente && (
-                                <span style={{ marginLeft: "0.5rem", fontSize: "0.66rem", fontWeight: 700, color: "var(--red)", background: "rgba(220,38,38,0.12)", padding: "0.05rem 0.45rem", borderRadius: 999 }}>
-                                  Urgente
-                                </span>
-                              )}
-                            </td>
-                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || <span className="ag2-nada">—</span>}</td>
-                            <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
-                            <td onClick={(ev) => ev.stopPropagation()} />
-                          </tr>
-                          {abertoCron && (
-                            <tr style={{ background: "var(--surface-2)" }}>
-                              <td></td>
-                              <td colSpan={5}>
-                                <div style={{ padding: "0.6rem 0" }}>
-                                  {!acao ? (
-                                    <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-                                      <button className="btn-secondary" style={{ fontSize: "0.72rem" }} onClick={() => setCronogramaAcao((p) => ({ ...p, [e.id]: "veterinario" }))}>
-                                        Veterinário
-                                      </button>
-                                      <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id)} onClick={() => decidirCronogramaModo(e, "propria")}>
-                                        Aplicação própria
-                                      </button>
-                                      {urgente && (
-                                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setCronogramaAcao((p) => ({ ...p, [e.id]: "adiar" }))}>
-                                          Adiar
-                                        </button>
-                                      )}
-                                    </div>
-                                  ) : acao === "veterinario" ? (
-                                    <div style={{ maxWidth: 420 }}>
-                                      <label style={rotuloInline}>Veterinário</label>
-                                      {!cronogramaNovoVet[e.id] ? (
-                                        <>
-                                          <select style={inputInline} value={cronogramaVetSel[e.id] || ""} onChange={(ev) => setCronogramaVetSel((p) => ({ ...p, [e.id]: ev.target.value }))}>
-                                            <option value="">Selecione…</option>
-                                            {veterinariosCronograma.map((v) => <option key={v.id} value={v.id}>{v.nome}</option>)}
-                                          </select>
-                                          <button type="button" className="btn-ghost" style={{ fontSize: "0.7rem", marginTop: "0.35rem" }} onClick={() => setCronogramaNovoVet((p) => ({ ...p, [e.id]: true }))}>
-                                            + cadastrar novo veterinário
-                                          </button>
-                                        </>
-                                      ) : (
-                                        <div className="flex items-center gap-2" style={{ marginTop: "0.3rem" }}>
-                                          <input style={inputInline} placeholder="Nome do veterinário" value={cronogramaNovoVetNome[e.id] || ""} onChange={(ev) => setCronogramaNovoVetNome((p) => ({ ...p, [e.id]: ev.target.value }))} />
-                                          <button className="btn-secondary" style={{ fontSize: "0.7rem" }} disabled={cronogramaCriandoVet.has(e.id)} onClick={() => criarVetInlineCronograma(e)}>
-                                            {cronogramaCriandoVet.has(e.id) ? "Salvando…" : "Salvar"}
-                                          </button>
-                                          <button className="btn-ghost" style={{ fontSize: "0.7rem" }} onClick={() => setCronogramaNovoVet((p) => ({ ...p, [e.id]: false }))}>Cancelar</button>
-                                        </div>
-                                      )}
-                                      <div className="flex items-center gap-2 mt-2">
-                                        <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id) || !cronogramaVetSel[e.id]} onClick={() => decidirCronogramaModo(e, "veterinario")}>
-                                          <Check size={12} /> Confirmar
-                                        </button>
-                                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setCronogramaAcao((p) => ({ ...p, [e.id]: "" }))}>Voltar</button>
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <div style={{ maxWidth: 320 }}>
-                                      <label style={rotuloInline}>Nova data</label>
-                                      <input type="date" style={inputInline} value={cronogramaAdiarData[e.id] || ""} onChange={(ev) => setCronogramaAdiarData((p) => ({ ...p, [e.id]: ev.target.value }))} />
-                                      <label style={{ ...rotuloInline, marginTop: "0.4rem" }}>Motivo (opcional)</label>
-                                      <input style={inputInline} value={cronogramaAdiarMotivo[e.id] || ""} onChange={(ev) => setCronogramaAdiarMotivo((p) => ({ ...p, [e.id]: ev.target.value }))} />
-                                      <div className="flex items-center gap-2 mt-2">
-                                        <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id)} onClick={() => adiarCronograma(e)}>
-                                          <Check size={12} /> Confirmar adiamento
-                                        </button>
-                                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setCronogramaAcao((p) => ({ ...p, [e.id]: "" }))}>Voltar</button>
-                                      </div>
-                                    </div>
-                                  )}
-
-                                  {/* Só entra na lista de "sugeridos" quem bate o critério automático
-                                      da regra (idade/gatilho/categoria projetada) — sem isto, não havia
-                                      jeito de incluir manualmente um animal fora desse critério (bug
-                                      relatado pelo usuário em 12/09/2026). */}
-                                  <div className="mt-3" style={{ borderTop: "1px solid var(--border)", paddingTop: "0.6rem" }}>
-                                    <label className="flex items-center gap-2" style={{ fontSize: "0.75rem", cursor: "pointer" }}>
-                                      <input type="checkbox" checked={!!cronogramaForaJanela[e.id]} onChange={() => toggleCronogramaForaJanela(e.id)} />
-                                      Incluir animal fora da janela de aplicação
-                                    </label>
-                                    {cronogramaForaJanela[e.id] && (
-                                      <div className="mt-2" style={{ maxWidth: 420 }}>
-                                        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.35rem" }}>
-                                          Mostra todos os animais da fazenda, não só os que entraram automaticamente na janela — use para incluir manualmente quem ficou de fora.
-                                        </p>
-                                        <AnimalPickerModal
-                                          animais={animaisTodos}
-                                          selecionados={cronogramaForaJanelaSel[e.id] || new Set()}
-                                          onToggle={(numero) => toggleAnimalForaJanela(e.id, numero)}
-                                          colunas={pickerColunasAnimais}
-                                          titulo="Incluir animal fora da janela"
-                                          placeholder="Selecionar animal(is)…"
-                                        />
-                                        <div className="flex items-center gap-2 mt-2">
-                                          <button className="btn-primary" style={{ fontSize: "0.72rem" }}
-                                            disabled={marcando.has(e.id) || !(cronogramaForaJanelaSel[e.id]?.size)}
-                                            onClick={() => incluirAnimaisForaJanela(e)}>
-                                            <Check size={12} /> Incluir{cronogramaForaJanelaSel[e.id]?.size ? ` (${cronogramaForaJanelaSel[e.id].size})` : ""}
-                                          </button>
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              </td>
-                            </tr>
-                          )}
-                        </React.Fragment>
-                      );
-                    }
-                    if (linha.tipo === "cronograma_aplicar") {
-                      // Só o AGENDAMENTO entra na Agenda, no dia. "Aplicar" abre a MESMA
-                      // gaveta de Protocolos › Acompanhamento (mesmo endpoint, canal "Agenda").
-                      const e = linha.e;
-                      const pendCk = (e.checklist_total ?? 0) - (e.checklist_resolvidos ?? 0);
-                      return (
-                        <React.Fragment key={`cron-aplicar-${i}`}>
-                        <tr style={{ cursor: "pointer" }} onClick={() => setGavetaAplicarId(e.cronograma_id)}>
-                          {tdAccent(e.categoria)}
-                          <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{e.animais.length} animal(is)</td>
-                          <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>
-                            {e.descricao}{mostrarAtraso && pillAtraso(e.data)}
-                            {pendCk > 0 && (
-                              <span title="Aplicar não é bloqueado: pede só a ciência dos itens pendentes"
-                                    style={{ marginLeft: "0.5rem", fontSize: "0.68rem", fontWeight: 700, color: "var(--amber)", background: "rgba(217,119,6,0.12)", padding: "0.05rem 0.45rem", borderRadius: 999, whiteSpace: "nowrap" }}>
-                                checklist pendente · {e.checklist_resolvidos}/{e.checklist_total}
-                              </span>
-                            )}
-                          </td>
-                          <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || <span className="ag2-nada">—</span>}</td>
-                          <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>agendamento</td>
-                          <td onClick={(ev) => ev.stopPropagation()}>
-                            <button className="btn-primary-gold" style={{ fontSize: "0.72rem" }} onClick={() => setGavetaAplicarId(e.cronograma_id)}>
-                              <Syringe size={12} /> {e.fase === "leitura" ? "Registrar leitura" : e.fase === "inoculacao" ? "Inocular" : e.fase === "coleta" ? "Registrar coleta" : "Aplicar"}
-                            </button>
-                            <button className="btn-ghost" style={{ fontSize: "0.72rem", marginLeft: "0.4rem" }} aria-expanded={adiandoId === e.cronograma_id}
-                              onClick={() => setAdiandoId((atual) => (atual === e.cronograma_id ? null : e.cronograma_id))}>
-                              Adiar
-                            </button>
-                          </td>
-                        </tr>
-                        {adiandoId === e.cronograma_id && (
-                          <tr style={{ background: "var(--surface-2)" }}>
-                            <td colSpan={6} style={{ padding: "0.5rem 0.75rem" }}>
-                              <AdiarComChips dataAtual={e.data} ocupado={adiandoOcupado} onCancelar={() => setAdiandoId(null)}
-                                onConfirmar={(novaData, motivo) => adiarAgendamento(e, novaData, motivo)} />
-                            </td>
-                          </tr>
-                        )}
-                        </React.Fragment>
-                      );
-                    }
                     if (linha.tipo === "inducao") {
                       const e = linha.e;
                       const abertoInducao = inducaoAbertos.has(e.id);
@@ -1958,26 +1252,6 @@ function AgendaConteudo() {
                       </React.Fragment>
                     );
                   })}
-                  {modoLinhaUnicaDia && itensGrupoAtivo.length > 0 && (
-                    <tr style={{ background: "var(--surface-2)" }}>
-                      <td></td>
-                      <td colSpan={5}>
-                        <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.2rem" }}>
-                          {itensGrupoAtivo.length} pendências de "{grupoLoteRotulo(itensGrupoAtivo[0])}" — os dados abaixo valem para todas.
-                        </div>
-                        <PainelConfirmarBaixa e={{ ...itensGrupoAtivo[0], id: chaveCamposGrupo(d) }} loteModo={true} />
-                      </td>
-                    </tr>
-                  )}
-                  {loteAtivoDia && (selecionadosLote[d]?.size ?? 0) > 0 && (
-                    <tr style={{ background: "var(--surface-2)" }}>
-                      <td colSpan={6} style={{ textAlign: "right", padding: "0.6rem 0.9rem" }}>
-                        <button className="btn-primary" style={{ fontSize: "0.75rem" }} disabled={resolvendoLoteDia.has(d)} onClick={() => confirmarLoteDia(d)}>
-                          <Check size={13} /> {resolvendoLoteDia.has(d) ? "Salvando…" : `Confirmar baixa em lote (${selecionadosLote[d]!.size})`}
-                        </button>
-                      </td>
-                    </tr>
-                  )}
                 </tbody>
               </table>
             </div>
@@ -2381,9 +1655,6 @@ function AgendaConteudo() {
 
   const renderDiaADia = () => (
     <div id="ag2-painel-dia" role="tabpanel" aria-labelledby="ag2-tab-dia">
-      {/* Reagente de exame (TB/brucelose): aviso persistente, com o registro da notificação — não some ao notificar. */}
-      {temMod("sanitario") && <BannerReagentes />}
-
       {renderComunicados((agenda?.comunicados_dia as ComunicadoAgenda[] | undefined) || [])}
 
       <div className="ag2-controles">
@@ -2538,12 +1809,8 @@ function AgendaConteudo() {
   // "A receber" (contrato F): lista separada de "Contas a pagar", mesmo formato; ausente = vazia.
   const contasReceber: any[] = agenda?.contas_a_receber || [];
   const valorReceber = resumoContasAgenda(contasReceber).saldo;
-  const listaEsperaTotal: number = agenda?.lista_espera_total ?? 0;
-  // O cartão só existe com a rotina ativa E o aviso diário ligado (Parâmetros); o backend decide.
-  const mostrarCartaoListaEspera: boolean = agenda?.rotina_lista_espera?.mostrar_card === true;
   const totalConcluidos = inducaoConcluidosPeriodo.length + realizadosGenericos.length;
   const pendencias = agenda?.pendencias || { n: 0, mais_antiga_dias: null };
-  const aindaCalculando = !projAtual;
   const linkConfigRepasse = "/parametros";
 
   const renderPainel = () => (
@@ -2601,21 +1868,9 @@ function AgendaConteudo() {
             <CartaoPainel titulo="Incluir no próximo BST" icon={Syringe} cor="var(--cat-sanidade)" valor={bstNuncaAplicados.length}
               detalhe="nunca receberam ou pedem reanálise"
               onClick={bstNuncaAplicados.length > 0 ? () => toggleLista("bstNunca") : undefined} aberto={listaAtiva.has("bstNunca")} />
-            <CartaoPainel titulo="Vacinas previstas" icon={Syringe} cor="var(--cat-sanidade)" href="/protocolos?aba=acompanhamento"
-              valor={aindaCalculando ? "…" : (cartoesProj.vacinas?.agendadas ?? 0)}
-              detalhe={aindaCalculando ? "calculando…" : cartoesProj.vacinas?.proximas?.[0]
-                ? <>{cartoesProj.vacinas.n_animais} animais · próxima {fmtCurta(cartoesProj.vacinas.proximas[0].data)}</> : `nenhuma agendada em ${horizonte} dias`} />
-            <CartaoPainel titulo="Exames previstos" icon={ClipboardCheck} cor="var(--cat-sanidade)" href="/protocolos?aba=acompanhamento"
-              valor={aindaCalculando ? "…" : (cartoesProj.exames?.agendadas ?? 0)}
-              detalhe={aindaCalculando ? "calculando…" : cartoesProj.exames?.proximas?.[0]
-                ? <>{cartoesProj.exames.n_animais} animais · próximo {fmtCurta(cartoesProj.exames.proximas[0].data)}</> : `nenhum agendado em ${horizonte} dias`} />
-            {/* Animais na lista de espera: SÓ atalho/contagem para Protocolos › Aplicar (nunca lista de brincos, nunca
-                tarefa do Dia a dia — R1). Aparece apenas quando a rotina da lista de espera está ativa E o "Aviso diário
-                nos cards da 2ª aba da Agenda" está ligado em Parâmetros (o backend calcula `mostrar_card`). */}
-            {mostrarCartaoListaEspera && listaEsperaTotal > 0 && (
-              <CartaoPainel titulo="Animais na lista de espera" icon={ClipboardList} cor="var(--cat-sanidade)" href="/protocolos?aba=aplicar"
-                valor={listaEsperaTotal} detalhe="atalho para Protocolos › Aplicar" />
-            )}
+            {/* Vacinas previstas · 30 d (Sanitário Preventivo v2): só números, com
+                link para Sanidade › Preventiva › Painel. */}
+            <CartaoVacinasPrevistas />
           </GrupoPainel>
           )}
 
@@ -2640,6 +1895,8 @@ function AgendaConteudo() {
           </GrupoPainel>
         </div>
       )}
+
+      {gruposPainel.sanidade && <NotasSanitario />}
 
       <ProjecaoAgenda dados={projAtual} carregando={projecaoCarregando} erro={projecaoErro} horizonte={horizonte} onTentar={() => carregarProjecao(horizonte)} />
 
@@ -3035,33 +2292,18 @@ function AgendaConteudo() {
         </div>
       )}
 
-      {gavetaAplicarId != null && (
-        <GavetaAplicar
-          cronogramaId={gavetaAplicarId} canal="Agenda" onFechar={() => setGavetaAplicarId(null)}
-          onMudou={() => { carregar(); }}
-        />
-      )}
-
-      {/* Gaveta lateral (T2, mockup 1e) — Preventivo/Avulso e Inseminação
-          abertos direto de uma linha da Agenda (ver abrirGavetaPreventivo/
-          abrirGavetaInseminacao acima), sem navegar pra /lancamentos. */}
+      {/* Gaveta lateral (T2, mockup 1e) — Inseminação aberta direto de uma
+          linha da Agenda (ver abrirGavetaInseminacao acima), sem navegar pra
+          /lancamentos. */}
       <GavetaLancamento
         aberto={gavetaAgenda != null}
         onFechar={fecharGavetaAgenda}
-        titulo={gavetaAgenda?.tipo === "inseminacao" ? "Inseminação" : "Preventivo — Avulso"}
-        icone={gavetaAgenda?.tipo === "inseminacao" ? Heart : Syringe}
+        titulo="Inseminação"
+        icone={Heart}
         mensagemSalva={mensagemSalvaGavetaAgenda}
         onSalvarProximo={salvarEProximoGavetaAgenda}
         onConcluir={concluirGavetaAgenda}
       >
-        {gavetaAgenda?.tipo === "preventivo_aplicacao" && (
-          <FormPreventivoAplicacao
-            key={formKeyGavetaAgenda}
-            animais={animaisGaveta} lotes={lotesGaveta} estoque={estoqueGaveta}
-            prefill={gavetaAgenda.prefill}
-            onSalvo={aoSalvarGavetaAgenda}
-          />
-        )}
         {gavetaAgenda?.tipo === "inseminacao" && (
           <FormInseminacao
             key={formKeyGavetaAgenda}

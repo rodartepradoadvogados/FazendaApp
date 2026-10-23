@@ -20,10 +20,8 @@ from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from fazenda.models import (
-    CalendarioSanitario,
     Estoque,
     EstoquePrincipioAtivo,
-    ExameDefinicao,
     IndicacaoTerapeutica,
     MedicamentoComercial,
     MedicamentoPrincipioAtivo,
@@ -126,7 +124,7 @@ def checar_e_desvincular_exclusao_principio(
     BLOQUEIA (400) se algum Medicamento (marca comercial) ainda usa este
     princípio — `MedicamentoComercial.principio_ativo_id` é obrigatório, não
     dá pra simplesmente desvincular. As demais referências são opcionais/de
-    catálogo e são desfeitas (calendário, exame, indução, IATF, item de
+    catálogo e são desfeitas (indução, IATF, item de
     estoque) ou removidas por serem puro vínculo (indicação terapêutica,
     junção de estoque).
 
@@ -151,24 +149,12 @@ def checar_e_desvincular_exclusao_principio(
         )
 
     impacto = [f"Princípio ativo {pa.nome}"]
-    vinculados_calendario = session.exec(select(CalendarioSanitario).where(CalendarioSanitario.principio_ativo_id == pa.id)).all()
-    vinculados_exame = session.exec(select(ExameDefinicao).where(ExameDefinicao.principio_ativo_id == pa.id)).all()
     vinculados_inducao = session.exec(select(ProtocoloInducaoLactacaoEtapa).where(ProtocoloInducaoLactacaoEtapa.principio_ativo_id == pa.id)).all()
     vinculados_iatf = session.exec(select(ProtocoloIatfEtapa).where(ProtocoloIatfEtapa.principio_ativo_id == pa.id)).all()
     indicacoes = session.exec(select(IndicacaoTerapeutica).where(IndicacaoTerapeutica.principio_ativo_id == pa.id)).all()
     itens_estoque = session.exec(select(Estoque).where(Estoque.principio_ativo_id == pa.id)).all()
     vinculos_estoque_junction = session.exec(select(EstoquePrincipioAtivo).where(EstoquePrincipioAtivo.principio_ativo_id == pa.id)).all()
 
-    if vinculados_calendario:
-        impacto.append(f"{len(vinculados_calendario)} regra(s) do calendário sanitário perderão esse vínculo")
-        for regra in vinculados_calendario:
-            regra.principio_ativo_id = None
-            session.add(regra)
-    if vinculados_exame:
-        impacto.append(f"{len(vinculados_exame)} definição(ões) de exame perderão esse vínculo")
-        for exame in vinculados_exame:
-            exame.principio_ativo_id = None
-            session.add(exame)
     if vinculados_inducao:
         impacto.append(f"{len(vinculados_inducao)} etapa(s) de indução de lactação perderão esse vínculo")
         for etapa in vinculados_inducao:

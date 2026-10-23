@@ -826,8 +826,7 @@ class CartaoCredito(SQLModel, table=True):
 
 class FaturaCartao(SQLModel, table=True):
     """Uma competência (mês) do cartão — nasce "aberta" na hora do 1º
-    lançamento daquele mês (mesmo padrão de `cronograma_aberto()`, ver
-    fazenda/rules/cronograma_sanitario.py: lida sempre cria se faltar).
+    lançamento daquele mês (lida sempre cria se faltar).
     `valor_total`/`milhas_acumuladas` só são gravados (congelados) no
     fechamento — enquanto aberta, o extrato soma os LancamentoCartao ao vivo."""
 

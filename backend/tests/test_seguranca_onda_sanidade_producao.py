@@ -1,6 +1,7 @@
 """
-Isolamento por fazenda — achados F-C-01, F-C-04, F-C-06, F-C-08 e F-C-10 do
-dossiê `onda-sanidade-producao-exclusoes` (auditoria de 3 rodadas, 05/09/2026).
+Isolamento por fazenda — achados F-C-04, F-C-06 e F-C-10 do dossiê
+`onda-sanidade-producao-exclusoes` (auditoria de 3 rodadas, 05/09/2026).
+F-C-01 e F-C-08 eram rotas do sanitário preventivo antigo (removidas em 2026).
 
 Cada classe abaixo reproduz UM achado: duas fazendas com dados próprios,
 e a operação de uma não pode alcançar a da outra. F-C-03 (exclusão em
@@ -24,7 +25,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
 from fazenda.models import (
-    Animal, CalendarioSanitario, ContratoFazenda, ContratoFazendaModulo, EventoSanitario, Fazenda,
+    Animal, ContratoFazenda, ContratoFazendaModulo, Fazenda,
     Parto, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa, ProtocoloSanitario, ProtocoloSanitarioEtapa,
     ProtocoloSanitarioLancamento, ProtocoloSanitarioLote, Servico,
 )
@@ -76,42 +77,6 @@ def _como_fazenda(fazenda_id: int | None):
     import main
     from fazenda.auth import get_fazenda_atual_id
     main.app.dependency_overrides[get_fazenda_atual_id] = lambda: fazenda_id
-
-
-# ---------------------------------------------------------------------------
-# F-C-01 — GET /sanidade/calendario/relatorio-eventos-vida
-# ---------------------------------------------------------------------------
-class TestRelatorioEventosVidaIsolado:
-    def test_relatorio_por_gatilho_nao_lista_animal_de_outra_fazenda(self, client):
-        c, engine = client
-        with Session(engine) as s:
-            s.add(Animal(numero="9001", fazenda_id=1, nome="Vaca sigilosa F1", data_nasc=date(2026, 1, 1)))
-            s.add(Animal(numero="9002", fazenda_id=2, nome="Vaca F2", data_nasc=date(2026, 1, 1)))
-            s.commit()
-
-        _como_fazenda(1)
-        r = c.get("/sanidade/calendario/relatorio-eventos-vida", params={"gatilho": "nascimento"})
-        assert r.status_code == 200, r.text
-        numeros = {linha["numero_matriz"] for linha in r.json()["animais"]}
-        assert "9001" in numeros
-        assert "9002" not in numeros, "animal de OUTRA fazenda vazou no relatório de eventos de vida"
-
-    def test_relatorio_por_evento_sanitario_de_outra_fazenda_da_400(self, client):
-        c, engine = client
-        with Session(engine) as s:
-            ev = EventoSanitario(
-                nome="Brucelose B19 sigilosa", fazenda_id=1, tipo_agendamento="evento",
-                gatilho="novilha_apta", gatilho_idade_meses=13,
-            )
-            s.add(ev)
-            s.commit()
-            s.refresh(ev)
-            ev_id = ev.id
-
-        _como_fazenda(2)
-        r = c.get("/sanidade/calendario/relatorio-eventos-vida", params={"evento_sanitario_id": ev_id})
-        assert r.status_code == 400, "evento_sanitario_id de outra fazenda não pode ser aceito"
-        assert "sigilosa" not in r.text.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -191,62 +156,6 @@ class TestProtocoloInducaoLactacaoIsolado:
             "protocolo_id": protocolo_id_f1, "animais": ["1"], "data_d0": "2026-09-05",
         })
         assert r.status_code == 404, r.text
-
-
-# ---------------------------------------------------------------------------
-# F-C-08 — POST /sanidade/calendario/cadastrar-preventivo
-# ---------------------------------------------------------------------------
-class TestCadastrarPreventivoIsolado:
-    def test_evento_sanitario_de_outra_fazenda_nao_pode_ser_usado(self, client):
-        c, engine = client
-        with Session(engine) as s:
-            ev = EventoSanitario(nome="Vacina sigilosa F1", fazenda_id=1, produto_padrao="Segredo Comercial")
-            s.add(ev)
-            s.commit()
-            s.refresh(ev)
-            ev_id = ev.id
-
-        _como_fazenda(2)
-        r = c.post("/sanidade/calendario/cadastrar-preventivo", json={
-            "evento_sanitario_id": ev_id, "data_evento": "2026-09-05", "frequencia_valor": 0,
-        })
-        assert r.status_code == 400, r.text
-        assert "Segredo Comercial" not in r.text
-
-    def test_calendario_id_de_outra_fazenda_nao_pode_ser_reaproveitado(self, client):
-        """A checagem antiga só comparava `regra.evento_sanitario_id ==
-        ev.id` — nunca o tenant da própria regra. Reproduz isolando essa
-        checagem: uma CalendarioSanitario da FAZENDA 1 que referencia o
-        evento_sanitario_id da FAZENDA 2 (a mesma anomalia que o comentário
-        do achado descreve como possível antes do fix em `calendario_id is
-        None`) — o atacante (fazenda 2) usa o PRÓPRIO evento_sanitario_id
-        (passa na 1ª checagem) e o calendario_id da fazenda 1 (deveria falhar
-        na 2ª)."""
-        c, engine = client
-        with Session(engine) as s:
-            ev2 = EventoSanitario(nome="Vacina F2", fazenda_id=2)
-            s.add(ev2)
-            s.commit()
-            s.refresh(ev2)
-            # Regra é da FAZENDA 1, mas aponta pro evento_sanitario_id que
-            # pertence à fazenda 2 (atacante) — únicos ids que o antigo check
-            # comparava.
-            cal_f1 = CalendarioSanitario(
-                evento_sanitario_id=ev2.id, fazenda_id=1, frequencia_valor=4, frequencia_unidade="meses",
-                data_evento=date(2026, 1, 1), produto="Segredo Regra F1",
-            )
-            s.add(cal_f1)
-            s.commit()
-            s.refresh(cal_f1)
-            ids = {"ev2_id": ev2.id, "cal_f1_id": cal_f1.id}
-
-        _como_fazenda(2)
-        r = c.post("/sanidade/calendario/cadastrar-preventivo", json={
-            "evento_sanitario_id": ids["ev2_id"], "calendario_id": ids["cal_f1_id"],
-            "data_evento": "2026-09-05", "frequencia_valor": 0,
-        })
-        assert r.status_code == 404, r.text
-        assert "Segredo Regra F1" not in r.text
 
 
 # ---------------------------------------------------------------------------

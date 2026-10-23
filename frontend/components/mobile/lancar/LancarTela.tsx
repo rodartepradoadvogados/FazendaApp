@@ -47,22 +47,12 @@ const TITULOS: Record<Tela, string> = {
 
 export function LancarTela() {
   const animais = useCache<Animal[]>("animais", () => fetchAnimais() as Promise<Animal[]>, []);
-  // /app/lancar#financeiro (ex.: atalho "$ Lançar financeiro" do Calendário
-  // Sanitário) abre direto em Financeiro > Contas a pagar — o `?servico=`
-  // que vem junto é lido pelo próprio FormFinanceiro (ver components/
-  // FormFinanceiro.tsx), não precisa ser tratado aqui.
-  // "Ver quem está na janela" (Menu > Calendário Sanitário) — abre direto em
-  // Sanidade > Preventiva > Aplicação, evento e modo "Na janela" já prontos
-  // (ver FormSanidade > PreventivoAplicacao), sem repetir os toques normais.
-  const deepLinkJanelaEventoId = typeof window !== "undefined"
-    ? new URLSearchParams(window.location.search).get("ir") === "sanidade_janela"
-      ? new URLSearchParams(window.location.search).get("evento_sanitario_id")
-      : null
-    : null;
+  // /app/lancar#financeiro abre direto em Financeiro > Contas a pagar — o
+  // `?servico=` que vem junto é lido pelo próprio FormFinanceiro (ver
+  // components/FormFinanceiro.tsx), não precisa ser tratado aqui.
   const [tela, setTela] = useState<Tela | null>(() => {
     if (typeof window === "undefined") return null;
     if (window.location.hash === "#financeiro") return "financeiro";
-    if (deepLinkJanelaEventoId) return "sanidade";
     return null;
   });
   const [fixado, setFixado] = useState<Animal | null>(null);
@@ -88,7 +78,7 @@ export function LancarTela() {
         {tela !== "financeiro" && tela !== "estoque" && <MobVoltar titulo={TITULOS[tela]} onVoltar={() => setTela(null)} />}
         {tela === "reprodutivo" && <FormReprodutivo animais={animais.dados} animalFixado={fixado?.numero || null} />}
         {tela === "producao" && <FormProducao animais={animais.dados} animalFixado={fixado?.numero || null} />}
-        {tela === "sanidade" && <FormSanidade animais={animais.dados} animalFixado={fixado?.numero || null} deepLinkEventoId={deepLinkJanelaEventoId} />}
+        {tela === "sanidade" && <FormSanidade animais={animais.dados} animalFixado={fixado?.numero || null} />}
         {tela === "alimentacao" && <FormAlimentacao />}
         {tela === "sobra" && <FormSobraCocho />}
         {tela === "protocolos" && <FormProtocolos animais={animais.dados} animalFixado={fixado?.numero || null} />}

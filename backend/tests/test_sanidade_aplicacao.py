@@ -328,123 +328,17 @@ class TestAplicadoSimNao:
         assert item["quantidade"] == 990
 
 
-class TestPreventivoAplicadoSimNao:
-    """Mesmo toggle 'aplicado? sim/não' do lançamento avulso, agora também no
-    fluxo de Preventivo/calendário sanitário (cadastrar-preventivo) — se não
-    aplicado, vira pendência (AplicacaoAgendada) em vez de Sanidade real."""
+class TestNaturezaSoCurativo:
+    """O lançamento avulso só aceita natureza "curativo" desde 2026: vacinas e
+    exames preventivos saíram daqui (módulo novo sanitario_*). BST e Indução
+    de cio continuam gravando "preventivo" pelos próprios fluxos."""
 
-    def _criar_evento(self, client) -> int:
-        r = client.post("/cadastro/eventos-sanitarios", json={
-            "nome": "Vacina Aftosa", "categoria_preventiva": "vacina",
-            "produto_padrao": "Vacina X", "dose_padrao": 2, "unidade_padrao": "unidade", "via_padrao": "IM",
+    def test_natureza_preventivo_e_recusada(self, client):
+        r = client.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": "2026-07-08", "animais": ["101"], "natureza": "preventivo",
+            "itens": [{"produto": "Borgal 50ml", "quantidade": 10, "unidade": "ml"}],
         })
-        assert r.status_code == 200, r.text
-        return r.json()["id"]
-
-    def test_preventivo_nao_aplicado_nao_baixa_e_vira_pendencia(self, client):
-        from datetime import date
-        ev_id = self._criar_evento(client)
-        r = client.post("/sanidade/calendario/cadastrar-preventivo", json={
-            "evento_sanitario_id": ev_id, "data_evento": date.today().isoformat(), "animais": ["101"],
-            "aplicar": True, "aplicado": False,
-        })
-        assert r.status_code == 200, r.text
-        d = r.json()
-        assert d["aplicacao"]["programado"] is True
-        # Estoque intacto — nada foi baixado.
-        item = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Vacina X")
-        assert item["quantidade"] == 20
-        assert client.get("/sanidade/aplicacoes").json()["total"] == 0
-
-    def test_preventivo_aplicado_baixa_na_hora(self, client):
-        from datetime import date
-        ev_id = self._criar_evento(client)
-        r = client.post("/sanidade/calendario/cadastrar-preventivo", json={
-            "evento_sanitario_id": ev_id, "data_evento": date.today().isoformat(), "animais": ["101"],
-            "aplicar": True, "aplicado": True,
-        })
-        assert r.status_code == 200, r.text
-        d = r.json()
-        assert d["aplicacao"]["programado"] is False
-        item = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Vacina X")
-        assert item["quantidade"] == 18  # baixou 2
-        assert client.get("/sanidade/aplicacoes").json()["total"] == 1
-
-    def test_preventivo_aplicado_default_true_retrocompativel(self, client):
-        """Sem enviar 'aplicado' no payload (clientes antigos), comportamento
-        continua sendo aplicar de verdade — igual a antes desta feature."""
-        from datetime import date
-        ev_id = self._criar_evento(client)
-        r = client.post("/sanidade/calendario/cadastrar-preventivo", json={
-            "evento_sanitario_id": ev_id, "data_evento": date.today().isoformat(), "animais": ["101"], "aplicar": True,
-        })
-        assert r.status_code == 200, r.text
-        assert r.json()["aplicacao"]["programado"] is False
-
-
-class TestPreventivoFalhaExplicita:
-    """Antes, evento sem produto/dose/unidade padrão fazia a aplicação ser
-    pulada em silêncio (200 com aplicacao: null, nada gravado/baixado). Agora
-    é 400 explícito — só quando aplicar=True e há animais marcados."""
-
-    def _criar_evento_sem_padrao(self, client) -> int:
-        r = client.post("/cadastro/eventos-sanitarios", json={
-            "nome": "Vermífugo", "categoria_preventiva": "vermifugacao",
-        })
-        assert r.status_code == 200, r.text
-        return r.json()["id"]
-
-    def test_aplicar_sem_produto_padrao_da_400_citando_o_que_falta(self, client):
-        from datetime import date
-        ev_id = self._criar_evento_sem_padrao(client)
-        r = client.post("/sanidade/calendario/cadastrar-preventivo", json={
-            "evento_sanitario_id": ev_id, "data_evento": date.today().isoformat(), "animais": ["101"],
-            "aplicar": True,
-        })
-        assert r.status_code == 400, r.text
-        detalhe = r.json()["detail"]
-        assert "medicamento" in detalhe and "dose" in detalhe and "unidade" in detalhe
-        assert "Vermífugo" in detalhe
-        # Nada foi gravado (nem a regra do calendário, nem a aplicação).
-        assert client.get("/sanidade/aplicacoes").json()["total"] == 0
-        assert client.get("/sanidade/calendario").json() == []
-
-    def test_produto_dose_unidade_informados_no_request_grava_e_baixa(self, client):
-        from datetime import date
-        ev_id = self._criar_evento_sem_padrao(client)
-        r = client.post("/sanidade/calendario/cadastrar-preventivo", json={
-            "evento_sanitario_id": ev_id, "data_evento": date.today().isoformat(), "animais": ["101"],
-            "aplicar": True, "produto": "Vacina X", "dose": 3, "unidade": "unidade",
-        })
-        assert r.status_code == 200, r.text
-        assert r.json()["aplicacao"]["programado"] is False
-        item = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Vacina X")
-        assert item["quantidade"] == 17  # 20 - 3
-
-    def test_aplicar_falso_nao_exige_produto_e_so_grava_regra(self, client):
-        """Regressão: aplicar=False continua só cadastrando/atualizando a regra
-        do calendário, mesmo sem produto/dose/unidade — não deve dar erro."""
-        from datetime import date
-        ev_id = self._criar_evento_sem_padrao(client)
-        r = client.post("/sanidade/calendario/cadastrar-preventivo", json={
-            "evento_sanitario_id": ev_id, "data_evento": date.today().isoformat(), "animais": ["101"],
-            "aplicar": False,
-        })
-        assert r.status_code == 200, r.text
-        assert r.json()["aplicacao"] is None
-        assert r.json()["regra"] is not None
-        assert client.get("/sanidade/aplicacoes").json()["total"] == 0
-
-    def test_sem_animais_nao_exige_produto(self, client):
-        """Cadastro só da regra (sem animal marcado) também não deve exigir
-        produto padrão, mesmo com aplicar=True."""
-        from datetime import date
-        ev_id = self._criar_evento_sem_padrao(client)
-        r = client.post("/sanidade/calendario/cadastrar-preventivo", json={
-            "evento_sanitario_id": ev_id, "data_evento": date.today().isoformat(), "animais": [],
-            "aplicar": True,
-        })
-        assert r.status_code == 200, r.text
+        assert r.status_code == 422, r.text
 
 
 class TestAvisoSaldoNegativo:

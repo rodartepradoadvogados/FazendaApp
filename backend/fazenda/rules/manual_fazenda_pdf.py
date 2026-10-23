@@ -9,8 +9,8 @@ padding/border/background-color simples. Identidade visual CowData
 frontend/lib/export.ts.
 
 BUG DE SEGURANÇA CORRIGIDO (CWE-918 via CWE-80): quase todo texto que entra
-neste template (nome de item de estoque, protocolo/número de animal do
-calendário sanitário, responsável pelo manejo reprodutivo, sugestão
+neste template (nome de item de estoque, protocolo/número de animal dos
+protocolos sanitários, responsável pelo manejo reprodutivo, sugestão
 cadastrada pelo usuário) é texto livre gravável por um usuário comum — sem
 gate de admin — e entrava CRU nas f-strings de HTML abaixo (`<td>{...}</td>`
 etc.), sem `html.escape` nenhum. Como `gerar_pdf_manual` chama
@@ -89,7 +89,7 @@ def _bloco_rotina(rotina: dict) -> str:
         p = sanit["proxima"]
         linhas.append(f"""
           <tr>
-            <td style="padding:6px 8px;font-weight:bold;">Calendário sanitário</td>
+            <td style="padding:6px 8px;font-weight:bold;">Protocolos sanitários</td>
             <td style="padding:6px 8px;color:{COR_MUTED};">
               Próxima: {_esc(p['protocolo'])} — animal {_esc(p['animal'])} em {_fmt_data(p['data'])}
               {f" · {_esc(sanit['vencidas'])} vencida(s)" if sanit.get('vencidas') else ""}

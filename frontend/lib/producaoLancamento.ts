@@ -196,11 +196,10 @@ export function aplicadoEfetivo(aplicado: boolean, dataSecagem: string, hoje: st
   return aplicado && dataSecagem <= hoje;
 }
 /** Mensagem do que falta para salvar (null = pode salvar). Mesmas travas do formulário antigo. */
-export function erroDeSecagem(d: { nVacas: number; motivo: string; vacinaSim: boolean; vacinas: string[]; ecc?: string }): string | null {
+export function erroDeSecagem(d: { nVacas: number; motivo: string; ecc?: string }): string | null {
   if (d.nVacas === 0) return "Selecione ao menos uma vaca (ou lote).";
   if (!d.motivo) return "Selecione o motivo da secagem.";
   const ecc = numOuNull(d.ecc);
   if (ecc !== null && (ecc < 1 || ecc > 5)) return "O escore de condição corporal vai de 1 a 5 (ou deixe em branco).";
-  if (d.vacinaSim && d.vacinas.length === 0) return 'Marque ao menos uma vacina pré-parto, ou volte para "Não".';
   return null;
 }

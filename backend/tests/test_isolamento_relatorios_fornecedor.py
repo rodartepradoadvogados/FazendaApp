@@ -29,8 +29,8 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
 
 from fazenda.models import (
-    Animal, CalendarioSanitario, CompraAnimal, ContaGerencial, ContratoFazenda, ContratoFazendaModulo,
-    CronogramaSanitario, CronogramaSanitarioAnimal, EntregaLeiteMensal, Estoque, EstoqueSemen, EventoSanitario,
+    Animal, CompraAnimal, ContaGerencial, ContratoFazenda, ContratoFazendaModulo,
+    EntregaLeiteMensal, Estoque, EstoqueSemen,
     Fazenda, Fornecedor, MovimentoEstoque, Sanidade,
 )
 from fazenda.models.planos import MODULOS_COMERCIAIS
@@ -82,20 +82,6 @@ def client(monkeypatch):
         s.add(MovimentoEstoque(
             fazenda_id=1, nome_item="Silagem F1", movimento="Saída de ajuste",
             quantidade=50.0, unidade="kg", data_movimento=date(2026, 7, 15),
-        ))
-        # Cronograma sanitário da fazenda 1 — alvo do IDOR de escrita.
-        s.add(EventoSanitario(id=1, fazenda_id=1, nome="Vacina F1"))
-        s.add(CalendarioSanitario(
-            id=1, fazenda_id=1, evento_sanitario_id=1, categoria_alvo="Vaca",
-            frequencia_valor=12, frequencia_unidade="meses", data_evento=date(2026, 7, 20),
-        ))
-        s.add(CronogramaSanitario(
-            id=1, fazenda_id=1, calendario_sanitario_id=1,
-            data_evento=date(2026, 7, 20), status="agendado",
-        ))
-        s.add(CronogramaSanitarioAnimal(
-            id=1, fazenda_id=1, cronograma_id=1, numero_matriz="F1-VACA",
-            status="incluido", data_sugestao=date(2026, 7, 1),
         ))
 
         # --- Fazenda 2: o dado legítimo de quem está consultando ---
@@ -267,36 +253,6 @@ class TestG5AcasalamentoVazaEstoqueDeSemen:
         c, _ = client
         _como_fazenda(2)
         r = c.get("/reproducao/acasalamento/sugestao", params={"numero_matriz": "F1-VACA"})
-        assert r.status_code == 404
-
-
-class TestG6CronogramaSanitarioIDOR:
-    def test_decidir_modo_de_cronograma_de_outra_fazenda_devolve_404(self, client):
-        c, engine = client
-        _como_fazenda(2)
-        r = c.post("/agenda/realizados", json={
-            "evento_id": "cronograma_sanitario_modo_1", "modo": "propria",
-        })
-        assert r.status_code == 404
-        with Session(engine) as s:
-            assert s.get(CronogramaSanitario, 1).modo_execucao is None, "modo do cronograma alheio foi alterado"
-
-    def test_aplicar_cronograma_de_outra_fazenda_devolve_404(self, client):
-        c, engine = client
-        _como_fazenda(2)
-        r = c.post("/agenda/realizados", json={
-            "evento_id": "cronograma_sanitario_aplicar_1", "responsavel": "atacante",
-        })
-        assert r.status_code == 404
-        with Session(engine) as s:
-            assert s.get(CronogramaSanitario, 1).status == "agendado", "cronograma alheio foi concluído"
-
-    def test_incluir_animal_em_cronograma_de_outra_fazenda_devolve_404(self, client):
-        c, _ = client
-        _como_fazenda(2)
-        r = c.post("/agenda/realizados", json={
-            "evento_id": "cronograma_sanitario_animal_1", "incluir": True,
-        })
         assert r.status_code == 404
 
 

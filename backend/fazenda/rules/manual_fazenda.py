@@ -3,7 +3,7 @@ Manual da Fazenda — monta, a partir dos parâmetros e indicadores já
 calculados em outros módulos, um relatório com 4 seções:
 
   - rotina: projeção das próximas datas de BST, visita reprodutiva,
-    calendário sanitário e reposição de estoque — mesma lógica de
+    protocolos sanitários (curativos) e reposição de estoque — mesma lógica de
     ancoragem já usada na Agenda, sem duplicar a Agenda inteira.
   - resultado: KPIs atuais (reaproveita calcular_indicadores).
   - insights: compara a média dos últimos meses com o período anterior nas
@@ -132,7 +132,7 @@ def _rotina_sanitaria(session: Session, fazenda_id: int | None, hoje: date) -> d
     vencidas = [row for row in pendentes if row[0].data_prevista < hoje]
     proxima = pendentes[0] if pendentes else None
     return {
-        "titulo": "Calendário sanitário preventivo",
+        "titulo": "Protocolos sanitários",
         "vencidas": len(vencidas),
         "proxima": (
             {"protocolo": proxima[2].nome, "data": proxima[0].data_prevista.isoformat(), "animal": proxima[1].numero_matriz}
