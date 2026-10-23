@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
-from fazenda.models import Fazenda
+from fazenda.models import ContratoFazenda, Fazenda
 from fazenda.rules import assistente_llm as llm
 from fazenda.rules import ferramentas_pagina as pagina
 from fazenda.rules.assistente import responder
@@ -46,6 +46,8 @@ def engine():
     SQLModel.metadata.create_all(eng)
     with Session(eng) as s:
         s.add(Fazenda(id=1, nome="Fazenda Teste"))
+        # trava de tenant do main.py exige contrato ativo quando há fazenda
+        s.add(ContratoFazenda(fazenda_id=1, status="ativo"))
         s.commit()
     return eng
 
@@ -182,3 +184,60 @@ class TestProtocolo:
         nomes = {s["name"] for s in pagina.especificacoes()}
         assert nomes == set(pagina.NOMES)
         assert "pagina_navegar" in nomes
+
+
+# ---------------------------------------------------------------------------
+# Contrato do endpoint (o front depende dele para saber o que executar)
+# ---------------------------------------------------------------------------
+class TestEndpoint:
+    @pytest.fixture
+    def client(self, monkeypatch, engine):
+        import main
+        import fazenda.database as database
+        from fazenda.auth import get_current_user, get_fazenda_atual_id
+
+        monkeypatch.setattr(database, "engine", engine)
+
+        def _sess():
+            with Session(engine) as s:
+                yield s
+
+        main.app.dependency_overrides[database.get_session] = _sess
+        main.app.dependency_overrides[get_current_user] = lambda: _Usuario()
+        main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 1
+        from fastapi.testclient import TestClient
+        with TestClient(main.app) as c:
+            yield c
+        main.app.dependency_overrides.clear()
+
+    def test_devolve_aguardando_para_o_front_executar(self, client, monkeypatch):
+        _openrouter(monkeypatch, [
+            _msg(None, [_tool("pagina_info", {})], "tool_calls"),
+        ])
+        r = client.post("/assistente/perguntar", json={"mensagem": "onde estou?"})
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["aguardando"][0]["nome"] == "pagina_info"
+        assert corpo["aguardando"][0]["id"] == "call_1"
+
+    def test_aceita_continuacao_sem_mensagem(self, client, monkeypatch):
+        _openrouter(monkeypatch, [
+            _msg(None, [_tool("pagina_info", {})], "tool_calls"),
+            _msg("Você está em /lancamentos."),
+        ])
+        primeiro = client.post("/assistente/perguntar", json={"mensagem": "onde estou?"}).json()
+        segundo = client.post("/assistente/perguntar", json={
+            "historico": primeiro["historico"],
+            "resultados_pagina": [{"id": "call_1", "resultado": {"ok": True, "caminho": "/lancamentos"}}],
+        })
+        assert segundo.status_code == 200
+        assert segundo.json()["resposta"] == "Você está em /lancamentos."
+
+    def test_mensagem_vazia_sem_resultado_e_400(self, client):
+        assert client.post("/assistente/perguntar", json={"mensagem": "  "}).status_code == 400
+
+    def test_resultados_demais_e_400(self, client):
+        r = client.post("/assistente/perguntar", json={
+            "mensagem": "oi", "resultados_pagina": [{"id": str(i), "resultado": "x"} for i in range(13)],
+        })
+        assert r.status_code == 400
