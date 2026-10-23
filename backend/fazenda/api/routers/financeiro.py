@@ -29,6 +29,7 @@ from fazenda.models import (
 )
 from fazenda.rules import caixa_funcionario, estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
+from fazenda.rules.conta_baixa import conta_em_aberto
 from fazenda.rules.vale_item import (
     ajuste_vale_por_conta, eh_item_de_vale, sem_itens_automaticos, sem_itens_de_vale, valor_caixa_parcela, valor_gerencial,
 )
@@ -6111,7 +6112,7 @@ def contas_a_pagar(
         if (
             c.data_vencimento
             and hoje <= c.data_vencimento <= limite
-            and (c.valor_pago or 0) < (c.valor_total or 0)
+            and conta_em_aberto(c.data_pagamento, c.valor_pago, c.valor_total)
             and c.tipo == "despesa"
         ):
             resultado.append({**c.model_dump(), "usuario_nome": nomes_usuarios.get(c.usuario_id)})

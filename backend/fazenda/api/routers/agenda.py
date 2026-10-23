@@ -40,6 +40,7 @@ from fazenda.ordenacao import chave_numero
 from fazenda.rules import caixa_funcionario as caixa_funcionario_rules
 from fazenda.rules import tratos as regras_tratos
 from fazenda.rules import caixa_time as caixa_time_rules
+from fazenda.rules.conta_baixa import conta_em_aberto
 from fazenda.rules.agenda_engine import DIAS_CONTAS_VENCIDAS_NA_AGENDA, AgendaEngine, AgendaItem
 from fazenda.rules.cura_protocolo import protocolo_terminado
 from fazenda.rules import lactacao as regras_lactacao
@@ -1800,7 +1801,7 @@ def calcular_agenda(
                         )
                     ).all()
                 )
-                if (c.get("valor_pago") or 0) < (c.get("valor_total") or 0)
+                if conta_em_aberto(c.get("data_pagamento"), c.get("valor_pago"), c.get("valor_total"))
             ),
             key=lambda c: c["data_vencimento"],
         )

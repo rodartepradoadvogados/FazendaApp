@@ -1195,6 +1195,27 @@ class TestBaixaLoteDetalhada:
         # Valor pago menor que o total vira desconto (−20).
         assert lancs[id2]["desconto_acrescimo"] == -20.0
 
+    def test_baixa_em_valor_zero_tira_a_conta_da_agenda(self, client):
+        """LC-2026-00290: R$ 255 vencida em 14/10/2026, desconto de 100% lançado na baixa em lote por linha (valor 0).
+        Conta paga não aparece como atrasada na Agenda, seja qual for o valor pago; antes ficava (0 < 255)."""
+        c, engine = client
+        id1 = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "data_vencimento": "2026-10-14",
+            "itens": [{"produto": "Ração", "quantidade": 1, "valor_unitario": 255.0, "valor_total": 255.0}],
+        }).json()["ids"][0]
+
+        def na_agenda():
+            r = c.get("/agenda/", params={"data": "2026-10-23", "dias": 10})
+            assert r.status_code == 200
+            return [x["id"] for x in r.json()["contas_a_pagar"]]
+
+        assert na_agenda() == [id1]  # sem baixa: aparece, atrasada
+        r = c.put("/financeiro/lancamentos/baixa-lote-detalhada", json={"itens": [
+            {"lancamento_id": id1, "data_pagamento": "2026-10-14", "valor_pago": 0.0, "forma_pagamento": "pix"},
+        ]})
+        assert r.status_code == 200 and r.json()["baixados"] == 1
+        assert na_agenda() == []  # baixada em R$ 0,00: some
+
     def test_credito_por_linha_exige_vencimento(self, client):
         c, engine = client
         id1 = self._criar(c, 300.0)
