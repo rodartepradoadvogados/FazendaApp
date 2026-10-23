@@ -7,7 +7,7 @@
 > celular. Se a pasta `CowData-Milk` existe em outro lugar (Drive, notebook,
 > WhatsApp), é só copiar este arquivo para lá — ele é autocontido.
 
-Atualizado em 06/09/2026.
+Atualizado em 23/10/2026: o produto é o **CowData Milk** e o endereço é `milk.cowdata.com.br` (o antigo `fazenda-app-jfye.vercel.app` continua funcionando).
 
 ---
 
@@ -15,17 +15,17 @@ Atualizado em 06/09/2026.
 
 | O que | Link |
 | --- | --- |
-| Sistema (site completo) | **https://fazenda-app-jfye.vercel.app** |
-| Entrar direto na tela de login | https://fazenda-app-jfye.vercel.app/login |
-| Trocar de fazenda / Painel CowData | https://fazenda-app-jfye.vercel.app/escolher-conta |
-| Painel CowData (administração da empresa) | https://fazenda-app-jfye.vercel.app/painel-cowdata |
+| Sistema (site completo) | **https://milk.cowdata.com.br** |
+| Entrar direto na tela de login | https://milk.cowdata.com.br/login |
+| Trocar de fazenda / Painel CowData | https://milk.cowdata.com.br/escolher-conta |
+| Painel CowData (administração da empresa) | https://milk.cowdata.com.br/painel-cowdata |
 
 É o mesmo endereço para todo mundo: o que cada pessoa vê depende do usuário e
 da fazenda com que ela entra.
 
 ### Instalar o SITE como aplicativo (PWA de computador/notebook)
 
-1. Abra **https://fazenda-app-jfye.vercel.app** no Chrome ou no Edge e faça o login.
+1. Abra **https://milk.cowdata.com.br** no Chrome ou no Edge e faça o login.
 2. Na barra de endereço, à direita, clique no ícone de **instalar** (um monitor
    com uma seta para baixo) — ou vá em menu **⋮ → Salvar e compartilhar →
    Instalar página como aplicativo**.
@@ -46,7 +46,7 @@ navegador — isso era um defeito, corrigido em 06/09/2026.
 
 | O que | Link |
 | --- | --- |
-| App de campo pelo navegador (PWA) | **https://fazenda-app-jfye.vercel.app/app** |
+| App de campo pelo navegador (PWA) | **https://milk.cowdata.com.br/app** |
 | App nativo Android (`.apk`) | GitHub → repositório `rodartepradoadvogados/FazendaApp` → aba **Actions** → fluxo **"Gerar .apk de debug"** → última execução → seção **Artifacts** → baixar `app-debug.apk` |
 | Passo a passo completo de instalação | [`docs/APP_INSTALACAO.md`](./APP_INSTALACAO.md) |
 
@@ -89,18 +89,18 @@ Ele está aqui só para diagnóstico ("a API está no ar?" → abrir `/docs`).
 ## 4. Perguntas rápidas
 
 **Qual link eu mando para um funcionário novo?**
-`https://fazenda-app-jfye.vercel.app/app` — é o app de campo. Ele instala em
+`https://milk.cowdata.com.br/app` — é o app de campo. Ele instala em
 1 minuto e usa o próprio usuário e senha.
 
 **E para o veterinário / contador / sócio, que usa no computador?**
-`https://fazenda-app-jfye.vercel.app` — o site completo.
+`https://milk.cowdata.com.br` — o site completo.
 
 **É o mesmo login nos dois?**
 Sim. Site, app de campo e app nativo são o mesmo sistema, com os mesmos dados.
 
 **Tenho acesso a mais de uma fazenda. Como troco?**
 Menu → **Trocar de conta**, ou direto em
-`https://fazenda-app-jfye.vercel.app/escolher-conta`. A fazenda em que você já
+`https://milk.cowdata.com.br/escolher-conta`. A fazenda em que você já
 está aparece marcada como **CONTINUAR AQUI** e é clicável — dá para voltar para
 ela sem precisar entrar em outra antes.
 
