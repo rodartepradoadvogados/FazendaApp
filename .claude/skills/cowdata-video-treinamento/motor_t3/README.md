@@ -75,3 +75,13 @@ cd .. && ./copiar_telas_t3e5.sh && python3 cena/montar_episodio_t3e5.py && ./ren
 node aud/exportar_roteiro_audio_t3e5.mjs   # → aud/roteiro_t3e5.json; depois trilha_app.py + norm.sh como no Ep. 1
 ```
 Armadilhas: (1) o texto do cabeçalho do Plano é vários nós: `trecho()` concatena nós antes do regex; (2) o app mostra "Lote 1 · Alta"; (3) Voltar fica no topo da página (a rolagem volta a 0 antes do toque); (4) o efetivo da apresentação de dieta encerrada é o atual do lote; (5) âncoras do plano de produção vieram adiantadas: remapeie pelas palavras da voz real.
+
+## Episódio 6 — Produção (Menu › Produção, módulo inteiro)
+Arquivos `*_t3e6`: `cena/index_t3e6.html` (abertura "T3 · MENU / EP. 6 / PRODUÇÃO"; a placa que avança é a seção Produção aberta, posições de `tex/mapa.json`), `cena/episodio_roteiro_t3e6.js` + `cena/episodio_corpo_t3e6.js` (`python3 cena/montar_episodio_t3e6.py` → `cena/episodio_t3e6.html`; páginas = mp0/mp1 Menu, uc0/uc1/uc1b/uc2 Últimos controles, ql0/ql1 Qualidade, se0, bs0, pe0), `captura/capturar_t3e6_ep.mjs` (+ `captura/t3e6.mjs`, `EP=t3e6` no stub), `beats_t3e6.json`, `copiar_telas_t3e6.sh`, `render_ep6.sh`, `aud/exportar_roteiro_audio_t3e6.mjs`.
+```bash
+cd ../../../../frontend && npx next build && npx next start -p 3600 &      # precisa do build com os filtros de Produção (PR #957)
+cd captura && (EP=t3e6 STUB_PORT=8600 node stub-api.mjs &) ; STUB=8600 APP=3600 node capturar_t3e6_ep.mjs   # shots_ep/ + mapa.json (todas as telas como páginas altas, máx. 5200 px)
+cd .. && ./copiar_telas_t3e6.sh && python3 cena/montar_episodio_t3e6.py && ./render_ep6.sh ../q   # TOTAL=2907 quadros (96,9 s)
+node aud/exportar_roteiro_audio_t3e6.mjs   # → aud/roteiro_t3e6.json; depois trilha_app.py + norm.sh como no Ep. 1
+```
+Armadilhas: (1) o contêiner de rolagem é o BODY e o Menu volta ao topo após Voltar; (2) `hasText: "Produção"` casa "Reprodução": use `/^Produção/`; (3) o texto do cartão junta nós sem espaço: meça trechos dentro de cada folha; (4) âncoras: transcrição local com faster-whisper (`asr.py`: modelo small, int8) em vez dos tempos do TTS; (5) o stub respeita lotes/numeros/ultimos/tipo/motivos/del_min/del_max/origem e devolve sempre `lote_fonte: "dia"`; BST genérico ("Somatotropina bovina (BST)").

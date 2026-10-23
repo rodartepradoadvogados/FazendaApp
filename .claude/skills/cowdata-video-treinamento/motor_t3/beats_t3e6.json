@@ -1,0 +1,15 @@
+{
+ "producao": 2.52, "ficam": 5.48, "itemCtrl": 6.80, "itemQual": 8.24, "itemSec": 9.44, "itemBst": 10.14, "itemPes": 10.98,
+ "f3": 12.30, "periodo": 14.62, "ultimos60": 15.98, "quem": 17.82,
+ "rebanho": 20.28, "lotes": 21.52, "animais": 22.86, "numero": 23.84,
+ "loteDia": 25.28, "dataReg": 26.48, "naquele": 28.40,
+ "f6": 29.58, "quantos": 32.36, "ultimo": 34.08, "dois": 34.80, "tres": 35.54, "todos": 36.46,
+ "maisDeUm": 37.98, "separa": 39.40, "nVacas": 40.94, "media": 42.00, "cadaUm": 43.10,
+ "f8": 44.40, "tanque": 46.54, "individuais": 47.38,
+ "ccs": 48.96, "cbt": 49.76, "gordura": 50.50, "proteina": 51.20, "solidos": 52.08, "esd": 52.78, "lactose": 53.62, "nul": 54.46,
+ "f9": 55.42, "historico": 56.86, "loteSecar": 58.84, "motivo": 60.72, "filtrarMotivo": 61.50,
+ "f10": 63.76, "aplicacoes": 64.86, "delAplic": 66.50, "delHoje": 68.00, "faixaDel": 69.94, "origem": 71.18, "rotina": 72.04, "sanidade": 73.32,
+ "f11": 74.68, "ultimoPeso": 76.08, "gmd": 77.12, "cadaAnimal": 78.38,
+ "f12": 79.92, "excel": 81.56, "pdf": 82.30, "filtros": 84.20, "resumoLote": 85.62,
+ "pronto": 87.16, "obrigado": 90.60, "fimVoz": 92.365
+}
