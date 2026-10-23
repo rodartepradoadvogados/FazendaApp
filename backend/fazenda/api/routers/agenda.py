@@ -59,6 +59,7 @@ from fazenda.rules.lida import (
     PREFIXO_EVENTO as PREFIXO_LIDA,
 )
 from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
+from fazenda.rules.lote_historico import lote_na_data
 from fazenda.rules import estoque_baixa
 from fazenda.rules import repasse as _repasse_rules
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
@@ -2021,6 +2022,7 @@ def _baixar_aplicacao_agendada(
         numero_matriz=ag.numero_matriz, data_aplicacao=hoje, produto=produto_final,
         dose=dose_final, unidade=unidade_final, via=via_final, responsavel=ag.responsavel, obs=ag.observacao,
         natureza=ag.natureza or "curativo", fazenda_id=fazenda_id,
+        lote_no_dia=lote_na_data(session, numero_matriz=ag.numero_matriz, data=hoje, fazenda_id=fazenda_id),
     ))
 
     # Aplicação de BST confirmada (produto reconhecido) — fecha o ciclo do
@@ -2436,6 +2438,8 @@ def aplicar_bst_lote(
             numero_matriz=numero, data_aplicacao=dados.data_aplicacao, produto=dados.produto,
             dose=dose_individual, unidade=dados.unidade, responsavel=dados.responsavel, atividade="BST",
             usuario_id=usuario_id, natureza="preventivo", fazenda_id=fazenda_id,
+            # Lote do animal no dia da aplicação (filtro por lote do relatório de BST).
+            lote_no_dia=lote_na_data(session, numero_matriz=numero, data=dados.data_aplicacao, fazenda_id=fazenda_id),
         )
         session.add(sanidade)
         session.flush()

@@ -93,10 +93,10 @@ const GRUPOS: Grupo[] = [
     { chave: "necessidadeMensal", titulo: "Necessidade Mensal", subtitulo: "Consumo do mês em quilos e em sacas", rota: "/alimentacao", icone: <CalendarClock size={20} /> },
   ] },
   { secao: "producao", titulo: "Produção", cor: "var(--cat-producao)", iconeSecao: <Milk size={26} />, itens: [
-    { chave: "ultimosControles", titulo: "Últimos controles leiteiros", subtitulo: "Produção por controle, mais recente primeiro", rota: "/producao", icone: <Milk size={20} /> },
-    { chave: "qualidadeLeite", titulo: "Qualidade do leite", subtitulo: "CCS, CBT, gordura, proteína — por período", rota: "/producao", icone: <FlaskConical size={20} /> },
-    { chave: "secagens", titulo: "Secagens", subtitulo: "Histórico de secagens, motivo e ECC", rota: "/reproducao", icone: <Droplet size={20} /> },
-    { chave: "bstHistorico", titulo: "BST — aplicações", subtitulo: "Hormônio de produção (Boostin/Lactotropin) — histórico de aplicações", rota: "/producao", icone: <Droplets size={20} /> },
+    { chave: "ultimosControles", titulo: "Últimos controles leiteiros", subtitulo: "Por vaca, lote ou rebanho — último, 2, 3 ou todos", rota: "/producao", icone: <Milk size={20} /> },
+    { chave: "qualidadeLeite", titulo: "Qualidade do leite", subtitulo: "Tanque ou por vaca — CCS, CBT, sólidos, NUL", rota: "/producao", icone: <FlaskConical size={20} /> },
+    { chave: "secagens", titulo: "Secagens", subtitulo: "Por animal, lote ou motivo — com ECC", rota: "/reproducao", icone: <Droplet size={20} /> },
+    { chave: "bstHistorico", titulo: "BST — aplicações", subtitulo: "Aplicações por lote, DEL e origem (rotina ou Sanidade)", rota: "/producao", icone: <Droplets size={20} /> },
     { chave: "pesagemHistorico", titulo: "Pesagens", subtitulo: "Crescimento (GMD/GPD) por animal, lote ou rebanho", rota: "/producao", icone: <Scale size={20} /> },
   ] },
   { secao: "gestao", titulo: "Gestão", cor: "var(--cat-gestao)", iconeSecao: <FileBarChart size={26} />, itens: [

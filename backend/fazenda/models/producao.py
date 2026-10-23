@@ -42,6 +42,11 @@ class ControleLeiteiro(SQLModel, table=True):
     # carência com o modo "descarte"; None = tanque (todo o histórico antigo).
     destino_leite: Optional[str] = None
     sanitario_registro_id: Optional[int] = None  # registro sanitário que causou o descarte (referência fraca)
+    # Lote do animal NO DIA do controle ("01 - Lactação"), gravado no
+    # lançamento — o relatório filtra por lote na data (decisão do dono, espec
+    # de Produção out/2026). NULL = histórico anterior à coluna: o relatório
+    # reconstrói pelo MovimentoLote (ver fazenda/rules/lote_historico.py).
+    lote_no_dia: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

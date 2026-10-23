@@ -10,7 +10,9 @@ from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -42,6 +44,9 @@ from fazenda.rules import lactacao as regras_lactacao
 from fazenda.rules.lactacao import inducao_concluida
 from fazenda.rules.ordem_parto_historica import PartoRef, ordem_parto_na_data, ordem_parto_pelo_atalho_atual
 from fazenda.rules.producao_305 import PontoControle, Producao305, producao_305_dias
+from fazenda.rules.lote_historico import (
+    MapaLactacoes, MapaLotes, erro_periodo, lote_casa, lote_na_data, normalizar_lista,
+)
 from fazenda.rules.lote_criterios import _contexto_animal, _dias_pos_parto, animal_atende_criterios, lote_tem_criterio
 from fazenda.rules.parto import eh_parto_produtivo
 from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
@@ -110,13 +115,50 @@ def obter_producao(
     return calcular_producao(controles)
 
 
+def _checar_periodo(data_inicio: date | None, data_fim: date | None) -> None:
+    """400 com mensagem clara para período invertido (ver rules/lote_historico.py::erro_periodo)."""
+    msg = erro_periodo(data_inicio, data_fim)
+    if msg:
+        raise HTTPException(status_code=400, detail=msg)
+
+
+# Parâmetros de filtro comuns aos relatórios de Produção (espec out/2026).
+# Todos opcionais: SEM nenhum deles a rota responde exatamente como antes —
+# o site (app/producao) chama sem parâmetro e filtra na tela. `Annotated` (e
+# não `= Query(None)`) para o default continuar `None` em chamada Python
+# direta (assistente_consultas.py::_chamar, testes).
+ListaQuery = Annotated[list[str] | None, Query()]
+
+
 @router.get("/controles")
 def listar_controles(
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    data_inicio: date | None = None,
+    data_fim: date | None = None,
+    numeros: ListaQuery = None,
+    lotes: ListaQuery = None,
+    rebanho_lactacao: bool = False,
+    ultimos: int | None = None,
 ) -> dict:
-    """Registros de controle leiteiro achatados para o dashboard interativo."""
+    """Registros de controle leiteiro achatados para o dashboard interativo.
+
+    Filtros opcionais (app de campo, Menu › Produção):
+    - `data_inicio`/`data_fim`: período (registro sem data fica de fora);
+    - `numeros`: animal(is) por número EXATO (antes o app buscava substring —
+      "12" trazia 112, 120…);
+    - `lotes`: código(s) de lote — lote do animal NA DATA do controle
+      (`lote_no_dia` gravado ou reconstruído pelo MovimentoLote);
+    - `rebanho_lactacao`: só quem tinha lactação aberta na data e não foi
+      vendida/morta (Animal.ativo);
+    - `ultimos`: N controles mais recentes por vaca (1/2/3); ausente = todos.
+    Cada linha ganha `lote` (lote na data) e `lote_fonte` ("dia" | "historico"
+    | "atual"); `grupo_primario` continua sendo o lote ATUAL, como antes.
+    """
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    _checar_periodo(data_inicio, data_fim)
+    filtro_numeros = normalizar_lista(numeros)
+    filtro_lotes = normalizar_lista(lotes)
     animais_query = select(Animal)
     partos_query = select(Parto)
     # G13 — mais recentes primeiro, para sustentar a lista "últimos lançados"
@@ -126,8 +168,15 @@ def listar_controles(
         animais_query = animais_query.where(Animal.fazenda_id == fazenda_id)
         partos_query = partos_query.where(Parto.fazenda_id == fazenda_id)
         controles_query = controles_query.where(ControleLeiteiro.fazenda_id == fazenda_id)
+    if data_inicio is not None:
+        controles_query = controles_query.where(ControleLeiteiro.data_controle >= data_inicio)
+    if data_fim is not None:
+        controles_query = controles_query.where(ControleLeiteiro.data_controle <= data_fim)
+    if filtro_numeros:
+        controles_query = controles_query.where(ControleLeiteiro.numero_matriz.in_(filtro_numeros))
     animais_cadastro = session.exec(animais_query).all()
     grupo_por_numero = {a.numero: a.grupo_primario for a in animais_cadastro}
+    ativo_por_numero = {a.numero: a.ativo for a in animais_cadastro}
     # Raça sempre a do cadastro do animal (nunca a copiada/congelada no controle
     # leiteiro, que pode estar desatualizada ou vir de texto livre de CSV antigo).
     raca_por_numero = {a.numero: a.raca for a in animais_cadastro}
@@ -142,9 +191,29 @@ def listar_controles(
             continue
         partos_por_numero.setdefault(p.numero_matriz, []).append(PartoRef(p.data_parto, p.ordem_parto))
     controles = session.exec(controles_query).all()
-    nomes = mapa_usuarios(session, {c.usuario_id for c in controles})
-    registros = []
+    mapa_lotes = MapaLotes(session, fazenda_id)
+    lactacoes = MapaLactacoes(session, fazenda_id) if rebanho_lactacao else None
+    selecionados = []
+    vistos_por_vaca: dict[str, int] = {}
     for c in controles:
+        lote, fonte = mapa_lotes.na_data(c.numero_matriz, c.data_controle, gravado=c.lote_no_dia)
+        if filtro_lotes and not lote_casa(lote, filtro_lotes):
+            continue
+        if lactacoes is not None and (
+            not ativo_por_numero.get(c.numero_matriz, False)
+            or lactacoes.aberta(c.numero_matriz, c.data_controle) is None
+        ):
+            continue
+        if ultimos:
+            # `controles` já vem do mais recente para o mais antigo.
+            n = vistos_por_vaca.get(c.numero_matriz, 0)
+            if n >= ultimos:
+                continue
+            vistos_por_vaca[c.numero_matriz] = n + 1
+        selecionados.append((c, lote, fonte))
+    nomes = mapa_usuarios(session, {c.usuario_id for c, _, _ in selecionados})
+    registros = []
+    for c, lote, fonte in selecionados:
         d = c.data_controle
         # Sem atalho/palpite: `None` quando não dá para saber é mais honesto
         # que uma ordem que não corresponde a nada (mesma filosofia de
@@ -164,6 +233,8 @@ def listar_controles(
             "ordenha2_kg": c.ordenha2_kg,
             "ordenha3_kg": c.ordenha3_kg,
             "grupo_primario": grupo_por_numero.get(c.numero_matriz),  # lote atual do animal (não histórico)
+            "lote": lote,  # lote NA DATA do controle (ver docstring)
+            "lote_fonte": fonte,
             "usuario_nome": nomes.get(c.usuario_id),
         })
     return {"controles": registros, "total": len(registros)}
@@ -314,6 +385,12 @@ def _gravar_controles(
             registro = ControleLeiteiro(fazenda_id=fazenda_id, numero_matriz=entrada.numero_matriz, data_controle=dados.data_controle)
         registro.animal_id = animal.id if animal else None
         registro.raca = animal.raca if animal else None
+        # Lote do animal NO DIA do controle — o relatório filtra por ele
+        # (decisão 2 da espec de Produção). Retroativo reconstrói pelo
+        # MovimentoLote; lançamento de hoje é o lote atual.
+        registro.lote_no_dia = lote_na_data(
+            session, numero_matriz=entrada.numero_matriz, data=dados.data_controle, fazenda_id=fazenda_id, animal=animal,
+        )
         registro.producao_kg = producao_kg
         # DEL AO VIVO da lactação aberta na data do controle — antes era
         # `animal.del_dias`, o campo CONGELADO que nasce 0 no instante do
@@ -781,18 +858,34 @@ def relatorio_pesagens(
     data_fim: date | None = None,
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    numeros: ListaQuery = None,
+    lotes: ListaQuery = None,
 ) -> dict:
     """
     Primeira/última pesagem, GMD (ganho médio diário — peso final vs inicial no
     período) e GPD (ganho de peso diário entre pesagens — média dos ganhos
     diários de cada intervalo consecutivo) por animal, lote ou todo o rebanho.
+
+    `grupo` (texto exato do lote gravado na pesagem) continua igual para o
+    site. O filtro novo `lotes` (códigos) só escolhe QUAIS animais entram —
+    os que estiveram num desses lotes no período (lote gravado em alguma
+    pesagem do período, lote no início do período ou movimento para ele
+    dentro do período) — e o GMD/GPD usa TODAS as pesagens do animal no
+    período. Antes o filtro cortava as pesagens: a vaca que mudou de lote no
+    meio do período ficava com metade das pesagens e um GMD errado.
+    `numeros`: animal(is) por número exato.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    _checar_periodo(data_inicio, data_fim)
+    filtro_numeros = normalizar_lista(numeros)
+    filtro_lotes = normalizar_lista(lotes)
     query = select(PesagemCorporal)
     if fazenda_id is not None:
         query = query.where(PesagemCorporal.fazenda_id == fazenda_id)
     if numero_matriz:
         query = query.where(PesagemCorporal.numero_matriz == numero_matriz)
+    if filtro_numeros:
+        query = query.where(PesagemCorporal.numero_matriz.in_(filtro_numeros))
     if data_inicio:
         query = query.where(PesagemCorporal.data_pesagem >= data_inicio)
     if data_fim:
@@ -804,6 +897,14 @@ def relatorio_pesagens(
     por_animal: dict[str, list[PesagemCorporal]] = {}
     for p in pesagens:
         por_animal.setdefault(p.numero_matriz, []).append(p)
+
+    mapa_lotes = MapaLotes(session, fazenda_id) if filtro_lotes else None
+    if mapa_lotes is not None:
+        por_animal = {
+            numero: lista for numero, lista in por_animal.items()
+            if any(lote_casa(p.grupo_primario, filtro_lotes) for p in lista)
+            or mapa_lotes.esteve_em(numero, filtro_lotes, data_inicio, data_fim)
+        }
 
     linhas = []
     for numero, lista in por_animal.items():
@@ -819,9 +920,21 @@ def relatorio_pesagens(
                 taxas.append((atual.peso_kg - anterior.peso_kg) / dias)
         gpd = round(sum(taxas) / len(taxas), 3) if taxas else None
 
+        # Bloco por lote na tela: o lote gravado na última pesagem do período
+        # (com filtro de lotes, a última pesagem feita num dos lotes pedidos).
+        lote_bloco = ultima.grupo_primario
+        if filtro_lotes and not lote_casa(lote_bloco, filtro_lotes):
+            nos_lotes = [p.grupo_primario for p in lista if lote_casa(p.grupo_primario, filtro_lotes)]
+            if nos_lotes:
+                lote_bloco = nos_lotes[-1]
+            elif mapa_lotes is not None:
+                no_fim, _ = mapa_lotes.na_data(numero, data_fim or ultima.data_pesagem)
+                lote_bloco = no_fim if lote_casa(no_fim, filtro_lotes) else lote_bloco
         linhas.append({
             "numero_matriz": numero,
             "grupo_primario": ultima.grupo_primario,
+            "lote": lote_bloco,
+            "lotes_no_periodo": sorted({p.grupo_primario for p in lista if p.grupo_primario}),
             "primeira_data": primeira.data_pesagem.isoformat(),
             "primeira_peso": primeira.peso_kg,
             "ultima_data": ultima.data_pesagem.isoformat(),
@@ -907,14 +1020,48 @@ class QualidadeLeiteIn(BaseModel):
 def listar_qualidade_leite(
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    data_inicio: date | None = None,
+    data_fim: date | None = None,
+    tipo: str | None = None,
+    numeros: ListaQuery = None,
+    lotes: ListaQuery = None,
 ) -> dict:
+    """Coletas de qualidade do leite (tanque e individuais).
+
+    Filtros opcionais (app de campo): período; `tipo` = "tanque" (sem número)
+    ou "individual" (de uma vaca); `numeros`/`lotes` valem só para coleta
+    individual — lote da vaca NA DATA da coleta. Pedir vaca/lote já implica
+    "individual" (coleta de tanque não tem vaca nem lote). Sem parâmetro
+    nenhum, responde como antes (o site filtra na tela).
+    """
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    _checar_periodo(data_inicio, data_fim)
+    if tipo not in (None, "", "tanque", "individual"):
+        raise HTTPException(status_code=400, detail="tipo deve ser 'tanque' ou 'individual'")
+    filtro_numeros = normalizar_lista(numeros)
+    filtro_lotes = normalizar_lista(lotes)
     registros_query = select(QualidadeLeite).order_by(QualidadeLeite.data_coleta)
     faixas_query = select(FaixaBonificacaoQualidade)
     if fazenda_id is not None:
         registros_query = registros_query.where(QualidadeLeite.fazenda_id == fazenda_id)
         faixas_query = faixas_query.where(FaixaBonificacaoQualidade.fazenda_id == fazenda_id)
+    if data_inicio is not None:
+        registros_query = registros_query.where(QualidadeLeite.data_coleta >= data_inicio)
+    if data_fim is not None:
+        registros_query = registros_query.where(QualidadeLeite.data_coleta <= data_fim)
     registros = session.exec(registros_query).all()
+    if tipo == "tanque":
+        registros = [r for r in registros if not r.numero_matriz]
+    elif tipo == "individual" or filtro_numeros or filtro_lotes:
+        registros = [r for r in registros if r.numero_matriz]
+    if filtro_numeros:
+        registros = [r for r in registros if r.numero_matriz in filtro_numeros]
+    mapa_lotes = MapaLotes(session, fazenda_id) if any(r.numero_matriz for r in registros) else None
+    lote_de: dict[int, tuple[str | None, str | None]] = {}
+    for r in registros:
+        lote_de[r.id] = mapa_lotes.na_data(r.numero_matriz, r.data_coleta) if (mapa_lotes and r.numero_matriz) else (None, None)
+    if filtro_lotes:
+        registros = [r for r in registros if lote_casa(lote_de[r.id][0], filtro_lotes)]
     nomes = mapa_usuarios(session, {r.usuario_id for r in registros})
     faixas = session.exec(faixas_query).all()
     tem_faixas_bonificacao = any(f.ativo for f in faixas)
@@ -922,6 +1069,8 @@ def listar_qualidade_leite(
     for r in registros:
         linha = r.model_dump()
         linha["usuario_nome"] = nomes.get(linha.pop("usuario_id"))
+        linha["tipo"] = "individual" if r.numero_matriz else "tanque"
+        linha["lote"], linha["lote_fonte"] = lote_de[r.id]
         bonificacao = calcular_bonificacao(linha, faixas)
         linha["bonificacao_por_litro"] = bonificacao["total_por_litro"]
         linha["bonificacao_detalhe"] = bonificacao["detalhe"]
@@ -2181,12 +2330,50 @@ def confirmar_inducao_lactacao(
 MARCADORES_BST_PRODUCAO = re.compile(r"\b(lactotropi[nm]|boostin|bst|somatotropina)\b", re.IGNORECASE)
 
 
+ORIGEM_BST_ROTINA = "Rotina BST"
+ORIGEM_BST_SANIDADE = "Sanidade"
+
+
+def _origem_bst(s: Sanidade) -> str:
+    """De onde veio a aplicação com produto BST: a rotina de BST (Lançar ›
+    Produção › BST grava atividade "BST"; a aplicação AGENDADA pela mesma tela
+    vira Sanidade "preventivo" ao ser confirmada) ou um lançamento avulso da
+    Sanidade (curativo, ou dado legado sem natureza)."""
+    if s.atividade == "BST" or s.natureza == "preventivo":
+        return ORIGEM_BST_ROTINA
+    return ORIGEM_BST_SANIDADE
+
+
 @router.get("/relatorio-bst")
 def relatorio_bst(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    data_inicio: date | None = None,
+    data_fim: date | None = None,
+    numeros: ListaQuery = None,
+    lotes: ListaQuery = None,
+    del_min: int | None = None,
+    del_max: int | None = None,
+    origem: str | None = None,
 ) -> dict:
-    """Histórico de aplicações de BST, achatado com lote/categoria do animal na hora."""
+    """Histórico de aplicações de BST, achatado com lote/categoria do animal.
+
+    Filtros opcionais (app de campo): período; `numeros` (exato); `lotes`
+    (lote do animal NO DIA da aplicação — `lote_no_dia` gravado ou reconstruído
+    pelo MovimentoLote); `del_min`/`del_max` = faixa de DEL NO DIA DA
+    APLICAÇÃO (aplicação sem lactação aberta naquele dia fica fora quando há
+    faixa); `origem` = "rotina" | "sanidade". Cada linha traz também
+    `del_aplicacao`, `del_hoje`, `origem` e `lote_fonte`. Sem parâmetro, mesma
+    lista de antes (o site filtra na tela); `lote` continua preenchido.
+    """
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    _checar_periodo(data_inicio, data_fim)
+    if del_min is not None and del_max is not None and del_min > del_max:
+        raise HTTPException(status_code=400, detail="Faixa de DEL inválida: o mínimo é maior que o máximo.")
+    origem_filtro = (origem or "").strip().lower() or None
+    if origem_filtro not in (None, "rotina", "sanidade"):
+        raise HTTPException(status_code=400, detail="origem deve ser 'rotina' ou 'sanidade'")
+    filtro_numeros = normalizar_lista(numeros)
+    filtro_lotes = normalizar_lista(lotes)
     query_animais = select(Animal)
     query_sanidade = select(Sanidade)
     # BUG DE SEGURANÇA CORRIGIDO: sem estes filtros, esta rota agregava
@@ -2194,20 +2381,50 @@ def relatorio_bst(
     if fazenda_id is not None:
         query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
         query_sanidade = query_sanidade.where(Sanidade.fazenda_id == fazenda_id)
+    if data_inicio is not None:
+        query_sanidade = query_sanidade.where(Sanidade.data_aplicacao >= data_inicio)
+    if data_fim is not None:
+        query_sanidade = query_sanidade.where(Sanidade.data_aplicacao <= data_fim)
+    if filtro_numeros:
+        query_sanidade = query_sanidade.where(Sanidade.numero_matriz.in_(filtro_numeros))
     animais_por_numero = {a.numero: a for a in session.exec(query_animais).all()}
     aplicacoes = [
         s for s in session.exec(query_sanidade).all()
         if s.atividade == "BST" or MARCADORES_BST_PRODUCAO.search(s.produto or "")
     ]
+    if origem_filtro == "rotina":
+        aplicacoes = [s for s in aplicacoes if _origem_bst(s) == ORIGEM_BST_ROTINA]
+    elif origem_filtro == "sanidade":
+        aplicacoes = [s for s in aplicacoes if _origem_bst(s) == ORIGEM_BST_SANIDADE]
+    numeros_envolvidos = {s.numero_matriz for s in aplicacoes}
+    mapa_lotes = MapaLotes(session, fazenda_id, numeros_envolvidos)
+    lactacoes = MapaLactacoes(session, fazenda_id, numeros_envolvidos)
+    hoje = date.today()
     registros = []
     for s in aplicacoes:
+        lote, fonte = mapa_lotes.na_data(s.numero_matriz, s.data_aplicacao, gravado=s.lote_no_dia)
+        if filtro_lotes and not lote_casa(lote, filtro_lotes):
+            continue
+        del_aplicacao = lactacoes.del_na_data(s.numero_matriz, s.data_aplicacao)
+        if del_min is not None or del_max is not None:
+            if del_aplicacao is None:
+                continue
+            if del_min is not None and del_aplicacao < del_min:
+                continue
+            if del_max is not None and del_aplicacao > del_max:
+                continue
         a = animais_por_numero.get(s.numero_matriz)
         registros.append({
             "numero_matriz": s.numero_matriz,
             "data_aplicacao": s.data_aplicacao.isoformat() if s.data_aplicacao else None,
             "produto": s.produto, "dose": s.dose, "unidade": s.unidade, "responsavel": s.responsavel,
-            "lote": a.grupo_primario if a else None,
+            # Lote NA DATA da aplicação (antes: o lote atual do animal).
+            "lote": lote,
+            "lote_fonte": fonte,
             "categoria": (a.categoria_abrev or a.categoria_completa) if a else None,
+            "del_aplicacao": del_aplicacao,
+            "del_hoje": lactacoes.del_na_data(s.numero_matriz, hoje),
+            "origem": _origem_bst(s),
         })
     registros.sort(key=lambda r: r["data_aplicacao"] or "", reverse=True)
     return {"aplicacoes": registros, "total": len(registros)}
