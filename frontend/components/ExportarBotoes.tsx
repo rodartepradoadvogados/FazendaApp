@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { FileSpreadsheet, FileText, Loader2 } from "lucide-react";
-import { exportarExcel, exportarPDF, ColunaExport } from "@/lib/export";
+import { exportarExcel, exportarPDF, ColunaExport, type OpcoesExportLista } from "@/lib/export";
 import { useExportRegister } from "@/components/ExportContext";
 
 /**
@@ -9,15 +9,19 @@ import { useExportRegister } from "@/components/ExportContext";
  * calculado na tela — mesmo cabeçalho (fazenda, título, usuário, data) nos
  * dois formatos. Usar em qualquer tabela/relatório: só passar as colunas
  * (header + key) e as linhas (mesmos objetos usados para renderizar a tabela).
+ * `filtros` (texto dos filtros usados) e `resumo` (ex.: por lote) são
+ * opcionais — sem eles o arquivo sai exatamente como antes.
  */
 export function ExportarBotoes({
-  titulo, colunas, linhas, nomeArquivoBase, disabled,
+  titulo, colunas, linhas, nomeArquivoBase, disabled, filtros, resumo,
 }: {
   titulo: string;
   colunas: ColunaExport[];
   linhas: Record<string, unknown>[];
   nomeArquivoBase: string;
   disabled?: boolean;
+  filtros?: OpcoesExportLista["filtros"];
+  resumo?: OpcoesExportLista["resumo"];
 }) {
   const [gerando, setGerando] = useState<"excel" | "pdf" | null>(null);
   const semDados = disabled || linhas.length === 0;
@@ -29,8 +33,9 @@ export function ExportarBotoes({
   const rodar = async (formato: "excel" | "pdf") => {
     setGerando(formato);
     try {
-      if (formato === "excel") await exportarExcel(titulo, colunas, linhas, nomeArquivoBase);
-      else await exportarPDF(titulo, colunas, linhas, nomeArquivoBase);
+      const opcoes = filtros || resumo ? { filtros, resumo } : undefined;
+      if (formato === "excel") await exportarExcel(titulo, colunas, linhas, nomeArquivoBase, "baixar", opcoes);
+      else await exportarPDF(titulo, colunas, linhas, nomeArquivoBase, "baixar", opcoes);
     } catch {
       // erro já mostrado ao usuário dentro de exportarExcel/exportarPDF (lib/export.ts)
     } finally {

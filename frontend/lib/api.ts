@@ -2417,9 +2417,9 @@ export async function fetchPartosHistorico() {
   return res.json();
 }
 
-export async function fetchSecagensHistorico() {
-  const res = await authFetch(`${API}/reproducao/secagens`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Secagens error: ${res.status}`);
+export async function fetchSecagensHistorico(filtros?: FiltrosRelatorioProducao & { motivos?: string[] }) {
+  const res = await authFetch(`${API}/reproducao/secagens${qsFiltrosProducao(filtros)}`, { cache: "no-store" });
+  if (!res.ok) await erroRelatorioProducao(res, "Secagens");
   return res.json();
 }
 
@@ -5902,9 +5902,34 @@ export async function fetchProducao() {
   return res.json();
 }
 
-export async function fetchControles() {
-  const res = await authFetch(`${API}/producao/controles`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Controles error: ${res.status}`);
+// ── Filtros dos relatórios de Produção (Menu › Produção do app de campo) ─────
+// Todos opcionais: sem nenhum, as rotas respondem exatamente como antes (o
+// site chama assim e filtra na tela). `numeros` é número EXATO de animal;
+// `lotes` são CÓDIGOS de lote ("01"), comparados com o lote do animal NA DATA
+// do registro (ver backend fazenda/rules/lote_historico.py).
+export type FiltrosRelatorioProducao = {
+  data_inicio?: string; data_fim?: string; numeros?: string[]; lotes?: string[];
+};
+type ValorFiltro = string | number | boolean | string[] | null | undefined;
+export function qsFiltrosProducao(filtros?: Record<string, ValorFiltro>): string {
+  const qs = new URLSearchParams();
+  for (const [chave, valor] of Object.entries(filtros || {})) {
+    if (valor == null || valor === "" || valor === false) continue;
+    if (Array.isArray(valor)) valor.filter(Boolean).forEach((v) => qs.append(chave, v));
+    else qs.set(chave, String(valor));
+  }
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+/** Erro com a mensagem do servidor (ex.: "Período inválido…", 400) em vez de só o status. */
+async function erroRelatorioProducao(res: Response, rotulo: string): Promise<never> {
+  const d = await res.json().catch(() => ({}));
+  throw new Error(mensagemErroApi(d.detail) || `${rotulo}: erro ${res.status}`);
+}
+
+export async function fetchControles(filtros?: FiltrosRelatorioProducao & { rebanho_lactacao?: boolean; ultimos?: number | null }) {
+  const res = await authFetch(`${API}/producao/controles${qsFiltrosProducao(filtros)}`, { cache: "no-store" });
+  if (!res.ok) await erroRelatorioProducao(res, "Controles");
   return res.json();
 }
 
@@ -6206,9 +6231,9 @@ export async function atualizarPesagem(id: number, dados: PesagemEditIn) {
 // A exclusão roteia pelo motor genérico — confirmarExclusao("pesagem_corporal", id).
 
 // ── Qualidade do leite ──
-export async function fetchQualidadeLeite() {
-  const res = await authFetch(`${API}/producao/qualidade-leite`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Qualidade do leite error: ${res.status}`);
+export async function fetchQualidadeLeite(filtros?: FiltrosRelatorioProducao & { tipo?: "tanque" | "individual" }) {
+  const res = await authFetch(`${API}/producao/qualidade-leite${qsFiltrosProducao(filtros)}`, { cache: "no-store" });
+  if (!res.ok) await erroRelatorioProducao(res, "Qualidade do leite");
   return res.json();
 }
 export async function criarQualidadeLeite(dados: {
@@ -6272,9 +6297,11 @@ export async function fetchRelatorioControleEntrega(dataInicio?: string, dataFim
 }
 
 // ── Relatório de BST (Produção) ──
-export async function fetchRelatorioBst() {
-  const res = await authFetch(`${API}/producao/relatorio-bst`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Relatório de BST error: ${res.status}`);
+export async function fetchRelatorioBst(filtros?: FiltrosRelatorioProducao & {
+  del_min?: number | null; del_max?: number | null; origem?: "rotina" | "sanidade" | "";
+}) {
+  const res = await authFetch(`${API}/producao/relatorio-bst${qsFiltrosProducao(filtros)}`, { cache: "no-store" });
+  if (!res.ok) await erroRelatorioProducao(res, "Relatório de BST");
   return res.json();
 }
 
@@ -6582,14 +6609,13 @@ export async function criarParto(dados: {
 
 export async function fetchRelatorioPesagemCorporal(params?: {
   numero_matriz?: string; grupo?: string; data_inicio?: string; data_fim?: string;
+  /** Animal(is) por número exato. */
+  numeros?: string[];
+  /** Códigos de lote: escolhem QUAIS animais (estiveram no lote no período); o GMD usa todas as pesagens deles. */
+  lotes?: string[];
 }) {
-  const qs = new URLSearchParams();
-  if (params?.numero_matriz) qs.set("numero_matriz", params.numero_matriz);
-  if (params?.grupo) qs.set("grupo", params.grupo);
-  if (params?.data_inicio) qs.set("data_inicio", params.data_inicio);
-  if (params?.data_fim) qs.set("data_fim", params.data_fim);
-  const res = await authFetch(`${API}/producao/pesagens/relatorio?${qs}`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Relatório de pesagem error: ${res.status}`);
+  const res = await authFetch(`${API}/producao/pesagens/relatorio${qsFiltrosProducao(params)}`, { cache: "no-store" });
+  if (!res.ok) await erroRelatorioProducao(res, "Relatório de pesagem");
   return res.json();
 }
 
@@ -8628,6 +8654,13 @@ export function formatDate(iso: string): string {
 /** Hoje no calendário LOCAL do usuário (AAAA-MM-DD). Antes era a data UTC: depois das 21h no Brasil já vinha o dia seguinte. */
 export function today(): string {
   const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Data local (YYYY-MM-DD) de `dias` dias atrás — período padrão "últimos 60 dias" das telas de Produção do app. */
+export function diasAtras(dias: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - dias);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 

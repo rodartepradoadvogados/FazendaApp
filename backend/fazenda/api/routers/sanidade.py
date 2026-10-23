@@ -28,6 +28,7 @@ from fazenda.rules.estoque_baixa import (
     resolver_item as _resolver_item_estoque, resolver_marca_comercial,
 )
 from fazenda.rules.farmacia import resumo_principios
+from fazenda.rules.lote_historico import lote_na_data
 from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 from fazenda.rules.parto import eh_parto_produtivo
 from fazenda.rules.unidades import unidades_compativeis
@@ -307,6 +308,11 @@ def registrar_aplicacao(
                 usuario_id=usuario_id_seguro(user),
                 natureza=dados.natureza,
                 fazenda_id=fazenda_id,
+                # Lote do animal no dia da aplicação — o relatório de BST
+                # inclui o curativo com produto BST, filtrado pelo lote do dia.
+                lote_no_dia=lote_na_data(
+                    session, numero_matriz=numero, data=dados.data_aplicacao, fazenda_id=fazenda_id,
+                ),
             )
             session.add(sanidade)
             session.flush()

@@ -82,6 +82,7 @@ Sanitário Preventivo v2 (seção 5); histórico antigo entra pela importação 
   produtor decide. **Carência de leite** do preventivo vale na produção por vaca conforme o modo aceito pelo administrador
   (bloqueio, descarte ou tanque). Editar a caixa vale daqui para frente; o histórico não muda. O módulo antigo (calendário,
   cronogramas, lista de espera) foi arquivado no schema `arquivo_sanitario_2026` (detalhes, rotas e runbook no `README.md`).
+- **Relatórios de Produção — lote na data (23/10/2026, decisão do dono):** filtrar por lote = lote do animal NAQUELA DATA. Controle leiteiro e aplicação (BST/sanidade) gravam o lote do dia (`lote_no_dia`); o histórico antigo é reconstruído pelo `MovimentoLote` (último movimento ≤ data → destino; antes do 1º movimento → origem dele); sem histórico vale o lote atual, marcado "lote atual". Em lactação = lactação aberta na data; vendida/morta fora. BST: faixa de DEL no dia da aplicação; curativo da Sanidade com produto BST entra marcado "Sanidade". Pesagens: o lote escolhe os animais, o GMD usa todas as pesagens. App: período padrão 60 dias, vários lotes em blocos (nº de vacas e média), Excel/PDF com filtros e resumo por lote.
 - **Lotes:** 1 = novilhas alta lactação; 2 = vacas alta; 3 = média/final de lactação/baixa/tratamento (mastite, leite fora do tanque). Sobe de lote com ≥ 20 DEL e boa produção.
 
 ---

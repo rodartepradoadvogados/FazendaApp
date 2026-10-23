@@ -63,6 +63,11 @@ class Sanidade(SQLModel, table=True):
     # sanitário/reprodutivo, disparado ao salvar uma vacina/exame preventivo.
     numero_lancamento_vinculado: Optional[str] = Field(default=None, index=True)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    # Lote do ANIMAL no dia da aplicação ("01 - Lactação"), gravado no
+    # lançamento (BST e aplicação avulsa). Não confundir com `lote` acima, que
+    # vem do SANIDADE.csv do Ideagri. NULL = histórico anterior à coluna: o
+    # relatório de BST reconstrói pelo MovimentoLote (rules/lote_historico.py).
+    lote_no_dia: Optional[str] = None
 
 
 class AplicacaoAgendada(SQLModel, table=True):

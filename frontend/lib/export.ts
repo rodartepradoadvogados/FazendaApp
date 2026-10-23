@@ -25,7 +25,16 @@ async function entregarArquivo(blob: Blob, nomeArquivo: string, modo: ModoEntreg
   if (gravado) alert(`Arquivo salvo: ${nomeArquivo}`);
 }
 
-const NOME_FAZENDA = "Fazenda Estreito Ponte de Pedra";
+// Cabeçalho de TODO arquivo exportado: o nome da fazenda ATUAL (a escolhida no
+// login/troca de fazenda). BUG CORRIGIDO: antes era um nome fixo de uma fazenda
+// cliente, e só os relatórios do Financeiro liam a fazenda atual — Excel e PDF
+// de qualquer outra fazenda saíam com o nome errado no topo. Sem fazenda
+// conhecida (sessão antiga), sai a marca do sistema, nunca o nome de outra.
+const NOME_PADRAO_CABECALHO = "CowData";
+
+function nomeDaFazenda(): string {
+  return getFazendaAtual()?.nome?.trim() || NOME_PADRAO_CABECALHO;
+}
 
 // Paleta "Institucional" do redesign (ver globals.css, data-paleta="azul"):
 // marinho estrutural no lugar do vinho, ouro escurecido no lugar do dourado
@@ -143,7 +152,7 @@ function desenharCabecalhoPDF(
   doc.setFont("helvetica", "bold");
   doc.setFontSize(7.5);
   doc.setTextColor(...COR_MUTED_CLARO_RGB);
-  doc.text((opts.fazenda || NOME_FAZENDA).toUpperCase(), left, 12, { charSpace: 0.6 });
+  doc.text((opts.fazenda || nomeDaFazenda()).toUpperCase(), left, 12, { charSpace: 0.6 });
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(15);
@@ -185,12 +194,24 @@ function colunasMaiusculas(colunas: ColunaExport[]): ColunaExport[] {
   return colunas.map((c) => ({ ...c, header: c.header.toUpperCase() }));
 }
 
+/** Extras opcionais da exportação de lista (Excel/PDF) — sem eles o arquivo sai exatamente como antes. */
+export type OpcoesExportLista = {
+  /** Filtros usados na tela (período, animais, lotes…), impressos no cabeçalho. */
+  filtros?: string;
+  /** Tabela de resumo (ex.: por lote: nº de vacas e média) antes da lista. */
+  resumo?: { titulo: string; colunas: ColunaExport[]; linhas: Record<string, unknown>[] };
+};
+
+// A fonte padrão do jsPDF (Helvetica, WinAnsi) não tem "›", "…", "−" nem "≥/≤".
+const textoPdf = (t: string) => t.replace(/›/g, ">").replace(/…/g, "...").replace(/[−–]/g, "-").replace(/≥/g, ">=").replace(/≤/g, "<=");
+
 export async function exportarExcel(
   titulo: string,
   colunas: ColunaExport[],
   linhas: Record<string, unknown>[],
   nomeArquivoBase: string,
   modo: ModoEntregaExport = "baixar",
+  opcoes?: OpcoesExportLista,
 ) {
   return comAlertaDeErro(async () => {
   const ExcelJS = (await import("exceljs")).default;
@@ -198,11 +219,13 @@ export async function exportarExcel(
   const wb = new ExcelJS.Workbook();
   wb.creator = usuario?.nome || "FazendaApp";
   wb.created = new Date();
-  const ws = wb.addWorksheet((titulo || "Relatório").slice(0, 31));
+  // O Excel recusa * ? : \ / [ ] no nome da aba — sem tirar, um título como
+  // "GMD/GPD" derrubava a exportação inteira.
+  const ws = wb.addWorksheet((titulo || "Relatório").replace(/[[\]*/\\?:]/g, "-").slice(0, 31) || "Relatório");
 
   const nCols = Math.max(colunas.length, 1);
   ws.mergeCells(1, 1, 1, nCols);
-  ws.getCell(1, 1).value = NOME_FAZENDA.toUpperCase();
+  ws.getCell(1, 1).value = nomeDaFazenda().toUpperCase();
   ws.getCell(1, 1).font = { bold: true, size: 14, color: { argb: `FF${COR_VINHO}` } };
   ws.getCell(1, 1).alignment = { horizontal: "center" };
   ws.getRow(1).height = 22;
@@ -217,17 +240,36 @@ export async function exportarExcel(
   ws.getCell(3, 1).font = { italic: true, size: 9, color: { argb: "FF888888" } };
   ws.getCell(3, 1).alignment = { horizontal: "center" };
 
+  if (opcoes?.filtros) {
+    ws.mergeCells(4, 1, 4, nCols);
+    ws.getCell(4, 1).value = `Filtros: ${opcoes.filtros}`;
+    ws.getCell(4, 1).font = { size: 9, color: { argb: "FF4B5563" } };
+    ws.getCell(4, 1).alignment = { horizontal: "left", wrapText: true };
+    ws.getRow(4).height = Math.min(60, 15 * Math.ceil(opcoes.filtros.length / 90));
+  }
+
   ws.addRow([]);
 
-  const headerRow = ws.addRow(colunas.map((c) => c.header));
-  headerRow.eachCell((c) => {
+  const pintarCabecalho = (row: import("exceljs").Row) => row.eachCell((c) => {
     c.font = { bold: true, color: { argb: "FFFFFFFF" } };
     c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: `FF${COR_VINHO}` } };
     c.alignment = { horizontal: "center" };
   });
+  const valorCelula = (c: ColunaExport, v: unknown) => (c.numerico && typeof v === "number" ? v : formatarValor(v));
+
+  if (opcoes?.resumo?.linhas.length) {
+    const tituloResumo = ws.addRow([opcoes.resumo.titulo]);
+    tituloResumo.getCell(1).font = { bold: true, size: 11 };
+    pintarCabecalho(ws.addRow(opcoes.resumo.colunas.map((c) => c.header)));
+    opcoes.resumo.linhas.forEach((linha) => ws.addRow(opcoes.resumo!.colunas.map((c) => valorCelula(c, linha[c.key]))));
+    ws.addRow([]);
+  }
+
+  const headerRow = ws.addRow(colunas.map((c) => c.header));
+  pintarCabecalho(headerRow);
 
   linhas.forEach((linha) => {
-    ws.addRow(colunas.map((c) => formatarValor(linha[c.key])));
+    ws.addRow(colunas.map((c) => (opcoes ? valorCelula(c, linha[c.key]) : formatarValor(linha[c.key]))));
   });
 
   colunas.forEach((c, i) => {
@@ -246,6 +288,7 @@ export async function exportarPDF(
   linhas: Record<string, unknown>[],
   nomeArquivoBase: string,
   modo: ModoEntregaExport = "baixar",
+  opcoes?: OpcoesExportLista,
 ) {
   return comAlertaDeErro(async () => {
   const { default: jsPDF } = await import("jspdf");
@@ -257,14 +300,60 @@ export async function exportarPDF(
 
   const cabecalho = () => desenharCabecalhoPDF(doc, { titulo, usuario: usuario?.nome, dataStr, logo });
 
-  autoTable(doc, {
-    ...ESTILO_TABELA,
-    head: [colunasMaiusculas(colunas).map((c) => c.header)],
-    body: linhas.map((linha) => colunas.map((c) => formatarValor(linha[c.key]))),
-    startY: 31,
-    margin: { top: 31 },
-    didDrawPage: cabecalho,
-  });
+  if (!opcoes?.filtros && !opcoes?.resumo?.linhas.length) {
+    autoTable(doc, {
+      ...ESTILO_TABELA,
+      head: [colunasMaiusculas(colunas).map((c) => c.header)],
+      body: linhas.map((linha) => colunas.map((c) => formatarValor(linha[c.key]))),
+      startY: 31,
+      margin: { top: 31 },
+      didDrawPage: cabecalho,
+    });
+  } else {
+    // Com filtros/resumo: o cabeçalho sai UMA vez por página (duas tabelas
+    // podem dividir a mesma página — sem o controle, ele seria redesenhado).
+    const comCabecalho = new Set<number>();
+    const cabecalhoDaPagina = () => {
+      const pagina = doc.getCurrentPageInfo().pageNumber;
+      if (comCabecalho.has(pagina)) return;
+      comCabecalho.add(pagina);
+      cabecalho();
+    };
+    cabecalhoDaPagina();
+    let y = 32;
+    const largura = doc.internal.pageSize.getWidth() - 28;
+    if (opcoes.filtros) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(...COR_MUTED_RGB);
+      const partes = doc.splitTextToSize(textoPdf(`Filtros: ${opcoes.filtros}`), largura) as string[];
+      doc.text(partes, 14, y + 1);
+      y += partes.length * 3.6 + 3;
+    }
+    if (opcoes.resumo?.linhas.length) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(...COR_GRAFITE_RGB);
+      doc.text(textoPdf(opcoes.resumo.titulo), 14, y + 2);
+      autoTable(doc, {
+        ...ESTILO_TABELA,
+        head: [colunasMaiusculas(opcoes.resumo.colunas).map((c) => textoPdf(c.header))],
+        body: opcoes.resumo.linhas.map((linha) => opcoes.resumo!.colunas.map((c) => textoPdf(formatarValor(linha[c.key])))),
+        startY: y + 4,
+        margin: { top: 31 },
+        didDrawPage: cabecalhoDaPagina,
+      });
+      y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
+    }
+    autoTable(doc, {
+      ...ESTILO_TABELA,
+      head: [colunasMaiusculas(colunas).map((c) => textoPdf(c.header))],
+      body: linhas.map((linha) => colunas.map((c) => textoPdf(formatarValor(linha[c.key])))),
+      startY: y,
+      margin: { top: 31 },
+      didDrawPage: cabecalhoDaPagina,
+    });
+  }
 
   await entregarArquivo(doc.output("blob"), `${nomeArquivoBase}_${dataHoje()}.pdf`, modo);
   });
@@ -343,7 +432,7 @@ export async function gerarMultiExcelBlob(tituloGeral: string, secoes: SecaoFich
     const nCols = Math.max(secao.colunas.length, 1);
 
     ws.mergeCells(1, 1, 1, nCols);
-    ws.getCell(1, 1).value = NOME_FAZENDA.toUpperCase();
+    ws.getCell(1, 1).value = nomeDaFazenda().toUpperCase();
     ws.getCell(1, 1).font = { bold: true, size: 14, color: { argb: `FF${COR_VINHO}` } };
     ws.getCell(1, 1).alignment = { horizontal: "center" };
     ws.getRow(1).height = 22;
@@ -720,10 +809,6 @@ export type RelatorioParaExportar = {
    *  sai NO MESMO BLOCO da tabela que tem as réguas (última linha da tabela), sem opção de remover. */
   rodapeReguas?: string | null;
 };
-
-function nomeDaFazenda(): string {
-  return getFazendaAtual()?.nome || NOME_FAZENDA;
-}
 
 export function linhaDeContexto(c: RelatorioParaExportar["contexto"]): string {
   return [`Período: ${c.periodo}`, c.comparacao ? `comparado com ${c.comparacao}` : null, `Regime: ${c.regime}`, `Centro de custo: ${c.centro}`]

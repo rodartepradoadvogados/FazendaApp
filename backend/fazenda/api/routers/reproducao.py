@@ -8,6 +8,7 @@ import html
 import json
 import logging
 from datetime import date, datetime, timedelta
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, model_validator
@@ -33,6 +34,7 @@ from fazenda.rules.email import enviar_email
 from fazenda.rules.estado_reprodutivo import data_em_que_ficou_apta, estados_ao_vivo
 from fazenda.rules.genetica import calcular_grau_sangue_cria
 from fazenda.rules import lactacao as regras_lactacao
+from fazenda.rules.lote_historico import MapaLotes, erro_periodo, lote_casa, normalizar_lista
 from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 from fazenda.rules.parto import (
     TIPO_PARTO_ABORTO, TIPO_PARTO_NATIMORTO, TIPO_PARTO_NORMAL, eh_parto_produtivo, proxima_ordem_parto,
@@ -1817,26 +1819,58 @@ def verificar_mae_parto(
 @router.get("/secagens")
 def listar_secagens_historico(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    data_inicio: date | None = None,
+    data_fim: date | None = None,
+    numeros: Annotated[list[str] | None, Query()] = None,
+    lotes: Annotated[list[str] | None, Query()] = None,
+    motivos: Annotated[list[str] | None, Query()] = None,
 ) -> dict:
     """Todas as secagens, achatadas — histórico de secagens (Reprodução), com
     os mesmos filtros de animal/data/ciclo da sub-aba Reprodução.
+
+    Filtros opcionais (app de campo, Menu › Produção › Secagens): período,
+    `numeros` (exato), `motivos` e `lotes` — o lote em que a vaca estava ao
+    ser SECA: a secagem não grava lote, então ele vem do MovimentoLote,
+    ignorando o movimento do próprio dia (é o que leva a vaca para o lote de
+    secas — sem isso todo filtro por lote cairia no lote de secas). Cada linha
+    ganha `lote`/`lote_fonte`. Sem parâmetro, mesma lista de antes.
 
     Correção (fechamento dos 17 gaps de editar/excluir, G5): esta rota não
     filtrava por fazenda — vazamento entre fazendas, secagens de uma fazenda
     apareciam no histórico de outra."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    msg_periodo = erro_periodo(data_inicio, data_fim)
+    if msg_periodo:
+        raise HTTPException(status_code=400, detail=msg_periodo)
+    filtro_numeros = normalizar_lista(numeros)
+    filtro_lotes = normalizar_lista(lotes)
+    filtro_motivos = normalizar_lista(motivos)
     query = select(Secagem)
     if fazenda_id is not None:
         query = query.where(Secagem.fazenda_id == fazenda_id)
+    if data_inicio is not None:
+        query = query.where(Secagem.data_secagem >= data_inicio)
+    if data_fim is not None:
+        query = query.where(Secagem.data_secagem <= data_fim)
+    if filtro_numeros:
+        query = query.where(Secagem.numero_matriz.in_(filtro_numeros))
+    if filtro_motivos:
+        query = query.where(Secagem.motivo.in_(filtro_motivos))
     secagens = session.exec(query.order_by(Secagem.data_secagem.desc())).all()
+    mapa_lotes = MapaLotes(session, fazenda_id, {s.numero_matriz for s in secagens})
     registros = []
     for s in secagens:
+        lote, fonte = mapa_lotes.na_data(s.numero_matriz, s.data_secagem, antes_do_dia=True)
+        if filtro_lotes and not lote_casa(lote, filtro_lotes):
+            continue
         d = s.model_dump()
         d["numero"] = d.pop("numero_matriz")
         ds = d.get("data_secagem")
         d["ano"] = ds.year if isinstance(ds, date) else None
         d["mes"] = f"{ds.year}-{ds.month:02d}" if isinstance(ds, date) else None
         d["data"] = ds.isoformat() if isinstance(ds, date) else None
+        d["lote"] = lote
+        d["lote_fonte"] = fonte
         registros.append(d)
     return {"secagens": registros, "total": len(registros)}
 
