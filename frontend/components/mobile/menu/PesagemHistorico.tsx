@@ -119,11 +119,11 @@ export default function PesagemHistorico({ onVoltar }: { onVoltar: () => void })
               <MobCard key={l.numero_matriz} alt={(i % 2) as 0 | 1} style={{ marginBottom: "0.5rem" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.6rem" }}>
                   <span style={{ fontWeight: 800, fontSize: "1.02rem" }}>Nº {l.numero_matriz}</span>
-                  <strong style={{ color: "var(--mob-verde)", fontSize: "0.95rem" }}>{l.gmd_kg_dia != null ? `${l.gmd_kg_dia} kg/dia` : "—"}</strong>
+                  <strong style={{ color: "var(--mob-verde)", fontSize: "0.95rem" }}>{l.gmd_kg_dia != null ? `${fmtNum(l.gmd_kg_dia, 3)} kg/dia` : "—"}</strong>
                 </div>
                 <div style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginTop: "0.25rem", display: "flex", justifyContent: "space-between" }}>
                   <span>{loteDe(l) ? `Lote ${loteDe(l)}` : "—"} · {l.num_pesagens} {l.num_pesagens !== 1 ? "pesagens" : "pesagem"}</span>
-                  <span>GPD {l.gpd_kg_dia ?? "—"}</span>
+                  <span>GPD {fmtNum(l.gpd_kg_dia, 3)}</span>
                 </div>
                 {(l.lotes_no_periodo?.length ?? 0) > 1 && (
                   <div style={{ fontSize: "0.74rem", color: "var(--mob-muted)", marginTop: "0.2rem" }}>Passou por: {l.lotes_no_periodo!.join(", ")}</div>
