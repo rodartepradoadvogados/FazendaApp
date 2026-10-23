@@ -43,8 +43,8 @@ const unidadesCompat = (u?: string | null): string[] => {
 };
 
 // Evento sanitário e Exames (preventivo antigo) saíram: vacinas e exames são
-// cadastrados na Central de Protocolos › Vacinas e exames (Sanitário
-// Preventivo v2).
+// cadastrados na Central de Protocolos › Cadastro › Sanidade › Preventiva
+// (Sanitário Preventivo v2).
 const ABAS = [
   ["protocolos", "Protocolo sanitário", ClipboardList],
   ["inducao", "Indução de lactação", Milk],
@@ -398,7 +398,7 @@ function FormProtocolo({ form, setForm, doencas, estoque, principios, onSalvar, 
           </div>
           <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
             Protocolo sanitário é o tratamento curativo em <strong>dias fixos</strong> (D0/D1/D2…). Vacinas e exames ficam na
-            Central de Protocolos › Vacinas e exames.
+            Central de Protocolos › Cadastro › Sanidade › Preventiva.
             Marcar "É protocolo de mastite" habilita, no lançamento, os campos de CMT, teto afetado e classificação.
           </p>
         </div>

@@ -67,7 +67,7 @@ export function ExecucaoDia({ diaId, onVoltar }: { diaId: number; onVoltar: () =
   if (!pacote) {
     return (
       <div>
-        <MobVoltar titulo="Vacinação" onVoltar={onVoltar} />
+        <MobVoltar titulo="Vacinas e exames" onVoltar={onVoltar} />
         {pac.carregando ? <p className="mob-san-txt">Baixando o dia para o celular…</p> : (
           <FaixaSan tipo="alerta">Este dia ainda não foi baixado neste celular. Abra com sinal uma vez para guardar o pacote e trabalhar sem sinal.
             <button type="button" className="mob-btn-2" style={{ marginTop: "0.5rem" }} onClick={pac.recarregar}>Tentar de novo</button>

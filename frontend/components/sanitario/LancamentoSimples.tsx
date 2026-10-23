@@ -17,7 +17,7 @@ import {
   numOuNulo, type CarenciaDecisaoIn, type ConsentimentoIn, type ImportacaoPlanilha, type ItemRegistro, type LancamentoSimplesIn,
   type ModoLeite, type ProdutoIn, type Resultado, type ResultadoRegistro,
 } from "@/lib/sanitarioTipos";
-import { BarraDesfazer, CampoPessoa, Faixa, Seg, carregarEstoqueSan, useCarregar, useEuSanitario, type PessoaEscolhida } from "./comum";
+import { BarraDesfazer, CampoPessoa, Faixa, Seg, carregarEstoqueSan, opcoesEstoqueSan, useCarregar, useEuSanitario, type PessoaEscolhida } from "./comum";
 import { SeletorAnimais, type AnimalSan } from "./SeletorAnimais";
 import { elegibilidadeDaSimulacao } from "./dias/ModalMarcarDia";
 import { ModalConsentimento } from "./ModalConsentimento";
@@ -172,7 +172,9 @@ export function LancamentoSimples() {
           <h2>Lançamentos › Preventivo</h2>
           <p>Lançamento simples ou retroativo, à moda antiga: diga o que foi feito, em quem e quando. Grava no mesmo histórico da Central.</p>
         </div>
-        <button type="button" className="btn-ghost" disabled={!cx} title={cx ? undefined : "Escolha a vacina ou exame primeiro"} onClick={() => setFicha(true)}>
+        {/* Sempre clicável: sem vacina/exame escolhido sai a ficha genérica (colunas padrão). Antes ficava
+            desabilitado até escolher — o clique "não fazia nada" e só o tooltip explicava. */}
+        <button type="button" className="btn-ghost" title={cx ? `Ficha vazia de ${cx.nome}` : "Ficha vazia genérica (escolha a vacina ou exame para a ficha dela)"} onClick={() => setFicha(true)}>
           <Printer size={14} aria-hidden="true" style={{ verticalAlign: "-2px", marginRight: 4 }} />Imprimir ficha vazia
         </button>
       </div>
@@ -262,7 +264,7 @@ export function LancamentoSimples() {
               <div className="san-campo"><label htmlFor="lEstq">Item do estoque</label>
                 <select id="lEstq" className="san-input" value={f.estoqueId} onChange={(e) => set({ estoqueId: e.target.value })}>
                   <option value="">Escolha…</option>
-                  {(estoque.dados || []).map((e) => <option key={e.id} value={e.id}>{e.nome}{e.quantidade != null ? ` · saldo ${e.quantidade} ${e.unidade || ""}` : ""}</option>)}
+                  {opcoesEstoqueSan(estoque.dados, f.estoqueId).map((e) => <option key={e.id} value={e.id}>{e.nome}{e.quantidade != null ? ` · saldo ${e.quantidade} ${e.unidade || ""}` : ""}</option>)}
                 </select></div>
             )}
             {f.modoProduto === "sem_estoque" && (
@@ -349,7 +351,7 @@ export function LancamentoSimples() {
           checar={cx ? async (ids) => elegibilidadeDaSimulacao(await simularDia([cx.id], f.data, f.data, ids), ids) : undefined}
           onFechar={() => setSeletor(false)} onConfirmar={(_, animais) => { setSeletor(false); set({ animais }); }} />
       )}
-      {ficha && cx && <ModalFicha caixaIds={[cx.id]} onFechar={() => setFicha(false)} />}
+      {ficha && <ModalFicha caixaIds={cx ? [cx.id] : []} onFechar={() => setFicha(false)} />}
       {consent && (
         <ModalConsentimento itens={consent.map((i) => ({ animal_id: i.animal_id || 0, numero: i.numero, caixa_id: i.caixa_id, caixa: cx?.nome_curto || cx?.nome, motivo: i.motivo_fora || "fora da regra" }))}
           perguntarAtestado={consent.some((i) => i.pergunta_atestado)} onVoltar={() => setConsent(null)}

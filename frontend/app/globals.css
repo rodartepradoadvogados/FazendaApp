@@ -410,6 +410,31 @@ body {
   padding-top: var(--faixas-topo-h, 0px);
 }
 
+/* ── Lista aberta de <select> (option/optgroup) — site e app, todos os temas ──
+   Sintoma (Chrome no Windows, 10/2026): a lista de qualquer <select> abria com
+   fundo mas SEM TEXTO, nos dois temas. A janela da lista é nativa do sistema e
+   herdava do <select> o que o preflight do Tailwind põe nele (`font: inherit`,
+   `color: inherit`, `background-color: transparent`): a fonte web do site
+   (next/font Archivo/Inter, via --font-body) não existe nessa janela e a cor
+   vinha de tokens com color-mix()/transparência. Aqui a LISTA ganha fonte de
+   sistema e cores SÓLIDAS (hex) por tema — tokens --opt-* (definidos logo
+   abaixo, por tema e paleta). O campo FECHADO não muda: só option/optgroup. */
+:root, :root[data-theme="escuro"] { --opt-bg: #1A1215; --opt-fg: #F0E8EC; --opt-muted: #9B8A91; --opt-sel-bg: #5E1A2E; --opt-sel-fg: #FFFFFF; }
+:root[data-theme="claro"], :root[data-theme="misto"] { --opt-bg: #FFFFFF; --opt-fg: #1E1B18; --opt-muted: #6B6560; --opt-sel-bg: #E9E1D2; --opt-sel-fg: #1E1B18; }
+:root[data-theme="escuro"][data-paleta="verde"] { --opt-bg: #101A14; --opt-sel-bg: #1F5C3D; }
+:root[data-theme="escuro"][data-paleta="azul"] { --opt-bg: #0E1726; --opt-sel-bg: #0B2038; }
+:root[data-theme="claro"][data-paleta="verde"], :root[data-theme="misto"][data-paleta="verde"] { --opt-sel-bg: #DCEBE1; }
+:root[data-theme="claro"][data-paleta="azul"], :root[data-theme="misto"][data-paleta="azul"] { --opt-sel-bg: #DDE5EF; }
+select option, select optgroup, datalist option {
+  font-family: system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+  font-weight: 400; font-style: normal; letter-spacing: normal; text-transform: none;
+  background-color: var(--opt-bg);
+  color: var(--opt-fg);
+}
+select optgroup { font-weight: 700; }
+select option:disabled { color: var(--opt-muted); }
+select option:checked { background-color: var(--opt-sel-bg); color: var(--opt-sel-fg); }
+
 h1, h2, h3, h4, .card-header, .kpi-value {
   font-family: var(--font-heading);
 }

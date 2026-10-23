@@ -3,6 +3,9 @@
 // único (aplicação, resultado de exame, lançamento simples, planilha). Filtros
 // por período, vacina e origem; selos janela/manual/curral; estorno (só
 // administrador, com motivo); desfazer nos primeiros 10 s; exportar.
+// Reaproveitada em Central › Concluídos › Sanitário › Preventivo com `grupo`
+// (só as linhas de Vacina, de Exame ou dos Outros preventivos); sem `grupo`,
+// é a tela de Sanidade, igual a sempre.
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Modal } from "@/components/Modal";
@@ -11,6 +14,7 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useToast } from "@/components/Toast";
 import { desfazerRegistros, estornarRegistro, listarCaixas, listarRegistros, mensagemDoErro } from "@/lib/apiSanitario";
 import { ROTULO_ORIGEM, ROTULO_RESULTADO, fmtData, hojeISO, somarDias, textoDose, type Registro } from "@/lib/sanitarioTipos";
+import { grupoDoTipo, linkCentral, tipoNoGrupo, type GrupoPreventivo } from "@/lib/protocolosNavegacao";
 import { OrigemIcone, Seg, useCarregar, useEuSanitario } from "../comum";
 
 type Origem = "todas" | "dia" | "lancamento_simples" | "ficha" | "importado" | "apos";
@@ -22,7 +26,7 @@ async function carregar(f: { de: string; ate: string; caixa: string; estornados:
   return regs.map((r) => ({ ...r, desfazivel: !!r.criado_em && agora - Date.parse(/Z$/.test(r.criado_em) ? r.criado_em : r.criado_em + "Z") < 10000 }));
 }
 
-export function AplicacoesPreventivas() {
+export function AplicacoesPreventivas({ grupo = null }: { grupo?: GrupoPreventivo | null } = {}) {
   const toast = useToast();
   const { admin } = useEuSanitario();
   const hoje = hojeISO();
@@ -37,7 +41,8 @@ export function AplicacoesPreventivas() {
   const [motivo, setMotivo] = useState("");
   const [ocupado, setOcupado] = useState(false);
 
-  const linhas = useMemo(() => (dados || []).filter((r) => origem === "todas" ? true : origem === "apos" ? r.apos_fechamento : r.origem === origem), [dados, origem]);
+  const linhas = useMemo(() => (dados || []).filter((r) => tipoNoGrupo(r.tipo, grupo)
+    && (origem === "todas" ? true : origem === "apos" ? r.apos_fechamento : r.origem === origem)), [dados, origem, grupo]);
   const exp = useMemo(() => linhas.map((r) => ({
     data: fmtData(r.data), animal: r.numero || "", vacina: r.caixa || r.outro_texto || "", ciclo: r.ciclo_chave || "",
     produto: r.produto_texto || "", dose: textoDose(r), origem: ROTULO_ORIGEM[r.origem] || r.origem,
@@ -63,7 +68,7 @@ export function AplicacoesPreventivas() {
         <div className="san-campo medio"><label htmlFor="aAte">Até</label><input id="aAte" className="san-input" type="date" value={ate} onChange={(e) => setAte(e.target.value)} /></div>
         <div className="san-campo" style={{ flex: "1 1 240px" }}><label htmlFor="aCx">Vacina ou exame</label>
           <select id="aCx" className="san-input" value={caixa} onChange={(e) => setCaixa(e.target.value)}>
-            <option value="">Todos</option>{(caixas.dados || []).map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+            <option value="">Todos</option>{(caixas.dados || []).filter((c) => tipoNoGrupo(c.tipo, grupo)).map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
           </select></div>
         <label className="san-liga"><input type="checkbox" checked={estornados} onChange={(e) => setEstornados(e.target.checked)} /><span>Mostrar estornados</span></label>
       </div>
@@ -98,7 +103,7 @@ export function AplicacoesPreventivas() {
                         {r.dia_item_id ? <OrigemIcone origem={r.decisao_curral ? "curral" : r.fora_da_regra ? "manual" : "janela"} /> : null}
                         <span className="san-nota">{ROTULO_ORIGEM[r.origem] || r.origem}</span>
                       </span>
-                      {r.dia_id && <div><Link className="san-link" href={`/protocolos?aba=vacinas&sub=marcados&dia=${r.dia_id}`}>abrir o dia</Link></div>}
+                      {r.dia_id && <div><Link className="san-link" href={linkCentral.aplicarPreventivo({ dia: r.dia_id }, grupoDoTipo(r.tipo))}>abrir o dia</Link></div>}
                     </td>
                     <td className="san-nota">
                       {r.carencia_leite_ate && r.carencia_leite_ate >= hojeISO() ? <>leite até {fmtData(r.carencia_leite_ate, true)}<br /></> : null}

@@ -14,6 +14,7 @@ import { CartaoPainel } from "@/components/agenda/CartaoPainel";
 import { useToast } from "@/components/Toast";
 import { listarNotas, mensagemDoErro, resolverNota, resumoAgenda } from "@/lib/apiSanitario";
 import { fmtData, type NotaAgenda } from "@/lib/sanitarioTipos";
+import { linkCentral } from "@/lib/protocolosNavegacao";
 import { useCarregar } from "./comum";
 
 export function CartaoVacinasPrevistas() {
@@ -36,10 +37,10 @@ const ICONE: Record<string, typeof Bell> = {
   fechamento_auto: Bell, vespera: Syringe,
 };
 function linkDaNota(n: NotaAgenda): { href: string; rotulo: string } | null {
-  if (n.tipo === "carencia_pendente" && n.caixa_id) return { href: `/protocolos?aba=vacinas&sub=cadastro&caixa=${n.caixa_id}&passo=7`, rotulo: "Resolver no cadastro" };
-  if (n.tipo === "catalogo_mudou") return { href: "/protocolos?aba=vacinas&sub=cadastro", rotulo: "Ver o que mudou" };
-  if (n.dia_id) return { href: `/protocolos?aba=vacinas&sub=marcados&dia=${n.dia_id}`, rotulo: "Abrir o dia" };
-  if (n.tipo === "aglomerou" && n.caixa_id) return { href: `/protocolos?aba=vacinas&sub=marcados&caixas=${n.caixa_id}`, rotulo: "Marcar data" };
+  if (n.tipo === "carencia_pendente" && n.caixa_id) return { href: linkCentral.cadastroPreventivo({ caixa: n.caixa_id, passo: 7 }), rotulo: "Resolver no cadastro" };
+  if (n.tipo === "catalogo_mudou") return { href: linkCentral.cadastroPreventivo(), rotulo: "Ver o que mudou" };
+  if (n.dia_id) return { href: linkCentral.aplicarPreventivo({ dia: n.dia_id }), rotulo: "Abrir o dia" };
+  if (n.tipo === "aglomerou" && n.caixa_id) return { href: linkCentral.aplicarPreventivo({ caixas: [n.caixa_id] }), rotulo: "Marcar data" };
   if (n.tipo === "prazo_legal" || n.tipo === "comprovacao") return { href: "/sanidade?aba=preventiva&sub=painel", rotulo: "Ver prazos" };
   if (n.caixa_id) return { href: `/sanidade?aba=preventiva&sub=janela&caixa=${n.caixa_id}`, rotulo: "Ver animais" };
   return null;

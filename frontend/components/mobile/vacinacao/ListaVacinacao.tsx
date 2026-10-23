@@ -1,5 +1,5 @@
 "use client";
-// Menu › Vacinação (app de campo): vacinas e exames de hoje e de amanhã
+// Menu › Vacinas e exames (app de campo): vacinas e exames de hoje e de amanhã
 // (GET /sanitario/campo/hoje), o comunicado da véspera, o card "Leite
 // separado" e a fila do aparelho. Ao abrir a lista com sinal, os pacotes
 // offline dos dias já são baixados e guardados — no curral, sem sinal, o dia
@@ -49,7 +49,7 @@ export default function ListaVacinacao({ onVoltar, diaInicial }: { onVoltar: () 
 
   return (
     <div>
-      <MobVoltar titulo="Vacinação" subtitulo="Vacinas e exames de hoje e de amanhã" onVoltar={onVoltar} />
+      <MobVoltar titulo="Vacinas e exames" subtitulo="Marcados para hoje e amanhã" onVoltar={onVoltar} />
       {hojeQ.doCache && hojeQ.dados && <p className="mob-san-txt" style={{ marginTop: "-0.5rem", marginBottom: "0.6rem" }}>Sem sinal: lista guardada neste celular.</p>}
       <PainelFila eu={eu} partes={{ aviso: true, decisoes: true }} />
 

@@ -1,5 +1,5 @@
 "use client";
-// Central de Protocolos › Vacinas e exames › Cadastro — WIZARD de 9 etapas que
+// Central de Protocolos › Cadastro › Sanidade › Preventiva — WIZARD de 9 etapas que
 // deslizam (casco: components/protocolos/WizardProtocolo.tsx, que respeita
 // prefers-reduced-motion). Começa por "do catálogo ou do zero":
 //   - do catálogo: GET /sanitario/catalogo/{versao}/previa-copia traz a definição
@@ -24,7 +24,8 @@ import {
   definicaoCompleta, definicaoVazia, fmtData, hojeISO, intOuNulo, numOuNulo, textoJanela, textoProduto, textoPublico,
   type CaixaDetalhe, type CaixaResumo, type CatalogoItemFazenda, type DefinicaoCaixa, type Parametros, type PreviaCaixa,
 } from "@/lib/sanitarioTipos";
-import { Faixa, Seg, carregarCategoriasSan, carregarEstoqueSan, useCarregar, type ItemEstoqueSan } from "../comum";
+import { Faixa, Seg, carregarCategoriasSan, carregarEstoqueSan, opcoesEstoqueSan, useCarregar, type ItemEstoqueSan } from "../comum";
+import { ROTULO_GRUPO, tipoInicialDoGrupo, tipoNoGrupo, type GrupoPreventivo } from "@/lib/protocolosNavegacao";
 import { FolhaVazia } from "../FichaCampo";
 
 type Form = { def: DefinicaoCaixa; ativo: boolean; aceitarCarencia: boolean };
@@ -103,8 +104,9 @@ function EtapaProduto({ ctx, apoio }: { ctx: Ctx; apoio: Apoio }) {
           <label htmlFor="wEstq">Item do estoque</label>
           <select id="wEstq" className="san-input" value={d.estoque_id ?? ""} onChange={(e) => setDef(ctx, { estoque_id: intOuNulo(e.target.value) })}>
             <option value="">Escolha…</option>
-            {apoio.estoque.map((e) => <option key={e.id} value={e.id}>{e.nome}{e.quantidade != null ? ` · saldo ${e.quantidade} ${e.unidade || ""}` : ""}</option>)}
+            {opcoesEstoqueSan(apoio.estoque, d.estoque_id).map((e) => <option key={e.id} value={e.id}>{e.nome}{e.quantidade != null ? ` · saldo ${e.quantidade} ${e.unidade || ""}` : ""}</option>)}
           </select>
+          <span className="san-nota">Só itens da Farmácia (medicamentos, vacinas, vermífugos). Não achou? Em Estoque, marque o item com a finalidade “Medicamento”.</span>
         </div>
       )}
       {d.produto_modo === "sem_estoque" && (
@@ -148,6 +150,8 @@ function EtapaProduto({ ctx, apoio }: { ctx: Ctx; apoio: Apoio }) {
 function EtapaPublico({ ctx, apoio, caixaId }: { ctx: Ctx; apoio: Apoio; caixaId: number | null }) {
   const d = ctx.form.def;
   const alternarCat = (id: number) => setDef(ctx, { categorias: d.categorias.includes(id) ? d.categorias.filter((c) => c !== id) : [...d.categorias, id] });
+  const vacinasRef = apoio.caixas.filter((c) => c.id !== caixaId
+    && ((c.tipo === "vacina" && c.estado !== "arquivada") || c.id === d.pub_hist_caixa_id));
   const alternarCond = (c: (typeof CONDICOES)[number]) => setDef(ctx, { pub_condicoes: d.pub_condicoes.includes(c) ? d.pub_condicoes.filter((x) => x !== c) : [...d.pub_condicoes, c] });
   return (
     <div className="san-wiz-etapa">
@@ -192,22 +196,25 @@ function EtapaPublico({ ctx, apoio, caixaId }: { ctx: Ctx; apoio: Apoio; caixaId
       </div>
       <div className="san-linha">
         <div className="san-campo medio">
-          <label htmlFor="wHT">Histórico vacinal</label>
+          <label htmlFor="wHT">Depende de outra vacina? (opcional)</label>
           <select id="wHT" className="san-input" value={d.pub_hist_tipo ?? ""} onChange={(e) => setDef(ctx, { pub_hist_tipo: (e.target.value || null) as DefinicaoCaixa["pub_hist_tipo"] })}>
-            <option value="">Não filtrar</option><option value="ja">Já recebeu</option><option value="nunca">Nunca recebeu</option>
+            <option value="">Não depende</option><option value="ja">Só quem já recebeu</option><option value="nunca">Só quem nunca recebeu</option>
           </select>
         </div>
         {d.pub_hist_tipo && (
           <div className="san-campo">
             <label htmlFor="wHC">Qual vacina</label>
-            <select id="wHC" className="san-input" value={d.pub_hist_caixa_id ?? ""} onChange={(e) => setDef(ctx, { pub_hist_caixa_id: intOuNulo(e.target.value) })}>
-              <option value="">Escolha…</option>
-              {apoio.caixas.filter((c) => c.id !== caixaId && c.estado !== "arquivada").map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-            </select>
+            {/* Só VACINAS (nunca exame), sem a própria e sem as arquivadas; a já escolhida fica, para não sumir ao editar. */}
+            {vacinasRef.length ? (
+              <select id="wHC" className="san-input" value={d.pub_hist_caixa_id ?? ""} onChange={(e) => setDef(ctx, { pub_hist_caixa_id: intOuNulo(e.target.value) })}>
+                <option value="">Escolha…</option>
+                {vacinasRef.map((c) => <option key={c.id} value={c.id}>{c.nome}{c.estado === "ativa" ? "" : " (inativa)"}</option>)}
+              </select>
+            ) : <p id="wHC" className="san-nota" style={{ margin: 0 }}>Cadastre primeiro a vacina de referência.</p>}
           </div>
         )}
       </div>
-      <p className="san-nota" style={{ margin: 0 }}>Ex.: RB51 só em quem nunca recebeu B19; reforço só em quem já tem a primovacinação. Quem começou uma série continua até completar, mesmo mudando de categoria.</p>
+      <p className="san-nota" style={{ margin: 0 }}>Use só quando esta vacina depende de outra: ex.: RB51 só em quem nunca recebeu B19; reforço só em quem já tomou a primovacinação. Na maioria das vacinas, deixe “Não depende”. Quem começou uma série continua até completar, mesmo mudando de categoria.</p>
     </div>
   );
 }
@@ -647,8 +654,12 @@ function EtapaRevisao({ ctx, apoio, editando }: { ctx: Ctx; apoio: Apoio; editan
 }
 
 // ── escolher do catálogo ou do zero ──
-function Comecar({ onZero, onCatalogo, ocupado, erro }: { onZero: () => void; onCatalogo: (c: CatalogoItemFazenda) => void; ocupado: boolean; erro: string | null }) {
-  const { dados, erro: erroCat, carregando, recarregar } = useCarregar(() => catalogoDaFazenda(), []);
+function Comecar({ onZero, onCatalogo, ocupado, erro, grupo }: {
+  onZero: () => void; onCatalogo: (c: CatalogoItemFazenda) => void; ocupado: boolean; erro: string | null; grupo: GrupoPreventivo | null;
+}) {
+  const { dados: todos, erro: erroCat, carregando, recarregar } = useCarregar(() => catalogoDaFazenda(), []);
+  // Catálogo filtrado pelo mesmo grupo da lista que abriu o wizard (Vacina | Exame | Outros preventivos).
+  const dados = (todos || []).filter((c) => tipoNoGrupo(c.tipo, grupo));
   return (
     <div className="san-bloco">
       <div className="san-bloco-cab"><h3>Escolher do catálogo ou criar do zero</h3></div>
@@ -670,9 +681,9 @@ function Comecar({ onZero, onCatalogo, ocupado, erro }: { onZero: () => void; on
                   </button>
                 );
               })}
-              {!dados?.length && <p className="san-nota">O catálogo central ainda não tem itens.</p>}
+              {!dados.length && <p className="san-nota">{grupo ? `O catálogo central ainda não tem ${ROTULO_GRUPO[grupo].toLowerCase()}.` : "O catálogo central ainda não tem itens."}</p>}
               <button type="button" className="san-opc tracejado" onClick={onZero} disabled={ocupado}>
-                <span style={{ flex: 1 }}><b>Criar do zero</b><small>Começa com tudo em branco. Nada é copiado.</small></span>
+                <span style={{ flex: 1 }}><b>Criar do zero</b><small>Começa em branco{grupo ? `, já como ${ROTULO_TIPO[tipoInicialDoGrupo(grupo)].toLowerCase()}` : ""}. Nada é copiado.</small></span>
                 <Plus size={14} aria-hidden="true" />
               </button>
             </div>
@@ -682,8 +693,10 @@ function Comecar({ onZero, onCatalogo, ocupado, erro }: { onZero: () => void; on
   );
 }
 
-export function WizardCaixa({ caixaId: caixaIdInicial = null, passoInicial = 0, admin, onSair }: {
+export function WizardCaixa({ caixaId: caixaIdInicial = null, passoInicial = 0, admin, onSair, grupo = null }: {
   caixaId?: number | null; passoInicial?: number; admin: boolean;
+  /** Grupo da lista que abriu o wizard: filtra o catálogo e já preenche o tipo no "Criar do zero". */
+  grupo?: GrupoPreventivo | null;
   /** Sai do wizard; `mensagem` vem quando algo foi salvo. */
   onSair: (mensagem?: string) => void;
 }) {
@@ -754,7 +767,7 @@ export function WizardCaixa({ caixaId: caixaIdInicial = null, passoInicial = 0, 
       <div className="san-pagina">
         <div className="san-acoes"><button type="button" className="btn-ghost" onClick={() => onSair()}>Voltar para a lista</button></div>
         <Comecar ocupado={ocupado} erro={erroComecar} onCatalogo={escolherCatalogo}
-          onZero={() => setForm({ def: definicaoVazia(), ativo: false, aceitarCarencia: false })} />
+          grupo={grupo} onZero={() => setForm({ def: definicaoVazia(tipoInicialDoGrupo(grupo)), ativo: false, aceitarCarencia: false })} />
       </div>
     );
   }
@@ -824,7 +837,7 @@ export function WizardCaixa({ caixaId: caixaIdInicial = null, passoInicial = 0, 
     <div className="san-pagina">
       {copiadoDoCatalogo && <Faixa tipo="ok">{copiadoDoCatalogo}</Faixa>}
       <WizardProtocolo<Form>
-        chaveRascunho={caixaId || doCatalogo ? null : "wizard-sanitario:nova-caixa"}
+        chaveRascunho={caixaId || doCatalogo ? null : `wizard-sanitario:nova-caixa${grupo ? `:${grupo}` : ""}`}
         form={form} setForm={setForm}
         ehVazio={(f) => !(f.def.nome || "").trim()}
         passos={passos}

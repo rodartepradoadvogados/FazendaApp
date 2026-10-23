@@ -12,6 +12,7 @@ import { ErroCarregamento, TelaSkeleton } from "@/components/ui";
 import { useToast } from "@/components/Toast";
 import { animaisNaJanela, dispensarAnimais, listarCaixas, mensagemDoErro } from "@/lib/apiSanitario";
 import { ROTULO_TIPO, fmtData, hojeISO, type JanelaItem } from "@/lib/sanitarioTipos";
+import { grupoDoTipo, linkCentral } from "@/lib/protocolosNavegacao";
 import { Chip, ChipSituacao, Faixa, useCarregar } from "../comum";
 
 const chaveSel = (caixaId: number, it: JanelaItem) => `${caixaId}|${it.animal_id}|${it.ciclo_chave ?? ""}|${it.dose_num ?? ""}`;
@@ -40,8 +41,7 @@ export function AnimaisNaJanela({ caixaInicial }: { caixaInicial?: number | null
     setSel((p) => { const n = new Map(p); if (n.has(k)) n.delete(k); else n.set(k, { caixa_id: cid, it }); return n; });
   }
   function agendar() {
-    const pares = selecionados.map((s) => `${s.caixa_id}-${s.it.animal_id}`).join(",");
-    router.push(`/protocolos?aba=vacinas&sub=marcados&marcar=${pares}`);
+    router.push(linkCentral.aplicarPreventivo({ pares: selecionados.map((s) => ({ caixa_id: s.caixa_id, animal_id: s.it.animal_id })) }));
   }
   async function confirmarDispensa() {
     setOcupado(true);
@@ -60,7 +60,7 @@ export function AnimaisNaJanela({ caixaInicial }: { caixaInicial?: number | null
         <span>Mostra: <b>na janela, em aviso, atrasadas e marcadas</b></span>
         <span>Mínimo e antecedência: <b>de cada vacina</b> (ao lado do nome)</span>
         <span>Vacinas inativas fora da lista: <b>{inativas}</b></span>
-        <Link href="/protocolos?aba=vacinas&sub=cadastro" className="san-link">Mudar na Central</Link>
+        <Link href={linkCentral.cadastroPreventivo()} className="san-link">Mudar na Central</Link>
       </div>
       <div className="san-linha">
         <div className="san-campo medio" style={{ flex: "0 1 320px" }}>
@@ -100,7 +100,7 @@ export function AnimaisNaJanela({ caixaInicial }: { caixaInicial?: number | null
                         <td><b className="san-num">{it.numero}</b></td>
                         <td>{it.categoria || "—"}<div className="san-nota">{it.lote || "sem lote"}{it.dose_num && it.dose_num > 1 ? ` · ${it.dose_num}ª dose` : ""}</div></td>
                         <td>{it.estado === "marcada" && it.dia_id
-                          ? <Link className="san-link" href={`/protocolos?aba=vacinas&sub=marcados&dia=${it.dia_id}`}><ChipSituacao estado={it.estado} /></Link>
+                          ? <Link className="san-link" href={linkCentral.aplicarPreventivo({ dia: it.dia_id }, grupoDoTipo(g.tipo))}><ChipSituacao estado={it.estado} /></Link>
                           : <ChipSituacao estado={it.estado} texto={it.texto} />}</td>
                         <td className="san-nota san-num">{it.janela_inicio ? `${fmtData(it.janela_inicio, true)} a ${fmtData(it.janela_fim, true)}` : "—"}</td>
                         <td><button type="button" className="san-link" aria-expanded={ab} onClick={() => setAbertos((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; })}>{ab ? "Esconder" : "Ver por quê"}</button></td>
@@ -121,7 +121,7 @@ export function AnimaisNaJanela({ caixaInicial }: { caixaInicial?: number | null
             </div>
           </section>
         );
-      }) : <Faixa tipo="ok">Nenhum animal nas vacinas ativas agora.{ativas.length ? "" : " Ative vacinas e exames na Central de Protocolos › Vacinas e exames › Cadastro."}</Faixa>}
+      }) : <Faixa tipo="ok">Nenhum animal nas vacinas ativas agora.{ativas.length ? "" : " Ative vacinas e exames na Central de Protocolos › Cadastro › Sanidade › Preventiva."}</Faixa>}
       {selecionados.length > 0 && (
         <div className="san-barra-sel" role="region" aria-label="Seleção">
           <span className="cont">{nAnimais} {nAnimais > 1 ? "animais" : "animal"} em {nCaixas} {nCaixas > 1 ? "vacinas" : "vacina"}</span>

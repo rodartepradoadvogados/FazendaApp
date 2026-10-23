@@ -1,15 +1,21 @@
 "use client";
-// Central de Protocolos › Vacinas e exames marcados — os dias de "Vacina" e
-// "Exame": marcados, em andamento e fechados; caixas que aglomeraram (só
-// administradores); conflitos entre dois celulares; "Marcar Vacina ou Exame".
-// Pode abrir já com animais escolhidos em Sanidade › Animais na janela
-// (`paresIniciais`, vindo da querystring `marcar=`).
+// Central de Protocolos › Aplicar › Sanitário › Preventivo › Vacina | Exame |
+// Outros preventivos — os dias de "Vacina" e "Exame": marcados, em andamento e
+// fechados; caixas que aglomeraram (só administradores); conflitos entre dois
+// celulares; "Marcar Vacina ou Exame". Pode abrir já com animais escolhidos em
+// Sanidade › Animais na janela (`paresIniciais`, vindo da querystring `marcar=`).
+// Filtros (mesmo componente nas outras abas):
+//   - `grupo`: só os dias com alguma caixa do grupo (lib/protocolosNavegacao.diaNoGrupo);
+//   - `estados`: "todos" (Aplicar, como sempre foi), "abertos" (Acompanhamento:
+//     marcados/em execução, aglomeradas e conflitos) ou "fechados" (Concluídos:
+//     só fechados e cancelados, sem "Marcar").
 import { useState } from "react";
 import { Bell, Plus, Printer, Smartphone } from "lucide-react";
 import { ErroCarregamento, TelaSkeleton } from "@/components/ui";
 import { useToast } from "@/components/Toast";
-import { decidirConflito, listarConflitos, listarDias, mensagemDoErro, painel } from "@/lib/apiSanitario";
+import { decidirConflito, listarCaixas, listarConflitos, listarDias, mensagemDoErro, painel } from "@/lib/apiSanitario";
 import { ROTULO_ESTADO_DIA, diaSemana, fmtData, fmtDataHora, hojeISO, MESES_CURTOS, somarDias, textoProduto, type Dia } from "@/lib/sanitarioTipos";
+import { diaNoGrupo, tipoNoGrupo, type GrupoPreventivo } from "@/lib/protocolosNavegacao";
 import { Chip, Faixa, useCarregar, useEuSanitario } from "../comum";
 import { ModalFicha } from "../FichaCampo";
 import { DetalheDia } from "./DetalheDia";
@@ -48,8 +54,11 @@ function CartaoDia({ d, onAbrir, onFicha }: { d: Dia; onAbrir: () => void; onFic
   );
 }
 
-export function ListaDias({ paresIniciais, caixasIniciais, diaInicial }: {
+export type EstadosDias = "todos" | "abertos" | "fechados";
+
+export function ListaDias({ paresIniciais, caixasIniciais, diaInicial, grupo = null, estados = "todos" }: {
   paresIniciais?: { caixa_id: number; animal_id: number }[]; caixasIniciais?: number[]; diaInicial?: number | null;
+  grupo?: GrupoPreventivo | null; estados?: EstadosDias;
 }) {
   const toast = useToast();
   const { admin } = useEuSanitario();
@@ -58,26 +67,37 @@ export function ListaDias({ paresIniciais, caixasIniciais, diaInicial }: {
     paresIniciais?.length || caixasIniciais?.length ? { caixas: caixasIniciais || [], pares: paresIniciais } : null);
   const [ficha, setFicha] = useState<number | null>(null);
   const hoje = hojeISO();
-  const abertos = useCarregar(() => listarDias({ estado: "abertos" }), []);
-  const fechados = useCarregar(() => listarDias({ de: somarDias(hoje, -180) }), []);
-  const pn = useCarregar(() => (admin ? painel(30) : Promise.resolve(null)), [admin]);
-  const conf = useCarregar(() => listarConflitos(), []);
+  const verAbertos = estados !== "fechados", verFechados = estados !== "abertos";
+  const abertos = useCarregar(() => (verAbertos ? listarDias({ estado: "abertos" }) : Promise.resolve([] as Dia[])), [verAbertos]);
+  const fechados = useCarregar(() => (verFechados ? listarDias({ de: somarDias(hoje, -180) }) : Promise.resolve([] as Dia[])), [verFechados]);
+  const pn = useCarregar(() => (admin && verAbertos ? painel(30) : Promise.resolve(null)), [admin, verAbertos]);
+  const conf = useCarregar(() => (verAbertos ? listarConflitos() : Promise.resolve([])), [verAbertos]);
+  // Tipo de cada caixa (para filtrar aglomeradas e conflitos pelo grupo); só carrega quando há grupo.
+  const tipos = useCarregar(() => (grupo ? listarCaixas("todas") : Promise.resolve([])), [grupo]);
   const [decidindo, setDecidindo] = useState(false);
 
   if (aberto != null) return <DetalheDia diaId={aberto} onVoltar={() => { setAberto(null); abertos.recarregar(); fechados.recarregar(); }} />;
 
-  const listaFechados = (fechados.dados || []).filter((d) => d.estado === "fechado" || d.estado === "cancelado").reverse();
-  const aglomeradas = pn.dados?.aglomeradas || [];
+  const tipoCx = new Map((tipos.dados || []).map((c) => [c.id, c.tipo]));
+  const daCaixa = (id: number | null | undefined) => !grupo || id == null || !tipoCx.has(id) || tipoNoGrupo(tipoCx.get(id), grupo);
+  const listaAbertos = (abertos.dados || []).filter((d) => diaNoGrupo(d, grupo));
+  const listaFechados = (fechados.dados || []).filter((d) => (d.estado === "fechado" || d.estado === "cancelado") && diaNoGrupo(d, grupo)).reverse();
+  const aglomeradas = (pn.dados?.aglomeradas || []).filter((a) => daCaixa(a.caixa_id));
+  const conflitos = (conf.dados || []).filter((c) => daCaixa(c.caixa_id));
   return (
     <div className="san-pagina">
       <div className="san-cab">
         <div>
-          <h2>Vacinas e exames marcados</h2>
-          <p>Marque, edite, execute e feche os dias de Vacina e de Exame. O nome do dia é sempre “Vacina” ou “Exame”.</p>
+          <h2>{estados === "fechados" ? "Dias fechados" : estados === "abertos" ? "Dias marcados em aberto" : "Vacinas e exames marcados"}</h2>
+          <p>{estados === "fechados" ? "Dias de Vacina e de Exame já fechados ou cancelados. Abra para ver o que foi aplicado."
+            : estados === "abertos" ? "O que está marcado e ainda não fechou. Execute, edite ou feche o dia."
+              : "Marque, edite, execute e feche os dias de Vacina e de Exame. O nome do dia é sempre “Vacina” ou “Exame”."}</p>
         </div>
-        <button type="button" className="btn-primary" onClick={() => setMarcar({ caixas: [] })}>
-          <Plus size={14} aria-hidden="true" style={{ verticalAlign: "-2px", marginRight: 4 }} />Marcar Vacina ou Exame
-        </button>
+        {verAbertos && (
+          <button type="button" className="btn-primary" onClick={() => setMarcar({ caixas: [] })}>
+            <Plus size={14} aria-hidden="true" style={{ verticalAlign: "-2px", marginRight: 4 }} />Marcar Vacina ou Exame
+          </button>
+        )}
       </div>
 
       {admin && aglomeradas.length > 0 && (
@@ -93,10 +113,10 @@ export function ListaDias({ paresIniciais, caixasIniciais, diaInicial }: {
         </section>
       )}
 
-      {(conf.dados || []).length > 0 && (
+      {conflitos.length > 0 && (
         <section className="san-bloco">
           <div className="san-bloco-cab"><h3>Conflitos entre celulares</h3><span className="san-nota">o aplicador ou o administrador decide qual vale</span></div>
-          {(conf.dados || []).map((c) => (
+          {conflitos.map((c) => (
             <div key={c.id} className="san-nota-ag">
               <span className="ico"><Smartphone size={15} aria-hidden="true" /></span>
               <div><p>{c.texto}</p><small>{fmtDataHora(c.em)}</small></div>
@@ -118,15 +138,15 @@ export function ListaDias({ paresIniciais, caixasIniciais, diaInicial }: {
       )}
       {conf.erro && <Faixa tipo="atencao">Não foi possível ver os conflitos entre celulares: {conf.erro}</Faixa>}
 
-      <section className="san-bloco">
-        <div className="san-bloco-cab"><h3>Marcados</h3><span className="san-nota san-num">{abertos.dados?.length ?? ""}</span></div>
+      {verAbertos && <section className="san-bloco">
+        <div className="san-bloco-cab"><h3>Marcados</h3><span className="san-nota san-num">{abertos.dados ? listaAbertos.length : ""}</span></div>
         {abertos.erro ? <div className="san-bloco-corpo"><ErroCarregamento mensagem={abertos.erro} onRetry={abertos.recarregar} /></div>
           : !abertos.dados ? <div className="san-bloco-corpo"><TelaSkeleton kpis={0} label="Carregando os dias marcados" /></div>
-            : abertos.dados.length ? abertos.dados.map((d) => <CartaoDia key={d.id} d={d} onAbrir={() => setAberto(d.id)} onFicha={() => setFicha(d.id)} />)
+            : listaAbertos.length ? listaAbertos.map((d) => <CartaoDia key={d.id} d={d} onAbrir={() => setAberto(d.id)} onFicha={() => setFicha(d.id)} />)
               : <div className="san-bloco-corpo san-nota">Nenhum dia marcado. Quando uma caixa aglomerar, a Agenda avisa os administradores.</div>}
-      </section>
+      </section>}
 
-      <section className="san-bloco">
+      {verFechados && <section className="san-bloco">
         <div className="san-bloco-cab">
           <h3>Fechados e cancelados · últimos 180 dias</h3>
           <button type="button" className="san-link" onClick={fechados.recarregar}>Atualizar</button>
@@ -135,10 +155,10 @@ export function ListaDias({ paresIniciais, caixasIniciais, diaInicial }: {
           : !fechados.dados ? <div className="san-bloco-corpo"><TelaSkeleton kpis={0} tabela={false} label="Carregando os dias fechados" /></div>
             : listaFechados.length ? listaFechados.map((d) => <CartaoDia key={d.id} d={d} onAbrir={() => setAberto(d.id)} onFicha={() => setFicha(d.id)} />)
               : <div className="san-bloco-corpo san-nota">Nenhum dia fechado ainda.</div>}
-      </section>
+      </section>}
 
       {marcar && (
-        <ModalMarcarDia caixasIniciais={marcar.caixas} paresIniciais={marcar.pares} onFechar={() => setMarcar(null)}
+        <ModalMarcarDia caixasIniciais={marcar.caixas} paresIniciais={marcar.pares} grupo={grupo} onFechar={() => setMarcar(null)}
           onSalvo={(dias, msg) => { setMarcar(null); toast(msg); abertos.recarregar(); if (dias.length === 1) setAberto(null); }} />
       )}
       {ficha != null && <ModalFicha diaId={ficha} onFechar={() => setFicha(null)} />}

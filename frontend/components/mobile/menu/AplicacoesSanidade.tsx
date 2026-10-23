@@ -1,7 +1,7 @@
 "use client";
 // Sub-tela: Histórico sanitário curativo (editar/excluir cada aplicação,
 // restrito à conta principal — admin). O histórico de vacinas e exames sai
-// daqui: o preventivo antigo foi removido e o novo entra pelo menu Vacinação.
+// daqui: o preventivo antigo foi removido e o novo entra pelo menu Vacinas e exames.
 import { useEffect, useMemo, useState } from "react";
 import { Pencil, Trash2, Check, X, Search } from "lucide-react";
 import { MobVoltar, MobCard } from "@/components/mobile/ui";

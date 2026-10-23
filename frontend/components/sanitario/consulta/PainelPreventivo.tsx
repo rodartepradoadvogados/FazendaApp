@@ -10,11 +10,12 @@ import { ErroCarregamento, TelaSkeleton } from "@/components/ui";
 import { useToast } from "@/components/Toast";
 import { cumprirPrazo, leiteSeparado, mensagemDoErro, painel } from "@/lib/apiSanitario";
 import { ROTULO_MODO_LEITE, diaSemana, diferencaDias, fmtData, hojeISO, somarDias, type Prazo } from "@/lib/sanitarioTipos";
+import { grupoDoDia, linkCentral, urlCentral } from "@/lib/protocolosNavegacao";
 import { Faixa, useCarregar, useEuSanitario } from "../comum";
 
 const brl = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
-function ModalCumprir({ prazo, onFeito, onFechar }: { prazo: Prazo; onFeito: () => void; onFechar: () => void }) {
+export function ModalCumprir({ prazo, onFeito, onFechar }: { prazo: Prazo; onFeito: () => void; onFechar: () => void }) {
   const [doc, setDoc] = useState("");
   const [data, setData] = useState(hojeISO());
   const [salvando, setSalvando] = useState(false);
@@ -82,7 +83,7 @@ export function PainelPreventivo() {
         <div className="san-kpi">
           <div className="l">Custo · {p.parametros.dias} dias</div><div className="v" style={{ fontSize: "1.2rem" }}>{brl(p.custo_periodo)}</div><div className="d">registros com produto do estoque</div>
         </div>
-        <Link href="/protocolos?aba=vacinas&sub=marcados" className="san-kpi">
+        <Link href={urlCentral({ aba: "acompanhamento", area: "sanitario", san: "preventivo", grupo: null })} className="san-kpi">
           <div className="l">Dias marcados</div><div className="v">{p.resumo.dias}</div><div className="d">Vacina ou Exame até {fmtData(fim, true)}</div>
         </Link>
         <div className={`san-kpi ${prazoPerto ? "alerta" : ""}`}>
@@ -91,7 +92,7 @@ export function PainelPreventivo() {
       </div>
       {admin && p.carencia_sem_aceite.length > 0 && (
         <Faixa tipo="atencao">{p.carencia_sem_aceite.length} {p.carencia_sem_aceite.length > 1 ? "vacinas estão" : "vacina está"} com carência sem aceite: o leite vai para o tanque e o registro marca “sem aceite”.{" "}
-          <Link className="san-link" href={`/protocolos?aba=vacinas&sub=cadastro&caixa=${p.carencia_sem_aceite[0]}&passo=7`}>Resolver no cadastro</Link></Faixa>
+          <Link className="san-link" href={linkCentral.cadastroPreventivo({ caixa: p.carencia_sem_aceite[0], passo: 7 })}>Resolver no cadastro</Link></Faixa>
       )}
       <div className="san-grid2">
         <section className="san-bloco">
@@ -146,7 +147,7 @@ export function PainelPreventivo() {
               </ul> : <p className="san-nota" style={{ margin: 0 }}>Nenhuma.</p>}</div>
             <div><span className="san-rot">Próximos 7 dias</span>
               {p.proximos_7_dias.length ? <ul style={{ margin: "0.3rem 0 0", paddingLeft: "1.1rem", fontSize: "0.82rem" }}>
-                {p.proximos_7_dias.map((d) => <li key={d.id}><Link className="san-link" href={`/protocolos?aba=vacinas&sub=marcados&dia=${d.id}`}>{d.nome}</Link>{d.hora ? ` · ${d.hora}` : ""} · {d.contagens.animais} animais</li>)}
+                {p.proximos_7_dias.map((d) => <li key={d.id}><Link className="san-link" href={linkCentral.aplicarPreventivo({ dia: d.id }, grupoDoDia(d))}>{d.nome}</Link>{d.hora ? ` · ${d.hora}` : ""} · {d.contagens.animais} animais</li>)}
               </ul> : <p className="san-nota" style={{ margin: 0 }}>Nenhum dia marcado.</p>}</div>
           </div>
         </section>

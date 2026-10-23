@@ -789,7 +789,9 @@ def test_push_aglomerou_so_admins_e_vespera_para_todos(api):
     urls = {e["titulo"]: e["url"] for e in enviados}
     vesp_url = next(v for k, v in urls.items() if k.startswith("Amanhã"))
     assert vesp_url == f"/app/menu#vacinacao-{notas['vespera'].dia_id}"
-    assert next(v for k, v in urls.items() if "aglomerou" in k).startswith("/protocolos")
+    # aglomerou abre a Central em Aplicar › Sanitário › Preventivo, já com a caixa para marcar
+    assert next(v for k, v in urls.items() if "aglomerou" in k) == (
+        f"/protocolos?aba=aplicar&area=sanitario&san=preventivo&caixas={notas['aglomerou'].caixa_id}")
     # notas: operador não vê as "só administradores"
     api.como("op")
     assert {n["tipo"] for n in api.c.get("/sanitario/notas").json()} == {"vespera"}

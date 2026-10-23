@@ -1,9 +1,11 @@
 "use client";
-// Central de Protocolos › Vacinas e exames › Cadastro — lista das caixas
-// (cada cadastro de vacina/exame é uma "caixa": o animal entra quando cumpre a
-// regra e sai quando recebe, deixa de cumprir, sai do rebanho ou a janela
-// fecha). Filtro ativa/inativa/arquivada, ações em massa (só administrador),
-// aviso "nova versão do catálogo" e o wizard (WizardCaixa) para criar/editar.
+// Central de Protocolos › Cadastro › Sanidade › Preventiva › Vacina | Exame |
+// Outros preventivos — lista das caixas (cada cadastro de vacina/exame é uma
+// "caixa": o animal entra quando cumpre a regra e sai quando recebe, deixa de
+// cumprir, sai do rebanho ou a janela fecha). Filtro ativa/inativa/arquivada,
+// ações em massa (só administrador), aviso "nova versão do catálogo" e o wizard
+// (WizardCaixa) para criar/editar. `grupo` filtra pelo tipo da caixa (ver
+// lib/protocolosNavegacao.grupoDoTipo); sem ele, lista todas, como antes.
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Archive, Pencil, Plus, Printer, RefreshCw } from "lucide-react";
@@ -14,6 +16,7 @@ import { atualizarDoCatalogo, listarCaixas, mensagemDoErro, mudarEstadoCaixas, o
 import { ROTULO_TIPO, textoJanela, textoPublico, type CaixaDetalhe, type CaixaResumo } from "@/lib/sanitarioTipos";
 import { Chip, Faixa, Seg, carregarCategoriasSan, useCarregar, useEuSanitario } from "../comum";
 import { ModalFicha } from "../FichaCampo";
+import { tipoNoGrupo, type GrupoPreventivo } from "@/lib/protocolosNavegacao";
 import { WizardCaixa } from "./WizardCaixa";
 
 type Filtro = "ativa" | "inativa" | "arquivada" | "todas";
@@ -25,7 +28,11 @@ function EstadoCaixa({ c }: { c: CaixaResumo }) {
   return <Chip tipo="inativa">inativa</Chip>;
 }
 
-export function ListaCaixas({ abrirCaixaId, abrirPasso }: { abrirCaixaId?: number | null; abrirPasso?: number | null }) {
+const TITULO_GRUPO: Record<GrupoPreventivo, string> = { vacina: "Vacinas da fazenda", exame: "Exames da fazenda", outros: "Outros preventivos da fazenda" };
+
+export function ListaCaixas({ abrirCaixaId, abrirPasso, grupo = null }: {
+  abrirCaixaId?: number | null; abrirPasso?: number | null; grupo?: GrupoPreventivo | null;
+}) {
   const { admin, erro: erroEu } = useEuSanitario();
   const toast = useToast();
   const [filtro, setFiltro] = useState<Filtro>("ativa");
@@ -37,7 +44,8 @@ export function ListaCaixas({ abrirCaixaId, abrirPasso }: { abrirCaixaId?: numbe
   const [ocupado, setOcupado] = useState(false);
   const [falhas, setFalhas] = useState<string[]>([]);
   const [ficha, setFicha] = useState<number | null>(null);
-  const { dados: caixas, erro, carregando, recarregar } = useCarregar(() => listarCaixas("todas"), []);
+  const { dados: todasCaixas, erro, carregando, recarregar } = useCarregar(() => listarCaixas("todas"), []);
+  const caixas = useMemo(() => (todasCaixas ? todasCaixas.filter((c) => tipoNoGrupo(c.tipo, grupo)) : null), [todasCaixas, grupo]);
   const [detalhes, setDetalhes] = useState<Map<number, CaixaDetalhe>>(new Map());
   const [nomesCat, setNomesCat] = useState<Map<number, string>>(new Map());
 
@@ -92,7 +100,7 @@ export function ListaCaixas({ abrirCaixaId, abrirPasso }: { abrirCaixaId?: numbe
   }
 
   if (wiz) {
-    return <WizardCaixa key={`${wiz.caixaId}-${wiz.passo}`} caixaId={wiz.caixaId} passoInicial={wiz.passo} admin={admin}
+    return <WizardCaixa key={`${wiz.caixaId}-${wiz.passo}`} caixaId={wiz.caixaId} passoInicial={wiz.passo} admin={admin} grupo={grupo}
       onSair={(msg) => { setWiz(null); if (msg) toast(msg); recarregar(); }} />;
   }
 
@@ -100,7 +108,7 @@ export function ListaCaixas({ abrirCaixaId, abrirPasso }: { abrirCaixaId?: numbe
     <div className="san-pagina">
       <div className="san-cab">
         <div>
-          <h2>Vacinas e exames da fazenda</h2>
+          <h2>{grupo ? TITULO_GRUPO[grupo] : "Vacinas e exames da fazenda"}</h2>
           <p>Cada cadastro é uma caixa: o animal entra quando cumpre a regra e sai quando recebe, deixa de cumprir, sai do rebanho ou a janela fecha. Só administradores cadastram, e só pelo site.</p>
         </div>
         {admin && (
@@ -129,7 +137,10 @@ export function ListaCaixas({ abrirCaixaId, abrirPasso }: { abrirCaixaId?: numbe
           opcoes={([["ativa", "Ativas"], ["inativa", "Inativas"], ["arquivada", "Arquivadas"], ["todas", "Todas"]] as const).map(([k, t]) => ({
             id: k, label: <>{t}<span className="san-num">{contagem[k]}</span></>,
           }))} />
-        <span className="san-nota">Padrão de fábrica: B19 e os exames de tuberculose e brucelose vêm <b>inativos</b> até você ativar.</span>
+        {grupo !== "outros" && (
+          <span className="san-nota">Padrão de fábrica: {grupo === "vacina" ? <>B19 vem <b>inativa</b></> : grupo === "exame" ? <>os exames de tuberculose e brucelose vêm <b>inativos</b></>
+            : <>B19 e os exames de tuberculose e brucelose vêm <b>inativos</b></>} até você ativar.</span>
+        )}
       </div>
       {falhas.length > 0 && <Faixa tipo="alerta">Não deu para todos: {falhas.join("; ")}.</Faixa>}
       {erro ? <ErroCarregamento mensagem={erro} onRetry={recarregar} />

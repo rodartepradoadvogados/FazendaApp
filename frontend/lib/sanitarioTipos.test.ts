@@ -209,3 +209,20 @@ test("leitura dos 409/422 e textos curtos", () => {
   assert.equal(tipoDoDia([{ tipo: "exame" }, { tipo: "exame" }]), "Exame");
   assert.equal(tipoDoDia([{ tipo: "exame" }, { tipo: "vacina" }]), "Vacina");
 });
+
+test("ehItemFarmacia: só Farmácia entra na lista de estoque do preventivo", async () => {
+  const { ehItemFarmacia } = await import("./sanitarioTipos.ts");
+  assert.ok(ehItemFarmacia({ nome: "Boostin", finalidade: "Medicamento" }));
+  assert.ok(!ehItemFarmacia({ nome: "Milho moído", finalidade: "Ração/Alimento" }));
+  assert.ok(!ehItemFarmacia({ nome: "Vacina na caixa errada", finalidade: "Material/Insumo" }), "finalidade decide sozinha");
+  assert.ok(ehItemFarmacia({ nome: "Ivomec", principio_ativo_id: 3 }));
+  assert.ok(ehItemFarmacia({ nome: "X", classificacao_medicamento: "Vacina" }));
+  assert.ok(ehItemFarmacia({ nome: "X", categoria_medicamento_ids: [2] }));
+  assert.ok(ehItemFarmacia({ nome: "Aftosa", categoria: "Medicamentos e produtos veterinários" }));
+  assert.ok(!ehItemFarmacia({ nome: "Silagem", categoria: "Ração e insumos alimentares" }));
+  assert.ok(!ehItemFarmacia({ nome: "Sêmen — X", categoria: "Sêmen e genética" }));
+  assert.ok(!ehItemFarmacia({ nome: "Núcleo", categoria_alimento_id: 4 }), "item ligado à Alimentação");
+  assert.ok(ehItemFarmacia({ nome: "Vacina B19" }), "sem classificação, o nome diz que é vacina");
+  assert.ok(ehItemFarmacia({ nome: "Vermífugo oral" }));
+  assert.ok(!ehItemFarmacia({ nome: "Alimentação" }));
+});

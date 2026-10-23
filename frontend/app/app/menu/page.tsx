@@ -77,7 +77,7 @@ const GRUPOS: Grupo[] = [
     { chave: "ciclos21", titulo: "Ciclos de 21 dias", subtitulo: "Eficiência reprodutiva ciclo a ciclo", rota: "/ciclos-21-dias", icone: <CalendarRange size={20} /> },
   ] },
   { secao: "sanidade", titulo: "Sanidade", cor: "var(--cat-sanidade)", iconeSecao: <ShieldPlus size={26} />, itens: [
-    { chave: "vacinacao", titulo: "Vacinação", subtitulo: "Vacinas e exames marcados para hoje e amanhã", rota: "/sanidade", icone: <CalendarDays size={20} /> },
+    { chave: "vacinacao", titulo: "Vacinas e exames", subtitulo: "Marcados para hoje e amanhã", rota: "/sanidade", icone: <CalendarDays size={20} /> },
     { chave: "aplicacoes", titulo: "Histórico", subtitulo: "Aplicações curativas", rota: "/sanidade", icone: <Syringe size={20} /> },
     { chave: "remedios", titulo: "Remédios por Doença", subtitulo: "Consulta rápida + substitutos indicados", rota: "/sanidade", icone: <FlaskConical size={20} /> },
   ] },
@@ -112,7 +112,7 @@ const GRUPOS: Grupo[] = [
   ] },
 ];
 
-// Menu Vacinação — app de campo do Sanitário Preventivo v2 (lista de hoje/
+// Menu Vacinas e exames (chave/âncora "vacinacao", mantida) — app de campo do Sanitário Preventivo v2 (lista de hoje/
 // amanhã, comunicado da véspera, leite separado, execução tronco/grupo com o
 // pacote offline do dia e a fila do aparelho). Atalho por hash:
 // "#vacinacao" abre a lista; "#vacinacao-<id do dia>" abre o dia (push da véspera).
