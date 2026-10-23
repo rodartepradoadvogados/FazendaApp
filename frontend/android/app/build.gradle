@@ -9,7 +9,7 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         // No CI (GitHub Actions) sobe a cada execução, para o Android aceitar o
         // .apk como atualização; localmente continua 1.
-        versionCode (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInteger()
+        versionCode = Integer.parseInt(System.getenv("GITHUB_RUN_NUMBER") ?: "1")
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
