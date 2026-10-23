@@ -1,10 +1,12 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Sparkles, X, Send, BookOpen, MessageCircle, Plus, Pencil, Trash2, Check } from "lucide-react";
 import {
-  perguntarAssistente, fetchAssistenteAcesso, fetchEnsinamentos, criarEnsinamento, atualizarEnsinamento,
+  fetchAssistenteAcesso, fetchEnsinamentos, criarEnsinamento, atualizarEnsinamento,
   excluirEnsinamento, fetchAssistenteStatus, type AssistenteEnsinamento, type AssistenteStatus,
 } from "@/lib/api";
+import { conversar } from "@/lib/assistenteConversa";
 
 type Mensagem = { autor: "usuario" | "assistente" | "erro"; texto: string };
 type Aba = "conversa" | "ensinamentos";
@@ -27,7 +29,9 @@ export default function AssistenteClaude() {
   const [historico, setHistorico] = useState<any[]>([]);
   const [pergunta, setPergunta] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [naTela, setNaTela] = useState(false);
   const fimRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
   useEffect(() => {
     fetchAssistenteAcesso()
@@ -49,12 +53,16 @@ export default function AssistenteClaude() {
     setMensagens((m) => [...m, { autor: "usuario", texto }]);
     setEnviando(true);
     try {
-      const r = await perguntarAssistente(texto, historico);
+      const r = await conversar(texto, historico, {
+        navegar: (caminho) => router.push(caminho),
+        aoExecutarNaTela: () => setNaTela(true),
+      });
       setMensagens((m) => [...m, { autor: "assistente", texto: r.resposta }]);
       setHistorico(r.historico);
     } catch (e: any) {
       setMensagens((m) => [...m, { autor: "erro", texto: e.message || "Erro ao consultar o assistente." }]);
     } finally {
+      setNaTela(false);
       setEnviando(false);
     }
   };
@@ -116,7 +124,11 @@ export default function AssistenteClaude() {
                     {m.texto}
                   </div>
                 ))}
-                {enviando && <p style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>Consultando…</p>}
+                {enviando && (
+                  <p style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>
+                    {naTela ? "Olhando a tela…" : "Consultando…"}
+                  </p>
+                )}
                 <div ref={fimRef} />
               </div>
 

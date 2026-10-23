@@ -29,6 +29,7 @@ from fazenda.models import (
 from fazenda.rules import assistente_consultas as _consultas
 from fazenda.rules import assistente_consultas_extra as _consultas_extra
 from fazenda.rules import assistente_llm
+from fazenda.rules import ferramentas_pagina as _pagina
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.indicadores import calcular_indicadores
 
@@ -44,7 +45,14 @@ na lista (ex.: financeiro), é porque este usuário não tem acesso àquele mód
 educadamente que ele não tem permissão para consultar aquele assunto, sem tentar contornar isso.
 
 Se a pergunta não puder ser respondida com as ferramentas disponíveis por outro motivo (ex.: pedir para \
-lançar ou alterar algo), explique isso ao usuário e diga que essa capacidade ainda não existe neste protótipo."""
+lançar ou alterar algo), explique isso ao usuário e diga que essa capacidade ainda não existe neste protótipo.
+
+As ferramentas que começam com `pagina_` enxergam e operam a TELA em que o usuário está, no navegador dele. \
+Use-as só quando a pergunta depender do que está aparecendo na tela ("onde eu cadastro isso?", "por que está \
+mostrando esse aviso?", "o que tem nessa lista?") — para dados do rebanho, financeiro e agenda prefira as \
+ferramentas de consulta, que são mais baratas e exatas. Se for navegar, use apenas caminho interno que exista \
+no app; depois de navegar, use `pagina_ler` para ver a tela em vez de supor o conteúdo. Nunca peça para o \
+usuário digitar senha, e nunca preencha campo de senha ou dado de pagamento."""
 
 # Cada ferramenta é gated pelo módulo indicado (mesma lista de fazenda.auth.MODULOS).
 _TOOLS_DISPONIVEIS = [
@@ -474,7 +482,59 @@ def _executar_tool(nome: str, entrada: dict, session: Session, usuario: Usuario,
     return _EXECUTORES[nome](session, usuario, entrada, fazenda_id)
 
 
-def responder(mensagem: str, historico: list[dict], session: Session, usuario: Usuario, fazenda_id: int | None = None) -> dict:
+def _ids_pendentes_pagina(historico: list[dict]) -> dict[str, str]:
+    """Ids de chamadas de TELA que ainda não têm resultado no histórico."""
+    pendentes: dict[str, str] = {}
+    respondidos: set[str] = set()
+    for m in historico:
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") == "assistant":
+            for c in (m.get("tool_calls") or []):
+                if isinstance(c, dict) and c.get("name") in _pagina.NOMES and isinstance(c.get("id"), str):
+                    pendentes[c["id"]] = c["name"]
+        elif m.get("role") == "tool" and isinstance(m.get("tool_call_id"), str):
+            respondidos.add(m["tool_call_id"])
+    return {i: n for i, n in pendentes.items() if i not in respondidos}
+
+
+def _aplicar_resultados_pagina(historico: list[dict], resultados: list[dict]) -> tuple[list[dict], list[str]]:
+    """Anexa as mensagens 'tool' com o que o navegador do usuário devolveu.
+
+    Devolve (histórico novo, ids que ficaram sem resultado). Só aceita id de
+    chamada PENDENTE e de ferramenta de página — um cliente adulterado não
+    consegue inventar resultado de ferramenta de dados (financeiro, rebanho),
+    porque essas nunca ficam pendentes: são executadas no próprio servidor.
+    """
+    pendentes = _ids_pendentes_pagina(historico)
+
+    saida = list(historico)
+    for r in resultados or []:
+        if not isinstance(r, dict):
+            continue
+        cid = r.get("id")
+        if cid not in pendentes:
+            continue
+        conteudo = r.get("resultado")
+        if isinstance(conteudo, (dict, list)):
+            texto = _serializar({"resultado": conteudo})
+        elif isinstance(conteudo, str):
+            texto = conteudo[:20000]
+        else:
+            texto = _serializar({"erro": "o navegador não devolveu resultado"})
+        saida.append({"role": "tool", "tool_call_id": cid, "name": pendentes[cid], "content": texto})
+        del pendentes[cid]
+    return saida, sorted(pendentes)
+
+
+def responder(
+    mensagem: str,
+    historico: list[dict],
+    session: Session,
+    usuario: Usuario,
+    fazenda_id: int | None = None,
+    resultados_pagina: list[dict] | None = None,
+) -> dict:
     """
     Manda a mensagem do usuário (mais o histórico da conversa) para o LLM do
     provedor configurado, executa as ferramentas que ele pedir — só as que o
@@ -488,9 +548,34 @@ def responder(mensagem: str, historico: list[dict], session: Session, usuario: U
     ciclo de requisição, ou token legado) mantém o comportamento de sempre.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    ferramentas = _ferramentas_do_usuario(usuario)
+    ferramentas_dados = _ferramentas_do_usuario(usuario)
+    # As ferramentas de tela só fazem sentido para quem abre alguma tela: sem
+    # nenhum módulo liberado o usuário não tem para onde navegar, e a lista de
+    # ferramentas continua vazia (comportamento coberto por teste).
+    ferramentas = ferramentas_dados + (_pagina.especificacoes() if ferramentas_dados else [])
     system = _system_prompt(session, fazenda_id)
-    mensagens: list[dict] = [*assistente_llm.limpar_historico(historico), {"role": "user", "content": mensagem}]
+
+    # `[]` é diferente de None: lista vazia com chamada pendente significa "o
+    # navegador não conseguiu executar" — precisa fechar a conversa com erro,
+    # senão o histórico fica com tool_call sem resposta e é descartado.
+    continua_pagina = resultados_pagina is not None and bool(_ids_pendentes_pagina(list(historico or [])))
+    if continua_pagina:
+        # Continuação: o frontend executou as ferramentas de página na aba do
+        # usuário e está devolvendo os resultados. Não existe mensagem nova.
+        historico = list(historico or [])
+        historico, sem_resultado = _aplicar_resultados_pagina(historico, resultados_pagina or [])
+        if sem_resultado:
+            return {
+                "resposta": "Não consegui continuar: o navegador não devolveu o resultado de "
+                            f"{len(sem_resultado)} ação(ões) da tela. Tente novamente.",
+                "historico": [],
+            }
+        mensagens: list[dict] = assistente_llm.limpar_historico(historico)
+        if not mensagens:
+            return {"resposta": "Não consegui continuar a conversa — reformule a pergunta.",
+                    "historico": []}
+    else:
+        mensagens = [*assistente_llm.limpar_historico(historico), {"role": "user", "content": mensagem}]
 
     ja_empurrou = False
     for _ in range(MAX_RODADAS_TOOL_USE):
@@ -511,7 +596,25 @@ def responder(mensagem: str, historico: list[dict], session: Session, usuario: U
                                   "content": "Responda agora em texto, com os dados que você já consultou."})
                 continue
             return {"resposta": resposta.get("content") or "(sem resposta)", "historico": mensagens}
+        pedidos_pagina: list[dict] = []
         for chamada in chamadas:
+            if chamada["name"] in _pagina.NOMES:
+                # Ferramenta de tela: NÃO executa aqui — devolve ao frontend,
+                # que roda no DOM da aba do próprio usuário (ver
+                # fazenda/rules/ferramentas_pagina.py) e manda o resultado na
+                # requisição seguinte, em `resultados_pagina`.
+                try:
+                    argumentos = _pagina.validar(chamada["name"], chamada.get("arguments") or {})
+                except ValueError as e:
+                    mensagens.append({
+                        "role": "tool", "tool_call_id": chamada["id"], "name": chamada["name"],
+                        "content": _serializar({"erro": str(e)}),
+                    })
+                    continue
+                pedidos_pagina.append(
+                    {"id": chamada["id"], "nome": chamada["name"], "argumentos": argumentos})
+                continue
+
             resultado = _executar_tool(chamada["name"], chamada["arguments"], session, usuario, fazenda_id)
             if (chamada["name"] in _consultas.NOMES or chamada["name"] in _consultas_extra.NOMES) and "erro" not in resultado:
                 # Mesma sanitização/paginação do /agente (e `truncado`) para o modelo.
@@ -520,6 +623,10 @@ def responder(mensagem: str, historico: list[dict], session: Session, usuario: U
                 "role": "tool", "tool_call_id": chamada["id"], "name": chamada["name"],
                 "content": _serializar(resultado),
             })
+
+        if pedidos_pagina:
+            # Interrompe o laço aqui: quem responde à interface é o frontend.
+            return {"resposta": "", "aguardando": pedidos_pagina, "historico": mensagens}
 
     return {
         "resposta": "Não consegui concluir a resposta dentro do limite de consultas deste protótipo — tente reformular a pergunta.",
