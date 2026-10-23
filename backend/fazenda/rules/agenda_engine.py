@@ -796,7 +796,7 @@ class AgendaEngine:
             c for c in contas
             if c.get("data_vencimento")
             and data_referencia - timedelta(days=DIAS_CONTAS_VENCIDAS_NA_AGENDA) <= c["data_vencimento"] <= limite_contas
-            and conta_em_aberto(c.get("data_pagamento"))
+            and conta_em_aberto(c.get("data_pagamento"), c.get("valor_pago"), c.get("valor_total"))
         ]
         result.contas_a_pagar = sorted(contas_proximas, key=lambda c: c["data_vencimento"])
         for conta in result.contas_a_pagar:

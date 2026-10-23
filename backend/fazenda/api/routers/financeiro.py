@@ -6112,7 +6112,7 @@ def contas_a_pagar(
         if (
             c.data_vencimento
             and hoje <= c.data_vencimento <= limite
-            and conta_em_aberto(c.data_pagamento)
+            and conta_em_aberto(c.data_pagamento, c.valor_pago, c.valor_total)
             and c.tipo == "despesa"
         ):
             resultado.append({**c.model_dump(), "usuario_nome": nomes_usuarios.get(c.usuario_id)})

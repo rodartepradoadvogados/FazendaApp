@@ -1801,7 +1801,7 @@ def calcular_agenda(
                         )
                     ).all()
                 )
-                if conta_em_aberto(c.get("data_pagamento"))
+                if conta_em_aberto(c.get("data_pagamento"), c.get("valor_pago"), c.get("valor_total"))
             ),
             key=lambda c: c["data_vencimento"],
         )

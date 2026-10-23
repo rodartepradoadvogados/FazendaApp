@@ -311,7 +311,7 @@ def _tool_consultar_financeiro(session: Session, fazenda_id: int | None = None) 
     if fazenda_id is not None:
         query = query.where(ContaGerencial.fazenda_id == fazenda_id)
     contas = session.exec(query).all()
-    abertas = [c for c in contas if conta_em_aberto(c.data_pagamento)]
+    abertas = [c for c in contas if conta_em_aberto(c.data_pagamento, c.valor_pago, c.valor_total)]
     total_pagar = sum(c.valor_total or 0 for c in abertas if c.tipo == "despesa")
     total_receber = sum(c.valor_total or 0 for c in abertas if c.tipo == "receita")
     vencidas = [c for c in abertas if c.data_vencimento and c.data_vencimento < hoje]

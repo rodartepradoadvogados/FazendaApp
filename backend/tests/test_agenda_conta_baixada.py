@@ -38,6 +38,10 @@ def test_conta_sem_baixa_continua_na_agenda_como_atrasada():
     assert [c["numero_lancamento"] for c in r.contas_a_pagar] == ["LC-2026-00290"]
 
 
-def test_conta_estornada_volta_a_ser_aberta():
-    assert conta_em_aberto(None) is True
-    assert conta_em_aberto(BAIXA) is False
+def test_regra_unica_conta_em_aberto():
+    assert conta_em_aberto(None, None, 255.0) is True            # sem baixa
+    assert conta_em_aberto(None, 200.0, 700.0) is True           # recebimento parcial sem baixa registrada
+    assert conta_em_aberto(BAIXA, 0.0, 255.0) is False           # baixa em R$ 0,00 (desconto de 100%)
+    assert conta_em_aberto(BAIXA, None, 255.0) is False
+    assert conta_em_aberto(None, 300.0, 300.0) is False          # registro antigo: valor pago cobre o total
+    assert conta_em_aberto(None, None, 0.0) is False             # conta de valor zero nunca foi "a pagar"
