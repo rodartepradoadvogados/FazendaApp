@@ -129,6 +129,12 @@ function CardOpcao({ o }: { o: OpcaoIndicacaoDoenca }) {
           )}
         </span>
       </div>
+      {/* Observação clínica da indicação (cadastro) — o servidor passou a devolver. */}
+      {o.nota && (
+        <p style={{ margin: "0.45rem 0 0", paddingLeft: "2.6rem", fontSize: "0.76rem", color: "var(--text)" }}>
+          <strong>Observação:</strong> {o.nota}
+        </p>
+      )}
       {o.marcas.length > 0 && (
         <div className="flex flex-wrap gap-1" style={{ marginTop: "0.55rem", paddingLeft: "2.6rem" }}>
           {o.marcas.map((m) => (

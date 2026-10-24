@@ -4712,9 +4712,19 @@ export async function fetchRelatorioCompraSemen(filtros: {
   return res.json() as Promise<LinhaRelatorioCompraSemen[]>;
 }
 
-export async function fetchSanidade() {
-  const res = await authFetch(`${API}/sanidade/aplicacoes`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Sanidade error: ${res.status}`);
+/** Sem filtros = a lista de sempre (só `Sanidade`, o site usa assim). Com
+ * `tipo` (todos | curativo | preventivo) vira o "Histórico de tratamentos e
+ * vacinas" do app: curativo + vacinas/exames do preventivo novo, com o lote
+ * NA DATA da aplicação (ver GET /sanidade/aplicacoes). */
+export type FiltrosHistoricoSanidade = FiltrosRelatorioProducao & {
+  tipo?: "todos" | "curativo" | "preventivo"; doencas?: string[];
+};
+export async function fetchSanidade(filtros?: FiltrosHistoricoSanidade) {
+  const res = await authFetch(`${API}/sanidade/aplicacoes${qsFiltrosProducao(filtros)}`, { cache: "no-store" });
+  if (!res.ok) {
+    if (filtros) await erroRelatorioProducao(res, "Histórico");
+    throw new Error(`Sanidade error: ${res.status}`);
+  }
   return res.json();
 }
 
@@ -5615,6 +5625,12 @@ export type OpcaoIndicacaoDoenca = {
   principio_ativo_id: number; nome: string; classificacao: string | null; prioridade: number;
   status_estoque: "ok" | "low" | "out"; total_apresentacoes: number | null; unidade_apresentacao: string | null;
   marcas: string[];
+  /** Observação clínica da indicação ("só com corpo lúteo"…) — opcional: servidor antigo não manda. */
+  nota?: string | null;
+  /** Nº de itens de estoque ligados ao princípio (0 = "Sem apresentações cadastradas"). */
+  apresentacoes_cadastradas?: number;
+  /** Dose, via e carência do cadastro das marcas (as que estão no estoque primeiro). */
+  bulas?: { marca: string; laboratorio: string | null; dose: string | null; via: string | null; carencia: string | null; em_estoque: boolean }[];
 };
 export async function fetchIndicacoes(principioAtivoId: number) {
   const res = await authFetch(`${API}/farmacia/indicacoes?principio_ativo_id=${principioAtivoId}`, { cache: "no-store" });

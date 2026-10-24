@@ -23,7 +23,8 @@ import {
   type AlvoDia, type RegistroCampo,
 } from "@/lib/sanitarioCampo";
 import {
-  ROTULO_ESTADO_DIA, fmtData, fmtDataHora, hojeISO, novaChave, textoProduto, type PacoteOffline, type ProdutoIn,
+  ROTULO_ESTADO_DIA, diasEntre, fmtData, fmtDataHora, hojeISO, novaChave, textoAtraso, textoProduto, textoSaidos,
+  type PacoteOffline, type ProdutoIn,
 } from "@/lib/sanitarioTipos";
 import { AdicionarAnimais } from "./AdicionarAnimais";
 import { ModoGrupo } from "./ModoGrupo";
@@ -167,7 +168,9 @@ export function ExecucaoDia({ diaId, onVoltar }: { diaId: number; onVoltar: () =
   // ── cabeçalho comum ──
   const cabecalho = (
     <>
-      <MobVoltar titulo={dia.nome} subtitulo={`${dia.data === hoje ? "Hoje" : fmtData(dia.data)}${dia.hora ? ` às ${dia.hora}` : ""} · ${ROTULO_ESTADO_DIA[dia.estado] || dia.estado}`}
+      <MobVoltar titulo={dia.nome} subtitulo={`${dia.data === hoje ? "Hoje" : fmtData(dia.data)}${dia.hora ? ` às ${dia.hora}` : ""}`
+        + `${dia.data < hoje && (dia.estado === "marcado" || dia.estado === "em_execucao") ? ` · ${textoAtraso(diasEntre(dia.data, hoje))}` : ""}`
+        + ` · ${ROTULO_ESTADO_DIA[dia.estado] || dia.estado}`}
         onVoltar={onVoltar} />
       <p className="mob-san-txt" style={{ marginTop: "-0.5rem", marginBottom: "0.6rem", display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
         <span>{pac.doCache ? "Sem sinal: usando o dia guardado neste celular" : "Dia guardado neste celular"} ({fmtDataHora(pacote.gerado_em)}).</span>
@@ -175,6 +178,13 @@ export function ExecucaoDia({ diaId, onVoltar }: { diaId: number; onVoltar: () =
           <RefreshCw size={16} aria-hidden="true" /> Atualizar
         </button>
       </p>
+      {/* Vendido/morto com o item pendente: o servidor já o tirou da fila e da contagem. */}
+      {(dia.saidos?.length || 0) > 0 && (
+        <FaixaSan tipo="atencao">
+          <b>{textoSaidos(dia.saidos!.length)}</b> (venda ou morte) e {dia.saidos!.length === 1 ? "não está" : "não estão"} mais
+          na fila deste dia: {dia.saidos!.map((x) => x.numero).join(", ")}.
+        </FaixaSan>
+      )}
       {dia.data > hoje && <FaixaSan tipo="atencao">Este dia está marcado para {fmtData(dia.data)}. Registrar hoje grava a data de hoje.</FaixaSan>}
       {dia.estado === "fechado" && <FaixaSan tipo="atencao">Dia fechado: o que for registrado entra como “lançado após o fechamento”.</FaixaSan>}
       {dia.estado === "cancelado" && <FaixaSan tipo="alerta">Dia cancelado{dia.motivo_cancelamento ? `: ${dia.motivo_cancelamento}` : ""}. Os registros serão recusados.</FaixaSan>}

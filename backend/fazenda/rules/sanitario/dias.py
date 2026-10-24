@@ -600,12 +600,25 @@ def dia_dict(session: Session, dia, *, com_itens: bool = True) -> dict:
         "fechado_em": dia.fechado_em.isoformat() if dia.fechado_em else None, "fechamento_auto": dia.fechamento_auto,
         "motivo_cancelamento": dia.motivo_cancelamento, "caixas": caixas,
     }
-    itens = session.exec(select(SanitarioDiaItem).where(
+    todos = session.exec(select(SanitarioDiaItem).where(
         SanitarioDiaItem.fazenda_id == dia.fazenda_id, SanitarioDiaItem.dia_id == dia.id).order_by(SanitarioDiaItem.id)).all()
+    # Animal que SAIU do rebanho (vendido/morto) com o item ainda pendente sai
+    # da fila e da contagem do dia (decisão do dono, out/2026): antes ele
+    # seguia na lista do curral e no "N animais" como se fosse vacinar. Só
+    # leitura — o item continua no banco e o fechamento do dia o trata como
+    # sempre; o que já foi feito antes da saída continua contando.
+    saiu = {a.id: a for a in session.exec(select(Animal).where(
+        Animal.fazenda_id == dia.fazenda_id, Animal.ativo == False,  # noqa: E712
+        Animal.id.in_({i.animal_id for i in todos if i.estado == "pendente"} or {-1}))).all()}
+    itens = [i for i in todos if not (i.estado == "pendente" and i.animal_id in saiu)]
+    saidos = sorted({i.animal_id for i in todos if i.estado == "pendente" and i.animal_id in saiu})
+    out["saidos"] = [{"animal_id": aid, "numero": saiu[aid].numero, "motivo": (saiu[aid].motivo_baixa or "").strip() or None,
+                      "data_baixa": saiu[aid].data_baixa.isoformat() if saiu[aid].data_baixa else None} for aid in saidos]
     out["contagens"] = {
         "animais": len({i.animal_id for i in itens if i.estado != "removido"}),
         "pendentes": sum(1 for i in itens if i.estado == "pendente"),
         "feitos": sum(1 for i in itens if i.estado == "feito"),
+        "saidos": len(saidos),
         "registros_apos_fechamento": len(session.exec(select(SanitarioRegistro.id).where(
             SanitarioRegistro.fazenda_id == dia.fazenda_id, SanitarioRegistro.dia_id == dia.id,
             SanitarioRegistro.apos_fechamento == True, SanitarioRegistro.estado == "valido")).all()),  # noqa: E712
@@ -655,6 +668,12 @@ def ficha_dia(session: Session, fazenda_id: int, dia, hoje: Optional[date] = Non
     itens = session.exec(select(SanitarioDiaItem).where(
         SanitarioDiaItem.fazenda_id == fazenda_id, SanitarioDiaItem.dia_id == dia.id,
         SanitarioDiaItem.estado != "removido")).all()
+    # Quem saiu do rebanho com o item pendente não vai para a ficha (mesma
+    # regra da fila do dia em `dia_dict`).
+    inativos = set(session.exec(select(Animal.id).where(
+        Animal.fazenda_id == fazenda_id, Animal.ativo == False,  # noqa: E712
+        Animal.id.in_({i.animal_id for i in itens} or {-1}))).all())
+    itens = [i for i in itens if not (i.estado == "pendente" and i.animal_id in inativos)]
     ids = sorted({i.animal_id for i in itens})
     ctxs = carregar_animais(session, fazenda_id, animal_ids=ids, hoje=hoje) if ids else {}
     linhas = []
