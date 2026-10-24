@@ -2646,7 +2646,10 @@ button.san-kpi { cursor: pointer; width: 100%; }
 .mob-san-chip small { display: block; font-size: var(--mob-fs-apoio); font-weight: 500; color: var(--mob-muted); margin-top: 0.1rem; }
 .mob-san-chip[aria-pressed="true"] { border-color: var(--mob-acao); background: color-mix(in srgb, var(--mob-acao) 12%, var(--mob-surface)); }
 .mob-san-chip[aria-pressed="false"] { opacity: 0.75; }
-.mob-san-chip[aria-pressed="false"] b, .mob-san-chip[aria-pressed="false"] > span:first-child { text-decoration: line-through; }
+/* Riscado = "tirado" — só no chip de desligar vacina/exame do Tronco (.risca).
+   Antes valia para todo chip não escolhido: em "Quem está aplicando" tudo
+   aparecia riscado antes de a pessoa escolher. */
+.mob-san-chip.risca[aria-pressed="false"] b, .mob-san-chip.risca[aria-pressed="false"] > span:first-child { text-decoration: line-through; }
 .mob-san-chip:disabled { opacity: 0.5; cursor: default; }
 .mob-san-linha {
   display: flex; align-items: center; gap: 0.75rem; width: 100%; min-height: 56px; padding: 0.6rem 0.8rem;

@@ -6,7 +6,7 @@ Endpoint: GET /sanidade/aplicacoes, POST /sanidade/aplicacoes
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
@@ -28,7 +28,12 @@ from fazenda.rules.estoque_baixa import (
     resolver_item as _resolver_item_estoque, resolver_marca_comercial,
 )
 from fazenda.rules.farmacia import resumo_principios
-from fazenda.rules.lote_historico import lote_na_data
+from fazenda.rules.historico_sanitario import (
+    TIPO_PREVENTIVO, TIPOS_HISTORICO, doencas_dos_curativos, linhas_preventivo,
+)
+from fazenda.rules.lote_historico import (
+    MapaLotes, erro_periodo, lote_casa, lote_na_data, no_periodo, normalizar_lista,
+)
 from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 from fazenda.rules.parto import eh_parto_produtivo
 from fazenda.rules.unidades import unidades_compativeis
@@ -62,6 +67,38 @@ def _data_br(iso: str) -> str:
 STATUS_ESTOQUE_RANK = {"ok": 0, "low": 1, "out": 2}
 
 
+def _bulas_por_principio(session: Session, fazenda_id: int | None, principio_ids: set[int]) -> dict[int, list[dict]]:
+    """Dose, via e carência do CADASTRO das marcas de cada princípio (é na
+    marca que moram — ver MedicamentoComercial). Catálogo global + o da
+    fazenda; a cópia personalizada pela fazenda esconde o padrão de origem."""
+    if not principio_ids:
+        return {}
+    marcas = session.exec(visivel(
+        select(MedicamentoComercial).where(
+            MedicamentoComercial.principio_ativo_id.in_(principio_ids), MedicamentoComercial.ativo == True,  # noqa: E712
+        ), MedicamentoComercial, fazenda_id,
+    )).all()
+    personalizadas = {m.origem_id for m in marcas if m.origem_id and m.fazenda_id is not None}
+    saida: dict[int, list[dict]] = {}
+    for m in marcas:
+        if m.id in personalizadas:
+            continue
+        dose = (m.dose_texto or "").strip() or None
+        if dose is None and m.dose_padrao is not None:
+            num = f"{m.dose_padrao:g}".replace(".", ",")
+            dose = f"{num} {m.unidade_dose or ''}".strip()
+            if m.dose_base == "por_kg_pv" and m.dose_referencia_kg:
+                dose += f" a cada {m.dose_referencia_kg:g} kg"
+        tem_carencia = m.carencia_leite_dias is not None or m.carencia_carne_dias is not None or bool(m.proibido_lactacao)
+        if not (dose or m.via_padrao or tem_carencia):
+            continue
+        saida.setdefault(m.principio_ativo_id, []).append({
+            "id": m.id, "marca": m.nome_comercial, "laboratorio": m.laboratorio, "dose": dose, "via": m.via_padrao,
+            "carencia": carencia_para_item(None, m)["texto"] if tem_carencia else None,
+        })
+    return saida
+
+
 @router.get("/indicacoes-doenca/{doenca_id}")
 def indicacoes_por_doenca(
     doenca_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -83,6 +120,7 @@ def indicacoes_por_doenca(
         ).order_by(IndicacaoTerapeutica.prioridade)
     ).all()
     resumo_por_pa = {r["id"]: r for r in resumo_principios(session, fazenda_id)}
+    bulas_por_pa = _bulas_por_principio(session, fazenda_id, {i.principio_ativo_id for i in indicacoes})
     opcoes = []
     for ind in indicacoes:
         r = resumo_por_pa.get(ind.principio_ativo_id)
@@ -90,6 +128,10 @@ def indicacoes_por_doenca(
             continue
         status = "out" if not r["itens"] or (r["total_apresentacoes"] or 0) <= 0 else ("low" if r["abaixo_minimo"] else "ok")
         marcas = sorted({it["marca"] for it in r["itens"] if it["marca"]})
+        # Bula das marcas: primeiro as que a fazenda TEM no estoque (é o que
+        # vai ser aplicado), depois as demais do catálogo.
+        em_estoque = {it["medicamento_comercial_id"] for it in r["itens"] if it["medicamento_comercial_id"]}
+        bulas = sorted(bulas_por_pa.get(ind.principio_ativo_id, []), key=lambda b: (b["id"] not in em_estoque, b["marca"]))
         opcoes.append({
             "principio_ativo_id": ind.principio_ativo_id,
             "nome": r["nome"],
@@ -99,6 +141,13 @@ def indicacoes_por_doenca(
             "total_apresentacoes": r["total_apresentacoes"],
             "unidade_apresentacao": r["unidade_apresentacao"],
             "marcas": marcas,
+            # Observação clínica da indicação ("só com corpo lúteo"...) — o
+            # campo existia no cadastro e nunca saía na consulta.
+            "nota": (ind.nota or "").strip() or None,
+            # Nenhum item de estoque ligado ao princípio: a tela diz "Sem
+            # apresentações cadastradas" em vez de "0 frasco em estoque".
+            "apresentacoes_cadastradas": len(r["itens"]),
+            "bulas": [{k: v for k, v in b.items() if k != "id"} | {"em_estoque": b["id"] in em_estoque} for b in bulas[:4]],
         })
     opcoes.sort(key=lambda o: (o["prioridade"], STATUS_ESTOQUE_RANK.get(o["status_estoque"], 9)))
     return {"doenca_id": doenca_id, "doenca": doenca.nome, "opcoes": opcoes}
@@ -107,18 +156,51 @@ def indicacoes_por_doenca(
 @router.get("/aplicacoes")
 def listar_aplicacoes(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    data_inicio: date | None = None,
+    data_fim: date | None = None,
+    numeros: Annotated[list[str] | None, Query()] = None,
+    lotes: Annotated[list[str] | None, Query()] = None,
+    tipo: str | None = None,
+    doencas: Annotated[list[int] | None, Query()] = None,
 ) -> dict:
-    """Aplicações achatadas para o dashboard interativo (filtra no cliente)."""
+    """Aplicações achatadas para o dashboard interativo (filtra no cliente).
+
+    Filtros OPCIONAIS (Menu › Sanidade › Histórico de tratamentos e vacinas do
+    app, espec aprovada pelo dono em out/2026) — sem nenhum, a resposta é a
+    mesma de antes (o site depende disso):
+      * `data_inicio`/`data_fim` (invertido = 400, como em Produção);
+      * `numeros` — número EXATO do animal (repetível ou "1,2");
+      * `lotes` — o lote do animal NA DATA da aplicação (gravado em
+        `lote_no_dia` ou reconstruído pelo MovimentoLote — rules/lote_historico);
+      * `tipo` = todos | curativo | preventivo — com ele a lista vira o
+        histórico do app: o curativo (sem o BST/indução, que é manejo) junto
+        com as vacinas/exames do preventivo novo (`sanitario_registro`), cada
+        linha com `tipo_historico`. Sem `tipo`, só `Sanidade`, como sempre;
+      * `doencas` — ids de doença do protocolo aplicado (curativo).
+    Toda linha ganha `chave` (única entre as duas tabelas), `tipo_historico`,
+    `lote_na_data`/`lote_fonte`, `doenca_id`/`doenca` e `curada`."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    msg_periodo = erro_periodo(data_inicio, data_fim)
+    if msg_periodo:
+        raise HTTPException(status_code=400, detail=msg_periodo)
+    if tipo is not None and tipo not in TIPOS_HISTORICO:
+        raise HTTPException(status_code=400, detail=f"Tipo inválido: use {', '.join(TIPOS_HISTORICO)}.")
+    filtro_numeros = normalizar_lista(numeros)
+    filtro_lotes = normalizar_lista(lotes)
+    filtro_doencas = set(doencas or [])
     # Aborto não conta como parto na ordem exibida (ver fazenda/rules/parto.py).
+    # Escopado pela fazenda: antes `select(Parto)` contava os partos de TODAS
+    # as fazendas com o mesmo número de brinco (ordem de parto misturada).
+    query_partos = select(Parto)
+    if fazenda_id is not None:
+        query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
     partos_por_numero: dict[str, int] = {}
-    for p in session.exec(select(Parto)).all():
+    for p in session.exec(query_partos).all():
         if not eh_parto_produtivo(p):
             continue
         partos_por_numero[p.numero_matriz] = partos_por_numero.get(p.numero_matriz, 0) + 1
-    # Lote/categoria ATUAIS do animal (a Sanidade não guarda o lote histórico de
-    # quando o produto foi aplicado — mesma limitação já aceita para ordem_parto
-    # acima, que também reflete o estado de hoje, não o de quando aconteceu).
+    # Lote/categoria ATUAIS do animal em `lote`/`categoria_animal` (campo de
+    # sempre, o site usa); o lote NA DATA vai em `lote_na_data`.
     query_animais = select(Animal)
     if fazenda_id is not None:
         query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
@@ -126,8 +208,21 @@ def listar_aplicacoes(
     query_sanidades = select(Sanidade)
     if fazenda_id is not None:
         query_sanidades = query_sanidades.where(Sanidade.fazenda_id == fazenda_id)
-    sanidades = session.exec(query_sanidades).all()
+    if data_inicio is not None:
+        query_sanidades = query_sanidades.where(Sanidade.data_aplicacao >= data_inicio)
+    if data_fim is not None:
+        query_sanidades = query_sanidades.where(Sanidade.data_aplicacao <= data_fim)
+    if filtro_numeros:
+        query_sanidades = query_sanidades.where(Sanidade.numero_matriz.in_(filtro_numeros))
+    sanidades = [] if tipo == TIPO_PREVENTIVO else session.exec(query_sanidades).all()
+    if tipo is not None:
+        # Histórico do app: BST e indução de cio (natureza="preventivo" em
+        # Sanidade) são manejo, não tratamento nem vacina — ficam de fora.
+        sanidades = [s for s in sanidades if (s.natureza or "curativo") != "preventivo"]
     nomes = mapa_usuarios(session, {s.usuario_id for s in sanidades})
+    doenca_por_lancamento = doencas_dos_curativos(
+        session, fazenda_id, {s.protocolo_sanitario_lancamento_id for s in sanidades},
+    )
 
     # Item de Estoque por nome do produto (mesma fazenda) — usado para casar
     # cada aplicação com a marca comercial que carrega a carência. Cacheado
@@ -155,8 +250,11 @@ def listar_aplicacoes(
         d = s.data_aplicacao
         animal = animais_por_numero.get(s.numero_matriz)
         item_produto, marca_produto = _item_e_marca(s.produto)
+        doenca = doenca_por_lancamento.get(s.protocolo_sanitario_lancamento_id)
         registros.append({
             "id": s.id,
+            "chave": f"c{s.id}",
+            "tipo_historico": s.natureza or "curativo",
             "numero": s.numero_matriz,
             "raca": s.raca or "(sem raça)",
             "produto": s.produto,
@@ -176,8 +274,40 @@ def listar_aplicacoes(
             "mes": f"{d.year}-{d.month:02d}" if d else None,
             "usuario_nome": nomes.get(s.usuario_id),
             "carencia": carencia_para_item(item_produto, marca_produto, data_aplicacao=d),
+            "doenca_id": doenca[0] if doenca else None,
+            "doenca": doenca[1] if doenca else None,
+            "curada": s.curada,
+            "lote_gravado": s.lote_no_dia,
         })
-    return {"aplicacoes": registros, "total": len(registros)}
+    if tipo in ("todos", TIPO_PREVENTIVO) and fazenda_id is not None:
+        for r in linhas_preventivo(session, fazenda_id, inicio=data_inicio, fim=data_fim, numeros=filtro_numeros):
+            animal = animais_por_numero.get(r["numero"])
+            r.update({
+                "raca": (animal.raca if animal else None) or "(sem raça)", "atividade": None,
+                "ordem_parto": partos_por_numero.get(r["numero"]) or None,
+                "lote": animal.grupo_primario if animal else None,
+                "categoria_animal": animal.categoria_abrev or animal.categoria_completa if animal else None,
+            })
+            registros.append(r)
+
+    # Lote NA DATA (uma carga só do histórico de movimentação, escopada).
+    mapa_lotes = MapaLotes(session, fazenda_id, {r["numero"] for r in registros if r["numero"]})
+    saida = []
+    for r in registros:
+        dia = date.fromisoformat(r["data"]) if r["data"] else None
+        lote, fonte = mapa_lotes.na_data(r["numero"], dia, gravado=r.pop("lote_gravado"))
+        if filtro_lotes and not lote_casa(lote, filtro_lotes):
+            continue
+        if filtro_doencas and r["doenca_id"] not in filtro_doencas:
+            continue
+        if (data_inicio or data_fim) and not no_periodo(dia, data_inicio, data_fim):
+            continue
+        r["lote_na_data"] = lote
+        r["lote_fonte"] = fonte
+        saida.append(r)
+    if tipo is not None:
+        saida.sort(key=lambda r: (r["data"] or "", r["chave"]), reverse=True)
+    return {"aplicacoes": saida, "total": len(saida)}
 
 
 @router.get("/unidades-compativeis")

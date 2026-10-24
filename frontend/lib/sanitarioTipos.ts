@@ -105,6 +105,20 @@ export function fmtData(iso: string | null | undefined, curta = false): string {
   const dd = String(p[2]).padStart(2, "0"), mm = String(p[1]).padStart(2, "0");
   return curta ? `${dd}/${mm}` : `${dd}/${mm}/${p[0]}`;
 }
+/** Dias de `de` até `ate` (datas ISO, sem fuso). */
+export function diasEntre(de: string, ate: string): number {
+  const a = partes(de), b = partes(ate);
+  if (!a || !b) return 0;
+  return Math.round((Date.UTC(b[0], b[1] - 1, b[2]) - Date.UTC(a[0], a[1] - 1, a[2])) / 86400000);
+}
+/** "atrasado há 1 dia" / "atrasado há 3 dias". */
+export function textoAtraso(dias: number): string {
+  return `atrasado há ${dias} ${dias === 1 ? "dia" : "dias"}`;
+}
+/** "1 animal saiu do rebanho" / "3 animais saíram do rebanho". */
+export function textoSaidos(n: number): string {
+  return n === 1 ? "1 animal saiu do rebanho" : `${n} animais saíram do rebanho`;
+}
 /** Dia da semana curto ("qua") de uma data ISO, sem depender do fuso do navegador. */
 export function diaSemana(iso: string): string {
   const p = partes(iso);
@@ -318,7 +332,10 @@ export type Dia = {
   estado: "marcado" | "em_execucao" | "fechado" | "cancelado"; veterinario: VeterinarioIn; observacao: string | null;
   decisao_riscos: DecisaoRiscos | null; versao_lock: number; fechado_em: string | null; fechamento_auto: boolean;
   motivo_cancelamento: string | null; caixas: DiaCaixa[];
-  contagens: { animais: number; pendentes: number; feitos: number; registros_apos_fechamento: number };
+  // `saidos`: animais que saíram do rebanho (vendidos/mortos) com o item ainda
+  // pendente — já fora da fila e da contagem (opcional: servidor antigo não manda).
+  contagens: { animais: number; pendentes: number; feitos: number; registros_apos_fechamento: number; saidos?: number };
+  saidos?: { animal_id: number; numero: string; motivo: string | null; data_baixa: string | null }[];
   itens?: DiaItem[]; avisos?: Aviso[]; fechamento?: { faltantes: number[]; destino: string };
 };
 export type Aviso = { codigo: string; texto: string; animal_id?: number; caixa_id?: number };
@@ -434,7 +451,8 @@ export type PacoteOffline = {
   regras_aviso: { consentimento_fora_da_regra: boolean; desfazer_segundos: number; aviso_offline_horas: number;
     texto_consentimento: string };
 };
-export type CampoHoje = { hoje: string; dias: (Dia & { quando: "hoje" | "amanha" })[] };
+// Dia atrasado (marcado antes de hoje, ainda aberto): `quando="hoje"` + `atrasado` (opcional: servidor antigo).
+export type CampoHoje = { hoje: string; dias: (Dia & { quando: "hoje" | "amanha"; atrasado?: boolean; dias_atraso?: number })[] };
 export type Dispositivo = {
   id: number; dispositivo_uid: string; nome: string | null; usuario_id: number | null; ultimo_contato_em: string | null;
   fila_pendentes: number; fila_mais_antigo_em: string | null; aviso_admin_em: string | null;

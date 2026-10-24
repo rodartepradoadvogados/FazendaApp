@@ -125,7 +125,7 @@ export function ModoTronco({ pacote, alvos, exec, eu, filaIds, onAplicar, onNaoA
           const qtd = cx?.tipo !== "exame" && dosePorPeso(p) ? quantidadeDose(p, pesoValor) : null;
           return (
             <div key={c} style={{ display: "flex", gap: "0.4rem" }}>
-              <button type="button" className="mob-san-chip" aria-pressed={on} style={{ flex: 1 }}
+              <button type="button" className="mob-san-chip risca" aria-pressed={on} style={{ flex: 1 }}
                 onClick={() => setDesl((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; })}>
                 <span>{cx?.nome_curto || cx?.nome || `#${c}`}
                   <small>{cx?.tipo === "exame" ? "exame" : textoProduto(p, est?.nome)}

@@ -536,6 +536,19 @@ def registrar(
         elif cx is not None:
             ciclo_chave = f"X:{data.isoformat()}"
 
+        # 3b) animal que SAIU do rebanho não recebe aplicação pelo dia
+        # (decisão do dono, out/2026): a fila do celular já o esconde, mas uma
+        # cópia antiga do pacote ainda podia mandá-lo. Aplicação com data até
+        # a da baixa (vacinou de manhã, vendeu à tarde, sincronizou à noite)
+        # é história verdadeira e entra.
+        if dia is not None and animal is not None and not animal.ativo and (
+                animal.data_baixa is None or data > animal.data_baixa):
+            motivo_saida = (animal.motivo_baixa or "").strip()
+            quando = f" em {animal.data_baixa.strftime('%d/%m/%Y')}" if animal.data_baixa else ""
+            r["avisos"].append(_aviso("saiu_do_rebanho", f"{animal.numero} saiu do rebanho{quando}"
+                                      f"{f' ({motivo_saida})' if motivo_saida else ''} — aplicação não registrada."))
+            continue
+
         # 4) chave única (animal × caixa × ciclo × dose)
         if animal is not None and cx is not None and not so_reg:
             existente = session.exec(select(SanitarioRegistro).where(

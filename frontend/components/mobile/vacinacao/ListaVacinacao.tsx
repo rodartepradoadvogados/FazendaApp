@@ -4,6 +4,9 @@
 // separado" e a fila do aparelho. Ao abrir a lista com sinal, os pacotes
 // offline dos dias já são baixados e guardados — no curral, sem sinal, o dia
 // abre do mesmo jeito. Tocar num dia abre a execução (tronco/grupo).
+// Dia ainda aberto de data passada vai para a seção "Atrasados", no topo, em
+// âmbar ("atrasado há N dias") — antes aparecia rotulado "Hoje" (espec de
+// Sanidade, out/2026). "Hoje e amanhã" fica só com hoje e amanhã.
 import { useEffect, useState } from "react";
 import { CalendarDays, ChevronRight, Droplet, Milk } from "lucide-react";
 import { MobVoltar } from "@/components/mobile/ui";
@@ -11,7 +14,7 @@ import { fetchComCache, lerCache } from "@/lib/offline";
 import { campoHoje, leiteSeparado, pacoteOffline } from "@/lib/apiSanitario";
 import { marcarCampoAtivo } from "@/lib/filaSanitario";
 import {
-  ROTULO_ESTADO_DIA, ROTULO_MODO_LEITE, fmtData, textoProduto,
+  ROTULO_ESTADO_DIA, ROTULO_MODO_LEITE, diasEntre, fmtData, textoAtraso, textoProduto, textoSaidos,
   type CampoHoje, type LeiteSeparado, type ModoLeite, type PacoteOffline, type ProdutoIn,
 } from "@/lib/sanitarioTipos";
 import { ExecucaoDia, chavePacote } from "./ExecucaoDia";
@@ -42,7 +45,13 @@ export default function ListaVacinacao({ onVoltar, diaInicial }: { onVoltar: () 
   if (aberto != null) return <ExecucaoDia diaId={aberto} onVoltar={() => { setAberto(null); hojeQ.recarregar(); }} />;
 
   const dias = hojeQ.dados?.dias || [];
-  const deHoje = dias.filter((d) => d.quando === "hoje");
+  const hoje = hojeQ.dados?.hoje || "";
+  // `atrasado` vem do servidor; a comparação de datas cobre a cópia guardada
+  // por uma versão anterior do servidor (sem o campo).
+  const ehAtrasado = (d: (typeof dias)[number]) => d.quando === "hoje" && (d.atrasado ?? (!!hoje && d.data < hoje));
+  const atraso = (d: (typeof dias)[number]) => d.dias_atraso ?? (hoje ? diasEntre(d.data, hoje) : 0);
+  const atrasados = dias.filter(ehAtrasado);
+  const deHoje = dias.filter((d) => d.quando === "hoje" && !ehAtrasado(d));
   const deAmanha = dias.filter((d) => d.quando === "amanha");
   const nomeEstoque = (diaId: number, estoqueId: number | null) =>
     estoqueId ? lerCache<PacoteOffline>(chavePacote(diaId))?.estoques.find((e) => e.id === estoqueId)?.nome : undefined;
@@ -52,6 +61,16 @@ export default function ListaVacinacao({ onVoltar, diaInicial }: { onVoltar: () 
       <MobVoltar titulo="Vacinas e exames" subtitulo="Marcados para hoje e amanhã" onVoltar={onVoltar} />
       {hojeQ.doCache && hojeQ.dados && <p className="mob-san-txt" style={{ marginTop: "-0.5rem", marginBottom: "0.6rem" }}>Sem sinal: lista guardada neste celular.</p>}
       <PainelFila eu={eu} partes={{ aviso: true, decisoes: true }} />
+
+      {atrasados.length > 0 && (
+        <>
+          <Rotulo>Atrasados</Rotulo>
+          {atrasados.map((d) => (
+            <LinhaDia key={d.id} d={d} topo={`${fmtData(d.data, true)} · ${textoAtraso(atraso(d))}`} atrasado
+              guardado={!!baixados[d.id]} onAbrir={() => setAberto(d.id)} />
+          ))}
+        </>
+      )}
 
       {deAmanha.map((d) => (
         <div key={`v${d.id}`} className="mob-card" data-estado="normal" style={{ padding: "0.95rem 1rem", marginBottom: "0.7rem" }}>
@@ -72,31 +91,15 @@ export default function ListaVacinacao({ onVoltar, diaInicial }: { onVoltar: () 
       {!hojeQ.carregando && !hojeQ.dados && (
         <FaixaSan tipo="alerta">Sem sinal e sem lista guardada neste celular. Abra com sinal uma vez.</FaixaSan>
       )}
-      {hojeQ.dados && !dias.length && (
+      {hojeQ.dados && !deHoje.length && !deAmanha.length && (
         <div style={{ textAlign: "center", padding: "1.5rem 1rem", color: "var(--mob-muted)" }}>
           <CalendarDays size={28} aria-hidden="true" style={{ margin: "0 auto 0.5rem", display: "block" }} />
           <p style={{ fontWeight: 700, color: "var(--mob-text)" }}>Nenhuma vacina ou exame para hoje ou amanhã.</p>
         </div>
       )}
-      {[...deHoje, ...deAmanha].map((d) => {
-        const feitos = d.contagens.feitos, total = d.contagens.feitos + d.contagens.pendentes;
-        return (
-          <button key={d.id} type="button" className="mob-linha" style={{ marginBottom: "0.6rem" }} onClick={() => setAberto(d.id)}
-            aria-label={`Abrir ${d.nome}`}>
-            <span style={{ flex: 1, minWidth: 0 }}>
-              <span className="mob-san-txt" style={{ display: "block", marginTop: 0 }}>
-                {d.quando === "hoje" ? (d.data < (hojeQ.dados?.hoje || "") ? fmtData(d.data, true) : "Hoje") : "Amanhã"}{d.hora ? ` · ${d.hora}` : ""} · {ROTULO_ESTADO_DIA[d.estado] || d.estado}
-              </span>
-              <b style={{ display: "block", fontSize: "1.05rem" }}>{d.nome}</b>
-              <span className="mob-san-txt" style={{ display: "block", marginTop: 0 }}>
-                {d.contagens.animais} {d.contagens.animais === 1 ? "animal" : "animais"} · {feitos} de {total} feitos
-                {baixados[d.id] ? " · guardado no celular" : ""}
-              </span>
-            </span>
-            <ChevronRight size={20} aria-hidden="true" style={{ color: "var(--mob-muted)" }} />
-          </button>
-        );
-      })}
+      {[...deHoje, ...deAmanha].map((d) => (
+        <LinhaDia key={d.id} d={d} topo={d.quando === "hoje" ? "Hoje" : "Amanhã"} guardado={!!baixados[d.id]} onAbrir={() => setAberto(d.id)} />
+      ))}
 
       <Rotulo>Leite separado</Rotulo>
       <div className="mob-card" data-estado={leite.dados?.animais ? "atrasado" : "feito"} style={{ padding: "0.95rem 1rem" }}>
@@ -122,5 +125,30 @@ export default function ListaVacinacao({ onVoltar, diaInicial }: { onVoltar: () 
       </div>
       <div style={{ marginTop: "1rem" }}><PainelFila eu={eu} partes={{ resultados: true }} /></div>
     </div>
+  );
+}
+
+/** Um dia na lista (atrasado = filete e texto em âmbar). */
+function LinhaDia({ d, topo, atrasado, guardado, onAbrir }: {
+  d: CampoHoje["dias"][number]; topo: string; atrasado?: boolean; guardado: boolean; onAbrir: () => void;
+}) {
+  const feitos = d.contagens.feitos, total = d.contagens.feitos + d.contagens.pendentes;
+  const saidos = d.contagens.saidos || 0;
+  return (
+    <button type="button" className="mob-linha" style={{ marginBottom: "0.6rem", ...(atrasado ? { borderLeft: "4px solid var(--mob-ambar)" } : {}) }}
+      onClick={onAbrir} aria-label={`Abrir ${d.nome}${atrasado ? ` (${topo})` : ""}`}>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span className="mob-san-txt" style={{ display: "block", marginTop: 0, ...(atrasado ? { color: "var(--mob-ambar)", fontWeight: 700 } : {}) }}>
+          {topo}{d.hora ? ` · ${d.hora}` : ""} · {ROTULO_ESTADO_DIA[d.estado] || d.estado}
+        </span>
+        <b style={{ display: "block", fontSize: "1.05rem" }}>{d.nome}</b>
+        <span className="mob-san-txt" style={{ display: "block", marginTop: 0 }}>
+          {d.contagens.animais} {d.contagens.animais === 1 ? "animal" : "animais"} · {feitos} de {total} feitos
+          {guardado ? " · guardado no celular" : ""}
+        </span>
+        {saidos > 0 && <span className="mob-san-txt" style={{ display: "block", marginTop: 0 }}>{textoSaidos(saidos)} e {saidos === 1 ? "não está" : "não estão"} mais na fila.</span>}
+      </span>
+      <ChevronRight size={20} aria-hidden="true" style={{ color: "var(--mob-muted)" }} />
+    </button>
   );
 }

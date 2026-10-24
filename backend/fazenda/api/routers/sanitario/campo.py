@@ -42,8 +42,14 @@ def campo_hoje(session: Session = Depends(get_session),
     dias = session.exec(select(SanitarioDia).where(
         SanitarioDia.fazenda_id == fid, SanitarioDia.estado.in_(regras_dias.ESTADOS_ABERTOS),
         SanitarioDia.data <= hoje + timedelta(days=1)).order_by(SanitarioDia.data, SanitarioDia.id)).all()
+    # Dia ATRASADO (marcado para antes de hoje e ainda aberto) continua com
+    # `quando="hoje"` (o app antigo, em cache no celular, só conhece hoje/
+    # amanhã) e ganha `atrasado`/`dias_atraso` — o app novo o mostra numa
+    # seção própria, em vez de rotulá-lo "Hoje".
     return {"hoje": hoje.isoformat(), "dias": [{**regras_dias.dia_dict(session, d, com_itens=False),
-                                                "quando": "hoje" if d.data <= hoje else "amanha"} for d in dias]}
+                                                "quando": "hoje" if d.data <= hoje else "amanha",
+                                                "atrasado": d.data < hoje,
+                                                "dias_atraso": max((hoje - d.data).days, 0)} for d in dias]}
 
 
 @router.get("/dias/{dia_id}/pacote-offline")

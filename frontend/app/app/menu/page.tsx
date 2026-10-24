@@ -78,7 +78,7 @@ const GRUPOS: Grupo[] = [
   ] },
   { secao: "sanidade", titulo: "Sanidade", cor: "var(--cat-sanidade)", iconeSecao: <ShieldPlus size={26} />, itens: [
     { chave: "vacinacao", titulo: "Vacinas e exames", subtitulo: "Marcados para hoje e amanhã", rota: "/sanidade", icone: <CalendarDays size={20} /> },
-    { chave: "aplicacoes", titulo: "Histórico", subtitulo: "Aplicações curativas", rota: "/sanidade", icone: <Syringe size={20} /> },
+    { chave: "aplicacoes", titulo: "Histórico de tratamentos e vacinas", subtitulo: "Curativos, vacinas e exames por período, lote e animal", rota: "/sanidade", icone: <Syringe size={20} /> },
     { chave: "remedios", titulo: "Remédios por Doença", subtitulo: "Consulta rápida + substitutos indicados", rota: "/sanidade", icone: <FlaskConical size={20} /> },
   ] },
   // Os 4 itens abaixo não levam `cor` própria de propósito: sem override,
