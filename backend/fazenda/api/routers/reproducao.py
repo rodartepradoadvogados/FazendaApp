@@ -35,6 +35,7 @@ from fazenda.rules.email import enviar_email
 from fazenda.rules.estado_reprodutivo import data_em_que_ficou_apta, estados_ao_vivo
 from fazenda.rules.genetica import calcular_grau_sangue_cria
 from fazenda.rules import lactacao as regras_lactacao
+from fazenda.rules.rebaixa_gestante import rebaixar_gestante_se_prenhez_acabou
 from fazenda.rules.lote_historico import MapaLotes, erro_periodo, lote_casa, normalizar_lista
 from fazenda.rules.nomenclatura_protocolo import gerar_nome_lancamento
 from fazenda.rules.parto import (
@@ -1341,6 +1342,8 @@ def atualizar_servico(
     for campo, valor in campos.items():
         setattr(servico, campo, valor)
     session.add(servico)
+    # Edição de exame/perda também pode encerrar a prenhez (toque negativo, perda): rebaixa "gestante" do texto.
+    rebaixar_gestante_se_prenhez_acabou(session, numero_matriz=servico.numero_matriz, fazenda_id=fazenda_id)
     session.commit()
     session.refresh(servico)
     return servico.model_dump()
@@ -1516,6 +1519,7 @@ def registrar_diagnostico(
             servico.data_perda_prenhez = dados.data_diagnostico
             servico.motivo_perda_prenhez = "aborto"
             session.add(servico)
+            rebaixar_gestante_se_prenhez_acabou(session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id)
             ganchos_sanitario.animal_mudou(session, fazenda_id, numeros=[dados.numero_matriz], evento="diagnostico")
             session.commit()
             session.refresh(servico)
@@ -1571,6 +1575,8 @@ def registrar_diagnostico(
             servico.retoque = False
 
     session.add(servico)
+    # Toque/retoque NEGATIVO no serviço vigente: "gestante" do texto congelado deixa de valer (decisão do dono).
+    rebaixar_gestante_se_prenhez_acabou(session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id)
     ganchos_sanitario.animal_mudou(session, fazenda_id, numeros=[dados.numero_matriz], evento="diagnostico")
     session.commit()
     session.refresh(servico)
@@ -1648,6 +1654,7 @@ def registrar_reconfirmacao(
     servico.retoque = False
 
     session.add(servico)
+    rebaixar_gestante_se_prenhez_acabou(session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id)
     session.commit()
     session.refresh(servico)
     return servico.model_dump()
@@ -1685,6 +1692,7 @@ def registrar_perda_prenhez(
     servico.data_perda_prenhez = dados.data_perda_prenhez
     servico.motivo_perda_prenhez = dados.motivo
     session.add(servico)
+    rebaixar_gestante_se_prenhez_acabou(session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id)
     ganchos_sanitario.animal_mudou(session, fazenda_id, numeros=[dados.numero_matriz], evento="perda_prenhez")
     session.commit()
     session.refresh(servico)
