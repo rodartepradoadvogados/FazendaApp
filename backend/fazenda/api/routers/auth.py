@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -544,14 +545,20 @@ def esqueci_senha_enviar(dados: EsqueciSenhaEnviarIn, session: Session = Depends
     username_seguro = html.escape(user.username)
     corpo_html = f"""
         <p>Olá, {nome_seguro}!</p>
-        <p>Recebemos um pedido para redefinir a senha do seu login <strong>{username_seguro}</strong> no sistema da fazenda.</p>
+        <p>Recebemos um pedido para redefinir a senha do seu login <strong>{username_seguro}</strong> no CowData Milk.</p>
         <p><a href="{link}">Clique aqui para definir uma nova senha</a></p>
         <p>Esse link vale por 1 hora. Se você não pediu essa redefinição, pode ignorar este e-mail.</p>
     """
     try:
-        enviar_email(user.email, "Redefinição de senha", corpo_html)
+        enviar_email(user.email, "Redefinição de senha — CowData Milk", corpo_html)
     except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        # "Não configurado" é mensagem nossa e útil ao administrador; qualquer
+        # outra (erro do provedor de e-mail) tem detalhe técnico que não vai
+        # para a tela de quem só esqueceu a senha — fica no log.
+        if "não está configurado" in str(e):
+            raise HTTPException(status_code=503, detail=str(e))
+        logging.getLogger(__name__).error("Falha ao enviar e-mail de redefinição de senha: %s", e)
+        raise HTTPException(status_code=503, detail="Não foi possível enviar o e-mail agora. Tente de novo em alguns minutos ou peça ao administrador para redefinir a senha.")
     return {"enviado": True}
 
 

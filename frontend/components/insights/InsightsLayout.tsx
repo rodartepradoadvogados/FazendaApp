@@ -144,7 +144,7 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const router = useRouter();
   const subNav = useSubNav();
-  const [fazendaNome, setFazendaNome] = useState("Jairo Nasser");
+  const [fazendaNome, setFazendaNome] = useState("");
   const [admin, setAdmin] = useState(false);
   const [dono, setDono] = useState(false);
   const [temConfiguracoes, setTemConfiguracoes] = useState(false);
@@ -167,7 +167,7 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
   }
 
   useEffect(() => {
-    setFazendaNome(getFazendaAtual()?.nome || "Jairo Nasser");
+    setFazendaNome(getFazendaAtual()?.nome || "");
     setAdmin(ehAdmin());
     setDono(ehDono());
     setTemConfiguracoes(podeModulo("parametros") || podeModulo("upload") || ehDono());

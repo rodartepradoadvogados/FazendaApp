@@ -294,7 +294,8 @@ Todas as regras da Seção 5 do `CONTEXTO_PROJETO_FAZENDA.md` estão em `backend
 `frontend/capacitor.config.ts`); o `.apk` de debug sai do workflow `Build Android APK`
 (assinado com `android/app/debug.keystore`, `versionCode` = nº da execução). Instalação e
 atualização dos celulares: `docs/APP_INSTALACAO.md`. O endereço antigo
-`fazenda-app-jfye.vercel.app` continua válido.
+`fazenda-app-jfye.vercel.app` foi removido do projeto em 24/10/2026 (os previews de PR continuam
+usando `fazenda-app-*.vercel.app`, liberados no CORS por regex).
 
 **Vercel** (alternativa para o frontend):
 - Deploy `frontend/` no Vercel

@@ -118,6 +118,19 @@ class TestEnviar:
         assert r.status_code == 503
         assert "RESEND_API_KEY" in r.json()["detail"]
 
+    def test_erro_do_provedor_nao_vaza_detalhe_tecnico(self, client, monkeypatch):
+        c, engine, _ = client
+
+        def _recusado(*args, **kwargs):
+            raise RuntimeError('Falha ao enviar e-mail (Resend): {"message":"You can only send testing emails to your own email address","statusCode":403}')
+
+        monkeypatch.setattr("fazenda.api.routers.auth.enviar_email", _recusado)
+        r = c.post("/auth/esqueci-senha/enviar", json={"username": "joao"})
+        assert r.status_code == 503
+        detalhe = r.json()["detail"]
+        assert "Resend" not in detalhe and "statusCode" not in detalhe
+        assert "Não foi possível enviar o e-mail" in detalhe
+
 
 class TestRedefinir:
     def test_redefine_com_token_valido(self, client):

@@ -184,7 +184,7 @@ def enviar(
             "android": {
                 "priority": "HIGH",
                 "notification": {
-                    "color": "#3A0F1A",  # mesmo vinho do splash/StatusBar (capacitor.config.ts)
+                    "color": "#0A1F36",  # marinho da marca, igual ao splash/StatusBar (capacitor.config.ts)
                     "icon": icon,
                     "channel_id": channel_id,
                     **({"notification_count": count} if count is not None else {}),
