@@ -102,6 +102,35 @@ async function aguardarTela(caminho: string): Promise<boolean> {
   }
 }
 
+/** Rótulos que indicam ação destrutiva ou de gravação: o assistente olha e
+ * preenche, mas quem exclui, cancela ou salva é a pessoa. */
+const ROTULO_BLOQUEADO =
+  /\b(exclu\w*|apag\w*|remov\w*|delet\w*|descart\w*|zerar|encerr\w*|desativ\w*|inativ\w*|cancel\w*|sair|logout|salvar|gravar|confirmar|finaliz\w*|lan[cç]ar|registrar|enviar|assinar|pagar|baixar)\b/i;
+
+function rotuloDoElemento(el: Element): string {
+  const h = el as HTMLElement;
+  return [h.innerText, h.getAttribute("aria-label"), h.getAttribute("title"), (h as HTMLInputElement).value]
+    .filter((t): t is string => typeof t === "string")
+    .join(" ")
+    .slice(0, 200);
+}
+
+/** Motivo do bloqueio de um clique, ou null se pode clicar. */
+export function motivoBloqueioClique(el: Element): string | null {
+  const alvo = el.closest("button, a, [role=button], input[type=submit], input[type=button]") ?? el;
+  if ((alvo as HTMLElement).dataset?.destrutivo !== undefined) return "ação destrutiva";
+  if ((alvo as HTMLInputElement).type === "submit") return "botão que grava dados";
+  if (ROTULO_BLOQUEADO.test(rotuloDoElemento(alvo))) return "ação destrutiva ou de gravação";
+  return null;
+}
+
+/** Enter só em campo de busca: em formulário comum equivale a salvar. */
+export function podeEnviarComEnter(el: Element): boolean {
+  const h = el as HTMLInputElement;
+  const marca = `${h.type ?? ""} ${h.name ?? ""} ${h.getAttribute?.("role") ?? ""} ${h.getAttribute?.("aria-label") ?? ""} ${h.placeholder ?? ""}`;
+  return /search|busca|pesquis|filtr/i.test(marca);
+}
+
 /** Executa UM pedido. Nunca lança: erro vira `resultado.ok = false`. */
 export async function executarPedido(
   pedido: PedidoPagina,
@@ -158,6 +187,13 @@ export async function executarPedido(
         const seletor = texto(args.seletor);
         const el = await esperarSeletor(seletor, 4000);
         if (!el) return { id: pedido.id, resultado: { ok: false, erro: `não achei '${seletor}'` } };
+        const bloqueio = motivoBloqueioClique(el);
+        if (bloqueio) {
+          return {
+            id: pedido.id,
+            resultado: { ok: false, erro: `clique bloqueado (${bloqueio}); peça para o usuário fazer isso` },
+          };
+        }
         (el as HTMLElement).click();
         await dormir(400);
         return { id: pedido.id, resultado: { ok: true, seletor, caminho: window.location.pathname } };
@@ -167,7 +203,13 @@ export async function executarPedido(
         const seletor = texto(args.seletor);
         const el = await esperarSeletor(seletor, 4000);
         if (!el) return { id: pedido.id, resultado: { ok: false, erro: `não achei '${seletor}'` } };
+        if ((el as HTMLInputElement).type === "password" || (el as HTMLInputElement).type === "file") {
+          return { id: pedido.id, resultado: { ok: false, erro: "este tipo de campo não pode ser preenchido pelo assistente" } };
+        }
         preencherCampo(el, texto(args.valor));
+        if (args.enviar === true && !podeEnviarComEnter(el)) {
+          return { id: pedido.id, resultado: { ok: false, erro: "Enter bloqueado: só em campo de busca/filtro" } };
+        }
         if (args.enviar === true) {
           const campo = el as HTMLElement;
           campo.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));

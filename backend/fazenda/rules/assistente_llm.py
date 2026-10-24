@@ -7,6 +7,10 @@ Variáveis de ambiente (nomes exatos):
                         OPENROUTER_API_KEY existe, senão anthropic quando
                         ANTHROPIC_API_KEY existe, senão erro de configuração.
   OPENROUTER_API_KEY    chave do OpenRouter (API compatível com OpenAI).
+  ASSISTENTE_PROVEDOR=personalizado  roteador próprio compatível com OpenAI (ex.: o
+                        9Router/arsenal do Hermes, exposto por HTTPS). Exige
+                        ASSISTENTE_URL_BASE (termina em /v1) e ASSISTENTE_CHAVE;
+                        ASSISTENTE_MODELO é o nome do modelo/combo no roteador.
   ANTHROPIC_API_KEY     chave da Anthropic.
   ASSISTENTE_MODELOS_RESERVA  (opcional) modelos do OpenRouter, separados por vírgula, usados
                         quando o principal está sobrecarregado/indisponível.
@@ -49,10 +53,12 @@ _mono = time.monotonic
 
 PROVEDOR_OPENROUTER = "openrouter"
 PROVEDOR_ANTHROPIC = "anthropic"
-PROVEDORES = (PROVEDOR_OPENROUTER, PROVEDOR_ANTHROPIC)
+PROVEDOR_PERSONALIZADO = "personalizado"
+PROVEDORES = (PROVEDOR_OPENROUTER, PROVEDOR_ANTHROPIC, PROVEDOR_PERSONALIZADO)
 MODELO_PADRAO = {
     PROVEDOR_OPENROUTER: "anthropic/claude-sonnet-4.5",
     PROVEDOR_ANTHROPIC: "claude-sonnet-5",
+    PROVEDOR_PERSONALIZADO: "9Router-Combo",
 }
 URL_OPENROUTER = "https://openrouter.ai/api/v1/chat/completions"
 MAX_TOKENS = 1536
@@ -70,7 +76,7 @@ TIMEOUT_TENTATIVA_PRINCIPAL_S = 40.0
 ORCAMENTO_TOTAL_S = 150.0
 
 MSG_INDISPONIVEL = "O assistente está temporariamente indisponível. Tente novamente em instantes."
-_VARS_CHAVE = ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY")
+_VARS_CHAVE = ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "ASSISTENTE_CHAVE")
 
 
 class ErroAssistente(RuntimeError):
@@ -134,8 +140,21 @@ def _registrar_sucesso() -> None:
 # ---------------------------------------------------------------------------
 # Configuração
 # ---------------------------------------------------------------------------
+_VAR_CHAVE = {
+    PROVEDOR_OPENROUTER: "OPENROUTER_API_KEY",
+    PROVEDOR_ANTHROPIC: "ANTHROPIC_API_KEY",
+    PROVEDOR_PERSONALIZADO: "ASSISTENTE_CHAVE",
+}
+
+
+def _url_personalizada() -> str | None:
+    """Endereço do roteador próprio. Só HTTPS (a chave viaja no cabeçalho)."""
+    base = (os.environ.get("ASSISTENTE_URL_BASE") or "").strip().rstrip("/")
+    return f"{base}/chat/completions" if base.startswith("https://") else None
+
+
 def _chave_do(provedor: str) -> str | None:
-    var = "OPENROUTER_API_KEY" if provedor == PROVEDOR_OPENROUTER else "ANTHROPIC_API_KEY"
+    var = _VAR_CHAVE[provedor]
     return (os.environ.get(var) or "").strip() or None
 
 
@@ -146,7 +165,7 @@ def configuracao() -> dict:
     if explicito:
         provedor = explicito
         if provedor not in PROVEDORES:
-            motivo = f"ASSISTENTE_PROVEDOR='{explicito}' inválido (use 'openrouter' ou 'anthropic')."
+            motivo = f"ASSISTENTE_PROVEDOR='{explicito}' inválido (use 'openrouter', 'anthropic' ou 'personalizado')."
     elif _chave_do(PROVEDOR_OPENROUTER):
         provedor = PROVEDOR_OPENROUTER
     elif _chave_do(PROVEDOR_ANTHROPIC):
@@ -161,8 +180,10 @@ def configuracao() -> dict:
     if provedor in PROVEDORES:
         modelo = (os.environ.get("ASSISTENTE_MODELO") or "").strip() or MODELO_PADRAO[provedor]
         if not _chave_do(provedor):
-            var = "OPENROUTER_API_KEY" if provedor == PROVEDOR_OPENROUTER else "ANTHROPIC_API_KEY"
+            var = _VAR_CHAVE[provedor]
             motivo = f"Provedor '{provedor}' selecionado, mas falta a variável {var} nas variáveis do serviço (Railway > Variables)."
+        elif provedor == PROVEDOR_PERSONALIZADO and not _url_personalizada():
+            motivo = "Provedor 'personalizado' exige ASSISTENTE_URL_BASE começando com https:// (termina em /v1)."
     return {"provedor": provedor, "modelo": modelo, "configurado": motivo is None, "motivo": motivo}
 
 
@@ -325,8 +346,9 @@ def _texto_do_erro(corpo) -> str:
 
 
 def _completar_openrouter(system: str, mensagens: list[dict], ferramentas: list[dict], modelo: str,
-                          timeout: float = TIMEOUT_SEGUNDOS) -> dict:
-    chave = _chave_do(PROVEDOR_OPENROUTER)
+                          timeout: float = TIMEOUT_SEGUNDOS, provedor: str = PROVEDOR_OPENROUTER) -> dict:
+    chave = _chave_do(provedor)
+    url = _url_personalizada() if provedor == PROVEDOR_PERSONALIZADO else URL_OPENROUTER
     payload: dict = {
         "model": modelo,
         "max_tokens": MAX_TOKENS,
@@ -340,7 +362,7 @@ def _completar_openrouter(system: str, mensagens: list[dict], ferramentas: list[
         "X-Title": "CowData",
     }
     try:
-        resp = _enviar_http(URL_OPENROUTER, headers, payload, timeout)
+        resp = _enviar_http(url or URL_OPENROUTER, headers, payload, timeout)
     except httpx.TimeoutException as e:
         raise _com_detalhe(_erro("timeout"), e) from None
     except httpx.HTTPError as e:
@@ -467,7 +489,8 @@ def _modelos_reserva() -> list[str]:
     return [m.strip() for m in bruto.split(",") if m.strip()]
 
 
-def _completar_openrouter_com_reserva(system: str, mensagens: list[dict], ferramentas: list[dict], modelo: str) -> dict:
+def _completar_openrouter_com_reserva(system: str, mensagens: list[dict], ferramentas: list[dict], modelo: str,
+                                      provedor: str = PROVEDOR_OPENROUTER) -> dict:
     """Passador com failover RÁPIDO e orçamento de tempo.
 
     - Modelo principal: até 2 tentativas, cada uma com teto CURTO
@@ -500,7 +523,7 @@ def _completar_openrouter_com_reserva(system: str, mensagens: list[dict], ferram
             else:
                 timeout = TIMEOUT_TENTATIVA_PRINCIPAL_S
             try:
-                return _completar_openrouter(system, mensagens, ferramentas, m, timeout=timeout)
+                return _completar_openrouter(system, mensagens, ferramentas, m, timeout=timeout, provedor=provedor)
             except ErroAssistente as e:
                 ultimo = e
                 if e.tipo not in ERROS_QUE_VALEM_TENTAR_DE_NOVO:
@@ -531,8 +554,8 @@ def completar(system: str, mensagens: list[dict], ferramentas: list[dict]) -> di
         _registrar_erro(e, cfg["provedor"], cfg["modelo"], cfg["motivo"] or "")
         raise e
     try:
-        if cfg["provedor"] == PROVEDOR_OPENROUTER:
-            out = _completar_openrouter_com_reserva(system, mensagens, ferramentas, cfg["modelo"])
+        if cfg["provedor"] in (PROVEDOR_OPENROUTER, PROVEDOR_PERSONALIZADO):
+            out = _completar_openrouter_com_reserva(system, mensagens, ferramentas, cfg["modelo"], cfg["provedor"])
         else:
             out = _completar_anthropic(system, mensagens, ferramentas, cfg["modelo"])
     except ErroAssistente as e:
