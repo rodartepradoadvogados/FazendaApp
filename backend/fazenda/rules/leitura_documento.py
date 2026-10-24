@@ -37,7 +37,13 @@ import io
 import re
 import unicodedata
 
-NOME_FAZENDA = "Fazenda Estreito Ponte de Pedra"
+# Contribuinte padrão de guia FGTS/DCTFWeb sem nome legível no OCR: é a
+# PRÓPRIA fazenda que recolhe a guia — o nome vem de quem chama
+# (`ler_documento(..., nome_fazenda=...)`, a fazenda do token/do chat).
+# BUG CORRIGIDO: era uma constante com o nome fixo de uma fazenda cliente,
+# lançado como fornecedor na guia de QUALQUER fazenda. Sem fazenda conhecida o
+# campo fica vazio (o formulário/robô pede) — nunca o nome de outra fazenda,
+# nem o do produto, que viraria fornecedor de verdade no lançamento.
 
 # PDF/imagem aceitos no upload, mais tolerância a variações reais do mundo:
 # "image/jpg" não é um media type padrão, mas câmeras/apps antigos mandam
@@ -477,7 +483,7 @@ def _parcelas_detectadas_boleto(textos_paginas: list[str]) -> list[dict]:
     return itens
 
 
-def _parsear_texto(texto_completo: str, textos_paginas: list[str]) -> dict:
+def _parsear_texto(texto_completo: str, textos_paginas: list[str], nome_fazenda: str | None = None) -> dict:
     texto_norm = _normalizar(texto_completo)
     linha_digitavel = _extrair_linha_digitavel(texto_completo)
     tipo = _classificar_tipo(texto_norm, linha_digitavel)
@@ -516,8 +522,8 @@ def _parsear_texto(texto_completo: str, textos_paginas: list[str]) -> dict:
         dados["valor_total"] = _achar_valor(texto_completo, _ROTULOS_VALOR_BOLETO)
 
     elif tipo in ("guia_fgts", "guia_dctf"):
-        if not dados["fornecedor_cliente"]:
-            dados["fornecedor_cliente"] = NOME_FAZENDA
+        if not dados["fornecedor_cliente"] and nome_fazenda:
+            dados["fornecedor_cliente"] = nome_fazenda
         dados["competencia"] = _achar_competencia(texto_completo)
         dados["data_vencimento"] = _achar_data(texto_completo, _ROTULOS_VENCIMENTO)
         dados["linha_digitavel"] = linha_digitavel
@@ -537,11 +543,12 @@ def _parsear_texto(texto_completo: str, textos_paginas: list[str]) -> dict:
     return dados
 
 
-def ler_documento(conteudo: bytes, mime_type: str) -> dict:
+def ler_documento(conteudo: bytes, mime_type: str, nome_fazenda: str | None = None) -> dict:
     """OCR (Tesseract) + regras/regex sobre o texto extraído — devolve os
     campos no mesmo formato esperado pelo formulário de lançamento
     financeiro (ver docstring do módulo sobre a migração e suas
-    limitações)."""
+    limitações). `nome_fazenda` é o nome da fazenda atual, usado só como
+    contribuinte padrão de guia FGTS/DCTFWeb."""
     if mime_type not in MIME_ACEITOS:
         raise ValueError(f"Tipo de arquivo não suportado: {mime_type} (aceitos: PDF, JPEG, PNG)")
 
@@ -558,7 +565,7 @@ def ler_documento(conteudo: bytes, mime_type: str) -> dict:
     textos_paginas = _extrair_textos_seguro(conteudo, mime_type_normalizado)
     texto_completo = "\n\f\n".join(textos_paginas)
 
-    dados = _parsear_texto(texto_completo, textos_paginas)
+    dados = _parsear_texto(texto_completo, textos_paginas, nome_fazenda=nome_fazenda)
     dados = _corrigir_valor_total_boleto(dados)
     dados["paginas_documento"] = paginas
     return dados

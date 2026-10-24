@@ -25,8 +25,10 @@ import { COR_TOPO } from "@/lib/themeColorTopo";
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: "/app",
-    name: "Fazenda Estreito Ponte de Pedra",
-    short_name: "Fazenda",
+    // Nome do produto, não de uma fazenda cliente: o manifesto é o mesmo para
+    // todas as fazendas (BUG CORRIGIDO: era o nome fixo de uma delas).
+    name: "CowData Milk",
+    short_name: "CowData Milk",
     description: "Sistema de gestão da fazenda — rebanho, produção, financeiro e agenda, com app de campo offline.",
     start_url: "/",
     scope: "/",

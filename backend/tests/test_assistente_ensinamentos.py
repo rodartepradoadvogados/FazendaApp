@@ -18,7 +18,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
 from fazenda.models import AssistenteEnsinamento, ContratoFazenda, Fazenda
-from fazenda.rules.assistente import SYSTEM_PROMPT
+from fazenda.rules.assistente import prompt_base
 
 
 class _Usuario:
@@ -157,7 +157,9 @@ class TestSystemPromptComEnsinamentos:
 
         assert "## O que foi ensinado sobre esta fazenda e este sistema" in kwargs["system"]
         assert "Nome da fazenda: O nome oficial é Fazenda Estreito Ponte de Pedra II." in kwargs["system"]
-        assert kwargs["system"].startswith(SYSTEM_PROMPT)
+        # Prompt base com o nome da fazenda do token (antes: nome fixo de uma
+        # fazenda cliente para todas).
+        assert kwargs["system"].startswith(prompt_base("Fazenda 1"))
 
     def test_ensinamento_inativo_nao_entra_no_system_prompt(self, client, monkeypatch):
         c, engine = client
@@ -177,8 +179,8 @@ class TestSystemPromptComEnsinamentos:
             assert r.status_code == 200, r.text
             kwargs = MockAnthropic.return_value.messages.create.call_args.kwargs
 
-        # Sem nenhum ensinamento ATIVO, o prompt fica idêntico ao original.
-        assert kwargs["system"] == SYSTEM_PROMPT
+        # Sem nenhum ensinamento ATIVO, o prompt fica idêntico ao base da fazenda.
+        assert kwargs["system"] == prompt_base("Fazenda 1")
         assert "Regra desativada" not in kwargs["system"]
 
 

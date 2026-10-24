@@ -25,8 +25,10 @@ const dancingScript = Dancing_Script({ subsets: ["latin"], weight: "700", variab
 const sora = Sora({ subsets: ["latin"], weight: ["700", "800"], variable: "--font-sora" });
 
 export const metadata: Metadata = {
-  title: "Fazenda Estreito Ponte de Pedra",
-  description: "Painel gerencial de pecuária leiteira — Jairo Nasser",
+  // Metadata é estática (montada sem sessão): vale para QUALQUER fazenda.
+  // BUG CORRIGIDO: trazia o nome fixo de uma fazenda cliente e do seu dono.
+  title: "CowData Milk",
+  description: "Sistema de gestão de pecuária leiteira — rebanho, produção, reprodução e financeiro",
   // PWA / iPhone: ícone da tela inicial e modo tela-cheia ao instalar o /app.
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Fazenda" },
   icons: { apple: "/icons/icone-180.png" },

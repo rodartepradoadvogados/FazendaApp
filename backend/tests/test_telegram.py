@@ -43,7 +43,7 @@ def client(monkeypatch):
     enviados: list[dict] = []
     monkeypatch.setattr(telegram, "_tg", lambda metodo, payload: (enviados.append({"metodo": metodo, **payload}) or {"ok": True}))
     # Simula a leitura do documento (sem baixar nem chamar IA).
-    monkeypatch.setattr(telegram, "_ler_documento_pendente", lambda pend: {
+    monkeypatch.setattr(telegram, "_ler_documento_pendente", lambda pend, **_: {
         "tipo_documento": "nota_fiscal",
         "fornecedor_cliente": "Casa do Produtor",
         "numero_documento": "NF-777",
@@ -159,7 +159,7 @@ def test_aprovar_despesa_com_itens_em_texto_solto(client, monkeypatch):
     "'str' object has no attribute 'get'". Aprovar deve funcionar mesmo assim,
     tratando cada texto como um item sem preço."""
     c, engine, enviados = client
-    monkeypatch.setattr(telegram, "_ler_documento_pendente", lambda pend: {
+    monkeypatch.setattr(telegram, "_ler_documento_pendente", lambda pend, **_: {
         "tipo_documento": "recibo",
         "fornecedor_cliente": "Kalunga S.A.",
         "numero_documento": "0000000071501",
@@ -332,7 +332,7 @@ def test_faltando_dados_pergunta_antes_de_confirmar(client, monkeypatch):
     """#397 — se faltar fornecedor/valor/data de emissão, o robô pergunta se
     quer lançar mesmo assim antes de mostrar os botões normais."""
     c, engine, enviados = client
-    monkeypatch.setattr(telegram, "_ler_documento_pendente", lambda pend: {
+    monkeypatch.setattr(telegram, "_ler_documento_pendente", lambda pend, **_: {
         "tipo_documento": "recibo", "fornecedor_cliente": None, "numero_documento": None,
         "data_emissao": None, "data_pagamento": None, "valor_total": 500.0,
         "conta_bancaria": None, "itens": [], "observacao": None,
@@ -357,7 +357,7 @@ def test_boleto_isolado_pergunta_avulso_ou_manual(client, monkeypatch):
     """#398 — boleto sem indicação de parcelamento pergunta se é avulso ou se
     o usuário prefere informar manualmente (ex.: novo parcelamento)."""
     c, engine, enviados = client
-    monkeypatch.setattr(telegram, "_ler_documento_pendente", lambda pend: {
+    monkeypatch.setattr(telegram, "_ler_documento_pendente", lambda pend, **_: {
         "tipo_documento": "boleto", "fornecedor_cliente": "Cooperativa Agro", "numero_documento": "00001-2",
         "data_emissao": None, "data_pagamento": None, "valor_total": 850.0, "conta_bancaria": None,
         "itens": [], "observacao": None, "parcela_num": None, "parcela_total": None,
@@ -385,7 +385,7 @@ def test_boleto_avulso_confirma_normalmente(client, monkeypatch):
     """#398 — escolhendo "avulso", segue para a confirmação normal (#397) e o
     Confirmar cria o LancamentoPendente."""
     c, engine, enviados = client
-    monkeypatch.setattr(telegram, "_ler_documento_pendente", lambda pend: {
+    monkeypatch.setattr(telegram, "_ler_documento_pendente", lambda pend, **_: {
         "tipo_documento": "boleto", "fornecedor_cliente": "Cooperativa Agro", "numero_documento": "00001-2",
         "data_emissao": "2026-07-10", "data_pagamento": None, "valor_total": 850.0, "conta_bancaria": None,
         "itens": [], "observacao": None, "parcela_num": None, "parcela_total": None,
@@ -411,7 +411,7 @@ def test_boleto_parcelado_nao_pergunta_avulso(client, monkeypatch):
     """#398 — quando o documento já indica a parcela (ex.: "2/6"), não faz
     sentido perguntar se é avulso — já sabemos que faz parte de um plano."""
     c, engine, enviados = client
-    monkeypatch.setattr(telegram, "_ler_documento_pendente", lambda pend: {
+    monkeypatch.setattr(telegram, "_ler_documento_pendente", lambda pend, **_: {
         "tipo_documento": "boleto", "fornecedor_cliente": "Cooperativa Agro", "numero_documento": "00001-2",
         "data_emissao": "2026-07-10", "data_pagamento": None, "valor_total": 850.0, "conta_bancaria": None,
         "itens": [], "observacao": None, "parcela_num": 2, "parcela_total": 6,

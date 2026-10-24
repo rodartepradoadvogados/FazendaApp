@@ -33,11 +33,16 @@ from fazenda.rules import ferramentas_pagina as _pagina
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.conta_baixa import conta_em_aberto
 from fazenda.rules.indicadores import calcular_indicadores
+from fazenda.rules.nome_fazenda import nome_da_fazenda
 
 MODEL = assistente_llm.MODELO_PADRAO[assistente_llm.PROVEDOR_ANTHROPIC]  # compatibilidade
 MAX_RODADAS_TOOL_USE = 4
 
-SYSTEM_PROMPT = """Você é o assistente virtual do sistema de gestão da Fazenda Estreito Ponte de Pedra \
+# Prompt base com o nome da fazenda ATUAL (cadastro `Fazenda.nome`, a do token)
+# — ver `prompt_base`. BUG CORRIGIDO: o texto trazia o nome fixo de uma fazenda
+# cliente, e o Assistente de QUALQUER fazenda se apresentava como sendo dela.
+# Ao provedor de IA vai só o nome da fazenda a mais — nenhum outro dado novo.
+_PROMPT_MODELO = """Você é o assistente virtual do sistema de gestão {da_fazenda} \
 (fazenda leiteira Girolando/Holandês). Responda em português, de forma direta e objetiva, sempre baseado \
 nos dados reais que você consulta pelas ferramentas disponíveis — nunca invente números.
 
@@ -54,6 +59,18 @@ mostrando esse aviso?", "o que tem nessa lista?") — para dados do rebanho, fin
 ferramentas de consulta, que são mais baratas e exatas. Se for navegar, use apenas caminho interno que exista \
 no app; depois de navegar, use `pagina_ler` para ver a tela em vez de supor o conteúdo. Nunca peça para o \
 usuário digitar senha, e nunca preencha campo de senha ou dado de pagamento."""
+
+
+def prompt_base(nome_fazenda: str | None) -> str:
+    """Prompt base do Assistente para a fazenda indicada — sem nome (prompt
+    montado sem contexto de fazenda), fica o genérico "da fazenda". O nome é
+    achatado numa linha só: é texto de cadastro, não instrução."""
+    nome = " ".join((nome_fazenda or "").split())
+    return _PROMPT_MODELO.format(da_fazenda=f'da fazenda "{nome}"' if nome else "da fazenda")
+
+
+# Prompt genérico (sem fazenda) — mantido para quem só precisa do texto base.
+SYSTEM_PROMPT = prompt_base(None)
 
 # Cada ferramenta é gated pelo módulo indicado (mesma lista de fazenda.auth.MODULOS).
 _TOOLS_DISPONIVEIS = [
@@ -174,19 +191,20 @@ def _ferramentas_do_usuario(usuario: Usuario) -> list[dict]:
 
 
 def _system_prompt(session: Session, fazenda_id: int | None) -> str:
-    """SYSTEM_PROMPT fixo + o que um admin ensinou (AssistenteEnsinamento
+    """Prompt base com o nome da fazenda (`prompt_base`) + o que um admin ensinou (AssistenteEnsinamento
     ativos da fazenda — cadastro restrito a admin, ver
     fazenda.api.routers.assistente._exigir_admin) — sem nenhum ensinamento
     cadastrado, o prompt fica idêntico ao de sempre (não mexe no texto
     original, só acrescenta uma seção)."""
+    base = prompt_base(nome_da_fazenda(session, fazenda_id))
     query = select(AssistenteEnsinamento).where(AssistenteEnsinamento.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.where(AssistenteEnsinamento.fazenda_id == fazenda_id)
     ensinamentos = session.exec(query).all()
     if not ensinamentos:
-        return SYSTEM_PROMPT
+        return base
     linhas = "\n".join(f"- {e.titulo}: {e.texto}" for e in ensinamentos)
-    return f"{SYSTEM_PROMPT}\n\n## O que foi ensinado sobre esta fazenda e este sistema\n{linhas}"
+    return f"{base}\n\n## O que foi ensinado sobre esta fazenda e este sistema\n{linhas}"
 
 
 def _tool_consultar_indicadores(session: Session, fazenda_id: int | None = None) -> dict:
