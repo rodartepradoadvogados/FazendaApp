@@ -41,7 +41,13 @@ jobs:
           distribution: "temurin"
           java-version: "21"
 
+      # packages vazio: o passo padrão tenta instalar o pacote "tools", que
+      # não existe mais no repositório do SDK ("Failed to find package
+      # 'tools'", sdkmanager exit 1) — só queremos o SDK + licenças aceitas;
+      # o Gradle baixa platform/build-tools que precisar.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: ""
 
       - run: npm ci
 
@@ -50,6 +56,33 @@ jobs:
       - name: Build APK de debug
         working-directory: frontend/android
         run: ./gradlew assembleDebug
+
+      - name: Conferir o APK
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          echo "build-tools: $BT"
+
+          echo "::group::aapt2 dump badging"
+          "$BT/aapt2" dump badging "$APK" | grep -E "^package:|application-label:" | tee badging.txt
+          echo "::endgroup::"
+
+          echo "::group::apksigner verify"
+          "$BT/apksigner" verify --print-certs "$APK" | tee apksigner.txt
+          echo "::endgroup::"
+
+          APK_SHA=$(grep -m1 "certificate SHA-256 digest" apksigner.txt | sed 's/.*: *//' | tr -d ':' | tr 'A-F' 'a-f')
+          KS_SHA=$(keytool -list -v -keystore android/app/debug.keystore -alias androiddebugkey -storepass android \
+            | grep -m1 "SHA256:" | sed 's/.*SHA256: *//' | tr -d ':' | tr 'A-F' 'a-f')
+          echo "SHA-256 do certificado do APK:      $APK_SHA"
+          echo "SHA-256 do certificado do keystore: $KS_SHA"
+          if [ -z "$APK_SHA" ] || [ "$APK_SHA" != "$KS_SHA" ]; then
+            echo "::error::Certificado do APK difere do debug.keystore — o APK NÃO atualizaria por cima do instalado."
+            exit 1
+          fi
+          grep -q "name='br.com.cowdata.fazenda'" badging.txt || { echo "::error::package inesperado"; exit 1; }
+          echo "OK: certificado igual ao do debug.keystore."
 
       - uses: actions/upload-artifact@v4
         with:

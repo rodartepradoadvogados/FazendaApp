@@ -1,16 +1,18 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
-// PROVISÓRIO: URL do site apontada aqui fica soldada dentro do .apk gerado —
-// trocar depois exige novo .apk em todos os celulares E apaga o storage
-// da origem antiga: localStorage (token, cache) E IndexedDB (fila de
-// lançamentos e FOTOS pendentes, ver lib/outboxDb.ts) — só trocar de
-// domínio com todos os celulares sincronizados (fila vazia). Antes de
-// gerar o primeiro .apk para os funcionários, confirmar com o usuário se
-// "fazenda-app-jfye.vercel.app" é definitivo ou se vai existir um domínio
-// próprio — ver docs/APP_INSTALACAO.md e README do app Capacitor.
+// ENDEREÇO: o site agora tem domínio próprio (milk.cowdata.com.br; a API fica
+// em api.milk.cowdata.com.br). A URL de server.url fica soldada dentro do
+// .apk gerado — trocar de novo exige novo .apk em todos os celulares E apaga
+// o storage da origem antiga: localStorage (token, cache) E IndexedDB (fila
+// de lançamentos e FOTOS pendentes, ver lib/outboxDb.ts). A troca do endereço
+// do Vercel para o domínio próprio já fez o celular esquecer o login e a fila
+// local (avisado aos usuários, ver docs/APP_INSTALACAO.md). O endereço antigo
+// (fazenda-app-jfye.vercel.app) continua válido e segue em allowNavigation
+// por segurança. Não mude appId, nem a chave debug.keystore: o app novo
+// precisa atualizar POR CIMA do instalado.
 const config: CapacitorConfig = {
   appId: "br.com.cowdata.fazenda",
-  appName: "CowData Fazenda",
+  appName: "CowData Milk",
 
   // Copiada para android/app/src/main/assets/public/ pelo `cap sync`. NÃO é
   // o app — o app vem de server.url, abaixo. Aqui mora só a casca offline
@@ -19,11 +21,12 @@ const config: CapacitorConfig = {
   webDir: "capacitor-www",
 
   server: {
-    url: "https://fazenda-app-jfye.vercel.app/app",
+    url: "https://milk.cowdata.com.br/app",
 
     // Hosts que a WebView pode navegar internamente — qualquer outro vira
-    // link externo (abre o Chrome). Ajustar se/quando o domínio mudar.
-    allowNavigation: ["fazenda-app-jfye.vercel.app"],
+    // link externo (abre o Chrome). O endereço antigo do Vercel é mantido
+    // por segurança.
+    allowNavigation: ["milk.cowdata.com.br", "fazenda-app-jfye.vercel.app"],
 
     // Página local mostrada quando o carregamento de server.url falha.
     errorPath: "offline.html",

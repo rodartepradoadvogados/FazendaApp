@@ -286,6 +286,14 @@ Todas as regras da Seção 5 do `CONTEXTO_PROJETO_FAZENDA.md` estão em `backend
 3. Add service: GitHub repo → `backend/` → `python -m uvicorn main:app --host 0.0.0.0 --port $PORT`
 4. Add service: GitHub repo → `frontend/` → Next.js auto-detected
 
+**Endereços (CowData Milk):** site `https://milk.cowdata.com.br` (app de campo em `/app`), API
+`https://api.milk.cowdata.com.br`. O app Android (`frontend/android`, Capacitor, appId
+`br.com.cowdata.fazenda`) só abre `https://milk.cowdata.com.br/app` (`server.url` em
+`frontend/capacitor.config.ts`); o `.apk` de debug sai do workflow `Build Android APK`
+(assinado com `android/app/debug.keystore`, `versionCode` = nº da execução). Instalação e
+atualização dos celulares: `docs/APP_INSTALACAO.md`. O endereço antigo
+`fazenda-app-jfye.vercel.app` continua válido.
+
 **Vercel** (alternativa para o frontend):
 - Deploy `frontend/` no Vercel
 - Setar `NEXT_PUBLIC_API_URL` apontando para o Railway

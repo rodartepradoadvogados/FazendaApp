@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Cor vinho do CowData (mesmo do splash/StatusBar #3A0F1A) -->
-    <color name="cowdata_vinho">#3A0F1A</color>
+    <!-- Marinho do CowData (mesmo do splash/StatusBar do capacitor.config.ts, #0A1F36) -->
+    <color name="cowdata_marinho">#0A1F36</color>
 </resources>

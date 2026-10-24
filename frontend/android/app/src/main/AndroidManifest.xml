@@ -53,7 +53,7 @@
             android:resource="@drawable/ic_notification_cowdata" />
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_color"
-            android:resource="@color/cowdata_vinho" />
+            android:resource="@color/cowdata_marinho" />
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="cowdata_notificacoes" />
