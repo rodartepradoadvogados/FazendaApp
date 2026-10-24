@@ -178,7 +178,7 @@
   --sidebar-active-border: var(--dourado);
   --sidebar-logo-bg: linear-gradient(135deg, var(--vinho), var(--vinho-dark));
   --sidebar-logo-fg: var(--dourado-light);
-  --sidebar-logo-sub: rgba(240, 232, 236, 0.85);
+  --sidebar-logo-sub: var(--text-muted); /* sidebar branca no claro: o rgba claro herdado do vinho dava contraste 1,2:1 */
   /* Contorno do grupo de sub-abas aberto — vinho no claro (fundo branco). */
   --sidebar-subnav-outline: var(--vinho);
   --sidebar-subnav-outline-bg: rgba(94, 26, 46, 0.06);

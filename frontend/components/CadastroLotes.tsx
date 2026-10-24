@@ -223,7 +223,7 @@ export default function CadastroLotes() {
   return (
     <div className="p-6 animate-in">
       <div className="mb-4">
-        <h1 className="text-2xl font-bold flex items-center gap-2"><Layers size={22} style={{ color: "var(--dourado)" }} /> Cadastro de lotes</h1>
+        <h2 className="text-2xl font-bold flex items-center gap-2"><Layers size={22} style={{ color: "var(--dourado)" }} /> Cadastro de lotes</h2>
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
           Crie e edite os lotes de manejo. Os critérios cumulativos definidos aqui (E lógico entre os marcados) vão
           orientar as futuras sugestões automáticas de movimentação entre lotes.

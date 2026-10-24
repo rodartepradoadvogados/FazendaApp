@@ -12,17 +12,9 @@ export type ModoEntregaExport = "baixar" | "compartilhar";
 
 async function entregarArquivo(blob: Blob, nomeArquivo: string, modo: ModoEntregaExport): Promise<void> {
   if (modo === "compartilhar") { await baixarArquivo(blob, nomeArquivo); return; }
-  const gravado = await salvarArquivo(blob, nomeArquivo);
-  // `salvarArquivo` só devolve `{uri}` dentro do app nativo (Capacitor) — no
-  // navegador/PWA o próprio SO já mostra a notificação de download, então
-  // não repete aviso nenhum aqui. Dentro do app, gravar em Directory.Documents
-  // não abre nada nem mostra nada sozinho (ver comentário de `salvarArquivo`
-  // em lib/nativo.ts) — sem este aviso, "Baixar" clicava, gerava o arquivo de
-  // verdade, e não dava sinal nenhum de que funcionou: o usuário via a tela
-  // voltar ao normal e concluía que "não exportou nada" (bug relatado com a
-  // folha de campo do protocolo, mas o mecanismo é o mesmo em toda
-  // exportação "Baixar" do app).
-  if (gravado) alert(`Arquivo salvo: ${nomeArquivo}`);
+  // Dentro do app, salvarArquivo já abre o PDF no visualizador (ou, sem
+  // visualizador, a folha de compartilhar) — não precisa de aviso nenhum.
+  await salvarArquivo(blob, nomeArquivo);
 }
 
 // Cabeçalho de TODO arquivo exportado: o nome da fazenda ATUAL (a escolhida no
