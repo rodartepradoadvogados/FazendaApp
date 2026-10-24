@@ -1,0 +1,14 @@
+{
+ "ep": 1.36, "alimentacao": 2.50, "menuF2": 6.66, "alimF2": 7.28, "toque": 8.20, "lancar": 8.74, "dieta": 9.44,
+ "lote": 10.82, "animais": 12.92, "del": 13.84, "mediaLeite": 14.92, "ultimaDieta": 16.10,
+ "dataInicio": 18.16, "provavelFim": 20.50,
+ "tratos": 22.86, "percentual": 24.06, "entre": 25.68, "sobra": 26.84,
+ "produto": 29.40, "alimento": 30.40, "totalDia": 31.46, "unidade": 32.98,
+ "cadaTrato": 36.20, "totalDoDia": 37.06, "cabeca": 38.68,
+ "vagao": 40.42, "tratoATrato": 41.52,
+ "salvar": 43.90, "dietaAtiva": 45.90, "pergunta": 47.24, "encerra": 47.88, "fimF9": 50.14,
+ "plano": 52.26, "historico": 54.52, "consultar": 55.38,
+ "necessidade": 57.84, "cadaAlimento": 60.16, "mes": 61.94, "vezesTrinta": 63.38,
+ "ensacado": 65.16, "sacas": 66.82, "silagem": 68.12, "granel": 69.30,
+ "pronto": 70.38, "dietaLancada": 71.00, "fimModulo": 73.64, "obrigado": 75.48, "fimVoz": 76.80
+}
