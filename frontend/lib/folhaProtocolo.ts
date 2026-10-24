@@ -15,7 +15,7 @@
 // A grade se ADAPTA ao formato do protocolo: cronograma longo com lote pequeno
 // (indução: 12-19 dias, 1-2 vacas) sai transposto, uma linha por dia. Ver
 // `secoes()` no fim do arquivo.
-import { exportarFichaPDF, exportarMultiExcel, type ColunaExport, type SecaoFicha } from "@/lib/export";
+import { exportarFichaPDF, exportarMultiExcel, type ColunaExport, type ModoEntregaExport, type SecaoFicha } from "@/lib/export";
 import type { DetalheCentralProtocolo } from "@/lib/api";
 
 /** `( )` em vez de um quadradinho unicode: a fonte padrão do jsPDF (Helvetica)
@@ -154,8 +154,8 @@ function nomeArquivo(det: DetalheCentralProtocolo): string {
   return `folha_campo_${base}`.slice(0, 80);
 }
 
-export async function exportarFolhaCampoPDF(det: DetalheCentralProtocolo) {
-  return exportarFichaPDF(det.nome, subtitulo(det), secoes(det), nomeArquivo(det));
+export async function exportarFolhaCampoPDF(det: DetalheCentralProtocolo, modo: ModoEntregaExport = "baixar") {
+  return exportarFichaPDF(det.nome, subtitulo(det), secoes(det), nomeArquivo(det), modo);
 }
 
 export async function exportarFolhaCampoExcel(det: DetalheCentralProtocolo) {

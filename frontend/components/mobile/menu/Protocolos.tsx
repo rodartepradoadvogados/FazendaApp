@@ -14,7 +14,7 @@
 // o que aplicar no dia, pergunta de qual frasco/lote saiu e mostra os avisos
 // de estoque da resposta. O `medicamentos` do POST sai de lib/baixaProtocolo.ts,
 // o mesmo montador do site — as duas telas não podem divergir no formato.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MobVoltar, MobCard, MobCampo, MobAviso } from "@/components/mobile/ui";
 import {
   fetchCentralProtocolosAcompanhamento, fetchCentralProtocolosHistorico, formatDate,
@@ -27,7 +27,9 @@ import {
 } from "@/lib/baixaProtocolo";
 import { enviarOuEnfileirar } from "@/lib/offline";
 import { exportarFolhaCampoPDF } from "@/lib/folhaProtocolo";
-import { Printer } from "lucide-react";
+import { Printer, Share2 } from "lucide-react";
+import type { ModoEntregaExport } from "@/lib/export";
+import { ehApp } from "@/lib/nativo";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
 
 const LABEL_TIPO: Record<string, string> = { produtivo: "Produtivo", reprodutivo: "Reprodutivo", sanitario: "Sanitário" };
@@ -148,6 +150,9 @@ function DetalheProtocoloApp({ origem, origemId, onVoltar }: {
   const [dataBaixa, setDataBaixa] = useState("");
   const [animaisFora, setAnimaisFora] = useState<string[]>([]);
   const [exportando, setExportando] = useState(false);
+  // "Compartilhar" (folha do Android) só existe dentro do app.
+  const [noApp, setNoApp] = useState(false);
+  useEffect(() => { ehApp().then(setNoApp); }, []);
   // Frasco e lote escolhidos para cada medicamento do dia em baixa (índice do
   // medicamento → índice da opção em `h.opcoes` / id do lote). Zera ao abrir
   // outro dia e ao trocar a lista de opções (os índices mudam de sentido).
@@ -234,11 +239,11 @@ function DetalheProtocoloApp({ origem, origemId, onVoltar }: {
   // Sem isto, um erro na geração do PDF (ex.: dado incompleto vindo do cache
   // offline) virava rejeição de promise não tratada: o clique não fazia
   // NADA visível, sem alerta nenhum — pior ainda que um erro explícito.
-  async function exportarFolha() {
+  async function exportarFolha(modo: ModoEntregaExport = "baixar") {
     if (!d) return;
     setExportando(true); setErro(null);
     try {
-      await exportarFolhaCampoPDF(d);
+      await exportarFolhaCampoPDF(d, modo);
     } catch (e: any) {
       setErro(e?.message || "Não foi possível gerar a folha de campo.");
     } finally {
@@ -281,9 +286,16 @@ function DetalheProtocoloApp({ origem, origemId, onVoltar }: {
           para imprimir e o funcionário ir anotando à caneta, no curral. */}
       {diaBaixa == null && (
         <button type="button" className="mob-btn mob-btn-sec" style={{ marginBottom: "0.9rem" }}
-                onClick={exportarFolha} disabled={exportando}>
+                onClick={() => exportarFolha()} disabled={exportando}>
           <Printer size={16} style={{ marginRight: "0.4rem", verticalAlign: "-0.2em" }} />
           {exportando ? "Gerando…" : "Folha de campo (PDF)"}
+        </button>
+      )}
+      {diaBaixa == null && noApp && (
+        <button type="button" className="mob-btn mob-btn-sec" style={{ marginBottom: "0.9rem" }}
+                onClick={() => exportarFolha("compartilhar")} disabled={exportando}>
+          <Share2 size={16} style={{ marginRight: "0.4rem", verticalAlign: "-0.2em" }} />
+          Compartilhar folha
         </button>
       )}
 
