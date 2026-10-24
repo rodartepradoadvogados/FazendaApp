@@ -20,6 +20,11 @@ from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.lote_criterios import animal_atende_criterios
 
 router = APIRouter(prefix="/lotes", tags=["lotes"])
+# Só a LISTAGEM (GET /lotes/): é o seletor de lotes de várias telas de campo (Movimentar animais, Lançar produção,
+# alimentação, dieta, sanidade...). Cadastro/edição/preview ficam em `router` e exigem "parametros" (Configurações).
+# Antes a listagem também exigia "parametros": o funcionário com "rebanho" abria Movimentar animais, mas a lista de lotes
+# voltava 403 e a tela ficava sem os botões dos lotes (caso do Leomir, 24/10/2026). Ver main.py.
+router_leitura = APIRouter(prefix="/lotes", tags=["lotes"])
 
 
 def _rotulo(codigo: str, nome: str) -> str:
@@ -181,7 +186,7 @@ def _aplicar_campos(lote: Lote, dados: LoteIn) -> None:
     lote.modo_baixa_estoque = dados.modo_baixa_estoque
 
 
-@router.get("/")
+@router_leitura.get("/")
 def listar_lotes(
     incluir_inativos: bool = Query(False, description="True mostra também lotes inativos (só o cadastro precisa disso; seletores de destino não)."),
     session: Session = Depends(get_session),
