@@ -60,6 +60,13 @@ Texto curto para mandar no WhatsApp:
 > Se o Android falar "app não instalado", me avisem antes de apagar o antigo.
 > Quem usa o iPhone: abra https://milk.cowdata.com.br/app no Safari e adicione de novo à Tela de Início.
 
+### Exportar e compartilhar PDF no app
+
+Nas telas do app que exportam (Rebanho, Menu › Controles, Agenda, Protocolos etc.) há dois botões: **PDF** (ou "Exportar PDF") e **Compartilhar**. Não há Excel no app.
+- **PDF** gera o arquivo e **abre no leitor de PDF do celular**, de onde dá para salvar ou enviar. Uma cópia também fica em Documentos.
+- **Compartilhar** abre a folha do Android (WhatsApp, e-mail, Drive).
+- Precisa do APK **v22 ou mais novo** (plugin nativo `AbrirArquivo`). No v21 o "PDF" cai na folha de compartilhar, em vez de abrir o leitor.
+
 ### Android (alternativa: Chrome, sem instalar .apk)
 
 1. Mande o link acima por WhatsApp para o funcionário.

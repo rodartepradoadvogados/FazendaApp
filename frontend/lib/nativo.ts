@@ -236,23 +236,60 @@ export async function baixarArquivo(blob: Blob, nomeArquivo: string): Promise<vo
   baixarViaAncora(blob, nomeArquivo);
 }
 
-/** Entrega ao usuário um arquivo gerado no cliente SEM abrir a folha de
- *  compartilhar — usado pelo botão "Baixar" (ver baixarArquivo acima para o
- *  "Compartilhar", que abre a folha nativa). Existe porque antes desta
- *  função só havia um caminho de entrega dentro do app, e ele SEMPRE
- *  compartilhava — clicar em "Exportar" jogava direto na folha de
- *  compartilhar do Android, sem opção de só baixar (pedido explícito do
- *  usuário para separar os dois). No navegador/PWA é idêntico a
- *  baixarArquivo (mesmo <a download>; não existe "compartilhar" por lá).
- *  Dentro do app nativo, grava em Directory.Documents (pasta persistente do
- *  app, não o cache usado por baixarArquivo/Share) e devolve o caminho
- *  gravado, para quem chamou avisar o usuário onde o arquivo ficou. */
-export async function salvarArquivo(blob: Blob, nomeArquivo: string): Promise<{ uri: string } | undefined> {
+/** Tipo MIME pela extensão do arquivo — o visualizador do Android escolhe o
+ *  app (leitor de PDF, planilha) por ele. */
+export function mimeDoArquivo(nomeArquivo: string): string {
+  const ext = nomeArquivo.toLowerCase().split(".").pop() ?? "";
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "xlsx") return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (ext === "csv") return "text/csv";
+  return "application/octet-stream";
+}
+
+type AbrirArquivoPlugin = { abrir(opcoes: { uri: string; mime: string }): Promise<void> };
+let abrirArquivoPlugin: AbrirArquivoPlugin | null = null;
+
+/** Abre um arquivo local (URI `file://` do cache do app) no visualizador do
+ *  Android (leitor de PDF etc.), de onde o usuário vê, salva ou envia. Usa o
+ *  plugin nativo `AbrirArquivo` (android/.../AbrirArquivoPlugin.java), que só
+ *  existe a partir do APK v22: num APK mais antigo a chamada falha e esta
+ *  função devolve `false` — quem chamou faz o plano B (folha de compartilhar). */
+export async function abrirArquivoNoApp(uri: string, nomeArquivo: string): Promise<boolean> {
+  try {
+    if (!abrirArquivoPlugin) {
+      const { registerPlugin } = await import("@capacitor/core");
+      abrirArquivoPlugin = registerPlugin<AbrirArquivoPlugin>("AbrirArquivo");
+    }
+    await abrirArquivoPlugin.abrir({ uri, mime: mimeDoArquivo(nomeArquivo) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Entrega ao usuário um arquivo gerado no cliente (Blob) pelo botão
+ *  "Exportar PDF" — distinto de "Compartilhar" (baixarArquivo acima).
+ *  No navegador/PWA é o <a download> de sempre (o SO mostra o download).
+ *  Dentro do app nativo: BUG CORRIGIDO (24/10/2026) — antes só gravava em
+ *  Directory.Documents e avisava "Arquivo salvo", mas o arquivo ficava numa
+ *  pasta que o usuário não vê: parecia que "nada acontecia". Agora o arquivo
+ *  é gravado no cache do app e ABERTO no visualizador (AbrirArquivo); uma
+ *  cópia vai para Documentos (melhor esforço). Se o aparelho não abrir (APK
+ *  antigo sem o plugin, ou sem leitor de PDF instalado), cai na folha de
+ *  compartilhar, que sempre funciona. Devolve o URI gravado e se abriu. */
+export async function salvarArquivo(blob: Blob, nomeArquivo: string): Promise<{ uri: string; aberto: boolean } | undefined> {
   if (await ehApp()) {
     const { Filesystem, Directory } = await import("@capacitor/filesystem");
     const base64 = await blobParaBase64(blob);
-    const gravado = await Filesystem.writeFile({ path: nomeArquivo, data: base64, directory: Directory.Documents });
-    return { uri: gravado.uri };
+    const noCache = await Filesystem.writeFile({ path: nomeArquivo, data: base64, directory: Directory.Cache });
+    // Cópia em Documentos: melhor esforço, nunca derruba a exportação.
+    await Filesystem.writeFile({ path: nomeArquivo, data: base64, directory: Directory.Documents }).catch(() => undefined);
+    const aberto = await abrirArquivoNoApp(noCache.uri, nomeArquivo);
+    if (!aberto) {
+      const { Share } = await import("@capacitor/share");
+      await Share.share({ url: noCache.uri, title: nomeArquivo });
+    }
+    return { uri: noCache.uri, aberto };
   }
   baixarViaAncora(blob, nomeArquivo);
   return undefined;

@@ -5,11 +5,13 @@
 // um ciclo — mas a preocupação muda: mostra a data da próxima visita
 // (D11 + intervalo de visita reprodutiva) e as candidatas herd-wide ao
 // próximo repasse (mesmo critério da Agenda) — ver tarefa #369.
-import { useState } from "react";
-import { AlertTriangle, Check, Printer } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertTriangle, Check, Printer, Share2 } from "lucide-react";
 import { MobVoltar, MobCard, MobAviso } from "@/components/mobile/ui";
 import { fetchProtocolosIatfAtivos, fetchDetalheProtocolo, formatDate } from "@/lib/api";
 import { exportarFolhaCampoPDF } from "@/lib/folhaProtocolo";
+import type { ModoEntregaExport } from "@/lib/export";
+import { ehApp } from "@/lib/nativo";
 import { useCarregar, AvisoCopia, Carregando, Vazio, NumAnimal } from "@/components/mobile/menu/comum";
 
 type AnimalStatus = { numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null; d0_confirmado?: boolean };
@@ -23,15 +25,18 @@ export default function ProtocolosIatf({ onVoltar }: { onVoltar: () => void }) {
   const { dados, doCache, carregando } = useCarregar<Protocolo[]>("menu_iatf_ativos", fetchProtocolosIatfAtivos);
   const [exportandoId, setExportandoId] = useState<number | null>(null);
   const [erroExport, setErroExport] = useState<string | null>(null);
+  // "Compartilhar" (folha do Android) só existe dentro do app.
+  const [noApp, setNoApp] = useState(false);
+  useEffect(() => { ehApp().then(setNoApp); }, []);
 
   // A lista aqui só tem o status resumido (AnimalStatus); a folha de campo
   // precisa da grade completa animal × dia, então busca o detalhe (mesmo
   // endpoint da Central de Protocolos, origem "iatf") só na hora de exportar.
-  async function exportarFolha(lancamentoId: number) {
+  async function exportarFolha(lancamentoId: number, modo: ModoEntregaExport = "baixar") {
     setExportandoId(lancamentoId); setErroExport(null);
     try {
       const det = await fetchDetalheProtocolo("iatf", lancamentoId);
-      await exportarFolhaCampoPDF(det);
+      await exportarFolhaCampoPDF(det, modo);
     } catch (e: any) {
       setErroExport(e?.message || "Não foi possível gerar a folha de campo.");
     } finally {
@@ -64,6 +69,13 @@ export default function ProtocolosIatf({ onVoltar }: { onVoltar: () => void }) {
               <Printer size={16} style={{ marginRight: "0.4rem", verticalAlign: "-0.2em" }} />
               {exportandoId === p.lancamento_id ? "Gerando…" : "Folha de campo (PDF)"}
             </button>
+            {noApp && (
+              <button type="button" className="mob-btn mob-btn-sec" style={{ marginBottom: "0.6rem" }}
+                      onClick={() => exportarFolha(p.lancamento_id, "compartilhar")} disabled={exportandoId === p.lancamento_id}>
+                <Share2 size={16} style={{ marginRight: "0.4rem", verticalAlign: "-0.2em" }} />
+                Compartilhar folha
+              </button>
+            )}
 
             {p.concluido ? (
               <div>

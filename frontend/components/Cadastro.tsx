@@ -95,7 +95,7 @@ export default function Cadastro({
   return (
     <div className="p-6 animate-in">
       <div className="mb-4">
-        <h1 className="text-2xl font-bold flex items-center gap-2"><Layers size={22} style={{ color: "var(--dourado)" }} /> Cadastro</h1>
+        <h2 className="text-2xl font-bold flex items-center gap-2"><Layers size={22} style={{ color: "var(--dourado)" }} /> Cadastro</h2>
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
           Dados mestres do site: lotes, animais, fornecedores/fabricantes/clientes e metadados de itens de estoque.
         </p>
