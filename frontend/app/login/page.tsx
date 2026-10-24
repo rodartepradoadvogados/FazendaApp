@@ -236,7 +236,7 @@ function Hero() {
       <div className="card" style={{ position: "relative", zIndex: 1, width: "100%", maxWidth: "352px", boxShadow: "0 24px 60px rgba(0,0,0,0.45)" }}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.5rem", marginBottom: "1.3rem" }}>
           <CowDataMark size={46} />
-          <CowDataWordmark size="1.3rem" />
+          <CowDataWordmark size="1.3rem" milkColor="#9DB4CC" />
         </div>
         <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.85rem", margin: "0 0 1.1rem", fontWeight: 600 }}>
           Entre com seu usuário e senha

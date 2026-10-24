@@ -185,7 +185,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div>
             <p style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
               <CowDataMark size={22} />
-              <CowDataWordmark size="1rem" cowColor="var(--mob-header-fg)" dataColor="var(--mob-dourado-2)" />
+              <CowDataWordmark size="1rem" cowColor="var(--mob-header-fg)" dataColor="var(--mob-dourado-2)" milkColor="#9DB4CC" />
               {/* Bolinha de conexão: verde luminoso quando o SERVIDOR responde de
                   verdade (ping real, não só a rádio do aparelho — ver
                   useConectividadeReal em lib/offline.ts), vermelha quando não. */}

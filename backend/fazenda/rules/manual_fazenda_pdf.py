@@ -33,13 +33,20 @@ A correção tem duas camadas independentes:
 """
 from __future__ import annotations
 
+import base64
 import html
 from datetime import date
 from io import BytesIO
+from pathlib import Path
 
 from xhtml2pdf import pisa
 
 NOME_FAZENDA = "Fazenda Estreito Ponte de Pedra"
+
+# Logomarca CowData Milk (PNG fixo do repositório, 700 x 157). Entra como
+# data URI único; `_bloquear_recursos_externos` deixa passar SÓ ele.
+_LOGO_PNG = Path(__file__).parent / "assets" / "cowdata-milk-horizontal.png"
+_LOGO_URI = "data:image/png;base64," + base64.b64encode(_LOGO_PNG.read_bytes()).decode("ascii")
 COR_VINHO = "#0E2A47"
 COR_DOURADO = "#8A6D2F"
 COR_MUTED = "#6B7280"
@@ -182,10 +189,15 @@ def _html_manual(manual: dict) -> str:
     <head><meta charset="utf-8" /></head>
     <body style="font-family:Helvetica,Arial,sans-serif;color:#201512;">
       <div style="border-bottom:2px solid {COR_VINHO};padding-bottom:8px;margin-bottom:12px;">
-        <span style="font-size:8pt;letter-spacing:1px;color:{COR_MUTED};">{NOME_FAZENDA.upper()}</span><br/>
-        <span style="font-size:16pt;font-weight:bold;color:{COR_VINHO};">Manual da Fazenda</span><br/>
-        <span style="font-size:8pt;color:{COR_MUTED};">Gerado em {hoje}</span>
-        {resp_linha}
+        <table width="100%"><tr>
+          <td>
+            <span style="font-size:8pt;letter-spacing:1px;color:{COR_MUTED};">{NOME_FAZENDA.upper()}</span><br/>
+            <span style="font-size:16pt;font-weight:bold;color:{COR_VINHO};">Manual da Fazenda</span><br/>
+            <span style="font-size:8pt;color:{COR_MUTED};">Gerado em {hoje}</span>
+            {resp_linha}
+          </td>
+          <td align="right" valign="top" width="150"><img src="{_LOGO_URI}" width="140" /></td>
+        </tr></table>
       </div>
 
       {_titulo_secao("Sua rotina")}
@@ -221,7 +233,12 @@ def _bloquear_recursos_externos(uri, basepath):  # noqa: ARG001 — assinatura e
     URI DIFERENTE de fato desvia a busca; "data:," falha ao decodificar
     (não tem "base64,") e o próprio xhtml2pdf captura esse erro e trata como
     "imagem não encontrada" — sem nenhuma requisição de rede ou leitura de
-    arquivo local ter sido feita."""
+    arquivo local ter sido feita.
+
+    Única exceção: o data URI da logomarca CowData Milk (constante do
+    próprio módulo, nunca texto de usuário)."""
+    if uri == _LOGO_URI:
+        return uri
     return "data:,"
 
 
