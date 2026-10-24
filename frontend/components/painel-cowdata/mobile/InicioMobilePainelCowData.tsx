@@ -41,7 +41,7 @@ export default function InicioMobilePainelCowData() {
         </Link>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <div style={{ width: 30, height: 30, borderRadius: 2, background: COR.dourado, flexShrink: 0 }} />
-          <CowDataWordmark size="1.15rem" cowColor={COR.textoPainel} dataColor={COR.doradoClaro} />
+          <CowDataWordmark size="1.15rem" cowColor={COR.textoPainel} dataColor={COR.doradoClaro} produto={null} />
         </div>
         <p style={{ fontSize: "0.64rem", color: COR.mudo, textTransform: "uppercase", letterSpacing: "0.08em", margin: "0.45rem 0 0" }}>
           Painel da empresa

@@ -37,7 +37,7 @@ export function PublicHeader({ variant = "institucional" }: { variant?: "login" 
       <Link href="/login" style={{ display: "flex", alignItems: "center", gap: "0.55rem", textDecoration: "none" }}>
         <CowDataMark size={30} />
         <div>
-          <CowDataWordmark size="1rem" cowColor="#F5EEF1" />
+          <CowDataWordmark size="1rem" cowColor="#F5EEF1" milkColor="#9DB4CC" />
           <p style={{ margin: 0, fontSize: "0.65rem", color: "rgba(245,238,241,0.6)" }}>Estreito Ponte de Pedra · Jairo Nasser</p>
         </div>
       </Link>
@@ -75,7 +75,7 @@ export function PublicFooter() {
           48+ testes automatizados das regras de negócio · construído com dados reais da Fazenda Estreito Ponte de Pedra
         </p>
         <p style={{ margin: 0, fontSize: "0.75rem", color: "rgba(245,238,241,0.45)" }}>
-          CowData · Estreito Ponte de Pedra · Jairo Nasser
+          CowData Milk · Estreito Ponte de Pedra · Jairo Nasser
         </p>
       </div>
       {/* Só links que já existem de verdade no site — nada de "Contato"/

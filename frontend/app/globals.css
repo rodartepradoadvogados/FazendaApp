@@ -65,6 +65,7 @@
   --ft-ouro: #C9A44C; --ft-ouro-txt: #E4C374; --ft-ouro-tint: rgba(201,164,76,.13); --ft-ouro-glow: rgba(201,164,76,.55);
   --ft-aco: #7FA6CC; --ft-ambar: #E8A33D; --ft-verde: #5CC08D; --ft-verm: #F0705E;
   color-scheme: dark;
+  --marca-milk: #9DB4CC; /* "Milk" da logomarca CowData Milk (azul-claro no escuro) */
   --vinho:       var(--wine);
   --vinho-light: var(--wine-lt);
   --vinho-dark:  color-mix(in srgb, var(--wine) 55%, var(--ink) 45%);
@@ -147,6 +148,7 @@
    Trocado do creme original (Direção B) a pedido explícito do usuário —
    mesma estrutura de tokens, só a base neutra deixou de ter viés amarelo. */
 :root[data-theme="claro"] {
+  --marca-milk: #416180; /* azul-aço no claro */
   --ft-ouro: #8A6D2F; --ft-ouro-txt: #765B1B; --ft-ouro-tint: rgba(138,109,47,.10); --ft-ouro-glow: rgba(138,109,47,.40);
   --ft-aco: #416180; --ft-ambar: #A8560A; --ft-verde: #2E7D52; --ft-verm: #B3301F;
   color-scheme: light;
@@ -203,6 +205,7 @@
 
 /* ── Tema MISTO — conteúdo claro, barra lateral vinho sólido ── */
 :root[data-theme="misto"] {
+  --marca-milk: #416180; /* azul-aço no claro */
   --ft-ouro: #8A6D2F; --ft-ouro-txt: #765B1B; --ft-ouro-tint: rgba(138,109,47,.10); --ft-ouro-glow: rgba(138,109,47,.40);
   --ft-aco: #416180; --ft-ambar: #A8560A; --ft-verde: #2E7D52; --ft-verm: #B3301F;
   color-scheme: light;

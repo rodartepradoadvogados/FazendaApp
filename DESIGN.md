@@ -127,11 +127,22 @@ Reprodutivo `#8B7FF0` · Sanidade `#4E7A5A` · Alimentação `#E0A63C` · Gestã
 ### Named Rules
 **The Gold-Is-Action Rule.** Ouro sólido preenchido só aparece em botões de salvar/confirmar ou em números que pedem destaque. Nunca é a cor padrão de um botão primário ou uma decoração de card.
 
+## Logomarca CowData Milk (aprovada em 24/10/2026)
+
+O produto leiteiro é **CowData *Milk***. A logomarca é o símbolo "A Curva" (tile marinho + curva dourada) + o wordmark em três partes:
+- **"Cow"** em Barlow Bold, marinho `#0A1F36` (creme `#F3E7D3` sobre fundo escuro);
+- **"Data"** em Barlow Bold, ouro `#8A6D2F` (`#C9A44C` sobre fundo escuro);
+- **"Milk"** em **Dancing Script Bold**, cursivo e inclinado 9° (`skewX(-9)`), ~12% maior e ~17% do tamanho **abaixo** da linha do CowData, em azul-aço `#416180` (`#9DB4CC` sobre fundo escuro, token `--marca-milk`). Do "k" sai um **floreio dourado que termina numa gota de leite**.
+- O texto vira **contornos** (SVG): nada depende de a fonte estar instalada. Fonte única da verdade: `frontend/components/brand/milkPath.ts` (gerada da Dancing Script, OFL) + `frontend/components/CowDataWordmark.tsx`.
+- **Onde:** site, app de campo, login, páginas públicas, Milk News, PDFs (`lib/export.ts`, cabeçalho de todo relatório/ficha), Manual da Fazenda (PDF do backend), contrato de licença, página offline do APK. Arquivos: `public/brand/cowdata-horizontal|vertical|wordmark(.svg|-transparente.png|-preenchido.png)`, `cowdata-horizontal-escuro.svg` e `cowdata-horizontal-pdf.png`.
+- **Exceção:** o **Painel CowData** (administração da empresa) e os contratos da Equipe CowData usam só "CowData" (`<CowDataWordmark produto={null} />`) — a empresa não é o produto Milk. O futuro CowData *Beef* terá o próprio sufixo.
+- **Tamanho mínimo:** o "Milk" leva traço extra de 1,8% do em para não sumir abaixo de ~14 px de altura de texto.
+
 ## Typography
 
 **Display/Heading Font:** Archivo (com fallback Inter, sans-serif)
 **Body Font:** Archivo (com fallback Inter, sans-serif) — mesma família do heading; a hierarquia vem do peso, não de uma segunda família.
-**Fontes de uso único:** Dancing Script (só o "milk" cursivo da marca d'água do login); Sora 700/800 (tipografia de manual de marca, hoje só no Milk News, disponível para expansão futura).
+**Fontes de uso único:** Dancing Script (o "milk" cursivo da marca d'água do login e o "Milk" da logomarca CowData Milk); Sora 700/800 (tipografia de manual de marca, hoje só no Milk News, disponível para expansão futura).
 **App de campo:** Inter para tudo — deliberadamente diferente do site, sem herdar Archivo.
 
 **Character:** Archivo em peso 700-800 nos títulos/rótulos/números dá o tom "relatório impresso" (maiúsculo, letter-spacing largo nos rótulos); o mesmo Archivo em peso 400 no corpo mantém legibilidade em tabelas densas sem competir com os rótulos — uma família única, hierarquia só por peso/tamanho/tracking.

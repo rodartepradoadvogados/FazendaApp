@@ -199,7 +199,7 @@ export function montarExportacao(e: EntradaExportacao): SaidaExportacao {
           { rotulo: "Neste arquivo", valor: `${listas} ${listas === 1 ? "lista" : "listas"}`, detalhe: `${animais} ${animais === 1 ? "animal" : "animais"}` },
         ],
         legenda,
-        rodape: `CowData · Agenda Reprodutiva · gerado em ${e.geradoEm}`,
+        rodape: `CowData Milk · Agenda Reprodutiva · gerado em ${e.geradoEm}`,
       },
     },
     excel: { titulo: "Agenda Reprodutiva", secoes: secoesExcel, opcoes: { subtitulo: `Filtro: ${filtro} · Referência ${fmtData(e.dataReferencia)}`, congelarCabecalho: true, autofiltro: true, legenda } },

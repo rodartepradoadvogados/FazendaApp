@@ -109,12 +109,12 @@ async function comAlertaDeErro<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-// Marca CowData rasterizada (public/brand/cowdata-mark.svg), carregada uma
+// Logomarca CowData Milk rasterizada (public/brand/cowdata-horizontal-pdf.png), carregada uma
 // única vez por sessão e reutilizada no cabeçalho de todo PDF exportado.
 let logoDataUrlPromise: Promise<string | null> | null = null;
 async function carregarLogo(): Promise<string | null> {
   if (!logoDataUrlPromise) {
-    logoDataUrlPromise = fetch("/brand/cowdata-mark-tile.png")
+    logoDataUrlPromise = fetch("/brand/cowdata-horizontal-pdf.png")
       .then((r) => r.blob())
       .then(
         (blob) =>
@@ -131,7 +131,7 @@ async function carregarLogo(): Promise<string | null> {
 }
 
 /** Cabeçalho padrão de PDF: fazenda (eyebrow) + título + subtítulo à
- * esquerda; marca CowData + autor/data à direita; linha de base sutil. */
+ * esquerda; logomarca CowData Milk + autor/data à direita; linha de base sutil. */
 function desenharCabecalhoPDF(
   doc: import("jspdf").jsPDF,
   opts: { titulo: string; subtitulo?: string; usuario?: string; dataStr: string; logo: string | null; emissor?: string; fazenda?: string },
@@ -168,8 +168,9 @@ function desenharCabecalhoPDF(
 
   const right = pageWidth - 14;
   if (opts.logo) {
-    const tile = 8;
-    doc.addImage(opts.logo, "PNG", right - tile, 6, tile, tile);
+    // Proporção do PNG da logomarca horizontal (900 x 202 px).
+    const larg = 36;
+    doc.addImage(opts.logo, "PNG", right - larg, 4.6, larg, larg * 202 / 900);
   }
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7);

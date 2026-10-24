@@ -193,7 +193,7 @@ export function InsightsLayout({ children }: { children: React.ReactNode }) {
           <div style={{ display: "flex", alignItems: "center", gap: "0.7rem" }}>
             <CowDataMark size={34} />
             <div>
-              <CowDataWordmark size="1rem" cowColor="#F5EEF1" dataColor="#C9A44C" />
+              <CowDataWordmark size="1rem" cowColor="#F5EEF1" dataColor="#C9A44C" milkColor="#9DB4CC" />
               <p style={{ margin: 0, fontSize: "0.68rem", color: "rgba(245,238,241,0.65)" }}>
                 {titulo} · {fazendaNome}
               </p>

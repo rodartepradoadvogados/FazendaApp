@@ -65,7 +65,7 @@ export function DietasLayout({ children }: { children: React.ReactNode }) {
           <div style={{ display: "flex", alignItems: "center", gap: "0.7rem" }}>
             <CowDataMark size={34} />
             <div>
-              <CowDataWordmark size="1rem" cowColor="var(--cream)" dataColor={PETROLEO} />
+              <CowDataWordmark size="1rem" cowColor="var(--cream)" dataColor={PETROLEO} milkColor="#9DB4CC" />
               <p style={{ margin: 0, fontSize: "0.68rem", color: "rgba(245,246,244,0.7)", display: "flex", alignItems: "center", gap: "0.35rem" }}>
                 <FlaskConical size={11} /> Formulação de Dietas{fazendaNome ? ` · ${fazendaNome}` : ""}
               </p>

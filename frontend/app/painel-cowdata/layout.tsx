@@ -239,7 +239,7 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
         </Link>
         <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
           <CowDataMark size={40} />
-          <CowDataWordmark size="1.1rem" cowColor={COR.textoPainel} dataColor={COR.doradoClaro} />
+          <CowDataWordmark size="1.1rem" cowColor={COR.textoPainel} dataColor={COR.doradoClaro} produto={null} />
         </div>
         <p style={{ fontSize: "0.62rem", color: COR.mudo, textTransform: "uppercase", letterSpacing: "0.08em", marginTop: "0.4rem" }}>
           Painel da empresa
@@ -358,7 +358,7 @@ function PainelCowDataShell({ children }: { children: React.ReactNode }) {
           style={{ background: "none", border: "none", color: COR.textoPainel, cursor: "pointer", display: "flex" }}>
           <Menu size={22} />
         </button>
-        <CowDataWordmark size="0.85rem" cowColor={COR.textoPainel} dataColor={COR.doradoClaro} />
+        <CowDataWordmark size="0.85rem" cowColor={COR.textoPainel} dataColor={COR.doradoClaro} produto={null} />
         <span style={{ color: COR.mudo, fontSize: "0.7rem" }}>· Painel da empresa</span>
       </div>
       <div className="md:hidden" style={{ height: "calc(3.25rem + env(safe-area-inset-top, 0px))" }} aria-hidden="true" />
