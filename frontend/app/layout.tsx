@@ -6,6 +6,7 @@ import { TabsShell } from "@/components/TabsShell";
 import { SubNavProvider } from "@/components/SubNavContext";
 import { ExportProvider } from "@/components/ExportContext";
 import { ToastProvider } from "@/components/Toast";
+import { AssociarRotulos } from "@/components/AssociarRotulos";
 import { COR_TOPO } from "@/lib/themeColorTopo";
 
 // Nenhuma dessas usa .className — só .variable (expõe uma CSS custom
@@ -64,6 +65,7 @@ export default function RootLayout({
         />
       </head>
       <body className={`${inter.variable} ${archivo.variable} ${dancingScript.variable} ${sora.variable}`}>
+        <AssociarRotulos />
         <SubNavProvider>
           <ExportProvider>
             <ToastProvider>
