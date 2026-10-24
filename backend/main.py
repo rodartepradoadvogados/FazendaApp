@@ -1040,6 +1040,11 @@ app.include_router(recria.router, dependencies=_protegido + [Depends(exigir_modu
 # cadastro.router é um cadastro-base amplo (fornecedores, pessoas, tipos,
 # serviços, farmácia...) usado por vários módulos comerciais ao mesmo tempo —
 # fica com a trava transversal (contrato ativo), não um módulo específico.
+# Leitura da lista de lotes: quem usa lote em alguma tela (movimentar, produção, alimentação, dieta, sanidade, agenda...)
+# precisa enxergar os lotes, não só quem tem Configurações. Escrita continua exigindo "parametros" (linha abaixo).
+app.include_router(lotes.router_leitura, dependencies=[Depends(exigir_modulo_qualquer(
+    "parametros", "rebanho", "producao", "alimentacao", "lancamentos", "sanidade", "reproducao", "agenda", "vet", "recria",
+)), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
 app.include_router(lotes.router, dependencies=[Depends(exigir_modulo("parametros")), Depends(exigir_modulo_contratado("rebanho"))] + _fazenda_selecionada)
 app.include_router(safra.router, dependencies=[Depends(exigir_modulo("parametros")), Depends(exigir_modulo_contratado("agricultura"))] + _fazenda_selecionada)
 app.include_router(cadastro.router, dependencies=[Depends(exigir_modulo("parametros"))] + _contrato_ativo + _fazenda_selecionada)

@@ -51,6 +51,8 @@ export default function Movimentar() {
   const [doCache, setDoCache] = useState(false);
   const [carregando, setCarregando] = useState(true);
   const [lotes, setLotes] = useState<Lote[]>([]);
+  // Lista de lotes que não veio (sem permissão, sem rede e sem cópia local): avisa em vez de mostrar a tela sem botões.
+  const [lotesFalhou, setLotesFalhou] = useState(false);
   const [motivos, setMotivos] = useState<string[]>([]);
   const [sugestoes, setSugestoes] = useState<SugestaoMov[] | null>(null);
 
@@ -82,6 +84,7 @@ export default function Movimentar() {
   const buscarLotes = () => fetchComCache<Lote[]>("lotes", () => fetchLotes());
   function aplicarLotes(r: { dados: Lote[] | null }) {
     if (r.dados) setLotes([...r.dados].sort((a, b) => comparaNumero(a.codigo, b.codigo)));
+    setLotesFalhou(!r.dados);
   }
   const buscarSugestoes = () => fetchComCache<{ sugestoes: SugestaoMov[] }>("sugestoes_mov", () => fetchSugestoesMovimentacao());
   function aplicarSugestoes(r: { dados: { sugestoes: SugestaoMov[] } | null }) { setSugestoes(r.dados?.sugestoes ?? []); }
@@ -403,6 +406,7 @@ export default function Movimentar() {
       <PassoIndicador passo={1}><b>quem</b> vai mudar de lote</PassoIndicador>
       <RascunhoAviso mostrar={sel.size > 0 && passo === 1} />
       {doCache && <AvisoLote tipo="offline">Sem internet: mostrando a lista do último acesso.</AvisoLote>}
+      {lotesFalhou && <AvisoLote tipo="erro">Não foi possível carregar os lotes. Confira a internet e abra a tela de novo; se continuar, peça ao administrador para liberar o acesso.</AvisoLote>}
 
       <RotuloLote>Origem</RotuloLote>
       <SeletorOrigem valor={origem} onChange={setOrigem} opcoes={ORIGENS_MOV} />
