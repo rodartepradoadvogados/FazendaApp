@@ -128,3 +128,8 @@ Categorias e cores claras: Reprodutivo, Sanidade, Produção, Gestão/Financeiro
 2. Ler este `CONTEXTO_PROJETO_FAZENDA.md` (histórico e regras) + `MODULO_AGENDA_v2.txt` (motor da agenda) + os CSV.
 3. Recomendação de arquitetura para o software próprio: separar **camada de dados** (parsers dos CSV/Ideagri → modelos: Animal, Servico, ContaGerencial, Estoque), **camada de regras** (as da seção 5, testáveis), **camada de visão** (agenda, financeiro, reprodução). Assim as regras da fazenda ficam versionadas e testadas — o que hoje está preso na macro VBA.
 4. Manter este documento como fonte de contexto e atualizá-lo a cada decisão.
+
+## Estado reprodutivo na API e rebaixa de "gestante" (24/10/2026)
+
+- `GET /animais/` e a ficha devolvem `estado_reprodutivo` (rótulo de `rules/estado_reprodutivo.ROTULOS`) e `estado_reprodutivo_codigo`, calculados ao vivo e em lote por `rules/estado_vivo_animais.py` (mesma regra de `/indicadores/estados-reprodutivos`). `categoria_completa` continua sendo o texto do Ideagri e não é reescrita por protocolo/inseminação/toque positivo: "IATF concluído" não é prenhez, e quem lê por máquina (bot Hermes) usa `estado_reprodutivo`.
+- Além de parto/aborto, toque/retoque NEGATIVO efetivo no serviço vigente e perda de prenhez (`POST /reproducao/diagnostico`, `/reconfirmacao`, `/perda-prenhez`, `PUT /reproducao/servicos/{id}`) tiram a marca "gestante"/"ges." do texto (`rules/rebaixa_gestante.py`; "ges." vira "vaz.", sem PEV). Não rebaixa com outro serviço vigente positivo, indefinido ou serviço em aberto. Desfazer o exame em Exclusões não restaura o texto antigo (o estado vivo acompanha). Sem função `categoria_real()`, por decisão do dono.

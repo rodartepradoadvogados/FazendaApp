@@ -430,7 +430,9 @@ _RE_GES_ABREV = re.compile(r"\bges\.", re.IGNORECASE)
 _RE_SEC_ABREV = re.compile(r"\bsec\.", re.IGNORECASE)
 
 
-def categoria_sem_gestacao(texto: str | None, *, abriu_lactacao: bool = False) -> str | None:
+def categoria_sem_gestacao(
+    texto: str | None, *, abriu_lactacao: bool = False, apos_parto: bool = True,
+) -> str | None:
     """Reescreve o texto de categoria do Ideagri de uma matriz cuja gestação
     ACABOU (parto, aborto ou natimorto). Função pura — quem grava/lê decide
     quando chamar.
@@ -444,12 +446,14 @@ def categoria_sem_gestacao(texto: str | None, *, abriu_lactacao: bool = False) -
         vaca 206 pariu e seguiu "Vaca ges. lac." na tela.
 
     Com `abriu_lactacao`, uma vaca que estava seca ("sec.") passa a "lac.".
+    Com `apos_parto=False` (toque NEGATIVO / perda lançada, sem parto): a vaca NÃO acabou de parir, então "ges." vira
+    só "vaz." (sem o "pev", que é descanso pós-parto) — ver `rules/rebaixa_gestante.py`.
     Texto sem marca de gestação fica intocado (critério conservador de
     `_categoria_ao_vivo`, em `api/routers/animais.py`: não inventamos texto)."""
     if not texto:
         return texto
     novo = re.sub("gestante", "vazia", texto, flags=re.IGNORECASE)
-    novo = _RE_GES_ABREV.sub("vaz. pev", novo)
+    novo = _RE_GES_ABREV.sub("vaz. pev" if apos_parto else "vaz.", novo)
     if novo == texto:
         return texto
     if abriu_lactacao:

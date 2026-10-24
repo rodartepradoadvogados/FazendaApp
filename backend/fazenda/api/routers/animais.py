@@ -24,6 +24,7 @@ from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import get_param, pre_parto_max
 from fazenda.rules.parto_resumo import resumo_por_parto
 from fazenda.rules.estado_reprodutivo import diagnostico_efetivo_do_servico
+from fazenda.rules.estado_vivo_animais import estados_vivos_por_animal
 from fazenda.rules.perda_prenhez import servico_esta_positivo_vigente, servicos_positivos_vigentes
 from fazenda.rules.gestation import dias_gestacao_da_raca
 from fazenda.rules.lactacao import em_lactacao_por_matriz as lactacoes_abertas_por_matriz
@@ -130,8 +131,11 @@ def listar_animais(
     # prenhez já perdida, ou que já pariu depois daquele serviço não deve
     # continuar contando "dias de gestação" de uma prenhez que não existe
     # mais (ver fazenda.rules.perda_prenhez).
+    # Só conta se o exame EFETIVO (o mais recente entre toque e reconfirmação) também é POSITIVO — mesma regra do
+    # `estado_reprodutivo` abaixo: reconfirmação NEGATIVA sem perda lançada não deixa "serviço positivo" na lista.
     ult_pos: dict[str, object] = {
         numero: s.data_servico for numero, s in servicos_positivos_vigentes(servicos_todos, partos_todos).items()
+        if diagnostico_efetivo_do_servico(s) == "POSITIVO"
     }
     ult_parto: dict[str, object] = {}
     # Só para `data_ult_parto` (auditoria/histórico): a data do último `Parto`
@@ -171,9 +175,18 @@ def listar_animais(
     # que o app de campo não filtrava nada e deixava lançar leite de bezerra.
     lactacoes_abertas = lactacoes_abertas_por_matriz(session, numeros, data=hoje, fazenda_id=fazenda_id)
 
+    # Estado reprodutivo VIVO (recalculado dos registros, em lote) — o texto `categoria_completa` é do Ideagri e não
+    # acompanha protocolo/inseminação/diagnóstico lançados aqui. Quem consome por máquina (bot Hermes) deve ler isto.
+    estados_vivos = estados_vivos_por_animal(
+        session, animais, fazenda_id=fazenda_id, hoje=hoje, servicos=servicos_todos, partos=partos_todos,
+    )
+
     saida = []
     for a in animais:
         d = a.model_dump()
+        ev = estados_vivos.get(a.numero)
+        d["estado_reprodutivo"] = ev["estado_reprodutivo"] if ev else None
+        d["estado_reprodutivo_codigo"] = ev["estado"] if ev else None
         sp = ult_pos.get(a.numero)
         pp = ult_parto.get(a.numero)
         pp_produtivo = ult_parto_produtivo.get(a.numero)
@@ -826,6 +839,9 @@ def ficha_animal(
     # ideia do del_dias_vivo calculado acima, para o texto de categoria.
     animal_dump = animal.model_dump()
     animal_dump["del_dias"] = del_dias_vivo
+    ev = estados_vivos_por_animal(session, [animal], fazenda_id=fazenda_id, hoje=date.today()).get(animal.numero)
+    animal_dump["estado_reprodutivo"] = ev["estado_reprodutivo"] if ev else None
+    animal_dump["estado_reprodutivo_codigo"] = ev["estado"] if ev else None
     animal_dump["categoria_completa"], animal_dump["categoria_abrev"] = _categoria_ao_vivo(
         animal_dump["categoria_completa"], animal_dump["categoria_abrev"],
         _ancora_lactacao(ultimo_parto_produtivo_data, lactacao_atual), ultima_secagem_data,

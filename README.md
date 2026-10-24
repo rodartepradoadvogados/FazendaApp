@@ -108,7 +108,7 @@ Acesse: http://localhost:3000
 |---|---|---|
 | GET | `/` | Health check |
 | GET | `/docs` | Swagger UI |
-| GET | `/animais/` | Lista animais (filtros: grupo, sit_rep) |
+| GET | `/animais/` | Lista animais (filtros: grupo, sit_rep). **`estado_reprodutivo`** (rótulo de `rules/estado_reprodutivo.ROTULOS`: Gestante, Inseminada, Em protocolo (IA atual), PEV, Apta, Atrasada, Não apta, Vazia) + `estado_reprodutivo_codigo` = estado VIVO recalculado dos registros (`rules/estado_vivo_animais.py`, em lote, mesmo cálculo de `/indicadores/estados-reprodutivos`; `null` p/ macho). `categoria_completa` segue sendo o texto do Ideagri — **consumidor de máquina (bot Hermes) deve ler `estado_reprodutivo`**. Também na ficha (`animal.estado_reprodutivo`). `data_ult_servico_pos` = serviço vigente cujo exame EFETIVO é POSITIVO. Toque/retoque NEGATIVO ou perda lançados rebaixam "gestante" do texto (`rules/rebaixa_gestante.py`) |
 | GET | `/animais/{numero}` | Busca animal |
 | POST | `/upload/{tipo}` | Upload CSV (geral/reprodutivo/estoque/conta_gerencial) |
 | GET | `/agenda/` | Agenda preditiva (param: `?data=YYYY-MM-DD`) |
