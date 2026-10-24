@@ -23,7 +23,8 @@ from fazenda.rules.sanitario.consulta import registros_do_animal
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import get_param, pre_parto_max
 from fazenda.rules.parto_resumo import resumo_por_parto
-from fazenda.rules.perda_prenhez import servicos_positivos_vigentes
+from fazenda.rules.estado_reprodutivo import diagnostico_efetivo_do_servico
+from fazenda.rules.perda_prenhez import servico_esta_positivo_vigente, servicos_positivos_vigentes
 from fazenda.rules.gestation import dias_gestacao_da_raca
 from fazenda.rules.lactacao import em_lactacao_por_matriz as lactacoes_abertas_por_matriz
 from fazenda.rules.lactacao import categoria_sem_gestacao, lactacao_aberta, lactacoes_da_matriz
@@ -772,11 +773,22 @@ def ficha_animal(
     # Listas de manejo (relatorios_gerenciais), aqui aplicada a um único animal.
     previsao_parto = None
     previsao_secagem = None
-    servicos_positivos = [
-        s for s in servicos
-        if (s.diagnostico or "").strip().upper() == "POSITIVO" and not s.data_perda_prenhez
-        and s.data_servico and (not ultimo_parto_data or s.data_servico > ultimo_parto_data)
+    # Só o serviço VIGENTE (o mais recente do ciclo) pode sustentar uma previsão, e só se o exame que VALE nele
+    # (o mais recente entre toque e reconfirmação) for POSITIVO — a MESMA regra de `estado_reprodutivo` (ramo
+    # GESTANTE). Antes pegava "qualquer serviço com toque POSITIVO" do ciclo: uma reconfirmação NEGATIVA sem perda
+    # lançada, ou um serviço mais novo ainda sem toque, deixavam a Ficha com previsão de parto enquanto a situação
+    # ao vivo dizia "apta"/"inseminada" (regra do produtor: inseminada tem expectativa, não previsão).
+    servicos_do_ciclo = [
+        s for s in servicos if s.data_servico and (not ultimo_parto_data or s.data_servico > ultimo_parto_data)
     ]
+    servico_vigente = max(servicos_do_ciclo, key=lambda s: s.data_servico, default=None)
+    servicos_positivos = (
+        [servico_vigente]
+        if servico_vigente is not None
+        and servico_esta_positivo_vigente(servico_vigente)
+        and diagnostico_efetivo_do_servico(servico_vigente) == "POSITIVO"
+        else []
+    )
     if servicos_positivos:
         concepcao = servicos_positivos[-1].data_servico
         # Gestação da raça DESTE animal (Holandês 280, Girolando 287,
