@@ -39,6 +39,7 @@ from fazenda.rules import lancamento_automatico  # registra os listeners dos ite
 from fazenda.rules.email import enviar_email
 from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, mapear_centro_custo, valor_gerencial_por_centro_custo
 from fazenda.rules.leitura_documento import MIME_ACEITOS, ler_documento
+from fazenda.rules.nome_fazenda import nome_da_fazenda, nome_fazenda_ou_padrao
 from fazenda.rules.nfe_xml import parse_nfe_xml
 from fazenda.rules.casamento_cadastro import normalizar
 from fazenda.rules.sugestao_documento import resolver_apelido_fornecedor, sugestoes_cadastro
@@ -5488,7 +5489,10 @@ async def ler_documento_anexado(
         raise HTTPException(status_code=400, detail=f"Tipo de arquivo não suportado: {file.content_type} (aceitos: PDF, JPEG, PNG)")
     conteudo = await file.read()
     try:
-        extraido = await run_in_threadpool(ler_documento, conteudo, file.content_type)
+        # Nome da fazenda atual: vira o contribuinte padrão de guia FGTS/DCTFWeb
+        # sem nome legível (ver leitura_documento._parsear_texto).
+        nome_fazenda = nome_da_fazenda(session, fazenda_id_seguro(fazenda_id))
+        extraido = await run_in_threadpool(ler_documento, conteudo, file.content_type, nome_fazenda=nome_fazenda)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
@@ -6074,7 +6078,10 @@ async def enviar_recibo(
     corpo_html = (
         f"<p>Segue em anexo o recibo do lançamento <b>{html.escape(numero_lancamento)}</b> "
         f"({html.escape(conta.fornecedor_cliente or '—')}, R$ {conta.valor_total or 0:.2f}).</p>"
-        "<p>Fazenda Estreito Ponte de Pedra</p>"
+        # Rodapé com o nome da fazenda DO LANÇAMENTO (a do token, já usada no
+        # filtro acima). BUG CORRIGIDO: era o nome fixo de uma fazenda
+        # cliente, para qualquer fazenda que enviasse o recibo.
+        f"<p>{html.escape(nome_fazenda_ou_padrao(session, fazenda_id))}</p>"
     )
     try:
         enviar_email(destinatario.strip(), f"Recibo — {numero_lancamento}", corpo_html, arquivo.filename or "recibo.pdf", conteudo)

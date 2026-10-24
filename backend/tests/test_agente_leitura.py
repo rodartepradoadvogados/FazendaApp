@@ -341,11 +341,13 @@ class TestFerramentas:
 
 class TestInstrucoes:
     def test_base_mais_ensinamentos_ativos_da_fazenda_alvo(self, client, engine):
-        from fazenda.rules.assistente import SYSTEM_PROMPT
+        from fazenda.rules.assistente import prompt_base
         r = client.get("/agente/instrucoes", headers=AUTH)
         assert r.status_code == 200
         corpo = r.json()
-        assert corpo["instrucoes"].startswith(SYSTEM_PROMPT)
+        # Base com o nome da fazenda alvo (antes: nome fixo de uma fazenda cliente).
+        base = prompt_base("Fazenda Um")
+        assert corpo["base"] == base and corpo["instrucoes"].startswith(base)
         assert "Regra F1: Lote 4 é de secas." in corpo["instrucoes"]
         assert "NAO VAZAR" not in r.text
 

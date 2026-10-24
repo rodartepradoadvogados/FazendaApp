@@ -117,7 +117,7 @@ def _fazenda_do_chat(chat_id: int) -> int | None:
     return None
 
 
-def _ler_documento_pendente(pend: TelegramPendente) -> dict:
+def _ler_documento_pendente(pend: TelegramPendente, nome_fazenda: str | None = None) -> dict:
     conteudo = _baixar_arquivo(pend.file_id)
     if pend.kind == "xml":
         from fazenda.rules.nfe_xml import parse_nfe_xml
@@ -125,7 +125,7 @@ def _ler_documento_pendente(pend: TelegramPendente) -> dict:
         dados.setdefault("tipo_documento", "nota_fiscal")
         return dados
     from fazenda.rules.leitura_documento import ler_documento
-    return ler_documento(conteudo, pend.mime or "application/pdf")
+    return ler_documento(conteudo, pend.mime or "application/pdf", nome_fazenda=nome_fazenda)
 
 
 # ── Confirmação/correção/cancelamento do lançamento lido do documento ──────
@@ -610,7 +610,10 @@ def _tratar_callback(session: Session, cq: dict) -> None:
             return
         _enviar(chat_id, "⏳ Lendo o documento…")
         try:
-            dados = _ler_documento_pendente(pend)
+            # Fazenda do chat (TELEGRAM_CHAT_FAZENDA) — contribuinte padrão de
+            # guia FGTS/DCTFWeb; chat sem fazenda mapeada deixa o campo vazio.
+            from fazenda.rules.nome_fazenda import nome_da_fazenda
+            dados = _ler_documento_pendente(pend, nome_fazenda=nome_da_fazenda(session, _fazenda_do_chat(chat_id)))
         except RuntimeError as e:
             session.delete(pend)
             session.commit()

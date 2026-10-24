@@ -16,6 +16,7 @@ from fazenda.models import AssistenteEnsinamento, Fazenda, Usuario
 from fazenda.rules import agente_leitura as al
 from fazenda.rules import assistente
 from fazenda.rules.parametros import fazenda_atual
+from fazenda.rules.nome_fazenda import nome_da_fazenda
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +204,7 @@ def instrucoes(request: Request, ctx: _Contexto = Depends(_contexto), session: S
     with _auditado(ctx, "instrucoes", {}):
         fid = _fazenda_alvo(session)
         texto = assistente._system_prompt(session, fid)
-        return {"instrucoes": al.sanitizar(texto), "base": assistente.SYSTEM_PROMPT, "fazenda_id": fid}
+        return {"instrucoes": al.sanitizar(texto), "base": assistente.prompt_base(nome_da_fazenda(session, fid)), "fazenda_id": fid}
 
 
 @router.get("/consultar/{ferramenta}")

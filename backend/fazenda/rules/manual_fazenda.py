@@ -26,6 +26,7 @@ from fazenda.models import (
 )
 from fazenda.rules.email import enviar_email
 from fazenda.rules.indicadores import calcular_indicadores
+from fazenda.rules.nome_fazenda import nome_da_fazenda
 from fazenda.rules.parametros import (
     bst_ajuste_ancora_data, dias_resultado_conhecido, intervalo_bst, intervalo_visita_reprodutiva,
 )
@@ -281,6 +282,9 @@ def montar_manual(session: Session, fazenda_id: int | None) -> dict:
 
     return {
         "gerado_em": datetime.utcnow().isoformat(),
+        # Nome da fazenda do recorte — cabeçalho do PDF (manual_fazenda_pdf).
+        # None sem fazenda conhecida (o PDF cai no nome do produto).
+        "nome_fazenda": nome_da_fazenda(session, fazenda_id),
         "responsavel_manejo": {
             "nome": parametro.responsavel_manejo_nome,
             "empresa": parametro.responsavel_manejo_empresa,

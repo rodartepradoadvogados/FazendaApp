@@ -1,5 +1,5 @@
 """
-Aplicação FastAPI — Fazenda Estreito Ponte de Pedra
+Aplicação FastAPI — CowData Milk (gestão de fazenda leiteira, multi-fazenda)
 Ponto de entrada principal.
 """
 import asyncio
@@ -424,7 +424,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Fazenda Estreito Ponte de Pedra — API",
+    # Nome do produto, não de uma fazenda cliente: a API atende todas.
+    title="CowData Milk — API",
     description="Backend para gestão de fazenda leiteira Girolando/Holandês",
     version="1.0.0",
     lifespan=lifespan,
@@ -1112,7 +1113,7 @@ app.include_router(agente_leitura.router)
 @app.get("/")
 def root():
     return {
-        "app": "Fazenda Estreito Ponte de Pedra",
+        "app": "CowData Milk",
         "versao": "1.0.0",
         "docs": "/docs",
     }

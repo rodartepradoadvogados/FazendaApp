@@ -1,10 +1,10 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Target, RefreshCw, Skull, Newspaper, Search } from "lucide-react";
 import {
   fetchIndicadores, fetchAgenda, fetchProducao, fetchResultadoMesRecente, fetchEstoque, fetchAnimais, fetchBaixas, formatBRL,
-  fetchNotaCapa, podeModulo, today, getToken, type NotaCapa, type IndicadoresReproducao, type ReproducaoCategoria,
+  fetchNotaCapa, podeModulo, today, getToken, getFazendaAtual, type NotaCapa, type IndicadoresReproducao, type ReproducaoCategoria,
 } from "@/lib/api";
 import { cartao } from "@/lib/cartaoDrillDown";
 import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
@@ -101,12 +101,21 @@ function Delta({ atual, anterior, sufixo = "", casasDecimais = 0 }: { atual: num
   );
 }
 
+// A fazenda atual só muda num login/troca de conta (sem evento próprio): o
+// snapshot é relido a cada renderização — mesmo padrão de app/app/layout.tsx.
+const semAssinatura = () => () => {};
+
 // A Capa (dashboard) propriamente dita — só renderizada para quem está
 // logado. Ver Home() no fim do arquivo, que decide entre esta e a landing
 // pública (T8); a divisão em dois componentes existe só por isso, nenhuma
 // lógica interna da Capa mudou.
 function Capa() {
   const router = useRouter();
+  // Nome da fazenda ATUAL no título da Capa. BUG CORRIGIDO: era o nome fixo de
+  // uma fazenda cliente, para qualquer conta. Snapshot do servidor vazio (sem
+  // localStorage) evita divergência na hidratação; sem fazenda conhecida, cai
+  // no nome do produto em vez do nome de outra fazenda.
+  const nomeFazenda = useSyncExternalStore(semAssinatura, () => getFazendaAtual()?.nome?.trim() || "", () => "");
   const [d, setD] = useState<any>(null);
   // Comparativo de 7 dias — recalculado de verdade pelo backend (data_ref),
   // nunca fabricado no cliente (achado da crítica original: inventar
@@ -317,7 +326,7 @@ function Capa() {
           página fica mais abaixo e continua precisando da faixa fixa). */}
       <div className="mb-5 flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold" style={{ color: "var(--text)" }}>Fazenda Estreito Ponte de Pedra</h1>
+          <h1 className="text-2xl font-bold" style={{ color: "var(--text)" }}>{nomeFazenda || "CowData Milk"}</h1>
           <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
             Pecuária leiteira · Girolando / Holandês · {new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
           </p>

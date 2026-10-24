@@ -41,7 +41,12 @@ from pathlib import Path
 
 from xhtml2pdf import pisa
 
-NOME_FAZENDA = "Fazenda Estreito Ponte de Pedra"
+from fazenda.rules.nome_fazenda import NOME_PADRAO
+
+# O cabeçalho usa `manual["nome_fazenda"]` (preenchido por
+# manual_fazenda.montar_manual com o nome da fazenda do recorte). BUG
+# CORRIGIDO: era uma constante com o nome fixo de uma fazenda cliente, impressa
+# no PDF de QUALQUER fazenda. Sem nome, cai no nome do produto (NOME_PADRAO).
 
 # Logomarca CowData Milk (PNG fixo do repositório, 700 x 157). Entra como
 # data URI único; `_bloquear_recursos_externos` deixa passar SÓ ele.
@@ -179,6 +184,7 @@ def _titulo_secao(texto: str) -> str:
 
 def _html_manual(manual: dict) -> str:
     hoje = date.today().strftime("%d/%m/%Y")
+    nome_fazenda = str(manual.get("nome_fazenda") or "").strip() or NOME_PADRAO
     responsavel = manual.get("responsavel_manejo") or {}
     resp_linha = ""
     if responsavel.get("nome"):
@@ -191,7 +197,7 @@ def _html_manual(manual: dict) -> str:
       <div style="border-bottom:2px solid {COR_VINHO};padding-bottom:8px;margin-bottom:12px;">
         <table width="100%"><tr>
           <td>
-            <span style="font-size:8pt;letter-spacing:1px;color:{COR_MUTED};">{NOME_FAZENDA.upper()}</span><br/>
+            <span style="font-size:8pt;letter-spacing:1px;color:{COR_MUTED};">{_esc(nome_fazenda.upper())}</span><br/>
             <span style="font-size:16pt;font-weight:bold;color:{COR_VINHO};">Manual da Fazenda</span><br/>
             <span style="font-size:8pt;color:{COR_MUTED};">Gerado em {hoje}</span>
             {resp_linha}

@@ -25,7 +25,9 @@ self.addEventListener("activate", (event) => {
 // alertas do sininho (contas vencendo, estoque baixo, pendências de agenda
 // etc. — ver backend/fazenda/api/routers/push.py, que decide o quê/quando).
 self.addEventListener("push", (event) => {
-  let dados = { title: "Fazenda Estreito Ponte de Pedra", body: "Você tem uma nova pendência.", url: "/agenda" };
+  // Título padrão neutro (produto): o payload do backend sobrescreve quando
+  // manda `title`. BUG CORRIGIDO: era o nome fixo de uma fazenda cliente.
+  let dados = { title: "CowData Milk", body: "Você tem uma nova pendência.", url: "/agenda" };
   try {
     if (event.data) dados = { ...dados, ...event.data.json() };
   } catch (e) { /* payload não veio em JSON — usa os padrões acima */ }

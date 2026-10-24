@@ -26,6 +26,7 @@ from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_reprodutiva_configuravel import SITUACOES, avaliar_card
 from fazenda.rules.sanitario import ganchos as ganchos_sanitario
 from fazenda.rules.agenda_veterinario import classificar_rebanho
+from fazenda.rules.nome_fazenda import nome_fazenda_ou_padrao
 from fazenda.rules.aptidao import AptidaoResultado, avaliar_aptidao_em_massa, avaliar_aptidao_no_banco, parametros_aptidao
 from fazenda.rules.iatf_vigente import MOTIVO_EM_PROTOCOLO, mensagem_em_protocolo, protocolos_vigentes_por_animal
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
@@ -1110,7 +1111,10 @@ def enviar_ultimo_diagnostico(
         linhas.append(f"<p><b>Método:</b> {html.escape(servico.metodo_diagnostico)}</p>")
     if servico.data_reconfirmacao:
         linhas.append(f"<p><b>Reconfirmação ({fmt(servico.data_reconfirmacao)}):</b> {html.escape(servico.diagnostico_reconfirmacao or '—')}</p>")
-    corpo_html = "".join(linhas) + "<p>Fazenda Estreito Ponte de Pedra</p>"
+    # Rodapé com o nome da fazenda do token (a mesma do filtro da matriz).
+    # BUG CORRIGIDO: era o nome fixo de uma fazenda cliente, para qualquer
+    # fazenda que enviasse o diagnóstico.
+    corpo_html = "".join(linhas) + f"<p>{html.escape(nome_fazenda_ou_padrao(session, fazenda_id))}</p>"
 
     try:
         enviar_email(dados.destinatario.strip(), f"Diagnóstico de gestação — matriz {numero_matriz}", corpo_html)
