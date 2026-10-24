@@ -162,10 +162,9 @@ export function Sidebar() {
   const [administracaoHref, setAdministracaoHref] = useState("/portal");
   const [formularDietas, setFormularDietas] = useState(false);
   // Nome exibido embaixo do logo CowData — vem da fazenda selecionada no
-  // login (piloto conservador de multi-fazenda). "Jairo Nasser" é o valor
-  // fixo de sempre, mantido como fallback para quem nunca teve mais de uma
-  // fazenda vinculada (ninguém percebe diferença nenhuma).
-  const [fazendaNome, setFazendaNome] = useState("Jairo Nasser");
+  // login (piloto conservador de multi-fazenda). Antes de carregar fica vazio:
+  // o fallback "Jairo Nasser" mostrava o nome de uma fazenda cliente a todas.
+  const [fazendaNome, setFazendaNome] = useState("");
   // ID da fazenda selecionada — ajuda a equipe CowData a identificar a
   // fazenda ao pedir suporte/ao rodar a sincronização da Fazenda Teste em
   // Painel CowData > Fazendas. Só aparece para dono, Equipe CowData e sessão
@@ -182,7 +181,7 @@ export function Sidebar() {
     setAdmin(ehAdmin());
     setDono(ehDono());
     setTemConfiguracoes(podeModulo("parametros") || podeModulo("upload") || ehAdmin());
-    setFazendaNome(getFazendaAtual()?.nome || "Jairo Nasser");
+    setFazendaNome(getFazendaAtual()?.nome || "");
     setFazendaId(getFazendaAtual()?.id ?? null);
     setMostrarId(ehDono() || ehMembroEquipeCowData() || getModoSuporte() != null);
     // Atalho "Insights" (ver botão no rodapé) — só para quem tem acesso a pelo

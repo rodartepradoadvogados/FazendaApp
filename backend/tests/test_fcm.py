@@ -117,7 +117,7 @@ class TestEnviar:
         assert isinstance(msg["data"]["count"], str)
         assert msg["data"]["url"] == "/agenda"
         assert msg["android"]["priority"] == "HIGH"
-        assert msg["android"]["notification"]["color"] == "#3A0F1A"
+        assert msg["android"]["notification"]["color"] == "#0A1F36"
 
     def test_sem_count_nao_inclui_a_chave(self, monkeypatch):
         chamadas = []

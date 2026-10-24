@@ -4,7 +4,7 @@ import { AlertTriangle, Beef, Check, Eye } from "lucide-react";
 import {
   fetchAnimais, criarAnimalFicha, atualizarAnimalFicha, fetchRacas, fetchGrausSangue,
   fetchEstoqueSemen, fetchTouros, fetchMotivosBaixaCadastro, fetchLotes, fetchCategoriasManejo,
-  fetchMatrizesComParto, type Touro, type CategoriaManejo, type MatrizComParto,
+  fetchMatrizesComParto, getFazendaAtual, type Touro, type CategoriaManejo, type MatrizComParto,
 } from "@/lib/api";
 import { AnimalRow } from "./AnimalModal";
 import { AnimalPicker } from "./AnimalPicker";
@@ -54,10 +54,17 @@ type Ficha = {
 };
 const fichaVazia: Ficha = {
   numero: "", nome: "", sisbov: "", sexo: "", raca: "Girolando", grau_sangue: "", categoria_abrev: "",
-  grupo_primario: "", data_nasc: "", data_entrada: "", proprietario: "Jairo Nasser Quintiliano da Silva", valor: "",
+  grupo_primario: "", data_nasc: "", data_entrada: "", proprietario: "", valor: "",
   motivo_baixa: "", data_baixa: "", mae_numero: "", mae_nome: "", observacoes: "",
   pai_nome: "", pai_naab: "", avo_paterno_nome: "", avo_paterno_naab: "", bisavo_paterno_nome: "", bisavo_paterno_naab: "",
 };
+// Proprietário pré-preenchido só na fazenda de origem (id 1), que sempre usou
+// este nome. BUG CORRIGIDO: o nome de uma pessoa estava fixo para TODAS as
+// fazendas; nas demais o campo começa vazio.
+const PROPRIETARIO_FAZENDA_DE_ORIGEM = "Jairo Nasser Quintiliano da Silva";
+function fichaNova(): Ficha {
+  return { ...fichaVazia, proprietario: getFazendaAtual()?.id === 1 ? PROPRIETARIO_FAZENDA_DE_ORIGEM : "" };
+}
 
 function paraPayload(f: Ficha) {
   const s = (v: string) => (v.trim() === "" ? null : v.trim());
@@ -83,7 +90,7 @@ export default function CadastroAnimalForm() {
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [numeroEdicao, setNumeroEdicao] = useState("");
   const [lotes, setLotes] = useState<string[]>([]);
-  const [form, setForm] = useState<Ficha>(fichaVazia);
+  const [form, setForm] = useState<Ficha>(fichaNova);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
@@ -222,7 +229,7 @@ export default function CadastroAnimalForm() {
 
   const trocarModo = (m: "novo" | "editar") => {
     setModo(m); setErro(null); setSucesso(null);
-    setForm(fichaVazia); setNumeroEdicao("");
+    setForm(fichaNova()); setNumeroEdicao("");
   };
 
   async function salvar() {
@@ -234,7 +241,7 @@ export default function CadastroAnimalForm() {
       if (modo === "novo") {
         await criarAnimalFicha(payload);
         setSucesso(`Animal ${form.numero} cadastrado com sucesso.`);
-        setForm(fichaVazia);
+        setForm(fichaNova());
       } else {
         await atualizarAnimalFicha(numeroEdicao, payload);
         setSucesso(`Ficha de ${numeroEdicao} atualizada com sucesso.`);
